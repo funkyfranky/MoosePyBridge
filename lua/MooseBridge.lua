@@ -37,6 +37,7 @@ function MOOSE_BRIDGE:New(host, port)
   self.Sequence = 0
   self.OutQueue = {}
   self.CommandHandlers = {}
+  self.RegisteredZones = {}
   self.ConnectRetryDelay = 5
   self.TickInterval = 0.2
   self.HeartbeatInterval = 5
@@ -127,11 +128,30 @@ function MOOSE_BRIDGE:RegisterCommand(action, handler)
   return self
 end
 
+function MOOSE_BRIDGE:RegisterZone(zone, name)
+  local zone_name = name or self:_SafeCall(zone, "GetName") or zone.ZoneName or zone.name
+  if zone_name then self.RegisteredZones[safe_tostring(zone_name)] = zone end
+  return self
+end
+
+function MOOSE_BRIDGE:RegisterZones(zones)
+  if type(zones) ~= "table" then return self end
+  for name, zone in pairs(zones) do self:RegisterZone(zone, name) end
+  return self
+end
+
 function MOOSE_BRIDGE:_SafeCall(object, method_name)
   if not object or not method_name then return nil end
   local ok_method, method = pcall(function() return object[method_name] end)
   if not ok_method or not method then return nil end
   local ok, value = pcall(function() return method(object) end)
+  if ok then return value end
+  return nil
+end
+
+function MOOSE_BRIDGE:_DcsCall(object, method_name)
+  if not object or not method_name then return nil end
+  local ok, value = pcall(function() return object[method_name](object) end)
   if ok then return value end
   return nil
 end
@@ -186,49 +206,24 @@ function MOOSE_BRIDGE:_NumberOrZero(value)
   return 0
 end
 
-function MOOSE_BRIDGE:_IsDcsUnitAlive(unit)
-  if not unit then return false end
+function MOOSE_BRIDGE:_IsDcsObjectAlive(object)
+  if not object then return false end
 
-  local ok_exist, exists = pcall(function() return unit:isExist() end)
+  local ok_exist, exists = pcall(function() return object:isExist() end)
   if ok_exist and not exists then return false end
 
-  local ok_life, life = pcall(function() return unit:getLife() end)
+  local ok_life, life = pcall(function() return object:getLife() end)
   if ok_life and type(life) == "number" then return life > 0 end
 
   return true
 end
 
-function MOOSE_BRIDGE:_IsMooseUnitAlive(unit)
-  if not unit then return false end
-
-  local alive = self:_SafeCall(unit, "IsAlive")
-  if alive ~= nil then return alive and true or false end
-
-  local dcs_unit = self:_SafeCall(unit, "GetDCSObject")
-  if dcs_unit then return self:_IsDcsUnitAlive(dcs_unit) end
-
-  return false
+function MOOSE_BRIDGE:_DcsTypeName(object)
+  return self:_DcsCall(object, "getTypeName")
 end
 
-function MOOSE_BRIDGE:_DcsUnitTypeName(dcs_unit)
-  if not dcs_unit then return nil end
-  local ok, value = pcall(function() return dcs_unit:getTypeName() end)
-  if ok then return value end
-  return nil
-end
-
-function MOOSE_BRIDGE:_DcsUnitPoint(dcs_unit)
-  if not dcs_unit then return nil end
-  local ok, value = pcall(function() return dcs_unit:getPoint() end)
-  if ok then return value end
-  return nil
-end
-
-function MOOSE_BRIDGE:_DcsAirbaseCall(airbase, method_name)
-  if not airbase or not method_name then return nil end
-  local ok, value = pcall(function() return airbase[method_name](airbase) end)
-  if ok then return value end
-  return nil
+function MOOSE_BRIDGE:_DcsPoint(object)
+  return self:_DcsCall(object, "getPoint")
 end
 
 function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
@@ -246,6 +241,18 @@ function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
   return count
 end
 
+function MOOSE_BRIDGE:_IsMooseUnitAlive(unit)
+  if not unit then return false end
+
+  local alive = self:_SafeCall(unit, "IsAlive")
+  if alive ~= nil then return alive and true or false end
+
+  local dcs_unit = self:_SafeCall(unit, "GetDCSObject")
+  if dcs_unit then return self:_IsDcsObjectAlive(dcs_unit) end
+
+  return false
+end
+
 function MOOSE_BRIDGE:_CountDcsGroupUnits(group, alive_only)
   local dcs_group = self:_SafeCall(group, "GetDCSObject")
   if not dcs_group then return nil end
@@ -256,7 +263,7 @@ function MOOSE_BRIDGE:_CountDcsGroupUnits(group, alive_only)
   local count = 0
   for _, unit in pairs(units) do
     if alive_only then
-      if self:_IsDcsUnitAlive(unit) then count = count + 1 end
+      if self:_IsDcsObjectAlive(unit) then count = count + 1 end
     else
       count = count + 1
     end
@@ -307,19 +314,11 @@ end
 function MOOSE_BRIDGE:BuildGroupSnapshot()
   local result = {}
 
-  if not _DATABASE or not _DATABASE.GROUPS then
-    return result
-  end
+  if not _DATABASE or not _DATABASE.GROUPS then return result end
 
   for group_name, group in pairs(_DATABASE.GROUPS) do
-    local ok, item = pcall(function()
-      return self:_BuildGroupSnapshotItem(group_name, group)
-    end)
-    if ok and item then
-      result[#result + 1] = item
-    else
-      self:_Log("Failed to snapshot group " .. safe_tostring(group_name) .. ": " .. safe_tostring(item))
-    end
+    local ok, item = pcall(function() return self:_BuildGroupSnapshotItem(group_name, group) end)
+    if ok and item then result[#result + 1] = item else self:_Log("Failed to snapshot group " .. safe_tostring(group_name) .. ": " .. safe_tostring(item)) end
   end
 
   return result
@@ -338,11 +337,11 @@ function MOOSE_BRIDGE:_BuildUnitSnapshotItem(unit_name, unit)
   if not category and group then category = self:_SafeCall(group, "GetCategoryName") or self:_SafeCall(group, "GetCategory") end
 
   local dcs_unit = self:_SafeCall(unit, "GetDCSObject")
-  local dcs_type = self:_SafeCall(unit, "GetTypeName") or self:_DcsUnitTypeName(dcs_unit)
+  local dcs_type = self:_SafeCall(unit, "GetTypeName") or self:_DcsTypeName(dcs_unit)
   local alive = self:_SafeCall(unit, "IsAlive")
-  if alive == nil then alive = self:_IsDcsUnitAlive(dcs_unit) end
+  if alive == nil then alive = self:_IsDcsObjectAlive(dcs_unit) end
   local active = self:_SafeCall(unit, "IsActive")
-  local point = self:_DcsUnitPoint(dcs_unit)
+  local point = self:_DcsPoint(dcs_unit)
 
   local item = {
     object_id = "UNIT:" .. safe_tostring(name),
@@ -356,12 +355,7 @@ function MOOSE_BRIDGE:_BuildUnitSnapshotItem(unit_name, unit)
     active = self:_BoolOrFalse(active),
   }
 
-  if point then
-    item.x = point.x
-    item.y = point.y
-    item.z = point.z
-  end
-
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
   return item
 end
 
@@ -370,34 +364,20 @@ function MOOSE_BRIDGE:BuildUnitSnapshot()
 
   if _DATABASE and _DATABASE.UNITS then
     for unit_name, unit in pairs(_DATABASE.UNITS) do
-      local ok, item = pcall(function()
-        return self:_BuildUnitSnapshotItem(unit_name, unit)
-      end)
-      if ok and item then
-        result[#result + 1] = item
-      else
-        self:_Log("Failed to snapshot unit " .. safe_tostring(unit_name) .. ": " .. safe_tostring(item))
-      end
+      local ok, item = pcall(function() return self:_BuildUnitSnapshotItem(unit_name, unit) end)
+      if ok and item then result[#result + 1] = item else self:_Log("Failed to snapshot unit " .. safe_tostring(unit_name) .. ": " .. safe_tostring(item)) end
     end
     return result
   end
 
-  if not _DATABASE or not _DATABASE.GROUPS then
-    return result
-  end
+  if not _DATABASE or not _DATABASE.GROUPS then return result end
 
   for _, group in pairs(_DATABASE.GROUPS) do
     local units = self:_SafeCall(group, "GetUnits")
     if type(units) == "table" then
       for unit_name, unit in pairs(units) do
-        local ok, item = pcall(function()
-          return self:_BuildUnitSnapshotItem(unit_name, unit)
-        end)
-        if ok and item then
-          result[#result + 1] = item
-        else
-          self:_Log("Failed to snapshot group unit " .. safe_tostring(unit_name) .. ": " .. safe_tostring(item))
-        end
+        local ok, item = pcall(function() return self:_BuildUnitSnapshotItem(unit_name, unit) end)
+        if ok and item then result[#result + 1] = item else self:_Log("Failed to snapshot group unit " .. safe_tostring(unit_name) .. ": " .. safe_tostring(item)) end
       end
     end
   end
@@ -405,21 +385,56 @@ function MOOSE_BRIDGE:BuildUnitSnapshot()
   return result
 end
 
+function MOOSE_BRIDGE:_BuildStaticSnapshotItem(static_name, static)
+  local name = self:_SafeCall(static, "GetName") or static_name
+  local coalition_value = self:_SafeCall(static, "GetCoalition")
+  local category = self:_SafeCall(static, "GetCategoryName") or self:_SafeCall(static, "GetCategory")
+  local dcs_static = self:_SafeCall(static, "GetDCSObject")
+  local dcs_type = self:_SafeCall(static, "GetTypeName") or self:_DcsTypeName(dcs_static)
+  local alive = self:_SafeCall(static, "IsAlive")
+  if alive == nil then alive = self:_IsDcsObjectAlive(dcs_static) end
+  local active = self:_SafeCall(static, "IsActive")
+  local point = self:_DcsPoint(dcs_static)
+
+  local item = {
+    object_id = "STATIC:" .. safe_tostring(name),
+    dcs_name = safe_tostring(name),
+    object_type = "STATIC",
+    category = category and safe_tostring(category) or "STATIC",
+    coalition = self:_CoalitionToName(coalition_value),
+    dcs_type = dcs_type and safe_tostring(dcs_type) or nil,
+    alive = self:_BoolOrFalse(alive),
+    active = self:_BoolOrFalse(active),
+  }
+
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:BuildStaticSnapshot()
+  local result = {}
+
+  if not _DATABASE or not _DATABASE.STATICS then return result end
+
+  for static_name, static in pairs(_DATABASE.STATICS) do
+    local ok, item = pcall(function() return self:_BuildStaticSnapshotItem(static_name, static) end)
+    if ok and item then result[#result + 1] = item else self:_Log("Failed to snapshot static " .. safe_tostring(static_name) .. ": " .. safe_tostring(item)) end
+  end
+
+  return result
+end
+
 function MOOSE_BRIDGE:_BuildAirbaseSnapshotItem(airbase)
-  local name = self:_DcsAirbaseCall(airbase, "getName")
-  local coalition_value = self:_DcsAirbaseCall(airbase, "getCoalition")
-  local object_category = self:_DcsAirbaseCall(airbase, "getCategory")
-  local point = self:_DcsAirbaseCall(airbase, "getPoint")
-  local desc = self:_DcsAirbaseCall(airbase, "getDesc")
+  local name = self:_DcsCall(airbase, "getName")
+  local coalition_value = self:_DcsCall(airbase, "getCoalition")
+  local object_category = self:_DcsCall(airbase, "getCategory")
+  local point = self:_DcsCall(airbase, "getPoint")
+  local desc = self:_DcsCall(airbase, "getDesc")
   local airbase_category = nil
   local dcs_type = nil
   local display_name = nil
 
-  if type(desc) == "table" then
-    airbase_category = desc.category
-    dcs_type = desc.typeName
-    display_name = desc.displayName
-  end
+  if type(desc) == "table" then airbase_category = desc.category; dcs_type = desc.typeName; display_name = desc.displayName end
 
   local item = {
     object_id = "AIRBASE:" .. safe_tostring(name),
@@ -433,35 +448,95 @@ function MOOSE_BRIDGE:_BuildAirbaseSnapshotItem(airbase)
     display_name = display_name and safe_tostring(display_name) or nil,
   }
 
-  if point then
-    item.x = point.x
-    item.y = point.y
-    item.z = point.z
-  end
-
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
   return item
 end
 
 function MOOSE_BRIDGE:BuildAirbaseSnapshot()
   local result = {}
 
-  if not world or not world.getAirbases then
-    return result
-  end
+  if not world or not world.getAirbases then return result end
 
   local ok, airbases = pcall(function() return world.getAirbases() end)
-  if not ok or type(airbases) ~= "table" then
-    return result
-  end
+  if not ok or type(airbases) ~= "table" then return result end
 
   for _, airbase in pairs(airbases) do
-    local ok_item, item = pcall(function()
-      return self:_BuildAirbaseSnapshotItem(airbase)
-    end)
-    if ok_item and item then
-      result[#result + 1] = item
-    else
-      self:_Log("Failed to snapshot airbase: " .. safe_tostring(item))
+    local ok_item, item = pcall(function() return self:_BuildAirbaseSnapshotItem(airbase) end)
+    if ok_item and item then result[#result + 1] = item else self:_Log("Failed to snapshot airbase: " .. safe_tostring(item)) end
+  end
+
+  return result
+end
+
+function MOOSE_BRIDGE:_ZonePointFromMoose(zone)
+  local coordinate = self:_SafeCall(zone, "GetCoordinate")
+  if coordinate then
+    local vec3 = self:_SafeCall(coordinate, "GetVec3")
+    if vec3 then return vec3 end
+  end
+
+  if zone.Coordinate then
+    local vec3 = self:_SafeCall(zone.Coordinate, "GetVec3")
+    if vec3 then return vec3 end
+  end
+
+  return nil
+end
+
+function MOOSE_BRIDGE:_BuildMooseZoneSnapshotItem(zone_name, zone, source)
+  local name = self:_SafeCall(zone, "GetName") or zone.ZoneName or zone_name
+  local radius = self:_SafeCall(zone, "GetRadius") or zone.Radius
+  local point = self:_ZonePointFromMoose(zone)
+
+  local item = {
+    object_id = "ZONE:" .. safe_tostring(name),
+    dcs_name = safe_tostring(name),
+    object_type = "ZONE",
+    category = "MOOSE_ZONE",
+    source = source or "moose",
+    radius = radius,
+  }
+
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:_BuildMissionZoneSnapshotItem(zone)
+  local name = zone.name
+  local item = {
+    object_id = "ZONE:" .. safe_tostring(name),
+    dcs_name = safe_tostring(name),
+    object_type = "ZONE",
+    category = "TRIGGER_ZONE",
+    source = "mission",
+    radius = zone.radius,
+    x = zone.x,
+    y = 0,
+    z = zone.y,
+  }
+  return item
+end
+
+function MOOSE_BRIDGE:BuildZoneSnapshot()
+  local result = {}
+  local seen = {}
+
+  for zone_name, zone in pairs(self.RegisteredZones or {}) do
+    local ok, item = pcall(function() return self:_BuildMooseZoneSnapshotItem(zone_name, zone, "registered") end)
+    if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
+  end
+
+  if _DATABASE and _DATABASE.ZONES then
+    for zone_name, zone in pairs(_DATABASE.ZONES) do
+      local ok, item = pcall(function() return self:_BuildMooseZoneSnapshotItem(zone_name, zone, "database") end)
+      if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
+    end
+  end
+
+  if env and env.mission and env.mission.triggers and type(env.mission.triggers.zones) == "table" then
+    for _, zone in pairs(env.mission.triggers.zones) do
+      local ok, item = pcall(function() return self:_BuildMissionZoneSnapshotItem(zone) end)
+      if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
     end
   end
 
@@ -491,10 +566,20 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     self:SendSnapshot("units", {units=units})
     return {kind="units", count=#units}
   end)
+  self:RegisterCommand("snapshot.statics", function(cmd)
+    local statics = self:BuildStaticSnapshot()
+    self:SendSnapshot("statics", {statics=statics})
+    return {kind="statics", count=#statics}
+  end)
   self:RegisterCommand("snapshot.airbases", function(cmd)
     local airbases = self:BuildAirbaseSnapshot()
     self:SendSnapshot("airbases", {airbases=airbases})
     return {kind="airbases", count=#airbases}
+  end)
+  self:RegisterCommand("snapshot.zones", function(cmd)
+    local zones = self:BuildZoneSnapshot()
+    self:SendSnapshot("zones", {zones=zones})
+    return {kind="zones", count=#zones}
   end)
 end
 
