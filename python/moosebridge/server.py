@@ -204,6 +204,14 @@ class MooseBridgeServer:
             )
         )
 
+    async def snapshot_groups(self) -> dict[str, Any]:
+        """Request a GROUP snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.groups", params={}))
+
     def _write_raw(self, direction: str, line: str) -> None:
         """Write one raw protocol line to the JSONL log.
 
@@ -221,6 +229,7 @@ HELP_TEXT = """
 Interactive commands:
   help, ?                 Show this help.
   status                  Show current bridge connection status.
+  groups                  Request and print a GROUP snapshot.
   all <text>              Send a MOOSE MESSAGE to all players.
   blue <text>             Send a MOOSE MESSAGE to blue coalition.
   red <text>              Send a MOOSE MESSAGE to red coalition.
@@ -237,6 +246,30 @@ async def _read_console_line(prompt: str = "moosebridge> ") -> str:
     """
 
     return await asyncio.to_thread(input, prompt)
+
+
+def _print_group_snapshot(groups: dict[str, dict[str, Any]], limit: int = 25) -> None:
+    """Print a compact GROUP snapshot summary.
+
+    :param groups: Mapping from object id to group payload.
+    :param limit: Maximum number of groups to print.
+    """
+
+    items = list(groups.values())
+    print(f"groups={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        coalition = item.get("coalition", "")
+        category = item.get("category", "")
+        alive = item.get("alive", "")
+        active = item.get("active", "")
+        alive_units = item.get("alive_unit_count", "")
+        units = item.get("unit_count", "")
+        print(f"  {object_id} coalition={coalition} category={category} alive={alive} active={active} units={alive_units}/{units}")
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more groups not shown")
 
 
 async def run_interactive_console(server: MooseBridgeServer) -> None:
@@ -279,6 +312,11 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
             continue
 
         try:
+            if command == "groups":
+                ack = await server.snapshot_groups()
+                print(f"ACK: {ack}")
+                _print_group_snapshot(server.state.groups)
+                continue
             if command == "all":
                 if not argument:
                     print("Usage: all <text>")
