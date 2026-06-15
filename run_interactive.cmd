@@ -1,3 +1,11 @@
 @echo off
 set PYTHONPATH=%CD%\python
-python -m moosebridge --host 127.0.0.1 --port 50100 --log moosebridge_raw.jsonl --interactive
+set HOST=127.0.0.1
+set PORT=50100
+set LOG=moosebridge_raw.jsonl
+set READER_LIMIT=16777216
+
+if not "%~1"=="" set PORT=%~1
+if not "%~2"=="" set HOST=%~2
+
+python -m moosebridge --host %HOST% --port %PORT% --log %LOG% --reader-limit %READER_LIMIT% --interactive
