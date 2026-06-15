@@ -218,6 +218,50 @@ class MooseBridgeServer:
             )
         )
 
+    async def smoke_at_point(self, x: float, z: float, color: str = "white", y: float = 0.0) -> dict[str, Any]:
+        """Create smoke at a DCS world point.
+
+        :param x: DCS world x coordinate.
+        :param z: DCS world z coordinate.
+        :param color: Smoke color: red, green, blue, orange, or white.
+        :param y: DCS world y coordinate, usually altitude.
+        :returns: ACK message received from DCS.
+        """
+
+        return await self.send_command(BridgeCommand(action="smoke.at_point", params={"x": x, "y": y, "z": z, "color": color}))
+
+    async def smoke_object(self, object_id: str, color: str = "white") -> dict[str, Any]:
+        """Create smoke at the resolved position of an object id.
+
+        :param object_id: Stable bridge object id such as ``UNIT:Name``.
+        :param color: Smoke color: red, green, blue, orange, or white.
+        :returns: ACK message received from DCS.
+        """
+
+        return await self.send_command(BridgeCommand(action="smoke.object", params={"object_id": object_id, "color": color}))
+
+    async def mark_at_point(self, x: float, z: float, text: str, y: float = 0.0) -> dict[str, Any]:
+        """Create a map mark at a DCS world point.
+
+        :param x: DCS world x coordinate.
+        :param z: DCS world z coordinate.
+        :param text: Mark text.
+        :param y: DCS world y coordinate, usually altitude.
+        :returns: ACK message received from DCS.
+        """
+
+        return await self.send_command(BridgeCommand(action="mark.at_point", params={"x": x, "y": y, "z": z, "text": text}))
+
+    async def mark_object(self, object_id: str, text: str) -> dict[str, Any]:
+        """Create a map mark at the resolved position of an object id.
+
+        :param object_id: Stable bridge object id such as ``GROUP:Name``.
+        :param text: Mark text.
+        :returns: ACK message received from DCS.
+        """
+
+        return await self.send_command(BridgeCommand(action="mark.object", params={"object_id": object_id, "text": text}))
+
     async def snapshot_groups(self) -> dict[str, Any]:
         """Request a GROUP snapshot from DCS/MOOSE.
 
@@ -280,6 +324,10 @@ Interactive commands:
   statics                 Request and print a STATIC snapshot.
   airbases                Request and print an AIRBASE snapshot.
   zones                   Request and print a ZONE snapshot.
+  smoke <object_id> [color]       Smoke an object position.
+  smokepoint <x> <z> [color]      Smoke a DCS world point.
+  mark <object_id> <text>         Mark an object position.
+  markpoint <x> <z> <text>        Mark a DCS world point.
   all <text>              Send a MOOSE MESSAGE to all players.
   blue <text>             Send a MOOSE MESSAGE to blue coalition.
   red <text>              Send a MOOSE MESSAGE to red coalition.
@@ -296,6 +344,20 @@ async def _read_console_line(prompt: str = "moosebridge> ") -> str:
     """
 
     return await asyncio.to_thread(input, prompt)
+
+
+def _parse_float(value: str, name: str) -> float:
+    """Parse a CLI float argument.
+
+    :param value: Raw argument value.
+    :param name: User-facing argument name for errors.
+    :returns: Parsed floating point value.
+    """
+
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid {name}: {value}") from exc
 
 
 def _print_group_snapshot(groups: dict[str, dict[str, Any]], limit: int = 25) -> None:
@@ -483,7 +545,32 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
                 print(f"ACK: {ack}")
                 _print_zone_snapshot(server.state.zones)
                 continue
-            if command == "all":
+            if command == "smoke":
+                object_id, _, color = argument.partition(" ")
+                if not object_id:
+                    print("Usage: smoke <object_id> [color]")
+                    continue
+                ack = await server.smoke_object(object_id, color.strip() or "white")
+            elif command == "smokepoint":
+                parts = argument.split(maxsplit=2)
+                if len(parts) < 2:
+                    print("Usage: smokepoint <x> <z> [color]")
+                    continue
+                color = parts[2] if len(parts) >= 3 else "white"
+                ack = await server.smoke_at_point(_parse_float(parts[0], "x"), _parse_float(parts[1], "z"), color)
+            elif command == "mark":
+                object_id, _, text = argument.partition(" ")
+                if not object_id or not text:
+                    print("Usage: mark <object_id> <text>")
+                    continue
+                ack = await server.mark_object(object_id, text)
+            elif command == "markpoint":
+                parts = argument.split(maxsplit=2)
+                if len(parts) < 3:
+                    print("Usage: markpoint <x> <z> <text>")
+                    continue
+                ack = await server.mark_at_point(_parse_float(parts[0], "x"), _parse_float(parts[1], "z"), parts[2])
+            elif command == "all":
                 if not argument:
                     print("Usage: all <text>")
                     continue
