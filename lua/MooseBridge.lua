@@ -106,6 +106,13 @@ function MOOSE_BRIDGE:SendHeartbeat()
   self:Send(msg)
 end
 
+function MOOSE_BRIDGE:SendSnapshot(kind, payload)
+  local msg = self:_BaseMessage("snapshot")
+  msg.kind = kind
+  msg.payload = payload or {}
+  self:Send(msg)
+end
+
 function MOOSE_BRIDGE:SendAck(command, ok, result, error_message)
   local msg = self:_BaseMessage("ack")
   msg.correlation_id = command and command.id or nil
@@ -120,6 +127,81 @@ function MOOSE_BRIDGE:RegisterCommand(action, handler)
   return self
 end
 
+function MOOSE_BRIDGE:_SafeCall(object, method_name)
+  if not object or not method_name then return nil end
+  local method = object[method_name]
+  if not method then return nil end
+  local ok, value = pcall(function() return method(object) end)
+  if ok then return value end
+  return nil
+end
+
+function MOOSE_BRIDGE:_CoalitionToName(value)
+  if value == nil then return nil end
+  if coalition and coalition.side then
+    if value == coalition.side.BLUE then return "blue" end
+    if value == coalition.side.RED then return "red" end
+    if value == coalition.side.NEUTRAL then return "neutral" end
+  end
+  if value == 2 then return "blue" end
+  if value == 1 then return "red" end
+  if value == 0 then return "neutral" end
+  return tostring(value)
+end
+
+function MOOSE_BRIDGE:_BoolOrFalse(value)
+  if value == nil then return false end
+  return value and true or false
+end
+
+function MOOSE_BRIDGE:_NumberOrZero(value)
+  if type(value) == "number" then return value end
+  return 0
+end
+
+function MOOSE_BRIDGE:_BuildGroupSnapshotItem(group_name, group)
+  local name = self:_SafeCall(group, "GetName") or group_name
+  local coalition_value = self:_SafeCall(group, "GetCoalition")
+  local category = self:_SafeCall(group, "GetCategoryName") or self:_SafeCall(group, "GetCategory")
+  local alive = self:_SafeCall(group, "IsAlive")
+  local active = self:_SafeCall(group, "IsActive")
+  local unit_count = self:_SafeCall(group, "CountUnits")
+  local alive_unit_count = self:_SafeCall(group, "CountAliveUnits")
+
+  return {
+    object_id = "GROUP:" .. safe_tostring(name),
+    dcs_name = safe_tostring(name),
+    object_type = "GROUP",
+    category = category and safe_tostring(category) or nil,
+    coalition = self:_CoalitionToName(coalition_value),
+    alive = self:_BoolOrFalse(alive),
+    active = self:_BoolOrFalse(active),
+    unit_count = self:_NumberOrZero(unit_count),
+    alive_unit_count = self:_NumberOrZero(alive_unit_count),
+  }
+end
+
+function MOOSE_BRIDGE:BuildGroupSnapshot()
+  local result = {}
+
+  if not _DATABASE or not _DATABASE.GROUPS then
+    return result
+  end
+
+  for group_name, group in pairs(_DATABASE.GROUPS) do
+    local ok, item = pcall(function()
+      return self:_BuildGroupSnapshotItem(group_name, group)
+    end)
+    if ok and item then
+      result[#result + 1] = item
+    else
+      self:_Log("Failed to snapshot group " .. safe_tostring(group_name) .. ": " .. safe_tostring(item))
+    end
+  end
+
+  return result
+end
+
 function MOOSE_BRIDGE:RegisterDefaultCommands()
   self:RegisterCommand("message.to_all", function(cmd)
     local p = cmd.params or {}
@@ -132,6 +214,11 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     if not side then error("Invalid coalition: " .. safe_tostring(p.coalition)) end
     MESSAGE:New(p.text or "", p.duration or 10):ToCoalition(side)
     return {message="Message sent to coalition", coalition=p.coalition}
+  end)
+  self:RegisterCommand("snapshot.groups", function(cmd)
+    local groups = self:BuildGroupSnapshot()
+    self:SendSnapshot("groups", {groups=groups})
+    return {kind="groups", count=#groups}
   end)
 end
 
