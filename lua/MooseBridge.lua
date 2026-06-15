@@ -26,6 +26,11 @@ local function safe_tostring(value)
   return tostring(value)
 end
 
+local function string_or_nil(value)
+  if value == nil then return nil end
+  return tostring(value)
+end
+
 function MOOSE_BRIDGE:New(host, port)
   local self = BASE and BASE:Inherit({}, BASE:New()) or {}
   setmetatable(self, { __index = MOOSE_BRIDGE })
@@ -39,6 +44,8 @@ function MOOSE_BRIDGE:New(host, port)
   self.OutQueue = {}
   self.CommandHandlers = {}
   self.RegisteredZones = {}
+  self.RegisteredOpsZones = {}
+  self.RegisteredOpsGroups = {}
   self.ConnectRetryDelay = 5
   self.TickInterval = 0.2
   self.HeartbeatInterval = 5
@@ -135,6 +142,7 @@ function MOOSE_BRIDGE:RegisterCommand(action, handler)
 end
 
 function MOOSE_BRIDGE:RegisterZone(zone, name)
+  if not zone then return self end
   local zone_name = name or self:_SafeCall(zone, "GetName") or zone.ZoneName or zone.name
   if zone_name then self.RegisteredZones[safe_tostring(zone_name)] = zone end
   return self
@@ -143,6 +151,32 @@ end
 function MOOSE_BRIDGE:RegisterZones(zones)
   if type(zones) ~= "table" then return self end
   for name, zone in pairs(zones) do self:RegisterZone(zone, name) end
+  return self
+end
+
+function MOOSE_BRIDGE:RegisterOpsZone(opszone, name)
+  if not opszone then return self end
+  local zone_name = name or self:_SafeCall(opszone, "GetName") or opszone.Name or opszone.name
+  if zone_name then self.RegisteredOpsZones[safe_tostring(zone_name)] = opszone end
+  return self
+end
+
+function MOOSE_BRIDGE:RegisterOpsZones(opszones)
+  if type(opszones) ~= "table" then return self end
+  for name, opszone in pairs(opszones) do self:RegisterOpsZone(opszone, name) end
+  return self
+end
+
+function MOOSE_BRIDGE:RegisterOpsGroup(opsgroup, name)
+  if not opsgroup then return self end
+  local group_name = name or self:_SafeCall(opsgroup, "GetName") or opsgroup.Name or opsgroup.name
+  if group_name then self.RegisteredOpsGroups[safe_tostring(group_name)] = opsgroup end
+  return self
+end
+
+function MOOSE_BRIDGE:RegisterOpsGroups(opsgroups)
+  if type(opsgroups) ~= "table" then return self end
+  for name, opsgroup in pairs(opsgroups) do self:RegisterOpsGroup(opsgroup, name) end
   return self
 end
 
@@ -220,13 +254,10 @@ end
 
 function MOOSE_BRIDGE:_IsDcsObjectAlive(object)
   if not object then return false end
-
   local ok_exist, exists = pcall(function() return object:isExist() end)
   if ok_exist and not exists then return false end
-
   local ok_life, life = pcall(function() return object:getLife() end)
   if ok_life and type(life) == "number" then return life > 0 end
-
   return true
 end
 
@@ -240,21 +271,17 @@ end
 
 function MOOSE_BRIDGE:_PointFromMooseObject(object)
   if not object then return nil end
-
   local coordinate = self:_SafeCall(object, "GetCoordinate")
   if coordinate then
     local vec3 = self:_SafeCall(coordinate, "GetVec3")
     if vec3 then return vec3 end
   end
-
   local vec3 = self:_SafeCall(object, "GetVec3") or self:_SafeCall(object, "GetPointVec3")
   if vec3 then return vec3 end
-
   if object.Coordinate then
     vec3 = self:_SafeCall(object.Coordinate, "GetVec3")
     if vec3 then return vec3 end
   end
-
   return nil
 end
 
@@ -276,14 +303,11 @@ end
 function MOOSE_BRIDGE:_PointForGroupName(name)
   local group = _DATABASE and _DATABASE.GROUPS and _DATABASE.GROUPS[name]
   if not group then return nil end
-
   local point = self:_PointFromMooseObject(group)
   if point then return point end
-
   local dcs_group = self:_SafeCall(group, "GetDCSObject")
   local ok, units = pcall(function() return dcs_group and dcs_group:getUnits() end)
   if ok and type(units) == "table" and units[1] then return self:_DcsPoint(units[1]) end
-
   return nil
 end
 
@@ -318,26 +342,22 @@ function MOOSE_BRIDGE:_PointForZoneName(name)
     local point = self:_PointFromMooseObject(zone)
     if point then return point end
   end
-
   if env and env.mission and env.mission.triggers and type(env.mission.triggers.zones) == "table" then
     for _, trigger_zone in pairs(env.mission.triggers.zones) do
       if trigger_zone.name == name then return {x=trigger_zone.x, y=0, z=trigger_zone.y} end
     end
   end
-
   return nil
 end
 
 function MOOSE_BRIDGE:_PointForObjectId(object_id)
   local object_type, name = self:_SplitObjectId(object_id)
   if not object_type or not name then error("Invalid object_id: " .. safe_tostring(object_id)) end
-
   if object_type == "GROUP" then return self:_PointForGroupName(name) end
   if object_type == "UNIT" then return self:_PointForUnitName(name) end
   if object_type == "STATIC" then return self:_PointForStaticName(name) end
   if object_type == "AIRBASE" then return self:_PointForAirbaseName(name) end
   if object_type == "ZONE" then return self:_PointForZoneName(name) end
-
   error("Unsupported object_id type for point lookup: " .. safe_tostring(object_type))
 end
 
@@ -374,7 +394,6 @@ end
 
 function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
   if type(units) ~= "table" then return nil end
-
   local count = 0
   for _, unit in pairs(units) do
     if alive_only then
@@ -383,29 +402,23 @@ function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
       count = count + 1
     end
   end
-
   return count
 end
 
 function MOOSE_BRIDGE:_IsMooseUnitAlive(unit)
   if not unit then return false end
-
   local alive = self:_SafeCall(unit, "IsAlive")
   if alive ~= nil then return alive and true or false end
-
   local dcs_unit = self:_SafeCall(unit, "GetDCSObject")
   if dcs_unit then return self:_IsDcsObjectAlive(dcs_unit) end
-
   return false
 end
 
 function MOOSE_BRIDGE:_CountDcsGroupUnits(group, alive_only)
   local dcs_group = self:_SafeCall(group, "GetDCSObject")
   if not dcs_group then return nil end
-
   local ok, units = pcall(function() return dcs_group:getUnits() end)
   if not ok or type(units) ~= "table" then return nil end
-
   local count = 0
   for _, unit in pairs(units) do
     if alive_only then
@@ -414,7 +427,6 @@ function MOOSE_BRIDGE:_CountDcsGroupUnits(group, alive_only)
       count = count + 1
     end
   end
-
   return count
 end
 
@@ -422,16 +434,9 @@ function MOOSE_BRIDGE:_CountGroupUnits(group, alive_only)
   local units = self:_SafeCall(group, "GetUnits")
   local count = self:_CountUnitsInTable(units, alive_only)
   if count ~= nil then return count end
-
   count = self:_CountDcsGroupUnits(group, alive_only)
   if count ~= nil then return count end
-
-  if alive_only then
-    count = self:_SafeCall(group, "CountAliveUnits")
-  else
-    count = self:_SafeCall(group, "CountUnits")
-  end
-
+  if alive_only then count = self:_SafeCall(group, "CountAliveUnits") else count = self:_SafeCall(group, "CountUnits") end
   return self:_NumberOrZero(count)
 end
 
@@ -443,30 +448,16 @@ function MOOSE_BRIDGE:_BuildGroupSnapshotItem(group_name, group)
   local active = self:_SafeCall(group, "IsActive")
   local unit_count = self:_CountGroupUnits(group, false)
   local alive_unit_count = self:_CountGroupUnits(group, true)
-
-  return {
-    object_id = "GROUP:" .. safe_tostring(name),
-    dcs_name = safe_tostring(name),
-    object_type = "GROUP",
-    category = category and safe_tostring(category) or nil,
-    coalition = self:_CoalitionToName(coalition_value),
-    alive = self:_BoolOrFalse(alive),
-    active = self:_BoolOrFalse(active),
-    unit_count = self:_NumberOrZero(unit_count),
-    alive_unit_count = self:_NumberOrZero(alive_unit_count),
-  }
+  return {object_id="GROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="GROUP",category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active),unit_count=self:_NumberOrZero(unit_count),alive_unit_count=self:_NumberOrZero(alive_unit_count)}
 end
 
 function MOOSE_BRIDGE:BuildGroupSnapshot()
   local result = {}
-
   if not _DATABASE or not _DATABASE.GROUPS then return result end
-
   for group_name, group in pairs(_DATABASE.GROUPS) do
     local ok, item = pcall(function() return self:_BuildGroupSnapshotItem(group_name, group) end)
     if ok and item then result[#result + 1] = item else self:_Log("Failed to snapshot group " .. safe_tostring(group_name) .. ": " .. safe_tostring(item)) end
   end
-
   return result
 end
 
@@ -475,39 +466,23 @@ function MOOSE_BRIDGE:_BuildUnitSnapshotItem(unit_name, unit)
   local group_name = self:_SafeCall(unit, "GetGroupName")
   local group = self:_SafeCall(unit, "GetGroup")
   if not group_name and group then group_name = self:_SafeCall(group, "GetName") end
-
   local coalition_value = self:_SafeCall(unit, "GetCoalition")
   if coalition_value == nil and group then coalition_value = self:_SafeCall(group, "GetCoalition") end
-
   local category = self:_SafeCall(unit, "GetCategoryName") or self:_SafeCall(unit, "GetCategory")
   if not category and group then category = self:_SafeCall(group, "GetCategoryName") or self:_SafeCall(group, "GetCategory") end
-
   local dcs_unit = self:_SafeCall(unit, "GetDCSObject")
   local dcs_type = self:_SafeCall(unit, "GetTypeName") or self:_DcsTypeName(dcs_unit)
   local alive = self:_SafeCall(unit, "IsAlive")
   if alive == nil then alive = self:_IsDcsObjectAlive(dcs_unit) end
   local active = self:_SafeCall(unit, "IsActive")
   local point = self:_DcsPoint(dcs_unit)
-
-  local item = {
-    object_id = "UNIT:" .. safe_tostring(name),
-    dcs_name = safe_tostring(name),
-    object_type = "UNIT",
-    group_name = group_name and safe_tostring(group_name) or nil,
-    category = category and safe_tostring(category) or nil,
-    coalition = self:_CoalitionToName(coalition_value),
-    dcs_type = dcs_type and safe_tostring(dcs_type) or nil,
-    alive = self:_BoolOrFalse(alive),
-    active = self:_BoolOrFalse(active),
-  }
-
+  local item = {object_id="UNIT:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="UNIT",group_name=group_name and safe_tostring(group_name) or nil,category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active)}
   if point then item.x = point.x; item.y = point.y; item.z = point.z end
   return item
 end
 
 function MOOSE_BRIDGE:BuildUnitSnapshot()
   local result = {}
-
   if _DATABASE and _DATABASE.UNITS then
     for unit_name, unit in pairs(_DATABASE.UNITS) do
       local ok, item = pcall(function() return self:_BuildUnitSnapshotItem(unit_name, unit) end)
@@ -515,9 +490,7 @@ function MOOSE_BRIDGE:BuildUnitSnapshot()
     end
     return result
   end
-
   if not _DATABASE or not _DATABASE.GROUPS then return result end
-
   for _, group in pairs(_DATABASE.GROUPS) do
     local units = self:_SafeCall(group, "GetUnits")
     if type(units) == "table" then
@@ -527,7 +500,6 @@ function MOOSE_BRIDGE:BuildUnitSnapshot()
       end
     end
   end
-
   return result
 end
 
@@ -540,31 +512,18 @@ function MOOSE_BRIDGE:_BuildStaticSnapshotItem(static_name, static)
   local alive = self:_SafeCall(static, "IsAlive")
   if alive == nil then alive = self:_IsDcsObjectAlive(dcs_static) end
   local point = self:_DcsPoint(dcs_static) or self:_PointFromMooseObject(static)
-
-  local item = {
-    object_id = "STATIC:" .. safe_tostring(name),
-    dcs_name = safe_tostring(name),
-    object_type = "STATIC",
-    category = category and safe_tostring(category) or "STATIC",
-    coalition = self:_CoalitionToName(coalition_value),
-    dcs_type = dcs_type and safe_tostring(dcs_type) or nil,
-    alive = self:_BoolOrFalse(alive),
-  }
-
+  local item = {object_id="STATIC:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="STATIC",category=category and safe_tostring(category) or "STATIC",coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,alive=self:_BoolOrFalse(alive)}
   if point then item.x = point.x; item.y = point.y; item.z = point.z end
   return item
 end
 
 function MOOSE_BRIDGE:BuildStaticSnapshot()
   local result = {}
-
   if not _DATABASE or not _DATABASE.STATICS then return result end
-
   for static_name, static in pairs(_DATABASE.STATICS) do
     local ok, item = pcall(function() return self:_BuildStaticSnapshotItem(static_name, static) end)
     if ok and item then result[#result + 1] = item else self:_Log("Failed to snapshot static " .. safe_tostring(static_name) .. ": " .. safe_tostring(item)) end
   end
-
   return result
 end
 
@@ -574,105 +533,141 @@ function MOOSE_BRIDGE:_BuildAirbaseSnapshotItem(airbase)
   local object_category = self:_DcsCall(airbase, "getCategory")
   local point = self:_DcsCall(airbase, "getPoint")
   local desc = self:_DcsCall(airbase, "getDesc")
-  local airbase_category = nil
-  local dcs_type = nil
-  local display_name = nil
-
+  local airbase_category = nil; local dcs_type = nil; local display_name = nil
   if type(desc) == "table" then airbase_category = desc.category; dcs_type = desc.typeName; display_name = desc.displayName end
-
-  local item = {
-    object_id = "AIRBASE:" .. safe_tostring(name),
-    dcs_name = safe_tostring(name),
-    object_type = "AIRBASE",
-    category = self:_AirbaseCategoryToName(airbase_category) or "AIRBASE",
-    dcs_category = object_category,
-    dcs_category_name = self:_ObjectCategoryToName(object_category),
-    coalition = self:_CoalitionToName(coalition_value),
-    dcs_type = dcs_type and safe_tostring(dcs_type) or nil,
-    display_name = display_name and safe_tostring(display_name) or nil,
-  }
-
+  local item = {object_id="AIRBASE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="AIRBASE",category=self:_AirbaseCategoryToName(airbase_category) or "AIRBASE",dcs_category=object_category,dcs_category_name=self:_ObjectCategoryToName(object_category),coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,display_name=display_name and safe_tostring(display_name) or nil}
   if point then item.x = point.x; item.y = point.y; item.z = point.z end
   return item
 end
 
 function MOOSE_BRIDGE:BuildAirbaseSnapshot()
   local result = {}
-
   if not world or not world.getAirbases then return result end
-
   local ok, airbases = pcall(function() return world.getAirbases() end)
   if not ok or type(airbases) ~= "table" then return result end
-
   for _, airbase in pairs(airbases) do
     local ok_item, item = pcall(function() return self:_BuildAirbaseSnapshotItem(airbase) end)
     if ok_item and item then result[#result + 1] = item else self:_Log("Failed to snapshot airbase: " .. safe_tostring(item)) end
   end
-
   return result
-end
-
-function MOOSE_BRIDGE:_ZonePointFromMoose(zone)
-  return self:_PointFromMooseObject(zone)
 end
 
 function MOOSE_BRIDGE:_BuildMooseZoneSnapshotItem(zone_name, zone, source)
   local name = self:_SafeCall(zone, "GetName") or zone.ZoneName or zone_name
   local radius = self:_SafeCall(zone, "GetRadius") or zone.Radius
-  local point = self:_ZonePointFromMoose(zone)
-
-  local item = {
-    object_id = "ZONE:" .. safe_tostring(name),
-    dcs_name = safe_tostring(name),
-    object_type = "ZONE",
-    category = "MOOSE_ZONE",
-    source = source or "moose",
-    radius = radius,
-  }
-
+  local point = self:_PointFromMooseObject(zone)
+  local item = {object_id="ZONE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="ZONE",category="MOOSE_ZONE",source=source or "moose",radius=radius}
   if point then item.x = point.x; item.y = point.y; item.z = point.z end
   return item
 end
 
 function MOOSE_BRIDGE:_BuildMissionZoneSnapshotItem(zone)
-  local name = zone.name
-  local item = {
-    object_id = "ZONE:" .. safe_tostring(name),
-    dcs_name = safe_tostring(name),
-    object_type = "ZONE",
-    category = "TRIGGER_ZONE",
-    source = "mission",
-    radius = zone.radius,
-    x = zone.x,
-    y = 0,
-    z = zone.y,
-  }
-  return item
+  return {object_id="ZONE:"..safe_tostring(zone.name),dcs_name=safe_tostring(zone.name),object_type="ZONE",category="TRIGGER_ZONE",source="mission",radius=zone.radius,x=zone.x,y=0,z=zone.y}
 end
 
 function MOOSE_BRIDGE:BuildZoneSnapshot()
-  local result = {}
-  local seen = {}
-
+  local result = {}; local seen = {}
   for zone_name, zone in pairs(self.RegisteredZones or {}) do
     local ok, item = pcall(function() return self:_BuildMooseZoneSnapshotItem(zone_name, zone, "registered") end)
     if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
   end
-
   if _DATABASE and _DATABASE.ZONES then
     for zone_name, zone in pairs(_DATABASE.ZONES) do
       local ok, item = pcall(function() return self:_BuildMooseZoneSnapshotItem(zone_name, zone, "database") end)
       if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
     end
   end
-
   if env and env.mission and env.mission.triggers and type(env.mission.triggers.zones) == "table" then
     for _, zone in pairs(env.mission.triggers.zones) do
       local ok, item = pcall(function() return self:_BuildMissionZoneSnapshotItem(zone) end)
       if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
     end
   end
+  return result
+end
 
+function MOOSE_BRIDGE:_OpsClassName(object, fallback)
+  if type(object) == "table" then
+    if object.ClassName then return tostring(object.ClassName) end
+    if object.classname then return tostring(object.classname) end
+  end
+  return fallback
+end
+
+function MOOSE_BRIDGE:_OpsGroupKind(opsgroup)
+  if self:_SafeCall(opsgroup, "IsFlightgroup") then return "FLIGHTGROUP" end
+  if self:_SafeCall(opsgroup, "IsArmygroup") then return "ARMYGROUP" end
+  if self:_SafeCall(opsgroup, "IsNavygroup") then return "NAVYGROUP" end
+  return self:_OpsClassName(opsgroup, "OPSGROUP")
+end
+
+function MOOSE_BRIDGE:_OpsName(object, fallback)
+  if not object then return fallback end
+  return self:_SafeCall(object, "GetName") or fallback or object.Name or object.name
+end
+
+function MOOSE_BRIDGE:_OpsState(object)
+  if not object then return nil end
+  return self:_SafeCall(object, "GetState") or self:_SafeCall(object, "GetStateName") or object.State or object.state
+end
+
+function MOOSE_BRIDGE:_OpsCoalition(object)
+  if not object then return nil end
+  local coalition_value = self:_SafeCall(object, "GetCoalition") or object.Coalition or object.coalition
+  return self:_CoalitionToName(coalition_value)
+end
+
+function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
+  local name = self:_OpsName(opszone, zone_name)
+  local class_name = self:_OpsClassName(opszone, "OPSZONE")
+  local point = self:_PointFromMooseObject(opszone)
+  local radius = self:_SafeCall(opszone, "GetRadius") or opszone.Radius or opszone.radius
+  local state = self:_OpsState(opszone)
+  local item = {object_id="OPSZONE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="OPSZONE",category=class_name,source=source,radius=radius,state=string_or_nil(state),coalition=self:_OpsCoalition(opszone)}
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:BuildOpsZoneSnapshot()
+  local result = {}; local seen = {}
+  for name, opszone in pairs(self.RegisteredOpsZones or {}) do
+    local ok, item = pcall(function() return self:_BuildOpsZoneSnapshotItem(name, opszone, "registered") end)
+    if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
+  end
+  if _DATABASE and type(_DATABASE.OPSZONES) == "table" then
+    for name, opszone in pairs(_DATABASE.OPSZONES) do
+      local ok, item = pcall(function() return self:_BuildOpsZoneSnapshotItem(name, opszone, "database.OPSZONES") end)
+      if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
+    end
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_BuildOpsGroupSnapshotItem(group_name, opsgroup, source)
+  local name = self:_OpsName(opsgroup, group_name)
+  local group_kind = self:_OpsGroupKind(opsgroup)
+  local class_name = self:_OpsClassName(opsgroup, "OPSGROUP")
+  local point = self:_PointFromMooseObject(opsgroup)
+  local state = self:_OpsState(opsgroup)
+  local alive = self:_SafeCall(opsgroup, "IsAlive")
+  local active = self:_SafeCall(opsgroup, "IsActive")
+  local item = {object_id="OPSGROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="OPSGROUP",category=group_kind,class_name=class_name,source=source,group_name=safe_tostring(name),state=string_or_nil(state),coalition=self:_OpsCoalition(opsgroup),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active)}
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:BuildOpsGroupSnapshot()
+  local result = {}; local seen = {}
+  for name, opsgroup in pairs(self.RegisteredOpsGroups or {}) do
+    local ok, item = pcall(function() return self:_BuildOpsGroupSnapshotItem(name, opsgroup, "registered") end)
+    if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
+  end
+  if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
+    for name, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do
+      local ok, item = pcall(function() return self:_BuildOpsGroupSnapshotItem(name, opsgroup, "database.FLIGHTGROUPS") end)
+      if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
+    end
+  end
   return result
 end
 
@@ -690,55 +685,41 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     return {message="Message sent to coalition", coalition=p.coalition}
   end)
   self:RegisterCommand("smoke.at_point", function(cmd)
-    local p = cmd.params or {}
-    local point = self:_PointFromParams(p)
-    return self:_SmokePoint(point, p.color)
+    local p = cmd.params or {}; return self:_SmokePoint(self:_PointFromParams(p), p.color)
   end)
   self:RegisterCommand("smoke.object", function(cmd)
-    local p = cmd.params or {}
-    local point = self:_PointForObjectId(p.object_id)
+    local p = cmd.params or {}; local point = self:_PointForObjectId(p.object_id)
     if not point then error("Could not resolve point for object_id: " .. safe_tostring(p.object_id)) end
-    local result = self:_SmokePoint(point, p.color)
-    result.object_id = p.object_id
-    return result
+    local result = self:_SmokePoint(point, p.color); result.object_id = p.object_id; return result
   end)
   self:RegisterCommand("mark.at_point", function(cmd)
-    local p = cmd.params or {}
-    local point = self:_PointFromParams(p)
-    return self:_MarkPoint(point, p.text)
+    local p = cmd.params or {}; return self:_MarkPoint(self:_PointFromParams(p), p.text)
   end)
   self:RegisterCommand("mark.object", function(cmd)
-    local p = cmd.params or {}
-    local point = self:_PointForObjectId(p.object_id)
+    local p = cmd.params or {}; local point = self:_PointForObjectId(p.object_id)
     if not point then error("Could not resolve point for object_id: " .. safe_tostring(p.object_id)) end
-    local result = self:_MarkPoint(point, p.text)
-    result.object_id = p.object_id
-    return result
+    local result = self:_MarkPoint(point, p.text); result.object_id = p.object_id; return result
   end)
   self:RegisterCommand("snapshot.groups", function(cmd)
-    local groups = self:BuildGroupSnapshot()
-    self:SendSnapshot("groups", {groups=groups})
-    return {kind="groups", count=#groups}
+    local groups = self:BuildGroupSnapshot(); self:SendSnapshot("groups", {groups=groups}); return {kind="groups", count=#groups}
   end)
   self:RegisterCommand("snapshot.units", function(cmd)
-    local units = self:BuildUnitSnapshot()
-    self:SendSnapshot("units", {units=units})
-    return {kind="units", count=#units}
+    local units = self:BuildUnitSnapshot(); self:SendSnapshot("units", {units=units}); return {kind="units", count=#units}
   end)
   self:RegisterCommand("snapshot.statics", function(cmd)
-    local statics = self:BuildStaticSnapshot()
-    self:SendSnapshot("statics", {statics=statics})
-    return {kind="statics", count=#statics}
+    local statics = self:BuildStaticSnapshot(); self:SendSnapshot("statics", {statics=statics}); return {kind="statics", count=#statics}
   end)
   self:RegisterCommand("snapshot.airbases", function(cmd)
-    local airbases = self:BuildAirbaseSnapshot()
-    self:SendSnapshot("airbases", {airbases=airbases})
-    return {kind="airbases", count=#airbases}
+    local airbases = self:BuildAirbaseSnapshot(); self:SendSnapshot("airbases", {airbases=airbases}); return {kind="airbases", count=#airbases}
   end)
   self:RegisterCommand("snapshot.zones", function(cmd)
-    local zones = self:BuildZoneSnapshot()
-    self:SendSnapshot("zones", {zones=zones})
-    return {kind="zones", count=#zones}
+    local zones = self:BuildZoneSnapshot(); self:SendSnapshot("zones", {zones=zones}); return {kind="zones", count=#zones}
+  end)
+  self:RegisterCommand("snapshot.opszones", function(cmd)
+    local opszones = self:BuildOpsZoneSnapshot(); self:SendSnapshot("opszones", {opszones=opszones}); return {kind="opszones", count=#opszones}
+  end)
+  self:RegisterCommand("snapshot.opsgroups", function(cmd)
+    local opsgroups = self:BuildOpsGroupSnapshot(); self:SendSnapshot("opsgroups", {opsgroups=opsgroups}); return {kind="opsgroups", count=#opsgroups}
   end)
 end
 
