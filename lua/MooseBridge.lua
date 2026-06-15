@@ -35,6 +35,7 @@ function MOOSE_BRIDGE:New(host, port)
   self.Scheduler = nil
   self.Connected = false
   self.Sequence = 0
+  self.MarkId = 10000
   self.OutQueue = {}
   self.CommandHandlers = {}
   self.RegisteredZones = {}
@@ -90,6 +91,11 @@ end
 function MOOSE_BRIDGE:_NextId(prefix)
   self.Sequence = self.Sequence + 1
   return (prefix or "msg") .. "-" .. tostring(self.Sequence)
+end
+
+function MOOSE_BRIDGE:_NextMarkId()
+  self.MarkId = self.MarkId + 1
+  return self.MarkId
 end
 
 function MOOSE_BRIDGE:_BaseMessage(message_type)
@@ -206,6 +212,12 @@ function MOOSE_BRIDGE:_NumberOrZero(value)
   return 0
 end
 
+function MOOSE_BRIDGE:_NumberOrNil(value)
+  if type(value) == "number" then return value end
+  if type(value) == "string" then return tonumber(value) end
+  return nil
+end
+
 function MOOSE_BRIDGE:_IsDcsObjectAlive(object)
   if not object then return false end
 
@@ -244,6 +256,120 @@ function MOOSE_BRIDGE:_PointFromMooseObject(object)
   end
 
   return nil
+end
+
+function MOOSE_BRIDGE:_PointFromParams(params)
+  local x = self:_NumberOrNil(params and params.x)
+  local y = self:_NumberOrNil(params and params.y) or 0
+  local z = self:_NumberOrNil(params and params.z)
+  if x == nil or z == nil then error("Point commands require numeric x and z parameters") end
+  return {x=x, y=y, z=z}
+end
+
+function MOOSE_BRIDGE:_SplitObjectId(object_id)
+  if type(object_id) ~= "string" then return nil, nil end
+  local separator = string.find(object_id, ":")
+  if not separator then return nil, nil end
+  return string.sub(object_id, 1, separator - 1), string.sub(object_id, separator + 1)
+end
+
+function MOOSE_BRIDGE:_PointForGroupName(name)
+  local group = _DATABASE and _DATABASE.GROUPS and _DATABASE.GROUPS[name]
+  if not group then return nil end
+
+  local point = self:_PointFromMooseObject(group)
+  if point then return point end
+
+  local dcs_group = self:_SafeCall(group, "GetDCSObject")
+  local ok, units = pcall(function() return dcs_group and dcs_group:getUnits() end)
+  if ok and type(units) == "table" and units[1] then return self:_DcsPoint(units[1]) end
+
+  return nil
+end
+
+function MOOSE_BRIDGE:_PointForUnitName(name)
+  local unit = _DATABASE and _DATABASE.UNITS and _DATABASE.UNITS[name]
+  if not unit then return nil end
+  local dcs_unit = self:_SafeCall(unit, "GetDCSObject")
+  return self:_DcsPoint(dcs_unit) or self:_PointFromMooseObject(unit)
+end
+
+function MOOSE_BRIDGE:_PointForStaticName(name)
+  local static = _DATABASE and _DATABASE.STATICS and _DATABASE.STATICS[name]
+  if not static then return nil end
+  local dcs_static = self:_SafeCall(static, "GetDCSObject")
+  return self:_DcsPoint(dcs_static) or self:_PointFromMooseObject(static)
+end
+
+function MOOSE_BRIDGE:_PointForAirbaseName(name)
+  if not world or not world.getAirbases then return nil end
+  local ok, airbases = pcall(function() return world.getAirbases() end)
+  if not ok or type(airbases) ~= "table" then return nil end
+  for _, airbase in pairs(airbases) do
+    if self:_DcsCall(airbase, "getName") == name then return self:_DcsPoint(airbase) end
+  end
+  return nil
+end
+
+function MOOSE_BRIDGE:_PointForZoneName(name)
+  local zone = self.RegisteredZones and self.RegisteredZones[name]
+  if not zone and _DATABASE and _DATABASE.ZONES then zone = _DATABASE.ZONES[name] end
+  if zone then
+    local point = self:_PointFromMooseObject(zone)
+    if point then return point end
+  end
+
+  if env and env.mission and env.mission.triggers and type(env.mission.triggers.zones) == "table" then
+    for _, trigger_zone in pairs(env.mission.triggers.zones) do
+      if trigger_zone.name == name then return {x=trigger_zone.x, y=0, z=trigger_zone.y} end
+    end
+  end
+
+  return nil
+end
+
+function MOOSE_BRIDGE:_PointForObjectId(object_id)
+  local object_type, name = self:_SplitObjectId(object_id)
+  if not object_type or not name then error("Invalid object_id: " .. safe_tostring(object_id)) end
+
+  if object_type == "GROUP" then return self:_PointForGroupName(name) end
+  if object_type == "UNIT" then return self:_PointForUnitName(name) end
+  if object_type == "STATIC" then return self:_PointForStaticName(name) end
+  if object_type == "AIRBASE" then return self:_PointForAirbaseName(name) end
+  if object_type == "ZONE" then return self:_PointForZoneName(name) end
+
+  error("Unsupported object_id type for point lookup: " .. safe_tostring(object_type))
+end
+
+function MOOSE_BRIDGE:_CoordinateFromPoint(point)
+  if not COORDINATE or not COORDINATE.NewFromVec3 then error("MOOSE COORDINATE is not available") end
+  if not point then error("Point is nil") end
+  return COORDINATE:NewFromVec3({x=point.x, y=point.y or 0, z=point.z})
+end
+
+function MOOSE_BRIDGE:_SmokePoint(point, color)
+  local coordinate = self:_CoordinateFromPoint(point)
+  local smoke_color = string.lower(color or "white")
+  local method_by_color = {red="SmokeRed", green="SmokeGreen", blue="SmokeBlue", orange="SmokeOrange", white="SmokeWhite"}
+  local method_name = method_by_color[smoke_color]
+  if not method_name then error("Unsupported smoke color: " .. safe_tostring(color)) end
+  local method = coordinate[method_name]
+  if not method then error("COORDINATE method unavailable: " .. method_name) end
+  method(coordinate)
+  return {x=point.x, y=point.y or 0, z=point.z, color=smoke_color}
+end
+
+function MOOSE_BRIDGE:_MarkPoint(point, text)
+  local coordinate = self:_CoordinateFromPoint(point)
+  local mark_text = text or "MOOSE Bridge mark"
+  if coordinate.MarkToAll then
+    coordinate:MarkToAll(mark_text)
+  elseif trigger and trigger.action and trigger.action.markToAll then
+    trigger.action.markToAll(self:_NextMarkId(), mark_text, {x=point.x, y=point.y or 0, z=point.z}, true)
+  else
+    error("No mark implementation available")
+  end
+  return {x=point.x, y=point.y or 0, z=point.z, text=mark_text}
 end
 
 function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
@@ -562,6 +688,32 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     if not side then error("Invalid coalition: " .. safe_tostring(p.coalition)) end
     MESSAGE:New(p.text or "", p.duration or 10):ToCoalition(side)
     return {message="Message sent to coalition", coalition=p.coalition}
+  end)
+  self:RegisterCommand("smoke.at_point", function(cmd)
+    local p = cmd.params or {}
+    local point = self:_PointFromParams(p)
+    return self:_SmokePoint(point, p.color)
+  end)
+  self:RegisterCommand("smoke.object", function(cmd)
+    local p = cmd.params or {}
+    local point = self:_PointForObjectId(p.object_id)
+    if not point then error("Could not resolve point for object_id: " .. safe_tostring(p.object_id)) end
+    local result = self:_SmokePoint(point, p.color)
+    result.object_id = p.object_id
+    return result
+  end)
+  self:RegisterCommand("mark.at_point", function(cmd)
+    local p = cmd.params or {}
+    local point = self:_PointFromParams(p)
+    return self:_MarkPoint(point, p.text)
+  end)
+  self:RegisterCommand("mark.object", function(cmd)
+    local p = cmd.params or {}
+    local point = self:_PointForObjectId(p.object_id)
+    if not point then error("Could not resolve point for object_id: " .. safe_tostring(p.object_id)) end
+    local result = self:_MarkPoint(point, p.text)
+    result.object_id = p.object_id
+    return result
   end)
   self:RegisterCommand("snapshot.groups", function(cmd)
     local groups = self:BuildGroupSnapshot()
