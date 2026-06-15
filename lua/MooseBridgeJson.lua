@@ -1,5 +1,5 @@
 --- Minimal JSON helper for the MOOSE Bridge V1 prototype.
--- This is deliberately small and covers the V1 command/ack/heartbeat payloads.
+-- This is deliberately small and covers the V1 command/ack/heartbeat/snapshot payloads.
 
 MOOSE_BRIDGE_JSON = MOOSE_BRIDGE_JSON or {}
 local json = MOOSE_BRIDGE_JSON
@@ -12,6 +12,27 @@ local function escape(value)
   value = value:gsub('\r', '\\r')
   value = value:gsub('\t', '\\t')
   return value
+end
+
+local function is_array(value)
+  if type(value) ~= "table" then
+    return false
+  end
+
+  local max_index = 0
+  local count = 0
+
+  for key, _ in pairs(value) do
+    if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
+      return false
+    end
+    if key > max_index then
+      max_index = key
+    end
+    count = count + 1
+  end
+
+  return count == max_index
 end
 
 local function encode_value(value)
@@ -27,6 +48,14 @@ local function encode_value(value)
     return '"' .. escape(value) .. '"'
   elseif t == "table" then
     local parts = {}
+
+    if is_array(value) then
+      for index = 1, #value do
+        parts[#parts + 1] = encode_value(value[index])
+      end
+      return "[" .. table.concat(parts, ",") .. "]"
+    end
+
     for k, v in pairs(value) do
       parts[#parts + 1] = '"' .. escape(k) .. '":' .. encode_value(v)
     end
