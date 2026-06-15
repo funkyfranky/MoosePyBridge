@@ -212,6 +212,14 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.groups", params={}))
 
+    async def snapshot_units(self) -> dict[str, Any]:
+        """Request a UNIT snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.units", params={}))
+
     def _write_raw(self, direction: str, line: str) -> None:
         """Write one raw protocol line to the JSONL log.
 
@@ -230,6 +238,7 @@ Interactive commands:
   help, ?                 Show this help.
   status                  Show current bridge connection status.
   groups                  Request and print a GROUP snapshot.
+  units                   Request and print a UNIT snapshot.
   all <text>              Send a MOOSE MESSAGE to all players.
   blue <text>             Send a MOOSE MESSAGE to blue coalition.
   red <text>              Send a MOOSE MESSAGE to red coalition.
@@ -270,6 +279,33 @@ def _print_group_snapshot(groups: dict[str, dict[str, Any]], limit: int = 25) ->
 
     if len(items) > limit:
         print(f"  ... {len(items) - limit} more groups not shown")
+
+
+def _print_unit_snapshot(units: dict[str, dict[str, Any]], limit: int = 40) -> None:
+    """Print a compact UNIT snapshot summary.
+
+    :param units: Mapping from object id to unit payload.
+    :param limit: Maximum number of units to print.
+    """
+
+    items = list(units.values())
+    print(f"units={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        group_name = item.get("group_name", "")
+        coalition = item.get("coalition", "")
+        category = item.get("category", "")
+        dcs_type = item.get("dcs_type", "")
+        alive = item.get("alive", "")
+        active = item.get("active", "")
+        print(
+            f"  {object_id} group={group_name} coalition={coalition} "
+            f"category={category} dcs_type={dcs_type} alive={alive} active={active}"
+        )
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more units not shown")
 
 
 async def run_interactive_console(server: MooseBridgeServer) -> None:
@@ -316,6 +352,11 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
                 ack = await server.snapshot_groups()
                 print(f"ACK: {ack}")
                 _print_group_snapshot(server.state.groups)
+                continue
+            if command == "units":
+                ack = await server.snapshot_units()
+                print(f"ACK: {ack}")
+                _print_unit_snapshot(server.state.units)
                 continue
             if command == "all":
                 if not argument:
