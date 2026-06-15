@@ -1,5 +1,5 @@
 --- Minimal mission-side example.
--- Load this after Moose.lua, MooseBridgeJson.lua, MooseBridge.lua and optional extensions such as MooseBridgeOps.lua.
+-- Load this after the JSON helper and main bridge script.
 
 Bridge = MOOSE_BRIDGE:New("127.0.0.1", 51000)
 Bridge:Start()
