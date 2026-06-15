@@ -109,6 +109,11 @@ function json.decode(text)
     result.params.coalition = read_string_field(params_text, "coalition")
     result.params.text = read_string_field(params_text, "text")
     result.params.duration = read_number_field(params_text, "duration")
+    result.params.object_id = read_string_field(params_text, "object_id")
+    result.params.color = read_string_field(params_text, "color")
+    result.params.x = read_number_field(params_text, "x")
+    result.params.y = read_number_field(params_text, "y")
+    result.params.z = read_number_field(params_text, "z")
   end
 
   return result
