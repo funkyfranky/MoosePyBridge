@@ -217,14 +217,109 @@ class MooseBridgeServer:
         self._raw_log_file.flush()
 
 
+HELP_TEXT = """
+Interactive commands:
+  help, ?                 Show this help.
+  status                  Show current bridge connection status.
+  all <text>              Send a MOOSE MESSAGE to all players.
+  blue <text>             Send a MOOSE MESSAGE to blue coalition.
+  red <text>              Send a MOOSE MESSAGE to red coalition.
+  neutral <text>          Send a MOOSE MESSAGE to neutral coalition.
+  quit, exit              Stop the bridge server.
+""".strip()
+
+
+async def _read_console_line(prompt: str = "moosebridge> ") -> str:
+    """Read one console line without blocking the asyncio event loop.
+
+    :param prompt: Prompt text displayed to the user.
+    :returns: Console input line.
+    """
+
+    return await asyncio.to_thread(input, prompt)
+
+
+async def run_interactive_console(server: MooseBridgeServer) -> None:
+    """Run an interactive command console backed by a bridge server.
+
+    :param server: Running bridge server instance.
+    """
+
+    print(HELP_TEXT)
+
+    while True:
+        try:
+            line = (await _read_console_line()).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+
+        if not line:
+            continue
+
+        command, _, argument = line.partition(" ")
+        command = command.lower()
+        argument = argument.strip()
+
+        if command in {"quit", "exit"}:
+            return
+
+        if command in {"help", "?"}:
+            print(HELP_TEXT)
+            continue
+
+        if command == "status":
+            print(f"connected={server.state.connected}")
+            if server.state.last_heartbeat is not None:
+                print(f"last_heartbeat={server.state.last_heartbeat}")
+            continue
+
+        if not server.state.connected:
+            print("No DCS bridge connection is active.")
+            continue
+
+        try:
+            if command == "all":
+                if not argument:
+                    print("Usage: all <text>")
+                    continue
+                ack = await server.message_to_all(argument)
+            elif command in {"blue", "red", "neutral"}:
+                if not argument:
+                    print(f"Usage: {command} <text>")
+                    continue
+                ack = await server.message_to_coalition(command, argument)
+            else:
+                print(f"Unknown command: {command}")
+                print("Type 'help' for available commands.")
+                continue
+        except Exception as exc:
+            print(f"ERROR: {exc}")
+            continue
+
+        print(f"ACK: {ack}")
+
+
 async def _run(args: argparse.Namespace) -> None:
     """Run the command-line server entry point.
 
     :param args: Parsed CLI arguments.
     """
 
-    logging.basicConfig(level=getattr(logging, args.log_level.upper()), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=getattr(logging, args.log_level.upper()),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     server = MooseBridgeServer(args.host, args.port, Path(args.log) if args.log else None)
+
+    if args.interactive:
+        await server.start()
+        try:
+            await run_interactive_console(server)
+        finally:
+            await server.stop()
+        return
+
     await server.serve_forever()
 
 
@@ -236,6 +331,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=50100)
     parser.add_argument("--log", default="moosebridge_raw.jsonl")
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument("--interactive", action="store_true", help="Run an interactive command console after starting the server")
     args = parser.parse_args()
 
     try:
