@@ -1,0 +1,1 @@
+"""MOOSE Bridge Python package."""
