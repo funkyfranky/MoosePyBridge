@@ -44,6 +44,7 @@ class MooseBridgeState:
     objects: dict[str, dict[str, Any]] = field(default_factory=dict)
     groups: dict[str, dict[str, Any]] = field(default_factory=dict)
     units: dict[str, dict[str, Any]] = field(default_factory=dict)
+    statics: dict[str, dict[str, Any]] = field(default_factory=dict)
     airbases: dict[str, dict[str, Any]] = field(default_factory=dict)
     zones: dict[str, dict[str, Any]] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -83,6 +84,8 @@ class MooseBridgeState:
             self.groups = self._index_objects(payload.get("groups", []))
         elif kind == "units":
             self.units = self._index_objects(payload.get("units", []))
+        elif kind == "statics":
+            self.statics = self._index_objects(payload.get("statics", []))
         elif kind == "airbases":
             self.airbases = self._index_objects(payload.get("airbases", []))
         elif kind == "zones":
