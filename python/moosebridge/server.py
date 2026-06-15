@@ -13,6 +13,7 @@ from .protocol import BridgeCommand, PendingCommand
 from .state import MooseBridgeState
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_PORT = 51000
 DEFAULT_READER_LIMIT = 16 * 1024 * 1024
 
 
@@ -28,7 +29,7 @@ class MooseBridgeServer:
     def __init__(
         self,
         host: str = "127.0.0.1",
-        port: int = 50100,
+        port: int = DEFAULT_PORT,
         log_path: Path | None = None,
         reader_limit: int = DEFAULT_READER_LIMIT,
     ) -> None:
@@ -302,6 +303,22 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.zones", params={}))
 
+    async def snapshot_opszones(self) -> dict[str, Any]:
+        """Request an OPSZONE snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.opszones", params={}))
+
+    async def snapshot_opsgroups(self) -> dict[str, Any]:
+        """Request an OPSGROUP snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.opsgroups", params={}))
+
     def _write_raw(self, direction: str, line: str) -> None:
         """Write one raw protocol line to the JSONL log.
 
@@ -324,6 +341,8 @@ Interactive commands:
   statics                 Request and print a STATIC snapshot.
   airbases                Request and print an AIRBASE snapshot.
   zones                   Request and print a ZONE snapshot.
+  opszones                Request and print an OPSZONE snapshot.
+  opsgroups               Request and print an OPSGROUP snapshot.
   smoke <object_id> [color]       Smoke an object position.
   smokepoint <x> <z> [color]      Smoke a DCS world point.
   mark <object_id> <text>         Mark an object position.
@@ -480,6 +499,59 @@ def _print_zone_snapshot(zones: dict[str, dict[str, Any]], limit: int = 60) -> N
         print(f"  ... {len(items) - limit} more zones not shown")
 
 
+def _print_opszone_snapshot(opszones: dict[str, dict[str, Any]], limit: int = 60) -> None:
+    """Print a compact OPSZONE snapshot summary.
+
+    :param opszones: Mapping from object id to OPSZONE payload.
+    :param limit: Maximum number of OPSZONEs to print.
+    """
+
+    items = list(opszones.values())
+    print(f"opszones={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        category = item.get("category", "")
+        source = item.get("source", "")
+        state = item.get("state", "")
+        radius = item.get("radius", "")
+        x = item.get("x", "")
+        z = item.get("z", "")
+        print(f"  {object_id} category={category} source={source} state={state} radius={radius} x={x} z={z}")
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more OPSZONEs not shown")
+
+
+def _print_opsgroup_snapshot(opsgroups: dict[str, dict[str, Any]], limit: int = 60) -> None:
+    """Print a compact OPSGROUP snapshot summary.
+
+    :param opsgroups: Mapping from object id to OPSGROUP payload.
+    :param limit: Maximum number of OPSGROUPs to print.
+    """
+
+    items = list(opsgroups.values())
+    print(f"opsgroups={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        category = item.get("category", "")
+        source = item.get("source", "")
+        coalition = item.get("coalition", "")
+        state = item.get("state", "")
+        alive = item.get("alive", "")
+        active = item.get("active", "")
+        x = item.get("x", "")
+        z = item.get("z", "")
+        print(
+            f"  {object_id} category={category} source={source} coalition={coalition} "
+            f"state={state} alive={alive} active={active} x={x} z={z}"
+        )
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more OPSGROUPs not shown")
+
+
 async def run_interactive_console(server: MooseBridgeServer) -> None:
     """Run an interactive command console backed by a bridge server.
 
@@ -544,6 +616,16 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
                 ack = await server.snapshot_zones()
                 print(f"ACK: {ack}")
                 _print_zone_snapshot(server.state.zones)
+                continue
+            if command == "opszones":
+                ack = await server.snapshot_opszones()
+                print(f"ACK: {ack}")
+                _print_opszone_snapshot(server.state.opszones)
+                continue
+            if command == "opsgroups":
+                ack = await server.snapshot_opsgroups()
+                print(f"ACK: {ack}")
+                _print_opsgroup_snapshot(server.state.opsgroups)
                 continue
             if command == "smoke":
                 object_id, _, color = argument.partition(" ")
@@ -624,7 +706,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="MOOSE Bridge TCP JSONL server")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=50100)
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--log", default="moosebridge_raw.jsonl")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--reader-limit", type=int, default=DEFAULT_READER_LIMIT, help="Maximum incoming JSONL line size in bytes")
