@@ -183,6 +183,20 @@ function MOOSE_BRIDGE:_IsMooseUnitAlive(unit)
   return false
 end
 
+function MOOSE_BRIDGE:_DcsUnitTypeName(dcs_unit)
+  if not dcs_unit then return nil end
+  local ok, value = pcall(function() return dcs_unit:getTypeName() end)
+  if ok then return value end
+  return nil
+end
+
+function MOOSE_BRIDGE:_DcsUnitPoint(dcs_unit)
+  if not dcs_unit then return nil end
+  local ok, value = pcall(function() return dcs_unit:getPoint() end)
+  if ok then return value end
+  return nil
+end
+
 function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
   if type(units) ~= "table" then return nil end
 
@@ -277,6 +291,86 @@ function MOOSE_BRIDGE:BuildGroupSnapshot()
   return result
 end
 
+function MOOSE_BRIDGE:_BuildUnitSnapshotItem(unit_name, unit)
+  local name = self:_SafeCall(unit, "GetName") or unit_name
+  local group_name = self:_SafeCall(unit, "GetGroupName")
+  local group = self:_SafeCall(unit, "GetGroup")
+  if not group_name and group then group_name = self:_SafeCall(group, "GetName") end
+
+  local coalition_value = self:_SafeCall(unit, "GetCoalition")
+  if coalition_value == nil and group then coalition_value = self:_SafeCall(group, "GetCoalition") end
+
+  local category = self:_SafeCall(unit, "GetCategoryName") or self:_SafeCall(unit, "GetCategory")
+  if not category and group then category = self:_SafeCall(group, "GetCategoryName") or self:_SafeCall(group, "GetCategory") end
+
+  local dcs_unit = self:_SafeCall(unit, "GetDCSObject")
+  local dcs_type = self:_SafeCall(unit, "GetTypeName") or self:_DcsUnitTypeName(dcs_unit)
+  local alive = self:_SafeCall(unit, "IsAlive")
+  if alive == nil then alive = self:_IsDcsUnitAlive(dcs_unit) end
+  local active = self:_SafeCall(unit, "IsActive")
+  local point = self:_DcsUnitPoint(dcs_unit)
+
+  local item = {
+    object_id = "UNIT:" .. safe_tostring(name),
+    dcs_name = safe_tostring(name),
+    object_type = "UNIT",
+    group_name = group_name and safe_tostring(group_name) or nil,
+    category = category and safe_tostring(category) or nil,
+    coalition = self:_CoalitionToName(coalition_value),
+    dcs_type = dcs_type and safe_tostring(dcs_type) or nil,
+    alive = self:_BoolOrFalse(alive),
+    active = self:_BoolOrFalse(active),
+  }
+
+  if point then
+    item.x = point.x
+    item.y = point.y
+    item.z = point.z
+  end
+
+  return item
+end
+
+function MOOSE_BRIDGE:BuildUnitSnapshot()
+  local result = {}
+
+  if _DATABASE and _DATABASE.UNITS then
+    for unit_name, unit in pairs(_DATABASE.UNITS) do
+      local ok, item = pcall(function()
+        return self:_BuildUnitSnapshotItem(unit_name, unit)
+      end)
+      if ok and item then
+        result[#result + 1] = item
+      else
+        self:_Log("Failed to snapshot unit " .. safe_tostring(unit_name) .. ": " .. safe_tostring(item))
+      end
+    end
+    return result
+  end
+
+  if not _DATABASE or not _DATABASE.GROUPS then
+    return result
+  end
+
+  for _, group in pairs(_DATABASE.GROUPS) do
+    local units = self:_SafeCall(group, "GetUnits")
+    if type(units) == "table" then
+      for unit_name, unit in pairs(units) do
+        local ok, item = pcall(function()
+          return self:_BuildUnitSnapshotItem(unit_name, unit)
+        end)
+        if ok and item then
+          result[#result + 1] = item
+        else
+          self:_Log("Failed to snapshot group unit " .. safe_tostring(unit_name) .. ": " .. safe_tostring(item))
+        end
+      end
+    end
+  end
+
+  return result
+end
+
 function MOOSE_BRIDGE:RegisterDefaultCommands()
   self:RegisterCommand("message.to_all", function(cmd)
     local p = cmd.params or {}
@@ -294,6 +388,11 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     local groups = self:BuildGroupSnapshot()
     self:SendSnapshot("groups", {groups=groups})
     return {kind="groups", count=#groups}
+  end)
+  self:RegisterCommand("snapshot.units", function(cmd)
+    local units = self:BuildUnitSnapshot()
+    self:SendSnapshot("units", {units=units})
+    return {kind="units", count=#units}
   end)
 end
 
