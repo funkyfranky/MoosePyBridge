@@ -1,6 +1,6 @@
 param(
     [string]$HostName = "127.0.0.1",
-    [int]$Port = 50100,
+    [int]$Port = 51000,
     [string]$Log = "moosebridge_raw.jsonl",
     [int]$ReaderLimit = 16777216
 )

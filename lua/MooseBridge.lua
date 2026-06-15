@@ -30,7 +30,7 @@ function MOOSE_BRIDGE:New(host, port)
   local self = BASE and BASE:Inherit({}, BASE:New()) or {}
   setmetatable(self, { __index = MOOSE_BRIDGE })
   self.Host = host or "127.0.0.1"
-  self.Port = port or 50100
+  self.Port = port or 51000
   self.Socket = nil
   self.Scheduler = nil
   self.Connected = false
