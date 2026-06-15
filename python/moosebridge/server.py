@@ -13,6 +13,7 @@ from .protocol import BridgeCommand, PendingCommand
 from .state import MooseBridgeState
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_READER_LIMIT = 16 * 1024 * 1024
 
 
 class MooseBridgeServer:
@@ -21,12 +22,20 @@ class MooseBridgeServer:
     :param host: Interface to bind.
     :param port: TCP port to listen on.
     :param log_path: Optional raw JSONL log file path.
+    :param reader_limit: Maximum incoming JSONL line size in bytes.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 50100, log_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 50100,
+        log_path: Path | None = None,
+        reader_limit: int = DEFAULT_READER_LIMIT,
+    ) -> None:
         self.host = host
         self.port = port
         self.log_path = log_path
+        self.reader_limit = reader_limit
         self.state = MooseBridgeState()
         self._server: asyncio.AbstractServer | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -41,7 +50,12 @@ class MooseBridgeServer:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             self._raw_log_file = self.log_path.open("a", encoding="utf-8")
 
-        self._server = await asyncio.start_server(self._handle_dcs_client, self.host, self.port)
+        self._server = await asyncio.start_server(
+            self._handle_dcs_client,
+            self.host,
+            self.port,
+            limit=self.reader_limit,
+        )
         sockets = ", ".join(str(sock.getsockname()) for sock in self._server.sockets or [])
         LOGGER.info("MOOSE Bridge server listening on %s", sockets)
 
@@ -499,7 +513,12 @@ async def _run(args: argparse.Namespace) -> None:
         level=getattr(logging, args.log_level.upper()),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    server = MooseBridgeServer(args.host, args.port, Path(args.log) if args.log else None)
+    server = MooseBridgeServer(
+        args.host,
+        args.port,
+        Path(args.log) if args.log else None,
+        reader_limit=args.reader_limit,
+    )
 
     if args.interactive:
         await server.start()
@@ -520,6 +539,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=50100)
     parser.add_argument("--log", default="moosebridge_raw.jsonl")
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument("--reader-limit", type=int, default=DEFAULT_READER_LIMIT, help="Maximum incoming JSONL line size in bytes")
     parser.add_argument("--interactive", action="store_true", help="Run an interactive command console after starting the server")
     args = parser.parse_args()
 
