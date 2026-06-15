@@ -159,6 +159,20 @@ function MOOSE_BRIDGE:_AirbaseCategoryToName(value)
   if value == 0 then return "AIRDROME" end
   if value == 1 then return "HELIPAD" end
   if value == 2 then return "SHIP" end
+  return "UNKNOWN_" .. tostring(value)
+end
+
+function MOOSE_BRIDGE:_ObjectCategoryToName(value)
+  if value == nil then return nil end
+  if Object and Object.Category then
+    if value == Object.Category.UNIT then return "UNIT" end
+    if value == Object.Category.WEAPON then return "WEAPON" end
+    if value == Object.Category.STATIC then return "STATIC" end
+    if value == Object.Category.BASE then return "BASE" end
+    if value == Object.Category.SCENERY then return "SCENERY" end
+    if value == Object.Category.CARGO then return "CARGO" end
+  end
+  if value == 4 then return "BASE" end
   return tostring(value)
 end
 
@@ -394,15 +408,29 @@ end
 function MOOSE_BRIDGE:_BuildAirbaseSnapshotItem(airbase)
   local name = self:_DcsAirbaseCall(airbase, "getName")
   local coalition_value = self:_DcsAirbaseCall(airbase, "getCoalition")
-  local category = self:_DcsAirbaseCall(airbase, "getCategory")
+  local object_category = self:_DcsAirbaseCall(airbase, "getCategory")
   local point = self:_DcsAirbaseCall(airbase, "getPoint")
+  local desc = self:_DcsAirbaseCall(airbase, "getDesc")
+  local airbase_category = nil
+  local dcs_type = nil
+  local display_name = nil
+
+  if type(desc) == "table" then
+    airbase_category = desc.category
+    dcs_type = desc.typeName
+    display_name = desc.displayName
+  end
 
   local item = {
     object_id = "AIRBASE:" .. safe_tostring(name),
     dcs_name = safe_tostring(name),
     object_type = "AIRBASE",
-    category = self:_AirbaseCategoryToName(category),
+    category = self:_AirbaseCategoryToName(airbase_category) or "AIRBASE",
+    dcs_category = object_category,
+    dcs_category_name = self:_ObjectCategoryToName(object_category),
     coalition = self:_CoalitionToName(coalition_value),
+    dcs_type = dcs_type and safe_tostring(dcs_type) or nil,
+    display_name = display_name and safe_tostring(display_name) or nil,
   }
 
   if point then
