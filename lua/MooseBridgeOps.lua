@@ -3,6 +3,11 @@
 
 if not MOOSE_BRIDGE then error("Load MooseBridge.lua before MooseBridgeOps.lua") end
 
+local function string_or_nil(value)
+  if value == nil then return nil end
+  return tostring(value)
+end
+
 function MOOSE_BRIDGE:_EnsureOpsRegistries()
   self.RegisteredOpsZones = self.RegisteredOpsZones or {}
   self.RegisteredOpsGroups = self.RegisteredOpsGroups or {}
@@ -25,7 +30,7 @@ end
 function MOOSE_BRIDGE:RegisterOpsGroup(opsgroup, name)
   self:_EnsureOpsRegistries()
   if not opsgroup then return self end
-  local group_name = name or self:_SafeCall(opsgroup, "GetName") or self:_SafeCall(opsgroup, "GetGroupName") or opsgroup.name or opsgroup.Name
+  local group_name = name or self:_SafeCall(opsgroup, "GetName") or opsgroup.name or opsgroup.Name
   if group_name then self.RegisteredOpsGroups[tostring(group_name)] = opsgroup end
   return self
 end
@@ -44,15 +49,25 @@ function MOOSE_BRIDGE:_OpsClassName(object, fallback)
   return fallback
 end
 
-function MOOSE_BRIDGE:_OpsName(object, fallback)
-  return self:_SafeCall(object, "GetName") or self:_SafeCall(object, "GetGroupName") or fallback or object.Name or object.name
+function MOOSE_BRIDGE:_OpsGroupKind(opsgroup)
+  if self:_SafeCall(opsgroup, "IsFlightgroup") then return "FLIGHTGROUP" end
+  if self:_SafeCall(opsgroup, "IsArmygroup") then return "ARMYGROUP" end
+  if self:_SafeCall(opsgroup, "IsNavygroup") then return "NAVYGROUP" end
+  return self:_OpsClassName(opsgroup, "OPSGROUP")
 end
 
-function MOOSE_BRIDGE:_OpsStatus(object)
-  return self:_SafeCall(object, "GetStatus") or self:_SafeCall(object, "GetState") or self:_SafeCall(object, "GetStateName") or object.Status or object.status or object.State or object.state
+function MOOSE_BRIDGE:_OpsName(object, fallback)
+  if not object then return fallback end
+  return self:_SafeCall(object, "GetName") or fallback or object.Name or object.name
+end
+
+function MOOSE_BRIDGE:_OpsState(object)
+  if not object then return nil end
+  return self:_SafeCall(object, "GetState") or self:_SafeCall(object, "GetStateName") or object.State or object.state
 end
 
 function MOOSE_BRIDGE:_OpsCoalition(object)
+  if not object then return nil end
   local coalition_value = self:_SafeCall(object, "GetCoalition") or object.Coalition or object.coalition
   return self:_CoalitionToName(coalition_value)
 end
@@ -73,16 +88,16 @@ function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
   local class_name = self:_OpsClassName(opszone, "OPSZONE")
   local point = self:_PointFromMooseObject(opszone)
   local radius = self:_SafeCall(opszone, "GetRadius") or opszone.Radius or opszone.radius
-  local status = self:_OpsStatus(opszone)
+  local state = self:_OpsState(opszone)
 
   local item = {
-    object_id = "OPSZONE:" .. safe_tostring(name),
-    dcs_name = safe_tostring(name),
+    object_id = "OPSZONE:" .. tostring(name),
+    dcs_name = tostring(name),
     object_type = "OPSZONE",
     category = class_name,
     source = source,
     radius = radius,
-    status = status and safe_tostring(status) or nil,
+    state = string_or_nil(state),
     coalition = self:_OpsCoalition(opszone),
   }
 
@@ -92,21 +107,22 @@ end
 
 function MOOSE_BRIDGE:_BuildOpsGroupSnapshotItem(group_name, opsgroup, source)
   local name = self:_OpsName(opsgroup, group_name)
+  local group_kind = self:_OpsGroupKind(opsgroup)
   local class_name = self:_OpsClassName(opsgroup, "OPSGROUP")
   local point = self:_PointFromMooseObject(opsgroup)
-  local status = self:_OpsStatus(opsgroup)
+  local state = self:_OpsState(opsgroup)
   local alive = self:_SafeCall(opsgroup, "IsAlive")
   local active = self:_SafeCall(opsgroup, "IsActive")
-  local dcs_group_name = self:_SafeCall(opsgroup, "GetGroupName") or opsgroup.GroupName or opsgroup.groupname
 
   local item = {
-    object_id = "OPSGROUP:" .. safe_tostring(name),
-    dcs_name = safe_tostring(name),
+    object_id = "OPSGROUP:" .. tostring(name),
+    dcs_name = tostring(name),
     object_type = "OPSGROUP",
-    category = class_name,
+    category = group_kind,
+    class_name = class_name,
     source = source,
-    group_name = dcs_group_name and safe_tostring(dcs_group_name) or nil,
-    status = status and safe_tostring(status) or nil,
+    group_name = tostring(name),
+    state = string_or_nil(state),
     coalition = self:_OpsCoalition(opsgroup),
     alive = self:_BoolOrFalse(alive),
     active = self:_BoolOrFalse(active),
@@ -127,8 +143,6 @@ function MOOSE_BRIDGE:BuildOpsZoneSnapshot()
   end
 
   self:_AddOpsDatabaseCandidates(result, seen, "OPSZONES", MOOSE_BRIDGE._BuildOpsZoneSnapshotItem, "database.OPSZONES")
-  self:_AddOpsDatabaseCandidates(result, seen, "OPS_ZONE", MOOSE_BRIDGE._BuildOpsZoneSnapshotItem, "database.OPS_ZONE")
-  self:_AddOpsDatabaseCandidates(result, seen, "OPERATIONALZONES", MOOSE_BRIDGE._BuildOpsZoneSnapshotItem, "database.OPERATIONALZONES")
 
   return result
 end
@@ -143,10 +157,7 @@ function MOOSE_BRIDGE:BuildOpsGroupSnapshot()
     if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
   end
 
-  self:_AddOpsDatabaseCandidates(result, seen, "OPSGROUPS", MOOSE_BRIDGE._BuildOpsGroupSnapshotItem, "database.OPSGROUPS")
   self:_AddOpsDatabaseCandidates(result, seen, "FLIGHTGROUPS", MOOSE_BRIDGE._BuildOpsGroupSnapshotItem, "database.FLIGHTGROUPS")
-  self:_AddOpsDatabaseCandidates(result, seen, "ARMYGROUPS", MOOSE_BRIDGE._BuildOpsGroupSnapshotItem, "database.ARMYGROUPS")
-  self:_AddOpsDatabaseCandidates(result, seen, "NAVYGROUPS", MOOSE_BRIDGE._BuildOpsGroupSnapshotItem, "database.NAVYGROUPS")
 
   return result
 end
