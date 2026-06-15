@@ -220,6 +220,14 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.units", params={}))
 
+    async def snapshot_statics(self) -> dict[str, Any]:
+        """Request a STATIC snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.statics", params={}))
+
     async def snapshot_airbases(self) -> dict[str, Any]:
         """Request an AIRBASE snapshot from DCS.
 
@@ -227,6 +235,14 @@ class MooseBridgeServer:
         """
 
         return await self.send_command(BridgeCommand(action="snapshot.airbases", params={}))
+
+    async def snapshot_zones(self) -> dict[str, Any]:
+        """Request a ZONE snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.zones", params={}))
 
     def _write_raw(self, direction: str, line: str) -> None:
         """Write one raw protocol line to the JSONL log.
@@ -247,7 +263,9 @@ Interactive commands:
   status                  Show current bridge connection status.
   groups                  Request and print a GROUP snapshot.
   units                   Request and print a UNIT snapshot.
+  statics                 Request and print a STATIC snapshot.
   airbases                Request and print an AIRBASE snapshot.
+  zones                   Request and print a ZONE snapshot.
   all <text>              Send a MOOSE MESSAGE to all players.
   blue <text>             Send a MOOSE MESSAGE to blue coalition.
   red <text>              Send a MOOSE MESSAGE to red coalition.
@@ -317,6 +335,29 @@ def _print_unit_snapshot(units: dict[str, dict[str, Any]], limit: int = 40) -> N
         print(f"  ... {len(items) - limit} more units not shown")
 
 
+def _print_static_snapshot(statics: dict[str, dict[str, Any]], limit: int = 40) -> None:
+    """Print a compact STATIC snapshot summary.
+
+    :param statics: Mapping from object id to static payload.
+    :param limit: Maximum number of statics to print.
+    """
+
+    items = list(statics.values())
+    print(f"statics={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        coalition = item.get("coalition", "")
+        category = item.get("category", "")
+        dcs_type = item.get("dcs_type", "")
+        alive = item.get("alive", "")
+        active = item.get("active", "")
+        print(f"  {object_id} coalition={coalition} category={category} dcs_type={dcs_type} alive={alive} active={active}")
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more statics not shown")
+
+
 def _print_airbase_snapshot(airbases: dict[str, dict[str, Any]], limit: int = 60) -> None:
     """Print a compact AIRBASE snapshot summary.
 
@@ -337,6 +378,29 @@ def _print_airbase_snapshot(airbases: dict[str, dict[str, Any]], limit: int = 60
 
     if len(items) > limit:
         print(f"  ... {len(items) - limit} more airbases not shown")
+
+
+def _print_zone_snapshot(zones: dict[str, dict[str, Any]], limit: int = 60) -> None:
+    """Print a compact ZONE snapshot summary.
+
+    :param zones: Mapping from object id to zone payload.
+    :param limit: Maximum number of zones to print.
+    """
+
+    items = list(zones.values())
+    print(f"zones={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        category = item.get("category", "")
+        source = item.get("source", "")
+        radius = item.get("radius", "")
+        x = item.get("x", "")
+        z = item.get("z", "")
+        print(f"  {object_id} category={category} source={source} radius={radius} x={x} z={z}")
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more zones not shown")
 
 
 async def run_interactive_console(server: MooseBridgeServer) -> None:
@@ -389,10 +453,20 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
                 print(f"ACK: {ack}")
                 _print_unit_snapshot(server.state.units)
                 continue
+            if command == "statics":
+                ack = await server.snapshot_statics()
+                print(f"ACK: {ack}")
+                _print_static_snapshot(server.state.statics)
+                continue
             if command == "airbases":
                 ack = await server.snapshot_airbases()
                 print(f"ACK: {ack}")
                 _print_airbase_snapshot(server.state.airbases)
+                continue
+            if command == "zones":
+                ack = await server.snapshot_zones()
+                print(f"ACK: {ack}")
+                _print_zone_snapshot(server.state.zones)
                 continue
             if command == "all":
                 if not argument:
