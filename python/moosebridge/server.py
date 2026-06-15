@@ -365,8 +365,9 @@ def _print_static_snapshot(statics: dict[str, dict[str, Any]], limit: int = 40) 
         category = item.get("category", "")
         dcs_type = item.get("dcs_type", "")
         alive = item.get("alive", "")
-        active = item.get("active", "")
-        print(f"  {object_id} coalition={coalition} category={category} dcs_type={dcs_type} alive={alive} active={active}")
+        x = item.get("x", "")
+        z = item.get("z", "")
+        print(f"  {object_id} coalition={coalition} category={category} dcs_type={dcs_type} alive={alive} x={x} z={z}")
 
     if len(items) > limit:
         print(f"  ... {len(items) - limit} more statics not shown")
