@@ -129,8 +129,8 @@ end
 
 function MOOSE_BRIDGE:_SafeCall(object, method_name)
   if not object or not method_name then return nil end
-  local method = object[method_name]
-  if not method then return nil end
+  local ok_method, method = pcall(function() return object[method_name] end)
+  if not ok_method or not method then return nil end
   local ok, value = pcall(function() return method(object) end)
   if ok then return value end
   return nil
@@ -159,14 +159,89 @@ function MOOSE_BRIDGE:_NumberOrZero(value)
   return 0
 end
 
+function MOOSE_BRIDGE:_IsDcsUnitAlive(unit)
+  if not unit then return false end
+
+  local ok_exist, exists = pcall(function() return unit:isExist() end)
+  if ok_exist and not exists then return false end
+
+  local ok_life, life = pcall(function() return unit:getLife() end)
+  if ok_life and type(life) == "number" then return life > 0 end
+
+  return true
+end
+
+function MOOSE_BRIDGE:_IsMooseUnitAlive(unit)
+  if not unit then return false end
+
+  local alive = self:_SafeCall(unit, "IsAlive")
+  if alive ~= nil then return alive and true or false end
+
+  local dcs_unit = self:_SafeCall(unit, "GetDCSObject")
+  if dcs_unit then return self:_IsDcsUnitAlive(dcs_unit) end
+
+  return false
+end
+
+function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
+  if type(units) ~= "table" then return nil end
+
+  local count = 0
+  for _, unit in pairs(units) do
+    if alive_only then
+      if self:_IsMooseUnitAlive(unit) then count = count + 1 end
+    else
+      count = count + 1
+    end
+  end
+
+  return count
+end
+
+function MOOSE_BRIDGE:_CountDcsGroupUnits(group, alive_only)
+  local dcs_group = self:_SafeCall(group, "GetDCSObject")
+  if not dcs_group then return nil end
+
+  local ok, units = pcall(function() return dcs_group:getUnits() end)
+  if not ok or type(units) ~= "table" then return nil end
+
+  local count = 0
+  for _, unit in pairs(units) do
+    if alive_only then
+      if self:_IsDcsUnitAlive(unit) then count = count + 1 end
+    else
+      count = count + 1
+    end
+  end
+
+  return count
+end
+
+function MOOSE_BRIDGE:_CountGroupUnits(group, alive_only)
+  local units = self:_SafeCall(group, "GetUnits")
+  local count = self:_CountUnitsInTable(units, alive_only)
+  if count ~= nil then return count end
+
+  count = self:_CountDcsGroupUnits(group, alive_only)
+  if count ~= nil then return count end
+
+  if alive_only then
+    count = self:_SafeCall(group, "CountAliveUnits")
+  else
+    count = self:_SafeCall(group, "CountUnits")
+  end
+
+  return self:_NumberOrZero(count)
+end
+
 function MOOSE_BRIDGE:_BuildGroupSnapshotItem(group_name, group)
   local name = self:_SafeCall(group, "GetName") or group_name
   local coalition_value = self:_SafeCall(group, "GetCoalition")
   local category = self:_SafeCall(group, "GetCategoryName") or self:_SafeCall(group, "GetCategory")
   local alive = self:_SafeCall(group, "IsAlive")
   local active = self:_SafeCall(group, "IsActive")
-  local unit_count = self:_SafeCall(group, "CountUnits")
-  local alive_unit_count = self:_SafeCall(group, "CountAliveUnits")
+  local unit_count = self:_CountGroupUnits(group, false)
+  local alive_unit_count = self:_CountGroupUnits(group, true)
 
   return {
     object_id = "GROUP:" .. safe_tostring(name),
