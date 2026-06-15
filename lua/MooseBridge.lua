@@ -226,6 +226,26 @@ function MOOSE_BRIDGE:_DcsPoint(object)
   return self:_DcsCall(object, "getPoint")
 end
 
+function MOOSE_BRIDGE:_PointFromMooseObject(object)
+  if not object then return nil end
+
+  local coordinate = self:_SafeCall(object, "GetCoordinate")
+  if coordinate then
+    local vec3 = self:_SafeCall(coordinate, "GetVec3")
+    if vec3 then return vec3 end
+  end
+
+  local vec3 = self:_SafeCall(object, "GetVec3") or self:_SafeCall(object, "GetPointVec3")
+  if vec3 then return vec3 end
+
+  if object.Coordinate then
+    vec3 = self:_SafeCall(object.Coordinate, "GetVec3")
+    if vec3 then return vec3 end
+  end
+
+  return nil
+end
+
 function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
   if type(units) ~= "table" then return nil end
 
@@ -393,8 +413,7 @@ function MOOSE_BRIDGE:_BuildStaticSnapshotItem(static_name, static)
   local dcs_type = self:_SafeCall(static, "GetTypeName") or self:_DcsTypeName(dcs_static)
   local alive = self:_SafeCall(static, "IsAlive")
   if alive == nil then alive = self:_IsDcsObjectAlive(dcs_static) end
-  local active = self:_SafeCall(static, "IsActive")
-  local point = self:_DcsPoint(dcs_static)
+  local point = self:_DcsPoint(dcs_static) or self:_PointFromMooseObject(static)
 
   local item = {
     object_id = "STATIC:" .. safe_tostring(name),
@@ -404,7 +423,6 @@ function MOOSE_BRIDGE:_BuildStaticSnapshotItem(static_name, static)
     coalition = self:_CoalitionToName(coalition_value),
     dcs_type = dcs_type and safe_tostring(dcs_type) or nil,
     alive = self:_BoolOrFalse(alive),
-    active = self:_BoolOrFalse(active),
   }
 
   if point then item.x = point.x; item.y = point.y; item.z = point.z end
@@ -469,18 +487,7 @@ function MOOSE_BRIDGE:BuildAirbaseSnapshot()
 end
 
 function MOOSE_BRIDGE:_ZonePointFromMoose(zone)
-  local coordinate = self:_SafeCall(zone, "GetCoordinate")
-  if coordinate then
-    local vec3 = self:_SafeCall(coordinate, "GetVec3")
-    if vec3 then return vec3 end
-  end
-
-  if zone.Coordinate then
-    local vec3 = self:_SafeCall(zone.Coordinate, "GetVec3")
-    if vec3 then return vec3 end
-  end
-
-  return nil
+  return self:_PointFromMooseObject(zone)
 end
 
 function MOOSE_BRIDGE:_BuildMooseZoneSnapshotItem(zone_name, zone, source)
