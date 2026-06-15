@@ -47,6 +47,8 @@ class MooseBridgeState:
     statics: dict[str, dict[str, Any]] = field(default_factory=dict)
     airbases: dict[str, dict[str, Any]] = field(default_factory=dict)
     zones: dict[str, dict[str, Any]] = field(default_factory=dict)
+    opszones: dict[str, dict[str, Any]] = field(default_factory=dict)
+    opsgroups: dict[str, dict[str, Any]] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
 
     def apply_message(self, message: dict[str, Any]) -> None:
@@ -90,6 +92,10 @@ class MooseBridgeState:
             self.airbases = self._index_objects(payload.get("airbases", []))
         elif kind == "zones":
             self.zones = self._index_objects(payload.get("zones", []))
+        elif kind == "opszones":
+            self.opszones = self._index_objects(payload.get("opszones", []))
+        elif kind == "opsgroups":
+            self.opsgroups = self._index_objects(payload.get("opsgroups", []))
 
     @staticmethod
     def _index_objects(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
