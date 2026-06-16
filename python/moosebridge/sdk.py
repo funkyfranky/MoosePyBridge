@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from .models import Auftrag, OpsGroup, OpsZone
 from .server import MooseBridgeServer
+from .state import MooseBridgeState
 
 SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
 
@@ -55,6 +57,60 @@ class MooseBridgeClient:
 
     def __init__(self, server: MooseBridgeServer) -> None:
         self.server = server
+
+    @property
+    def state(self) -> MooseBridgeState:
+        """Return the current typed and raw bridge state.
+
+        :returns: Local state mirror maintained by the server.
+        """
+
+        return self.server.state
+
+    def opszone(self, object_id: str) -> OpsZone | None:
+        """Return a typed OPSZONE by object id.
+
+        :param object_id: Stable bridge object id such as ``OPSZONE:Town Fight``.
+        :returns: Typed OPSZONE or ``None``.
+        """
+
+        return self.state.opszone(object_id)
+
+    def opsgroup(self, object_id: str) -> OpsGroup | None:
+        """Return a typed OPSGROUP by object id.
+
+        :param object_id: Stable bridge object id such as ``OPSGROUP:Aerial-1``.
+        :returns: Typed OPSGROUP or ``None``.
+        """
+
+        return self.state.opsgroup(object_id)
+
+    def auftrag(self, object_id: str) -> Auftrag | None:
+        """Return a typed AUFTRAG by object id.
+
+        :param object_id: Stable bridge object id such as ``AUFTRAG:1``.
+        :returns: Typed AUFTRAG or ``None``.
+        """
+
+        return self.state.auftrag(object_id)
+
+    def current_auftrag_for_group(self, opsgroup_id: str) -> Auftrag | None:
+        """Return the current AUFTRAG assigned to an OPSGROUP.
+
+        :param opsgroup_id: Stable OPSGROUP object id.
+        :returns: Typed AUFTRAG or ``None``.
+        """
+
+        return self.state.current_auftrag_for_group(opsgroup_id)
+
+    def queued_auftraege_for_group(self, opsgroup_id: str) -> list[Auftrag]:
+        """Return queued AUFTRAG objects for an OPSGROUP.
+
+        :param opsgroup_id: Stable OPSGROUP object id.
+        :returns: Typed AUFTRAG objects present in the local state mirror.
+        """
+
+        return self.state.queued_auftraege_for_group(opsgroup_id)
 
     async def message_coalition(self, coalition: str, text: str, duration: int = 10) -> dict[str, Any]:
         """Send a message to a coalition in DCS.
