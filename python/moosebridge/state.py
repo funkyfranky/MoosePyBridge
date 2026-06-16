@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, TypeVar
+
+from .models import Auftrag, OpsGroup, OpsZone
+
+
+T = TypeVar("T")
 
 
 @dataclass(slots=True)
@@ -50,6 +55,9 @@ class MooseBridgeState:
     opszones: dict[str, dict[str, Any]] = field(default_factory=dict)
     opsgroups: dict[str, dict[str, Any]] = field(default_factory=dict)
     auftraege: dict[str, dict[str, Any]] = field(default_factory=dict)
+    opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
+    opsgroup_objects: dict[str, OpsGroup] = field(default_factory=dict)
+    auftrag_objects: dict[str, Auftrag] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
 
     def apply_message(self, message: dict[str, Any]) -> None:
@@ -94,11 +102,17 @@ class MooseBridgeState:
         elif kind == "zones":
             self.zones = self._index_objects(payload.get("zones", []))
         elif kind == "opszones":
-            self.opszones = self._index_objects(payload.get("opszones", []))
+            items = payload.get("opszones", [])
+            self.opszones = self._index_objects(items)
+            self.opszone_objects = self._index_typed_objects(items, OpsZone.from_payload)
         elif kind == "opsgroups":
-            self.opsgroups = self._index_objects(payload.get("opsgroups", []))
+            items = payload.get("opsgroups", [])
+            self.opsgroups = self._index_objects(items)
+            self.opsgroup_objects = self._index_typed_objects(items, OpsGroup.from_payload)
         elif kind == "auftraege":
-            self.auftraege = self._index_objects(payload.get("auftraege", []))
+            items = payload.get("auftraege", [])
+            self.auftraege = self._index_objects(items)
+            self.auftrag_objects = self._index_typed_objects(items, Auftrag.from_payload)
 
     @staticmethod
     def _index_objects(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -113,4 +127,20 @@ class MooseBridgeState:
             object_id = item.get("object_id")
             if object_id:
                 indexed[str(object_id)] = item
+        return indexed
+
+    @staticmethod
+    def _index_typed_objects(items: list[dict[str, Any]], factory: Callable[[dict[str, Any]], T]) -> dict[str, T]:
+        """Index a list of protocol objects as typed models.
+
+        :param items: Objects received from DCS.
+        :param factory: Function converting one payload into a typed model.
+        :returns: Mapping from object id to typed model.
+        """
+
+        indexed: dict[str, T] = {}
+        for item in items:
+            object_id = item.get("object_id")
+            if object_id:
+                indexed[str(object_id)] = factory(item)
         return indexed
