@@ -1,6 +1,6 @@
 """MOOSE Bridge Python package."""
 
-from .models import Auftrag, MooseSnapshotObject, OpsGroup, OpsZone
+from .models import Auftrag, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
 from .protocol import BridgeCommand, BridgeMessage
 from .server import MooseBridgeServer
 from .sdk import MooseBridgeClient
@@ -17,4 +17,6 @@ __all__ = [
     "MooseSnapshotObject",
     "OpsGroup",
     "OpsZone",
+    "TargetObjectSnapshot",
+    "TargetSnapshot",
 ]
