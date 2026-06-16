@@ -924,6 +924,110 @@ function MOOSE_BRIDGE:_CollectLegionNames(legions)
   return result
 end
 
+function MOOSE_BRIDGE:_LegionKind(legion)
+  if self:_SafeCall(legion, "IsAirwing") then return "AIRWING" end
+  if self:_SafeCall(legion, "IsBrigade") then return "BRIGADE" end
+  if self:_SafeCall(legion, "IsFleet") then return "FLEET" end
+  return self:_OpsClassName(legion, "LEGION")
+end
+
+function MOOSE_BRIDGE:_LegionName(legion, fallback)
+  if not legion then return fallback end
+  return self:_SafeCall(legion, "GetName") or legion.alias or fallback
+end
+
+function MOOSE_BRIDGE:_CohortName(cohort, fallback)
+  if not cohort then return fallback end
+  return self:_SafeCall(cohort, "GetName") or cohort.name or fallback
+end
+
+function MOOSE_BRIDGE:_CohortKind(cohort)
+  if not cohort then return nil end
+  if cohort.isAir then return "AIR" end
+  if cohort.isGround then return "GROUND" end
+  if cohort.isNaval then return "NAVAL" end
+  return self:_OpsClassName(cohort, "COHORT")
+end
+
+function MOOSE_BRIDGE:_CollectCohortIds(cohorts)
+  local result = {}; local seen = {}
+  if type(cohorts) ~= "table" then return result end
+  for index, cohort in pairs(cohorts) do
+    local fallback = type(index) == "string" and index or nil
+    local name = self:_CohortName(cohort, fallback)
+    append_unique(result, seen, name and ("COHORT:" .. safe_tostring(name)) or nil)
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_BuildCohortSummary(cohort, index)
+  local fallback = type(index) == "string" and index or nil
+  local name = self:_CohortName(cohort, fallback)
+  if not name then return nil end
+  return {
+    object_id="COHORT:" .. safe_tostring(name),
+    name=safe_tostring(name),
+    category=self:_CohortKind(cohort),
+    class_name=self:_OpsClassName(cohort, "COHORT"),
+    is_air=self:_BoolOrFalse(cohort and cohort.isAir),
+    is_ground=self:_BoolOrFalse(cohort and cohort.isGround),
+    is_naval=self:_BoolOrFalse(cohort and cohort.isNaval),
+  }
+end
+
+function MOOSE_BRIDGE:_BuildCohortSummaries(cohorts)
+  local result = {}
+  if type(cohorts) ~= "table" then return result end
+  for index, cohort in pairs(cohorts) do
+    local ok, item = pcall(function() return self:_BuildCohortSummary(cohort, index) end)
+    if ok and item then result[#result + 1] = item end
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_BuildLegionSnapshotItem(legion_name, legion, source)
+  local name = self:_LegionName(legion, legion_name)
+  if not name then return nil end
+  local point = self:_PointFromMooseObject(legion)
+  local airbase = self:_SafeCall(legion, "GetAirbase")
+  local item = {
+    object_id="LEGION:"..safe_tostring(name),
+    dcs_name=safe_tostring(name),
+    object_type="LEGION",
+    category=self:_LegionKind(legion),
+    class_name=self:_OpsClassName(legion, "LEGION"),
+    source=source,
+    name=safe_tostring(name),
+    alias=string_or_nil(legion and legion.alias),
+    state=string_or_nil(self:_SafeCall(legion, "GetState")),
+    coalition=self:_CoalitionToName(self:_SafeCall(legion, "GetCoalition")),
+    coalition_name=string_or_nil(self:_SafeCall(legion, "GetCoalitionName")),
+    airbase_name=string_or_nil(self:_SafeCall(legion, "GetAirbaseName") or self:_ObjectName(airbase)),
+    cohort_ids=self:_CollectCohortIds(legion and legion.cohorts),
+    cohorts=self:_BuildCohortSummaries(legion and legion.cohorts),
+    n_cohorts=self:_CountTable((legion and legion.cohorts) or {}),
+    auftrag_queue_ids=self:_CollectAuftragIdsFromQueue(legion and legion.missionqueue),
+  }
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:BuildLegionSnapshot()
+  local result = {}; local seen = {}
+  if _DATABASE and type(_DATABASE.LEGIONS) == "table" then
+    for name, legion in pairs(_DATABASE.LEGIONS) do
+      local ok, item = pcall(function() return self:_BuildLegionSnapshotItem(name, legion, "database.LEGIONS") end)
+      if ok and item and item.object_id and not seen[item.object_id] then
+        result[#result + 1] = item
+        seen[item.object_id] = true
+      elseif not ok then
+        self:_Log("Failed to snapshot legion " .. safe_tostring(name) .. ": " .. safe_tostring(item))
+      end
+    end
+  end
+  return result
+end
+
 function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
   local object_id = self:_AuftragObjectId(auftrag)
   local auftrag_type = self:_SafeCall(auftrag, "GetType") or auftrag.type
@@ -1033,6 +1137,9 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   end)
   self:RegisterCommand("snapshot.opsgroups", function(cmd)
     local opsgroups = self:BuildOpsGroupSnapshot(); self:SendSnapshot("opsgroups", {opsgroups=opsgroups}); return {kind="opsgroups", count=#opsgroups}
+  end)
+  self:RegisterCommand("snapshot.legions", function(cmd)
+    local legions = self:BuildLegionSnapshot(); self:SendSnapshot("legions", {legions=legions}); return {kind="legions", count=#legions}
   end)
   self:RegisterCommand("snapshot.auftraege", function(cmd)
     local auftraege = self:BuildAuftragSnapshot(); self:SendSnapshot("auftraege", {auftraege=auftraege}); return {kind="auftraege", count=#auftraege}
