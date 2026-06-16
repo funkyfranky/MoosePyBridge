@@ -92,6 +92,27 @@ def test_target_snapshot_from_payload() -> None:
     assert target.objects[0].type == "OpsZone"
 
 
+def test_zone_target_is_not_remapped_to_opszone() -> None:
+    payload = {
+        "object_id": "TARGET:1",
+        "name": "Town Fight",
+        "category": "Zone",
+        "objects": [
+            {
+                "id": 1,
+                "type": "Zone",
+                "name": "Town Fight",
+                "object_id": "ZONE:Town Fight",
+            }
+        ],
+    }
+
+    target = TargetSnapshot.from_payload(payload)
+
+    assert target.objects[0].type == "Zone"
+    assert target.objects[0].object_id == "ZONE:Town Fight"
+
+
 def test_auftrag_model_from_payload() -> None:
     payload = {
         "object_id": "AUFTRAG:1",
