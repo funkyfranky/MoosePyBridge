@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
 
+from .legions import Legion
 from .models import Auftrag, OpsGroup, OpsZone
 
 
@@ -55,9 +56,11 @@ class MooseBridgeState:
     opszones: dict[str, dict[str, Any]] = field(default_factory=dict)
     opsgroups: dict[str, dict[str, Any]] = field(default_factory=dict)
     auftraege: dict[str, dict[str, Any]] = field(default_factory=dict)
+    legions: dict[str, dict[str, Any]] = field(default_factory=dict)
     opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
     opsgroup_objects: dict[str, OpsGroup] = field(default_factory=dict)
     auftrag_objects: dict[str, Auftrag] = field(default_factory=dict)
+    legion_objects: dict[str, Legion] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
 
     def apply_message(self, message: dict[str, Any]) -> None:
@@ -109,6 +112,15 @@ class MooseBridgeState:
 
         return self.auftrag_objects.get(object_id)
 
+    def legion(self, object_id: str) -> Legion | None:
+        """Return a typed LEGION by object id.
+
+        :param object_id: Stable bridge object id such as ``LEGION:US AW Batumi``.
+        :returns: Typed LEGION or ``None``.
+        """
+
+        return self.legion_objects.get(object_id)
+
     def current_auftrag_for_group(self, opsgroup_id: str) -> Auftrag | None:
         """Return the current AUFTRAG assigned to an OPSGROUP.
 
@@ -132,6 +144,18 @@ class MooseBridgeState:
         if not group:
             return []
         return [auftrag for auftrag_id in group.auftrag_queue_ids if (auftrag := self.auftrag(auftrag_id))]
+
+    def queued_auftraege_for_legion(self, legion_id: str) -> list[Auftrag]:
+        """Return queued AUFTRAG objects for a LEGION.
+
+        :param legion_id: Stable LEGION object id.
+        :returns: Typed AUFTRAG objects present in the mirrored state.
+        """
+
+        legion = self.legion(legion_id)
+        if not legion:
+            return []
+        return [auftrag for auftrag_id in legion.auftrag_queue_ids if (auftrag := self.auftrag(auftrag_id))]
 
     def _apply_snapshot(self, message: dict[str, Any]) -> None:
         """Apply a snapshot message to the local state mirror.
@@ -164,6 +188,10 @@ class MooseBridgeState:
             items = payload.get("auftraege", [])
             self.auftraege = self._index_objects(items)
             self.auftrag_objects = self._index_typed_objects(items, Auftrag.from_payload)
+        elif kind == "legions":
+            items = payload.get("legions", [])
+            self.legions = self._index_objects(items)
+            self.legion_objects = self._index_typed_objects(items, Legion.from_payload)
 
     @staticmethod
     def _index_objects(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
