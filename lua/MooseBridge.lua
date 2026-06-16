@@ -824,6 +824,7 @@ end
 
 function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
   local object_id = self:_AuftragObjectId(auftrag)
+  local auftrag_type = self:_SafeCall(auftrag, "GetType") or auftrag.type
   local assigned_group_ids = {}
   local group_seen = {}
   local opsgroups = self:_SafeCall(auftrag, "GetOpsGroups")
@@ -837,11 +838,11 @@ function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
     object_id=object_id,
     dcs_name=safe_tostring(auftrag.name or object_id),
     object_type="AUFTRAG",
-    category=string_or_nil(auftrag.type),
+    category=string_or_nil(auftrag_type),
     source=source,
     auftragsnummer=self:_AuftragNumber(auftrag),
     name=string_or_nil(auftrag.name),
-    type=string_or_nil(auftrag.type),
+    type=string_or_nil(auftrag_type),
     status=string_or_nil(self:_SafeCall(auftrag, "GetState") or auftrag.status),
     prio=auftrag.prio,
     urgent=self:_BoolOrFalse(auftrag.urgent),
