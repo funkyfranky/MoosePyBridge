@@ -1028,6 +1028,99 @@ function MOOSE_BRIDGE:BuildLegionSnapshot()
   return result
 end
 
+function MOOSE_BRIDGE:_CohortObjectId(cohort, fallback)
+  local name = self:_CohortName(cohort, fallback)
+  if not name then return nil end
+  return "COHORT:" .. safe_tostring(name)
+end
+
+function MOOSE_BRIDGE:_CollectMissionTypeNames(mission_types)
+  local result = {}; local seen = {}
+  if type(mission_types) ~= "table" then return result end
+  for key, value in pairs(mission_types) do
+    if type(value) == "string" then
+      append_unique(result, seen, value)
+    elseif type(key) == "string" and value then
+      append_unique(result, seen, key)
+    elseif value ~= nil then
+      append_unique(result, seen, safe_tostring(value))
+    end
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_CollectOpsGroupIdsFromSet(set_opsgroup)
+  local result = {}; local seen = {}
+  if not set_opsgroup then return result end
+
+  local for_each = set_opsgroup.ForEachOpsGroup or set_opsgroup.ForEach
+  if for_each then
+    pcall(function()
+      for_each(set_opsgroup, function(opsgroup)
+        local name = self:_OpsName(opsgroup, nil)
+        if name then append_unique(result, seen, "OPSGROUP:" .. safe_tostring(name)) end
+      end)
+    end)
+  end
+
+  if #result == 0 and type(set_opsgroup.Set) == "table" then
+    for name, opsgroup in pairs(set_opsgroup.Set) do
+      local opsgroup_name = self:_OpsName(opsgroup, type(name) == "string" and name or nil)
+      if opsgroup_name then append_unique(result, seen, "OPSGROUP:" .. safe_tostring(opsgroup_name)) end
+    end
+  end
+
+  return result
+end
+
+function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
+  local name = self:_CohortName(cohort, cohort_name)
+  if not name then return nil end
+  local legion_name = self:_LegionName(cohort and cohort.legion, nil)
+  local mission_types = self:_CollectMissionTypeNames(self:_SafeCall(cohort, "GetMissionTypes"))
+  local opsgroups = self:_SafeCall(cohort, "GetOpsGroups")
+  local point = self:_PointFromMooseObject(cohort)
+
+  local item = {
+    object_id="COHORT:"..safe_tostring(name),
+    dcs_name=safe_tostring(name),
+    object_type="COHORT",
+    category=self:_CohortKind(cohort),
+    class_name=self:_OpsClassName(cohort, "COHORT"),
+    source=source,
+    name=safe_tostring(name),
+    legion_id=legion_name and ("LEGION:" .. safe_tostring(legion_name)) or nil,
+    legion_name=string_or_nil(legion_name),
+    is_air=self:_BoolOrFalse(cohort and cohort.isAir),
+    is_ground=self:_BoolOrFalse(cohort and cohort.isGround),
+    is_naval=self:_BoolOrFalse(cohort and cohort.isNaval),
+    mission_types=mission_types,
+    asset_count=self:_NumberOrNil(self:_SafeCall(cohort, "CountAssets")),
+    stock_asset_count=self:_NumberOrNil(self:_SafeCallArg(cohort, "CountAssets", true)),
+    spawned_asset_count=self:_NumberOrNil(self:_SafeCallArg(cohort, "CountAssets", false)),
+    opsgroup_count=self:_CountSet(opsgroups),
+    opsgroup_ids=self:_CollectOpsGroupIdsFromSet(opsgroups),
+  }
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:BuildCohortSnapshot()
+  local result = {}; local seen = {}
+  if _DATABASE and type(_DATABASE.COHORTS) == "table" then
+    for name, cohort in pairs(_DATABASE.COHORTS) do
+      local ok, item = pcall(function() return self:_BuildCohortSnapshotItem(name, cohort, "database.COHORTS") end)
+      if ok and item and item.object_id and not seen[item.object_id] then
+        result[#result + 1] = item
+        seen[item.object_id] = true
+      elseif not ok then
+        self:_Log("Failed to snapshot cohort " .. safe_tostring(name) .. ": " .. safe_tostring(item))
+      end
+    end
+  end
+  return result
+end
+
 function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
   local object_id = self:_AuftragObjectId(auftrag)
   local auftrag_type = self:_SafeCall(auftrag, "GetType") or auftrag.type
@@ -1137,6 +1230,9 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   end)
   self:RegisterCommand("snapshot.opsgroups", function(cmd)
     local opsgroups = self:BuildOpsGroupSnapshot(); self:SendSnapshot("opsgroups", {opsgroups=opsgroups}); return {kind="opsgroups", count=#opsgroups}
+  end)
+  self:RegisterCommand("snapshot.cohorts", function(cmd)
+    local cohorts = self:BuildCohortSnapshot(); self:SendSnapshot("cohorts", {cohorts=cohorts}); return {kind="cohorts", count=#cohorts}
   end)
   self:RegisterCommand("snapshot.legions", function(cmd)
     local legions = self:BuildLegionSnapshot(); self:SendSnapshot("legions", {legions=legions}); return {kind="legions", count=#legions}
