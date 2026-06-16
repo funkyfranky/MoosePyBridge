@@ -1,6 +1,6 @@
 """Tests for typed MOOSE Bridge snapshot models."""
 
-from moosebridge.models import Auftrag, OpsGroup, OpsZone
+from moosebridge.models import Auftrag, OpsGroup, OpsZone, TargetSnapshot
 from moosebridge.state import MooseBridgeState
 
 
@@ -54,6 +54,44 @@ def test_opsgroup_model_from_payload() -> None:
     assert group.detected_group_ids == ["GROUP:Enemy-1"]
 
 
+def test_target_snapshot_from_payload() -> None:
+    payload = {
+        "object_id": "TARGET:1",
+        "name": "Town Fight",
+        "state": "Alive",
+        "category": "Zone",
+        "x": -33711.171875,
+        "y": 0,
+        "z": -510211,
+        "objects": [
+            {
+                "id": 1,
+                "type": "OpsZone",
+                "name": "Town Fight",
+                "object_id": "OPSZONE:Town Fight",
+                "status": "Alive",
+                "n0": 1,
+                "n_dead": 0,
+                "n_destroyed": 0,
+                "life": 1,
+                "life0": 1,
+                "x": -33711.171875,
+                "z": -510211,
+            }
+        ],
+    }
+
+    target = TargetSnapshot.from_payload(payload)
+
+    assert target.object_id == "TARGET:1"
+    assert target.name == "Town Fight"
+    assert target.category == "Zone"
+    assert target.x == -33711.171875
+    assert len(target.objects) == 1
+    assert target.objects[0].object_id == "OPSZONE:Town Fight"
+    assert target.objects[0].type == "OpsZone"
+
+
 def test_auftrag_model_from_payload() -> None:
     payload = {
         "object_id": "AUFTRAG:1",
@@ -67,6 +105,13 @@ def test_auftrag_model_from_payload() -> None:
         "prio": 50,
         "urgent": False,
         "assigned_group_ids": ["OPSGROUP:Aerial-1"],
+        "legion_names": ["US AW Batumi"],
+        "target": {
+            "object_id": "TARGET:1",
+            "name": "Town Fight",
+            "category": "Zone",
+            "objects": [{"id": 1, "type": "OpsZone", "name": "Town Fight", "object_id": "OPSZONE:Town Fight"}],
+        },
     }
 
     auftrag = Auftrag.from_payload(payload)
@@ -77,6 +122,10 @@ def test_auftrag_model_from_payload() -> None:
     assert auftrag.status == "scheduled"
     assert auftrag.prio == 50
     assert auftrag.assigned_group_ids == ["OPSGROUP:Aerial-1"]
+    assert auftrag.legion_names == ["US AW Batumi"]
+    assert auftrag.target is not None
+    assert auftrag.target.object_id == "TARGET:1"
+    assert auftrag.target.objects[0].object_id == "OPSZONE:Town Fight"
 
 
 def test_state_indexes_typed_ops_models() -> None:
