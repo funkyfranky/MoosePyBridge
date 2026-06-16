@@ -31,6 +31,14 @@ local function string_or_nil(value)
   return tostring(value)
 end
 
+local function append_unique(list, seen, value)
+  if value == nil then return end
+  local key = tostring(value)
+  if seen[key] then return end
+  list[#list + 1] = key
+  seen[key] = true
+end
+
 function MOOSE_BRIDGE:New(host, port)
   local self = BASE and BASE:Inherit({}, BASE:New()) or {}
   setmetatable(self, { __index = MOOSE_BRIDGE })
@@ -196,6 +204,17 @@ function MOOSE_BRIDGE:_DcsCall(object, method_name)
   return nil
 end
 
+function MOOSE_BRIDGE:_ObjectName(object)
+  if not object then return nil end
+  local name = self:_SafeCall(object, "GetName")
+  if name then return safe_tostring(name) end
+  if object.alias then return safe_tostring(object.alias) end
+  if object.name then return safe_tostring(object.name) end
+  if object.Name then return safe_tostring(object.Name) end
+  if object.groupname then return safe_tostring(object.groupname) end
+  return nil
+end
+
 function MOOSE_BRIDGE:_CoalitionToName(value)
   if value == nil then return nil end
   if coalition and coalition.side then
@@ -282,6 +301,7 @@ function MOOSE_BRIDGE:_PointFromMooseObject(object)
     vec3 = self:_SafeCall(object.Coordinate, "GetVec3")
     if vec3 then return vec3 end
   end
+  if object.position then return object.position end
   return nil
 end
 
@@ -390,6 +410,21 @@ function MOOSE_BRIDGE:_MarkPoint(point, text)
     error("No mark implementation available")
   end
   return {x=point.x, y=point.y or 0, z=point.z, text=mark_text}
+end
+
+function MOOSE_BRIDGE:_CountTable(value)
+  if type(value) ~= "table" then return 0 end
+  local count = 0
+  for _, _ in pairs(value) do count = count + 1 end
+  return count
+end
+
+function MOOSE_BRIDGE:_CountSet(set_object)
+  if not set_object then return 0 end
+  local count = self:_SafeCall(set_object, "Count") or self:_SafeCall(set_object, "CountAlive")
+  if type(count) == "number" then return count end
+  if type(set_object.Set) == "table" then return self:_CountTable(set_object.Set) end
+  return 0
 end
 
 function MOOSE_BRIDGE:_CountUnitsInTable(units, alive_only)
@@ -603,7 +638,7 @@ end
 
 function MOOSE_BRIDGE:_OpsName(object, fallback)
   if not object then return fallback end
-  return self:_SafeCall(object, "GetName") or fallback or object.Name or object.name
+  return self:_SafeCall(object, "GetName") or fallback or object.Name or object.name or object.groupname
 end
 
 function MOOSE_BRIDGE:_OpsState(object)
@@ -613,17 +648,84 @@ end
 
 function MOOSE_BRIDGE:_OpsCoalition(object)
   if not object then return nil end
-  local coalition_value = self:_SafeCall(object, "GetCoalition") or object.Coalition or object.coalition
+  local coalition_value = self:_SafeCall(object, "GetCoalition") or object.Coalition or object.coalition or object.ownerCurrent
   return self:_CoalitionToName(coalition_value)
+end
+
+function MOOSE_BRIDGE:_AuftragNumber(auftrag)
+  if not auftrag then return nil end
+  return self:_SafeCall(auftrag, "GetAuftragsnummer") or auftrag.auftragsnummer or auftrag.Auftragsnummer
+end
+
+function MOOSE_BRIDGE:_AuftragObjectId(auftrag)
+  local number = self:_AuftragNumber(auftrag)
+  if number == nil then return nil end
+  return "AUFTRAG:" .. safe_tostring(number)
+end
+
+function MOOSE_BRIDGE:_CollectAuftragIdsFromQueue(missionqueue)
+  local ids = {}; local seen = {}
+  if type(missionqueue) ~= "table" then return ids end
+  for key, auftrag in pairs(missionqueue) do
+    local object_id = nil
+    if type(auftrag) == "table" then object_id = self:_AuftragObjectId(auftrag) end
+    if not object_id and type(key) == "number" then object_id = "AUFTRAG:" .. safe_tostring(key) end
+    append_unique(ids, seen, object_id)
+  end
+  return ids
+end
+
+function MOOSE_BRIDGE:_CollectDetectedGroupIds(opsgroup)
+  local result = {}; local seen = {}
+  local set_group = self:_SafeCall(opsgroup, "GetDetectedGroups")
+  if not set_group then return result end
+
+  local for_each = set_group.ForEachGroup
+  if for_each then
+    pcall(function()
+      for_each(set_group, function(group)
+        local name = self:_SafeCall(group, "GetName") or group.GroupName or group.groupname or group.Name or group.name
+        if name then append_unique(result, seen, "GROUP:" .. safe_tostring(name)) end
+      end)
+    end)
+  end
+
+  if #result == 0 and type(set_group.Set) == "table" then
+    for name, group in pairs(set_group.Set) do
+      local group_name = self:_SafeCall(group, "GetName") or name
+      append_unique(result, seen, "GROUP:" .. safe_tostring(group_name))
+    end
+  end
+
+  return result
 end
 
 function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
   local name = self:_OpsName(opszone, zone_name)
-  local class_name = self:_OpsClassName(opszone, "OPSZONE")
   local point = self:_PointFromMooseObject(opszone)
-  local radius = self:_SafeCall(opszone, "GetRadius") or opszone.Radius or opszone.radius
   local state = self:_OpsState(opszone)
-  local item = {object_id="OPSZONE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="OPSZONE",category=class_name,source=source,radius=radius,state=string_or_nil(state),coalition=self:_OpsCoalition(opszone)}
+  local item = {
+    object_id="OPSZONE:"..safe_tostring(name),
+    dcs_name=safe_tostring(name),
+    object_type="OPSZONE",
+    category=self:_OpsClassName(opszone, "OPSZONE"),
+    source=source,
+    name=safe_tostring(name),
+    zone_name=string_or_nil(opszone and opszone.zoneName),
+    zone_type=string_or_nil(opszone and opszone.zoneType),
+    zone_radius=opszone and opszone.zoneRadius or nil,
+    state=string_or_nil(state),
+    owner_current_name=self:_CoalitionToName(opszone and opszone.ownerCurrent),
+    owner_previous_name=self:_CoalitionToName(opszone and opszone.ownerPrevious),
+    is_contested=self:_BoolOrFalse(opszone and opszone.isContested),
+    n_red=opszone and opszone.Nred or 0,
+    n_blue=opszone and opszone.Nblu or 0,
+    n_neutral=opszone and opszone.Nnut or 0,
+    threat_red=opszone and opszone.Tred or 0,
+    threat_blue=opszone and opszone.Tblu or 0,
+    threat_neutral=opszone and opszone.Tnut or 0,
+    airbase_name=string_or_nil(opszone and opszone.airbaseName),
+  }
   if point then item.x = point.x; item.y = point.y; item.z = point.z end
   return item
 end
@@ -646,12 +748,43 @@ end
 function MOOSE_BRIDGE:_BuildOpsGroupSnapshotItem(group_name, opsgroup, source)
   local name = self:_OpsName(opsgroup, group_name)
   local group_kind = self:_OpsGroupKind(opsgroup)
-  local class_name = self:_OpsClassName(opsgroup, "OPSGROUP")
   local point = self:_PointFromMooseObject(opsgroup)
   local state = self:_OpsState(opsgroup)
   local alive = self:_SafeCall(opsgroup, "IsAlive")
   local active = self:_SafeCall(opsgroup, "IsActive")
-  local item = {object_id="OPSGROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="OPSGROUP",category=group_kind,class_name=class_name,source=source,group_name=safe_tostring(name),state=string_or_nil(state),coalition=self:_OpsCoalition(opsgroup),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active)}
+  local current_id = nil
+  if opsgroup and opsgroup.currentmission then current_id = "AUFTRAG:" .. safe_tostring(opsgroup.currentmission) end
+  local item = {
+    object_id="OPSGROUP:"..safe_tostring(name),
+    dcs_name=safe_tostring(name),
+    object_type="OPSGROUP",
+    category=group_kind,
+    class_name=self:_OpsClassName(opsgroup, "OPSGROUP"),
+    source=source,
+    name=safe_tostring(name),
+    group_name=safe_tostring(name),
+    state=string_or_nil(state),
+    coalition=self:_OpsCoalition(opsgroup),
+    alive=self:_BoolOrFalse(alive),
+    active=self:_BoolOrFalse(active),
+    is_ai=self:_BoolOrFalse(opsgroup and opsgroup.isAI),
+    is_late_activated=self:_BoolOrFalse(opsgroup and opsgroup.isLateActivated),
+    is_uncontrolled=self:_BoolOrFalse(opsgroup and opsgroup.isUncontrolled),
+    is_dead=self:_BoolOrFalse(opsgroup and opsgroup.isDead),
+    is_destroyed=self:_BoolOrFalse(opsgroup and opsgroup.isDestroyed),
+    current_wp=opsgroup and opsgroup.currentwp or nil,
+    speed_cruise=opsgroup and opsgroup.speedCruise or nil,
+    speed_wp=opsgroup and opsgroup.speedWp or nil,
+    heading=opsgroup and opsgroup.heading or nil,
+    travel_dist=opsgroup and opsgroup.traveldist or nil,
+    travel_time=opsgroup and opsgroup.traveltime or nil,
+    homebase_name=self:_ObjectName(opsgroup and opsgroup.homebase),
+    destbase_name=self:_ObjectName(opsgroup and opsgroup.destbase),
+    currbase_name=self:_ObjectName(opsgroup and opsgroup.currbase),
+    auftrag_current_id=current_id,
+    auftrag_queue_ids=self:_CollectAuftragIdsFromQueue(opsgroup and opsgroup.missionqueue),
+    detected_group_ids=self:_CollectDetectedGroupIds(opsgroup),
+  }
   if point then item.x = point.x; item.y = point.y; item.z = point.z end
   return item
 end
@@ -667,6 +800,81 @@ function MOOSE_BRIDGE:BuildOpsGroupSnapshot()
       local ok, item = pcall(function() return self:_BuildOpsGroupSnapshotItem(name, opsgroup, "database.FLIGHTGROUPS") end)
       if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
     end
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_AddAuftragCandidate(result, seen, auftrag, source)
+  if type(auftrag) ~= "table" then return end
+  local object_id = self:_AuftragObjectId(auftrag)
+  if not object_id or seen[object_id] then return end
+  local ok, item = pcall(function() return self:_BuildAuftragSnapshotItem(auftrag, source) end)
+  if ok and item and item.object_id then
+    result[#result + 1] = item
+    seen[item.object_id] = true
+  end
+end
+
+function MOOSE_BRIDGE:_CollectAuftragCandidatesFromOpsGroup(result, seen, opsgroup)
+  if type(opsgroup) ~= "table" then return end
+  if type(opsgroup.missionqueue) == "table" then
+    for _, auftrag in pairs(opsgroup.missionqueue) do self:_AddAuftragCandidate(result, seen, auftrag, "opsgroup.missionqueue") end
+  end
+end
+
+function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
+  local object_id = self:_AuftragObjectId(auftrag)
+  local assigned_group_ids = {}
+  local group_seen = {}
+  local opsgroups = self:_SafeCall(auftrag, "GetOpsGroups")
+  if type(opsgroups) == "table" then
+    for _, opsgroup in pairs(opsgroups) do
+      local name = self:_OpsName(opsgroup, nil)
+      if name then append_unique(assigned_group_ids, group_seen, "OPSGROUP:" .. safe_tostring(name)) end
+    end
+  end
+  return {
+    object_id=object_id,
+    dcs_name=safe_tostring(auftrag.name or object_id),
+    object_type="AUFTRAG",
+    category=string_or_nil(auftrag.type),
+    source=source,
+    auftragsnummer=self:_AuftragNumber(auftrag),
+    name=string_or_nil(auftrag.name),
+    type=string_or_nil(auftrag.type),
+    status=string_or_nil(self:_SafeCall(auftrag, "GetState") or auftrag.status),
+    prio=auftrag.prio,
+    urgent=self:_BoolOrFalse(auftrag.urgent),
+    importance=auftrag.importance,
+    t_start=auftrag.Tstart,
+    t_stop=auftrag.Tstop,
+    duration=auftrag.duration,
+    duration_exe=auftrag.durationExe,
+    t_started=auftrag.Tstarted,
+    t_executing=auftrag.Texecuting,
+    t_push=auftrag.Tpush,
+    t_over=auftrag.Tover,
+    n_assigned=auftrag.Nassigned,
+    n_elements=auftrag.Nelements,
+    n_dead=auftrag.Ndead,
+    n_kills=auftrag.Nkills,
+    n_casualties=auftrag.Ncasualties,
+    mission_task=string_or_nil(auftrag.missionTask),
+    mission_altitude=auftrag.missionAltitude,
+    mission_speed=auftrag.missionSpeed,
+    mission_range=auftrag.missionRange,
+    chief_name=self:_ObjectName(auftrag.chief),
+    commander_name=self:_ObjectName(auftrag.commander),
+    operation_name=self:_ObjectName(auftrag.operation),
+    assigned_group_ids=assigned_group_ids,
+  }
+end
+
+function MOOSE_BRIDGE:BuildAuftragSnapshot()
+  local result = {}; local seen = {}
+  for _, opsgroup in pairs(self.RegisteredOpsGroups or {}) do self:_CollectAuftragCandidatesFromOpsGroup(result, seen, opsgroup) end
+  if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
+    for _, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do self:_CollectAuftragCandidatesFromOpsGroup(result, seen, opsgroup) end
   end
   return result
 end
@@ -720,6 +928,9 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   end)
   self:RegisterCommand("snapshot.opsgroups", function(cmd)
     local opsgroups = self:BuildOpsGroupSnapshot(); self:SendSnapshot("opsgroups", {opsgroups=opsgroups}); return {kind="opsgroups", count=#opsgroups}
+  end)
+  self:RegisterCommand("snapshot.auftraege", function(cmd)
+    local auftraege = self:BuildAuftragSnapshot(); self:SendSnapshot("auftraege", {auftraege=auftraege}); return {kind="auftraege", count=#auftraege}
   end)
 end
 
