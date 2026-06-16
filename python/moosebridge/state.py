@@ -82,6 +82,57 @@ class MooseBridgeState:
         if message_type == "snapshot":
             self._apply_snapshot(message)
 
+    def opszone(self, object_id: str) -> OpsZone | None:
+        """Return a typed OPSZONE by object id.
+
+        :param object_id: Stable bridge object id such as ``OPSZONE:Town Fight``.
+        :returns: Typed OPSZONE or ``None``.
+        """
+
+        return self.opszone_objects.get(object_id)
+
+    def opsgroup(self, object_id: str) -> OpsGroup | None:
+        """Return a typed OPSGROUP by object id.
+
+        :param object_id: Stable bridge object id such as ``OPSGROUP:Aerial-1``.
+        :returns: Typed OPSGROUP or ``None``.
+        """
+
+        return self.opsgroup_objects.get(object_id)
+
+    def auftrag(self, object_id: str) -> Auftrag | None:
+        """Return a typed AUFTRAG by object id.
+
+        :param object_id: Stable bridge object id such as ``AUFTRAG:1``.
+        :returns: Typed AUFTRAG or ``None``.
+        """
+
+        return self.auftrag_objects.get(object_id)
+
+    def current_auftrag_for_group(self, opsgroup_id: str) -> Auftrag | None:
+        """Return the current AUFTRAG assigned to an OPSGROUP.
+
+        :param opsgroup_id: Stable OPSGROUP object id.
+        :returns: Current typed AUFTRAG or ``None``.
+        """
+
+        group = self.opsgroup(opsgroup_id)
+        if not group or not group.auftrag_current_id:
+            return None
+        return self.auftrag(group.auftrag_current_id)
+
+    def queued_auftraege_for_group(self, opsgroup_id: str) -> list[Auftrag]:
+        """Return queued AUFTRAG objects for an OPSGROUP.
+
+        :param opsgroup_id: Stable OPSGROUP object id.
+        :returns: Typed AUFTRAG objects present in the mirrored state.
+        """
+
+        group = self.opsgroup(opsgroup_id)
+        if not group:
+            return []
+        return [auftrag for auftrag_id in group.auftrag_queue_ids if (auftrag := self.auftrag(auftrag_id))]
+
     def _apply_snapshot(self, message: dict[str, Any]) -> None:
         """Apply a snapshot message to the local state mirror.
 
