@@ -4,8 +4,7 @@ Load order in DCS:
     1. Moose.lua
     2. MooseBridgeJson.lua
     3. MooseBridge.lua
-    4. MooseBridgeLegionSnapshots.lua
-    5. MooseBridgeMissionExample.lua
+    4. MooseBridgeMissionExample.lua
 
 Example:
     PYTHONPATH=python python examples/typed_state/inspect_legions.py --host 127.0.0.1 --port 51000
@@ -38,7 +37,7 @@ async def wait_for_dcs_connection(server: MooseBridgeServer, timeout_s: float) -
 
     raise TimeoutError(
         f"No DCS bridge connection after {timeout_s:.1f} s. "
-        "Make sure MooseBridge.lua and MooseBridgeLegionSnapshots.lua are loaded and use the same host/port."
+        "Make sure MooseBridge.lua is loaded and uses the same host/port."
     )
 
 
