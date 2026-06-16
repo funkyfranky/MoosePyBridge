@@ -96,6 +96,108 @@ class MooseSnapshotObject:
 
 
 @dataclass(slots=True, frozen=True)
+class TargetObjectSnapshot:
+    """Typed TARGET object entry from an AUFTRAG target snapshot."""
+
+    id: int | None = None
+    type: str | None = None
+    name: str | None = None
+    object_id: str | None = None
+    status: str | None = None
+    n0: int | None = None
+    n_dead: int | None = None
+    n_destroyed: int | None = None
+    life: float | None = None
+    life0: float | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "TargetObjectSnapshot":
+        """Create a typed target object from a raw payload.
+
+        :param payload: Raw target object payload.
+        :returns: Typed target object.
+        """
+
+        return cls(
+            id=_optional_int(payload.get("id")),
+            type=_optional_str(payload.get("type")),
+            name=_optional_str(payload.get("name")),
+            object_id=_optional_str(payload.get("object_id")),
+            status=_optional_str(payload.get("status")),
+            n0=_optional_int(payload.get("n0")),
+            n_dead=_optional_int(payload.get("n_dead")),
+            n_destroyed=_optional_int(payload.get("n_destroyed")),
+            life=_optional_float(payload.get("life")),
+            life0=_optional_float(payload.get("life0")),
+            x=_optional_float(payload.get("x")),
+            y=_optional_float(payload.get("y")),
+            z=_optional_float(payload.get("z")),
+            raw=payload,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class TargetSnapshot:
+    """Typed TARGET snapshot embedded in an AUFTRAG snapshot."""
+
+    object_id: str | None = None
+    name: str | None = None
+    state: str | None = None
+    category: str | None = None
+    heading: float | None = None
+    life: float | None = None
+    life0: float | None = None
+    damage: float | None = None
+    threat_level_max: float | None = None
+    n0: int | None = None
+    n_targets0: int | None = None
+    n_destroyed: int | None = None
+    n_dead: int | None = None
+    is_destroyed: bool = False
+    objects: list[TargetObjectSnapshot] = field(default_factory=list)
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "TargetSnapshot":
+        """Create a typed target snapshot from a raw payload.
+
+        :param payload: Raw target payload.
+        :returns: Typed target snapshot.
+        """
+
+        raw_objects = payload.get("objects")
+        objects = [TargetObjectSnapshot.from_payload(item) for item in raw_objects] if isinstance(raw_objects, list) else []
+        return cls(
+            object_id=_optional_str(payload.get("object_id")),
+            name=_optional_str(payload.get("name")),
+            state=_optional_str(payload.get("state")),
+            category=_optional_str(payload.get("category")),
+            heading=_optional_float(payload.get("heading")),
+            life=_optional_float(payload.get("life")),
+            life0=_optional_float(payload.get("life0")),
+            damage=_optional_float(payload.get("damage")),
+            threat_level_max=_optional_float(payload.get("threat_level_max")),
+            n0=_optional_int(payload.get("n0")),
+            n_targets0=_optional_int(payload.get("n_targets0")),
+            n_destroyed=_optional_int(payload.get("n_destroyed")),
+            n_dead=_optional_int(payload.get("n_dead")),
+            is_destroyed=_bool_or_false(payload.get("is_destroyed")),
+            objects=objects,
+            x=_optional_float(payload.get("x")),
+            y=_optional_float(payload.get("y")),
+            z=_optional_float(payload.get("z")),
+            raw=payload,
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class OpsZone(MooseSnapshotObject):
     """Typed OPSZONE snapshot."""
 
@@ -263,6 +365,8 @@ class Auftrag(MooseSnapshotObject):
     commander_name: str | None = None
     operation_name: str | None = None
     assigned_group_ids: list[str] = field(default_factory=list)
+    legion_names: list[str] = field(default_factory=list)
+    target: TargetSnapshot | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "Auftrag":
@@ -272,6 +376,8 @@ class Auftrag(MooseSnapshotObject):
         :returns: Typed AUFTRAG object.
         """
 
+        raw_target = payload.get("target")
+        target = TargetSnapshot.from_payload(raw_target) if isinstance(raw_target, dict) else None
         return cls(
             object_id=str(payload.get("object_id", "")),
             dcs_name=str(payload.get("dcs_name", "")),
@@ -307,4 +413,6 @@ class Auftrag(MooseSnapshotObject):
             commander_name=_optional_str(payload.get("commander_name")),
             operation_name=_optional_str(payload.get("operation_name")),
             assigned_group_ids=_string_list(payload.get("assigned_group_ids")),
+            legion_names=_string_list(payload.get("legion_names")),
+            target=target,
         )
