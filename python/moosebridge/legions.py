@@ -1,4 +1,4 @@
-"""Typed Python models for MOOSE LEGION snapshots."""
+"""Typed Python models for MOOSE LEGION and COHORT snapshots."""
 
 from __future__ import annotations
 
@@ -99,6 +99,67 @@ class CohortSummary:
             is_air=_bool_or_false(payload.get("is_air")),
             is_ground=_bool_or_false(payload.get("is_ground")),
             is_naval=_bool_or_false(payload.get("is_naval")),
+            raw=payload,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class Cohort:
+    """Typed COHORT snapshot for SQUADRON, PLATOON and FLOTILLA objects."""
+
+    object_id: str
+    dcs_name: str
+    object_type: str
+    category: str | None = None
+    class_name: str | None = None
+    source: str | None = None
+    name: str | None = None
+    legion_id: str | None = None
+    legion_name: str | None = None
+    is_air: bool = False
+    is_ground: bool = False
+    is_naval: bool = False
+    mission_types: list[str] = field(default_factory=list)
+    asset_count: int | None = None
+    stock_asset_count: int | None = None
+    spawned_asset_count: int | None = None
+    opsgroup_count: int | None = None
+    opsgroup_ids: list[str] = field(default_factory=list)
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "Cohort":
+        """Create a COHORT model from a raw payload.
+
+        :param payload: Raw COHORT snapshot payload.
+        :returns: Typed COHORT object.
+        """
+
+        return cls(
+            object_id=str(payload.get("object_id", "")),
+            dcs_name=str(payload.get("dcs_name", "")),
+            object_type=str(payload.get("object_type", "COHORT")),
+            category=_optional_str(payload.get("category")),
+            class_name=_optional_str(payload.get("class_name")),
+            source=_optional_str(payload.get("source")),
+            name=_optional_str(payload.get("name")),
+            legion_id=_optional_str(payload.get("legion_id")),
+            legion_name=_optional_str(payload.get("legion_name")),
+            is_air=_bool_or_false(payload.get("is_air")),
+            is_ground=_bool_or_false(payload.get("is_ground")),
+            is_naval=_bool_or_false(payload.get("is_naval")),
+            mission_types=_string_list(payload.get("mission_types")),
+            asset_count=_optional_int(payload.get("asset_count")),
+            stock_asset_count=_optional_int(payload.get("stock_asset_count")),
+            spawned_asset_count=_optional_int(payload.get("spawned_asset_count")),
+            opsgroup_count=_optional_int(payload.get("opsgroup_count")),
+            opsgroup_ids=_string_list(payload.get("opsgroup_ids")),
+            x=_optional_float(payload.get("x")),
+            y=_optional_float(payload.get("y")),
+            z=_optional_float(payload.get("z")),
             raw=payload,
         )
 
