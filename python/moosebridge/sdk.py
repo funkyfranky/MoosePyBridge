@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from .models import Auftrag, OpsGroup, OpsZone
@@ -111,6 +112,46 @@ class MooseBridgeClient:
         """
 
         return self.state.queued_auftraege_for_group(opsgroup_id)
+
+    async def snapshot_opszones(self) -> dict[str, Any]:
+        """Request an OPSZONE snapshot through the SDK.
+
+        :returns: Successful ACK message received from DCS.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        return require_ok(await self.server.snapshot_opszones())
+
+    async def snapshot_opsgroups(self) -> dict[str, Any]:
+        """Request an OPSGROUP snapshot through the SDK.
+
+        :returns: Successful ACK message received from DCS.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        return require_ok(await self.server.snapshot_opsgroups())
+
+    async def snapshot_auftraege(self) -> dict[str, Any]:
+        """Request an AUFTRAG snapshot through the SDK.
+
+        :returns: Successful ACK message received from DCS.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        return require_ok(await self.server.snapshot_auftraege())
+
+    async def request_ops_state(self) -> MooseBridgeState:
+        """Request OPS snapshots and return the updated local state mirror.
+
+        :returns: Updated local state mirror.
+        :raises MooseBridgeCommandError: If DCS rejects one of the snapshot commands.
+        """
+
+        await self.snapshot_opszones()
+        await self.snapshot_opsgroups()
+        await self.snapshot_auftraege()
+        await asyncio.sleep(0.1)
+        return self.state
 
     async def message_coalition(self, coalition: str, text: str, duration: int = 10) -> dict[str, Any]:
         """Send a message to a coalition in DCS.
