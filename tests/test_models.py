@@ -101,3 +101,55 @@ def test_state_indexes_typed_ops_models() -> None:
 
     assert state.auftraege["AUFTRAG:1"]["type"] == "Patrol Zone"
     assert state.auftrag_objects["AUFTRAG:1"].type == "Patrol Zone"
+
+
+def test_state_resolves_group_auftrag_relationships() -> None:
+    state = MooseBridgeState()
+
+    state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "opsgroups",
+            "payload": {
+                "opsgroups": [
+                    {
+                        "object_id": "OPSGROUP:Aerial-1",
+                        "dcs_name": "Aerial-1",
+                        "object_type": "OPSGROUP",
+                        "auftrag_current_id": "AUFTRAG:1",
+                        "auftrag_queue_ids": ["AUFTRAG:1", "AUFTRAG:2"],
+                    }
+                ]
+            },
+        }
+    )
+    state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "auftraege",
+            "payload": {
+                "auftraege": [
+                    {
+                        "object_id": "AUFTRAG:1",
+                        "dcs_name": "Auftrag Nr. 1",
+                        "object_type": "AUFTRAG",
+                        "type": "Patrol Zone",
+                    },
+                    {
+                        "object_id": "AUFTRAG:2",
+                        "dcs_name": "Auftrag Nr. 2",
+                        "object_type": "AUFTRAG",
+                        "type": "CAP",
+                    },
+                ]
+            },
+        }
+    )
+
+    assert state.opsgroup("OPSGROUP:Aerial-1") is not None
+    assert state.auftrag("AUFTRAG:1") is not None
+    assert state.current_auftrag_for_group("OPSGROUP:Aerial-1").type == "Patrol Zone"
+    assert [auftrag.object_id for auftrag in state.queued_auftraege_for_group("OPSGROUP:Aerial-1")] == [
+        "AUFTRAG:1",
+        "AUFTRAG:2",
+    ]
