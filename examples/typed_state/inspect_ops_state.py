@@ -2,7 +2,8 @@
 
 Run this script while DCS has loaded the MOOSE Bridge mission-side Lua files.
 The script starts a local Python bridge server, waits for the DCS Lua bridge to
-connect, requests OPS snapshots, and prints the typed Python state model.
+connect, requests OPS snapshots through the SDK, and prints the typed Python
+state model.
 
 Example:
     PYTHONPATH=python python examples/typed_state/inspect_ops_state.py --host 127.0.0.1 --port 51000
@@ -37,19 +38,6 @@ async def wait_for_dcs_connection(server: MooseBridgeServer, timeout_s: float) -
         f"No DCS bridge connection after {timeout_s:.1f} s. "
         "Make sure MooseBridge.lua is loaded in the mission and uses the same host/port."
     )
-
-
-async def request_ops_snapshots(client: MooseBridgeClient) -> None:
-    """Request the OPS snapshots needed for the typed state example.
-
-    :param client: MOOSE Bridge SDK client.
-    """
-
-    await client.server.snapshot_opszones()
-    await client.server.snapshot_opsgroups()
-    await client.server.snapshot_auftraege()
-
-    await asyncio.sleep(0.1)
 
 
 def print_opszones(client: MooseBridgeClient) -> None:
@@ -144,8 +132,8 @@ async def async_main(args: argparse.Namespace) -> int:
         print(f"Waiting for DCS bridge connection on {args.host}:{args.port} ...")
         await wait_for_dcs_connection(server, args.connect_timeout)
 
-        print("DCS connected. Requesting OPS snapshots ...")
-        await request_ops_snapshots(client)
+        print("DCS connected. Requesting OPS state through SDK ...")
+        await client.request_ops_state()
 
         print_opszones(client)
         print_opsgroups(client)
