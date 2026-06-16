@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
 
-from .legions import Legion
+from .legions import Cohort, Legion
 from .models import Auftrag, OpsGroup, OpsZone
 
 
@@ -56,10 +56,12 @@ class MooseBridgeState:
     opszones: dict[str, dict[str, Any]] = field(default_factory=dict)
     opsgroups: dict[str, dict[str, Any]] = field(default_factory=dict)
     auftraege: dict[str, dict[str, Any]] = field(default_factory=dict)
+    cohorts: dict[str, dict[str, Any]] = field(default_factory=dict)
     legions: dict[str, dict[str, Any]] = field(default_factory=dict)
     opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
     opsgroup_objects: dict[str, OpsGroup] = field(default_factory=dict)
     auftrag_objects: dict[str, Auftrag] = field(default_factory=dict)
+    cohort_objects: dict[str, Cohort] = field(default_factory=dict)
     legion_objects: dict[str, Legion] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
 
@@ -112,6 +114,15 @@ class MooseBridgeState:
 
         return self.auftrag_objects.get(object_id)
 
+    def cohort(self, object_id: str) -> Cohort | None:
+        """Return a typed COHORT by object id.
+
+        :param object_id: Stable bridge object id such as ``COHORT:F-18 Laage``.
+        :returns: Typed COHORT or ``None``.
+        """
+
+        return self.cohort_objects.get(object_id)
+
     def legion(self, object_id: str) -> Legion | None:
         """Return a typed LEGION by object id.
 
@@ -157,6 +168,15 @@ class MooseBridgeState:
             return []
         return [auftrag for auftrag_id in legion.auftrag_queue_ids if (auftrag := self.auftrag(auftrag_id))]
 
+    def cohorts_for_legion(self, legion_id: str) -> list[Cohort]:
+        """Return typed COHORT objects belonging to a LEGION.
+
+        :param legion_id: Stable LEGION object id.
+        :returns: COHORT objects present in the mirrored state.
+        """
+
+        return [cohort for cohort in self.cohort_objects.values() if cohort.legion_id == legion_id]
+
     def _apply_snapshot(self, message: dict[str, Any]) -> None:
         """Apply a snapshot message to the local state mirror.
 
@@ -188,6 +208,10 @@ class MooseBridgeState:
             items = payload.get("auftraege", [])
             self.auftraege = self._index_objects(items)
             self.auftrag_objects = self._index_typed_objects(items, Auftrag.from_payload)
+        elif kind == "cohorts":
+            items = payload.get("cohorts", [])
+            self.cohorts = self._index_objects(items)
+            self.cohort_objects = self._index_typed_objects(items, Cohort.from_payload)
         elif kind == "legions":
             items = payload.get("legions", [])
             self.legions = self._index_objects(items)
