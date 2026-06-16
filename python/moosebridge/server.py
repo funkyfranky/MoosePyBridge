@@ -212,12 +212,7 @@ class MooseBridgeServer:
         :returns: ACK message received from DCS.
         """
 
-        return await self.send_command(
-            BridgeCommand(
-                action="message.to_all",
-                params={"text": text, "duration": duration},
-            )
-        )
+        return await self.send_command(BridgeCommand(action="message.to_all", params={"text": text, "duration": duration}))
 
     async def smoke_at_point(self, x: float, z: float, color: str = "white", y: float = 0.0) -> dict[str, Any]:
         """Create smoke at a DCS world point.
@@ -319,6 +314,14 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.opsgroups", params={}))
 
+    async def snapshot_auftraege(self) -> dict[str, Any]:
+        """Request an AUFTRAG snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.auftraege", params={}))
+
     def _write_raw(self, direction: str, line: str) -> None:
         """Write one raw protocol line to the JSONL log.
 
@@ -343,6 +346,7 @@ Interactive commands:
   zones                   Request and print a ZONE snapshot.
   opszones                Request and print an OPSZONE snapshot.
   opsgroups               Request and print an OPSGROUP snapshot.
+  auftraege               Request and print an AUFTRAG snapshot.
   smoke <object_id> [color]       Smoke an object position.
   smokepoint <x> <z> [color]      Smoke a DCS world point.
   mark <object_id> <text>         Mark an object position.
@@ -514,10 +518,12 @@ def _print_opszone_snapshot(opszones: dict[str, dict[str, Any]], limit: int = 60
         category = item.get("category", "")
         source = item.get("source", "")
         state = item.get("state", "")
-        radius = item.get("radius", "")
+        owner = item.get("owner_current_name", "")
+        zone_type = item.get("zone_type", "")
+        radius = item.get("zone_radius", "")
         x = item.get("x", "")
         z = item.get("z", "")
-        print(f"  {object_id} category={category} source={source} state={state} radius={radius} x={x} z={z}")
+        print(f"  {object_id} category={category} source={source} state={state} owner={owner} zone_type={zone_type} radius={radius} x={x} z={z}")
 
     if len(items) > limit:
         print(f"  ... {len(items) - limit} more OPSZONEs not shown")
@@ -541,15 +547,43 @@ def _print_opsgroup_snapshot(opsgroups: dict[str, dict[str, Any]], limit: int = 
         state = item.get("state", "")
         alive = item.get("alive", "")
         active = item.get("active", "")
+        current_auftrag = item.get("auftrag_current_id", "")
+        queue = item.get("auftrag_queue_ids", [])
+        detected = item.get("detected_group_ids", [])
         x = item.get("x", "")
         z = item.get("z", "")
         print(
             f"  {object_id} category={category} source={source} coalition={coalition} "
-            f"state={state} alive={alive} active={active} x={x} z={z}"
+            f"state={state} alive={alive} active={active} auftrag={current_auftrag} "
+            f"queue={len(queue)} detected_groups={len(detected)} x={x} z={z}"
         )
 
     if len(items) > limit:
         print(f"  ... {len(items) - limit} more OPSGROUPs not shown")
+
+
+def _print_auftrag_snapshot(auftraege: dict[str, dict[str, Any]], limit: int = 60) -> None:
+    """Print a compact AUFTRAG snapshot summary.
+
+    :param auftraege: Mapping from object id to AUFTRAG payload.
+    :param limit: Maximum number of AUFTRAG objects to print.
+    """
+
+    items = list(auftraege.values())
+    print(f"auftraege={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        auftrag_type = item.get("type", "")
+        status = item.get("status", "")
+        name = item.get("name", "")
+        prio = item.get("prio", "")
+        urgent = item.get("urgent", "")
+        assigned = item.get("assigned_group_ids", [])
+        print(f"  {object_id} type={auftrag_type} status={status} name={name} prio={prio} urgent={urgent} assigned_groups={len(assigned)}")
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more AUFTRAG objects not shown")
 
 
 async def run_interactive_console(server: MooseBridgeServer) -> None:
@@ -626,6 +660,11 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
                 ack = await server.snapshot_opsgroups()
                 print(f"ACK: {ack}")
                 _print_opsgroup_snapshot(server.state.opsgroups)
+                continue
+            if command == "auftraege":
+                ack = await server.snapshot_auftraege()
+                print(f"ACK: {ack}")
+                _print_auftrag_snapshot(server.state.auftraege)
                 continue
             if command == "smoke":
                 object_id, _, color = argument.partition(" ")
