@@ -197,6 +197,16 @@ function MOOSE_BRIDGE:_SafeCall(object, method_name)
   return nil
 end
 
+function MOOSE_BRIDGE:_SafeCallArg(object, method_name, ...)
+  if not object or not method_name then return nil end
+  local ok_method, method = pcall(function() return object[method_name] end)
+  if not ok_method or not method then return nil end
+  local args = {...}
+  local ok, value = pcall(function() return method(object, unpack(args)) end)
+  if ok then return value end
+  return nil
+end
+
 function MOOSE_BRIDGE:_DcsCall(object, method_name)
   if not object or not method_name then return nil end
   local ok, value = pcall(function() return object[method_name](object) end)
@@ -822,6 +832,98 @@ function MOOSE_BRIDGE:_CollectAuftragCandidatesFromOpsGroup(result, seen, opsgro
   end
 end
 
+function MOOSE_BRIDGE:_PointFromCoordinate(coordinate)
+  if not coordinate then return nil end
+  local vec3 = self:_SafeCall(coordinate, "GetVec3")
+  if vec3 then return vec3 end
+  if coordinate.x and coordinate.z then return {x=coordinate.x, y=coordinate.y or 0, z=coordinate.z} end
+  return nil
+end
+
+function MOOSE_BRIDGE:_TargetObjectId(target_object)
+  if not target_object then return nil end
+  local target_type = target_object.Type
+  local name = target_object.Name
+  if not target_type or not name then return nil end
+  local prefix_by_type = {
+    Group="GROUP",
+    Unit="UNIT",
+    Static="STATIC",
+    Scenery="SCENERY",
+    Airbase="AIRBASE",
+    Zone="ZONE",
+    OpsZone="OPSZONE",
+  }
+  local prefix = prefix_by_type[target_type]
+  if not prefix then return nil end
+  return prefix .. ":" .. safe_tostring(name)
+end
+
+function MOOSE_BRIDGE:_BuildTargetObjectSnapshot(target, target_object)
+  if type(target_object) ~= "table" then return nil end
+  local coordinate = self:_SafeCallArg(target, "GetTargetCoordinate", target_object) or target_object.Coordinate
+  local point = self:_PointFromCoordinate(coordinate)
+  local item = {
+    id=target_object.ID,
+    type=string_or_nil(target_object.Type),
+    name=string_or_nil(target_object.Name),
+    object_id=self:_TargetObjectId(target_object),
+    status=string_or_nil(target_object.Status),
+    n0=target_object.N0,
+    n_dead=target_object.Ndead,
+    n_destroyed=target_object.Ndestroyed,
+    life=target_object.Life,
+    life0=target_object.Life0,
+  }
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:_BuildTargetSnapshot(target)
+  if type(target) ~= "table" then return nil end
+  local target_objects = {}
+  if type(target.targets) == "table" then
+    for _, target_object in pairs(target.targets) do
+      local ok, item = pcall(function() return self:_BuildTargetObjectSnapshot(target, target_object) end)
+      if ok and item then target_objects[#target_objects + 1] = item end
+    end
+  end
+
+  local point = self:_SafeCall(target, "GetVec3")
+  if not point then point = self:_PointFromCoordinate(self:_SafeCall(target, "GetCoordinate")) end
+
+  local item = {
+    object_id=target.uid and ("TARGET:" .. safe_tostring(target.uid)) or nil,
+    name=string_or_nil(self:_SafeCall(target, "GetName") or target.name),
+    state=string_or_nil(self:_SafeCall(target, "GetState")),
+    category=string_or_nil(self:_SafeCall(target, "GetCategory") or target.category),
+    heading=self:_SafeCall(target, "GetHeading"),
+    life=self:_SafeCall(target, "GetLife") or target.life,
+    life0=self:_SafeCall(target, "GetLife0") or target.life0,
+    damage=self:_SafeCall(target, "GetDamage"),
+    threat_level_max=self:_SafeCall(target, "GetThreatLevelMax") or target.threatlevel0,
+    n0=target.N0,
+    n_targets0=target.Ntargets0,
+    n_destroyed=target.Ndestroyed,
+    n_dead=target.Ndead,
+    is_destroyed=self:_BoolOrFalse(target.isDestroyed),
+    objects=target_objects,
+  }
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:_CollectLegionNames(legions)
+  local result = {}; local seen = {}
+  if type(legions) ~= "table" then return result end
+  for key, legion in pairs(legions) do
+    local name = self:_ObjectName(legion)
+    if not name and type(key) == "string" then name = key end
+    append_unique(result, seen, name)
+  end
+  return result
+end
+
 function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
   local object_id = self:_AuftragObjectId(auftrag)
   local auftrag_type = self:_SafeCall(auftrag, "GetType") or auftrag.type
@@ -868,6 +970,8 @@ function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
     commander_name=self:_ObjectName(auftrag.commander),
     operation_name=self:_ObjectName(auftrag.operation),
     assigned_group_ids=assigned_group_ids,
+    legion_names=self:_CollectLegionNames(auftrag.legions),
+    target=self:_BuildTargetSnapshot(auftrag.engageTarget),
   }
 end
 
