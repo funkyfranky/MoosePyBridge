@@ -104,6 +104,7 @@ def print_auftraege(client: MooseBridgeClient) -> None:
 
     for auftrag in auftraege:
         assigned = ", ".join(auftrag.assigned_group_ids) or "none"
+        legions = ", ".join(auftrag.legion_names) or "none"
         print(
             f"  {auftrag.object_id} "
             f"type={auftrag.type} "
@@ -111,8 +112,36 @@ def print_auftraege(client: MooseBridgeClient) -> None:
             f"name={auftrag.name} "
             f"prio={auftrag.prio} "
             f"urgent={auftrag.urgent} "
-            f"assigned_groups=[{assigned}]"
+            f"assigned_groups=[{assigned}] "
+            f"legions=[{legions}]"
         )
+
+        if not auftrag.target:
+            print("    target=none")
+            continue
+
+        target = auftrag.target
+        print(
+            f"    target={target.object_id} "
+            f"name={target.name} "
+            f"category={target.category} "
+            f"state={target.state} "
+            f"damage={target.damage} "
+            f"threat={target.threat_level_max} "
+            f"x={target.x} z={target.z} "
+            f"objects={len(target.objects)}"
+        )
+
+        for target_object in target.objects:
+            print(
+                f"      target_object id={target_object.id} "
+                f"type={target_object.type} "
+                f"name={target_object.name} "
+                f"object_id={target_object.object_id} "
+                f"status={target_object.status} "
+                f"life={target_object.life}/{target_object.life0} "
+                f"x={target_object.x} z={target_object.z}"
+            )
 
 
 async def async_main(args: argparse.Namespace) -> int:
