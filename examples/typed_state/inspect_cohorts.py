@@ -62,13 +62,17 @@ def print_cohorts(client: MooseBridgeClient) -> None:
 
     for cohort in cohorts:
         mission_types = ", ".join(cohort.mission_types) or "none"
+        mission_type_keys = ", ".join(cohort.mission_type_keys) or "none"
+        performer_categories = ", ".join(cohort.performer_categories) or "none"
         opsgroups = ", ".join(cohort.opsgroup_ids) or "none"
         print(
             f"  {cohort.object_id} "
             f"category={cohort.category} "
             f"class={cohort.class_name} "
+            f"performers=[{performer_categories}] "
             f"legion={cohort.legion_id} "
             f"mission_types=[{mission_types}] "
+            f"mission_type_keys=[{mission_type_keys}] "
             f"assets={cohort.asset_count} "
             f"stock={cohort.stock_asset_count} "
             f"spawned={cohort.spawned_asset_count} "
