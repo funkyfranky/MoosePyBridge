@@ -177,6 +177,29 @@ class MooseBridgeState:
 
         return [cohort for cohort in self.cohort_objects.values() if cohort.legion_id == legion_id]
 
+    def cohorts_capable_of(self, mission_type: str) -> list[Cohort]:
+        """Return COHORTs that advertise support for a mission type.
+
+        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :returns: COHORT objects with matching canonical mission type keys.
+        """
+
+        key = mission_type.strip().upper()
+        return [cohort for cohort in self.cohort_objects.values() if key in cohort.mission_type_keys]
+
+    def cohorts_with_stock_for_mission_type(self, mission_type: str) -> list[Cohort]:
+        """Return mission-capable COHORTs with at least one stocked asset.
+
+        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :returns: Mission-capable COHORT objects with ``stock_asset_count > 0``.
+        """
+
+        return [
+            cohort
+            for cohort in self.cohorts_capable_of(mission_type)
+            if cohort.stock_asset_count is not None and cohort.stock_asset_count > 0
+        ]
+
     def _apply_snapshot(self, message: dict[str, Any]) -> None:
         """Apply a snapshot message to the local state mirror.
 
