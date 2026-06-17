@@ -8,6 +8,7 @@ This example performs advisory-only validation:
     - executing coalition filter
     - LEGION-to-target distance ranking
     - COHORT mission performance reporting
+    - AIRWING payload availability and payload performance reporting
 
 Example:
     PYTHONPATH=python python examples/advisory/validate_auftrag_request.py --mission-type BAI --target GROUP:Enemy-1 --coalition blue --altitude-ft 15000 --host 127.0.0.1 --port 51000
@@ -84,14 +85,34 @@ def print_result(result: Any) -> None:
     for candidate in result.candidates:
         legion_id = candidate.legion.object_id if candidate.legion else "none"
         distance = f"{candidate.distance_nm:.1f} NM" if candidate.distance_nm is not None else "unknown"
-        performance = candidate.cohort.mission_performance_for(result.mission_type)
-        performance_text = f"{performance:.1f}" if performance is not None else "unknown"
+        mission_performance = candidate.cohort.mission_performance_for(result.mission_type)
+        mission_performance_text = f"{mission_performance:.1f}" if mission_performance is not None else "unknown"
+        payload_available = candidate.cohort.has_payload_for(result.mission_type)
+        payload_status = "unknown" if payload_available is None else ("available" if payload_available else "not_available")
+        payload_performance = candidate.cohort.payload_performance_for(result.mission_type)
+        payload_performance_text = f"{payload_performance:.1f}" if payload_performance is not None else "unknown"
+        payload_info = candidate.cohort.payload_info_for(result.mission_type) or {}
+        payload_count = payload_info.get("available_count", "unknown")
         print(
             f"  {legion_id} / {candidate.cohort.object_id} "
+            f"unit_type={candidate.cohort.unit_type or 'unknown'} "
             f"stock={candidate.cohort.stock_asset_count} "
-            f"performance={performance_text} "
+            f"mission_performance={mission_performance_text} "
+            f"payload={payload_status} "
+            f"payload_count={payload_count} "
+            f"payload_performance={payload_performance_text} "
             f"distance={distance}"
         )
+
+
+def print_payload_load_hint() -> None:
+    """Print a hint when AIRWING payload data is not present.
+
+    :returns: None.
+    """
+
+    print("\nNote:")
+    print("  AIRWING payload information requires loading lua/MooseBridgePayloadExtension.lua after MooseBridge.lua.")
 
 
 async def async_main(args: argparse.Namespace) -> int:
@@ -127,6 +148,8 @@ async def async_main(args: argparse.Namespace) -> int:
             coalition=args.coalition,
         )
         print_result(result)
+        if any(candidate.cohort.is_air and candidate.cohort.payload_info_for(result.mission_type) is None for candidate in result.candidates):
+            print_payload_load_hint()
         return 0 if result.ok else 2
 
     finally:
