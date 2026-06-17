@@ -87,6 +87,29 @@ def _mission_type_keys(mission_types: list[str]) -> list[str]:
     return keys
 
 
+def _performer_categories(payload: dict[str, Any], is_air: bool, is_ground: bool, is_naval: bool) -> list[str]:
+    """Infer canonical performer categories for a COHORT snapshot.
+
+    :param payload: Raw COHORT payload.
+    :param is_air: Whether the COHORT is an air COHORT.
+    :param is_ground: Whether the COHORT is a ground COHORT.
+    :param is_naval: Whether the COHORT is a naval COHORT.
+    :returns: Canonical performer categories.
+    """
+
+    explicit = _string_list(payload.get("performer_categories"))
+    if explicit:
+        return [category.strip().upper() for category in explicit if category.strip()]
+
+    if is_air:
+        return ["AIR"]
+    if is_ground:
+        return ["GROUND"]
+    if is_naval:
+        return ["NAVAL"]
+    return []
+
+
 @dataclass(slots=True, frozen=True)
 class CohortSummary:
     """Lightweight COHORT reference embedded in a LEGION snapshot."""
@@ -136,6 +159,7 @@ class Cohort:
     is_air: bool = False
     is_ground: bool = False
     is_naval: bool = False
+    performer_categories: list[str] = field(default_factory=list)
     mission_types: list[str] = field(default_factory=list)
     mission_type_keys: list[str] = field(default_factory=list)
     asset_count: int | None = None
@@ -157,6 +181,9 @@ class Cohort:
         """
 
         mission_types = _string_list(payload.get("mission_types"))
+        is_air = _bool_or_false(payload.get("is_air"))
+        is_ground = _bool_or_false(payload.get("is_ground"))
+        is_naval = _bool_or_false(payload.get("is_naval"))
         return cls(
             object_id=str(payload.get("object_id", "")),
             dcs_name=str(payload.get("dcs_name", "")),
@@ -167,9 +194,10 @@ class Cohort:
             name=_optional_str(payload.get("name")),
             legion_id=_optional_str(payload.get("legion_id")),
             legion_name=_optional_str(payload.get("legion_name")),
-            is_air=_bool_or_false(payload.get("is_air")),
-            is_ground=_bool_or_false(payload.get("is_ground")),
-            is_naval=_bool_or_false(payload.get("is_naval")),
+            is_air=is_air,
+            is_ground=is_ground,
+            is_naval=is_naval,
+            performer_categories=_performer_categories(payload, is_air, is_ground, is_naval),
             mission_types=mission_types,
             mission_type_keys=_mission_type_keys(mission_types),
             asset_count=_optional_int(payload.get("asset_count")),
