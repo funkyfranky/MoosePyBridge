@@ -1,9 +1,9 @@
 -- Optional approval-gated AUFTRAG execution extension for MOOSE Bridge.
 --
--- Load after MooseBridge.lua. This file intentionally starts with one narrow,
--- explicit command: auftrag.create_bai. Python should only call it after an
--- advisory recommendation has passed all hard filters and the user explicitly
--- requested execution.
+-- Load after MooseBridge.lua and before creating the bridge instance. This file
+-- intentionally starts with one narrow, explicit command: auftrag.create_bai.
+-- Python should only call it after an advisory recommendation has passed all hard
+-- filters and the user explicitly requested execution.
 
 if not MOOSE_BRIDGE then error("Load MooseBridge.lua before MooseBridgeAuftragExecutionExtension.lua") end
 
@@ -81,7 +81,7 @@ function MOOSE_BRIDGE:_ResolveAuftragTargetById(target_id)
   return nil, "Unsupported BAI target type: " .. prefix
 end
 
-function MOOSE_BRIDGE:_RegisterAuftragExecutionCommands()
+function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
   self:RegisterCommand("auftrag.create_bai", function(cmd)
     local p = cmd.params or {}
     local legion, legion_err = self:_ResolveLegionById(p.legion_id)
@@ -122,4 +122,9 @@ function MOOSE_BRIDGE:_RegisterAuftragExecutionCommands()
   end)
 end
 
-MOOSE_BRIDGE:_RegisterAuftragExecutionCommands()
+local _moose_bridge_base_register_default_commands = MOOSE_BRIDGE.RegisterDefaultCommands
+
+function MOOSE_BRIDGE:RegisterDefaultCommands()
+  _moose_bridge_base_register_default_commands(self)
+  self:RegisterAuftragExecutionCommands()
+end
