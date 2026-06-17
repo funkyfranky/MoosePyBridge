@@ -70,6 +70,24 @@ def _string_list(value: Any) -> list[str]:
     return [str(item) for item in value if item is not None]
 
 
+def _float_map(value: Any) -> dict[str, float]:
+    """Convert a snapshot table to a string-float dictionary.
+
+    :param value: Raw snapshot value.
+    :returns: Mapping with string keys and float values.
+    """
+
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, float] = {}
+    for key, item in value.items():
+        try:
+            result[str(key)] = float(item)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
 def _mission_type_keys(mission_types: list[str]) -> list[str]:
     """Normalize MOOSE mission type names for robust Python-side lookup.
 
@@ -85,6 +103,16 @@ def _mission_type_keys(mission_types: list[str]) -> list[str]:
             keys.append(key)
             seen.add(key)
     return keys
+
+
+def _mission_performance_keys(mission_performance: dict[str, float]) -> dict[str, float]:
+    """Normalize mission performance keys for robust Python-side lookup.
+
+    :param mission_performance: Mission performance keyed by original MOOSE mission type names.
+    :returns: Mission performance keyed by uppercase mission type names.
+    """
+
+    return {key.strip().upper(): value for key, value in mission_performance.items() if key.strip()}
 
 
 def _performer_categories(payload: dict[str, Any], is_air: bool, is_ground: bool, is_naval: bool) -> list[str]:
@@ -162,6 +190,8 @@ class Cohort:
     performer_categories: list[str] = field(default_factory=list)
     mission_types: list[str] = field(default_factory=list)
     mission_type_keys: list[str] = field(default_factory=list)
+    mission_performance: dict[str, float] = field(default_factory=dict)
+    mission_performance_keys: dict[str, float] = field(default_factory=dict)
     asset_count: int | None = None
     stock_asset_count: int | None = None
     spawned_asset_count: int | None = None
@@ -172,6 +202,15 @@ class Cohort:
     z: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
+    def mission_performance_for(self, mission_type: str) -> float | None:
+        """Return mission performance for a mission type.
+
+        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :returns: Performance value, or ``None`` when not present.
+        """
+
+        return self.mission_performance_keys.get(mission_type.strip().upper())
+
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "Cohort":
         """Create a COHORT model from a raw payload.
@@ -181,6 +220,7 @@ class Cohort:
         """
 
         mission_types = _string_list(payload.get("mission_types"))
+        mission_performance = _float_map(payload.get("mission_performance"))
         is_air = _bool_or_false(payload.get("is_air"))
         is_ground = _bool_or_false(payload.get("is_ground"))
         is_naval = _bool_or_false(payload.get("is_naval"))
@@ -200,6 +240,8 @@ class Cohort:
             performer_categories=_performer_categories(payload, is_air, is_ground, is_naval),
             mission_types=mission_types,
             mission_type_keys=_mission_type_keys(mission_types),
+            mission_performance=mission_performance,
+            mission_performance_keys=_mission_performance_keys(mission_performance),
             asset_count=_optional_int(payload.get("asset_count")),
             stock_asset_count=_optional_int(payload.get("stock_asset_count")),
             spawned_asset_count=_optional_int(payload.get("spawned_asset_count")),
