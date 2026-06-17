@@ -57,6 +57,74 @@ async def request_required_snapshots(client: MooseBridgeClient) -> None:
         await asyncio.sleep(0.05)
 
 
+def payload_rejection_reason(candidate: Any, mission_type: str) -> str | None:
+    """Return why an AIRWING candidate is not executable because of payload state.
+
+    :param candidate: Advisory candidate.
+    :param mission_type: Requested mission type.
+    :returns: Rejection reason or ``None``.
+    """
+
+    if not candidate.cohort.is_air:
+        return None
+    payload_available = candidate.cohort.has_payload_for(mission_type)
+    if payload_available is True:
+        return None
+    if payload_available is False:
+        return "no compatible AIRWING payload available"
+    return "payload availability unknown; load MooseBridgePayloadExtension.lua"
+
+
+def candidate_sort_key(candidate: Any, mission_type: str) -> tuple[float, float, float, float]:
+    """Return ranking key for executable advisory candidates.
+
+    :param candidate: Advisory candidate.
+    :param mission_type: Requested mission type.
+    :returns: Sort key using mission performance, payload performance, distance and stock.
+    """
+
+    mission_performance = candidate.cohort.mission_performance_for(mission_type)
+    payload_performance = candidate.cohort.payload_performance_for(mission_type)
+    distance_m = candidate.distance_m if candidate.distance_m is not None else float("inf")
+    stock = candidate.cohort.stock_asset_count or 0
+    return (
+        -(mission_performance if mission_performance is not None else -1.0),
+        -(payload_performance if payload_performance is not None else -1.0),
+        distance_m,
+        -float(stock),
+    )
+
+
+def print_candidate(candidate: Any, mission_type: str, prefix: str = "  ") -> None:
+    """Print one advisory candidate.
+
+    :param candidate: Advisory candidate.
+    :param mission_type: Requested mission type.
+    :param prefix: Line prefix.
+    """
+
+    legion_id = candidate.legion.object_id if candidate.legion else "none"
+    distance = f"{candidate.distance_nm:.1f} NM" if candidate.distance_nm is not None else "unknown"
+    mission_performance = candidate.cohort.mission_performance_for(mission_type)
+    mission_performance_text = f"{mission_performance:.1f}" if mission_performance is not None else "unknown"
+    payload_available = candidate.cohort.has_payload_for(mission_type)
+    payload_status = "unknown" if payload_available is None else ("available" if payload_available else "not_available")
+    payload_performance = candidate.cohort.payload_performance_for(mission_type)
+    payload_performance_text = f"{payload_performance:.1f}" if payload_performance is not None else "unknown"
+    payload_info = candidate.cohort.payload_info_for(mission_type) or {}
+    payload_count = payload_info.get("available_count", "unknown")
+    print(
+        f"{prefix}{legion_id} / {candidate.cohort.object_id} "
+        f"unit_type={candidate.cohort.unit_type or 'unknown'} "
+        f"stock={candidate.cohort.stock_asset_count} "
+        f"mission_performance={mission_performance_text} "
+        f"payload={payload_status} "
+        f"payload_count={payload_count} "
+        f"payload_performance={payload_performance_text} "
+        f"distance={distance}"
+    )
+
+
 def print_result(result: Any) -> None:
     """Print an AUFTRAG advisory result.
 
@@ -81,36 +149,35 @@ def print_result(result: Any) -> None:
         for issue in result.issues:
             print(f"  [{issue.severity}] {issue.code}: {issue.message}")
 
-    print(f"\nCandidates: {len(result.candidates)}")
+    executable = []
+    rejected = []
     for candidate in result.candidates:
-        legion_id = candidate.legion.object_id if candidate.legion else "none"
-        distance = f"{candidate.distance_nm:.1f} NM" if candidate.distance_nm is not None else "unknown"
-        mission_performance = candidate.cohort.mission_performance_for(result.mission_type)
-        mission_performance_text = f"{mission_performance:.1f}" if mission_performance is not None else "unknown"
-        payload_available = candidate.cohort.has_payload_for(result.mission_type)
-        payload_status = "unknown" if payload_available is None else ("available" if payload_available else "not_available")
-        payload_performance = candidate.cohort.payload_performance_for(result.mission_type)
-        payload_performance_text = f"{payload_performance:.1f}" if payload_performance is not None else "unknown"
-        payload_info = candidate.cohort.payload_info_for(result.mission_type) or {}
-        payload_count = payload_info.get("available_count", "unknown")
-        print(
-            f"  {legion_id} / {candidate.cohort.object_id} "
-            f"unit_type={candidate.cohort.unit_type or 'unknown'} "
-            f"stock={candidate.cohort.stock_asset_count} "
-            f"mission_performance={mission_performance_text} "
-            f"payload={payload_status} "
-            f"payload_count={payload_count} "
-            f"payload_performance={payload_performance_text} "
-            f"distance={distance}"
-        )
+        reason = payload_rejection_reason(candidate, result.mission_type)
+        if reason:
+            rejected.append((candidate, reason))
+        else:
+            executable.append(candidate)
+    executable.sort(key=lambda candidate: candidate_sort_key(candidate, result.mission_type))
+
+    print(f"\nExecutable candidates: {len(executable)}")
+    for candidate in executable:
+        print_candidate(candidate, result.mission_type)
+
+    if rejected:
+        print(f"\nRejected candidates: {len(rejected)}")
+        for candidate, reason in rejected:
+            print_candidate(candidate, result.mission_type)
+            print(f"    reason={reason}")
 
 
-def print_payload_load_hint() -> None:
+def print_payload_load_hint(result: Any) -> None:
     """Print a hint when AIRWING payload data is not present.
 
-    :returns: None.
+    :param result: Advisory result.
     """
 
+    if not any(candidate.cohort.is_air and candidate.cohort.payload_info_for(result.mission_type) is None for candidate in result.candidates):
+        return
     print("\nNote:")
     print("  AIRWING payload information requires loading lua/MooseBridgePayloadExtension.lua after MooseBridge.lua.")
 
@@ -148,8 +215,7 @@ async def async_main(args: argparse.Namespace) -> int:
             coalition=args.coalition,
         )
         print_result(result)
-        if any(candidate.cohort.is_air and candidate.cohort.payload_info_for(result.mission_type) is None for candidate in result.candidates):
-            print_payload_load_hint()
+        print_payload_load_hint(result)
         return 0 if result.ok else 2
 
     finally:
