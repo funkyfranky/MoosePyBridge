@@ -9,6 +9,7 @@ This example performs advisory-only validation:
     - LEGION-to-target distance ranking
     - COHORT mission performance reporting
     - AIRWING payload availability and payload performance reporting
+    - structured recommendation output for the best executable candidate
 
 Example:
     PYTHONPATH=python python examples/advisory/validate_auftrag_request.py --mission-type BAI --target GROUP:Enemy-1 --coalition blue --altitude-ft 15000 --host 127.0.0.1 --port 51000
@@ -95,6 +96,39 @@ def candidate_sort_key(candidate: Any, mission_type: str) -> tuple[float, float,
     )
 
 
+def best_payload_for_candidate(candidate: Any, mission_type: str) -> dict[str, Any] | None:
+    """Return the best compatible payload for a candidate and mission type.
+
+    :param candidate: Advisory candidate.
+    :param mission_type: Requested mission type.
+    :returns: Payload summary dictionary or ``None``.
+    """
+
+    payload_info = candidate.cohort.payload_info_for(mission_type) or {}
+    payloads = payload_info.get("payloads")
+    if not isinstance(payloads, list):
+        return None
+
+    def payload_sort_key(payload: dict[str, Any]) -> tuple[float, float, float]:
+        performance = payload.get("performance")
+        navail = payload.get("navail")
+        unlimited = 1.0 if payload.get("unlimited") else 0.0
+        try:
+            performance_value = float(performance) if performance is not None else -1.0
+        except (TypeError, ValueError):
+            performance_value = -1.0
+        try:
+            navail_value = float(navail) if navail is not None else 0.0
+        except (TypeError, ValueError):
+            navail_value = 0.0
+        return (-performance_value, -unlimited, -navail_value)
+
+    valid_payloads = [payload for payload in payloads if isinstance(payload, dict)]
+    if not valid_payloads:
+        return None
+    return sorted(valid_payloads, key=payload_sort_key)[0]
+
+
 def print_candidate(candidate: Any, mission_type: str, prefix: str = "  ") -> None:
     """Print one advisory candidate.
 
@@ -123,6 +157,45 @@ def print_candidate(candidate: Any, mission_type: str, prefix: str = "  ") -> No
         f"payload_performance={payload_performance_text} "
         f"distance={distance}"
     )
+
+
+def print_recommendation(result: Any, executable: list[Any]) -> None:
+    """Print a structured recommendation for the best executable candidate.
+
+    :param result: Advisory result.
+    :param executable: Sorted executable candidates.
+    """
+
+    if not executable:
+        print("\nRecommendation:")
+        print("  none")
+        return
+
+    candidate = executable[0]
+    payload = best_payload_for_candidate(candidate, result.mission_type)
+    mission_performance = candidate.cohort.mission_performance_for(result.mission_type)
+    payload_performance = candidate.cohort.payload_performance_for(result.mission_type)
+    distance = f"{candidate.distance_nm:.1f} NM" if candidate.distance_nm is not None else "unknown"
+
+    print("\nRecommendation:")
+    print(f"  legion_id: {candidate.legion.object_id if candidate.legion else 'none'}")
+    print(f"  cohort_id: {candidate.cohort.object_id}")
+    print(f"  constructor: {result.spec.constructor if result.spec else 'unknown'}")
+    print(f"  mission_type: {result.mission_type}")
+    for key, value in result.params.items():
+        print(f"  {key}: {value}")
+    print(f"  unit_type: {candidate.cohort.unit_type or 'unknown'}")
+    print(f"  mission_performance: {mission_performance if mission_performance is not None else 'unknown'}")
+    print(f"  payload_performance: {payload_performance if payload_performance is not None else 'unknown'}")
+    print(f"  distance: {distance}")
+    if payload:
+        print(f"  selected_payload_uid: {payload.get('uid', 'unknown')}")
+        print(f"  selected_payload_unitname: {payload.get('unitname', 'unknown')}")
+        print(f"  selected_payload_aircrafttype: {payload.get('aircrafttype', 'unknown')}")
+        print(f"  selected_payload_available: {payload.get('navail', 'unknown')}")
+        print(f"  selected_payload_unlimited: {payload.get('unlimited', 'unknown')}")
+    else:
+        print("  selected_payload_uid: none")
 
 
 def print_result(result: Any) -> None:
@@ -168,6 +241,8 @@ def print_result(result: Any) -> None:
         for candidate, reason in rejected:
             print_candidate(candidate, result.mission_type)
             print(f"    reason={reason}")
+
+    print_recommendation(result, executable)
 
 
 def print_payload_load_hint(result: Any) -> None:
