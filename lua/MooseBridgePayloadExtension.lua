@@ -6,13 +6,23 @@
 
 if not MOOSE_BRIDGE then error("Load MooseBridge.lua before MooseBridgePayloadExtension.lua") end
 
+local function bridge_safe_tostring(value)
+  if value == nil then return "nil" end
+  return tostring(value)
+end
+
+local function bridge_string_or_nil(value)
+  if value == nil then return nil end
+  return tostring(value)
+end
+
 function MOOSE_BRIDGE:_CohortUnitType(cohort)
   if not cohort then return nil end
   local unit_type = self:_SafeCall(cohort, "GetUnitType")
   if not unit_type then unit_type = self:_SafeCall(cohort, "GetTypeName") end
   if not unit_type then unit_type = self:_SafeCall(cohort, "GetType") end
   if not unit_type then unit_type = cohort.unittype or cohort.unitType or cohort.aircrafttype or cohort.AircraftType or cohort.type end
-  return unit_type and safe_tostring(unit_type) or nil
+  return unit_type and bridge_safe_tostring(unit_type) or nil
 end
 
 function MOOSE_BRIDGE:_PayloadPerformance(payload, mission_type)
@@ -30,8 +40,8 @@ function MOOSE_BRIDGE:_SummarizePayload(payload, mission_type)
   local performance = self:_PayloadPerformance(payload, mission_type)
   return {
     uid=payload.uid,
-    unitname=string_or_nil(payload.unitname),
-    aircrafttype=string_or_nil(payload.aircrafttype),
+    unitname=bridge_string_or_nil(payload.unitname),
+    aircrafttype=bridge_string_or_nil(payload.aircrafttype),
     navail=self:_NumberOrNil(payload.navail),
     unlimited=self:_BoolOrFalse(payload.unlimited),
     performance=performance,
@@ -77,7 +87,7 @@ function MOOSE_BRIDGE:_CollectPayloadAvailability(cohort, mission_types)
   if not unit_type then return result end
 
   for _, mission_type in pairs(mission_types) do
-    result[safe_tostring(mission_type)] = self:_PayloadAvailabilityForMission(airwing, unit_type, mission_type)
+    result[bridge_safe_tostring(mission_type)] = self:_PayloadAvailabilityForMission(airwing, unit_type, mission_type)
   end
 
   return result
