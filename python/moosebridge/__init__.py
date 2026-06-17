@@ -1,5 +1,6 @@
 """MOOSE Bridge Python package."""
 
+from .advisory import AdvisoryIssue, AuftragAdvisoryResult, AuftragCandidate, evaluate_auftrag_request
 from .auftrag_specs import (
     AuftragParameterSpec,
     AuftragTypeSpec,
@@ -15,7 +16,10 @@ from .sdk import MooseBridgeClient
 from .state import MooseBridgeState, MooseObjectIdentity
 
 __all__ = [
+    "AdvisoryIssue",
     "Auftrag",
+    "AuftragAdvisoryResult",
+    "AuftragCandidate",
     "AuftragParameterSpec",
     "AuftragTypeSpec",
     "BridgeCommand",
@@ -32,6 +36,7 @@ __all__ = [
     "OpsZone",
     "TargetObjectSnapshot",
     "TargetSnapshot",
+    "evaluate_auftrag_request",
     "expand_platform_categories",
     "get_auftrag_type_spec",
     "platform_categories_match",
