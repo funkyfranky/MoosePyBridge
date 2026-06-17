@@ -1,5 +1,6 @@
 """MOOSE Bridge Python package."""
 
+from .auftrag_specs import AuftragParameterSpec, AuftragTypeSpec, get_auftrag_type_spec
 from .legions import Cohort, CohortSummary, Legion
 from .models import Auftrag, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
 from .protocol import BridgeCommand, BridgeMessage
@@ -9,6 +10,8 @@ from .state import MooseBridgeState, MooseObjectIdentity
 
 __all__ = [
     "Auftrag",
+    "AuftragParameterSpec",
+    "AuftragTypeSpec",
     "BridgeCommand",
     "BridgeMessage",
     "Cohort",
@@ -17,10 +20,11 @@ __all__ = [
     "MooseBridgeClient",
     "MooseBridgeServer",
     "MooseBridgeState",
-    "MooseObjectIdentity",
     "MooseSnapshotObject",
+    "MooseObjectIdentity",
     "OpsGroup",
     "OpsZone",
     "TargetObjectSnapshot",
     "TargetSnapshot",
+    "get_auftrag_type_spec",
 ]
