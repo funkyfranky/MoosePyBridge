@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
 
+from .auftrag_specs import get_auftrag_type_spec, platform_categories_match
 from .legions import Cohort, Legion
 from .models import Auftrag, OpsGroup, OpsZone
 
@@ -177,15 +178,36 @@ class MooseBridgeState:
 
         return [cohort for cohort in self.cohort_objects.values() if cohort.legion_id == legion_id]
 
+    def cohorts_matching_performer_categories(self, performer_categories: tuple[str, ...] | list[str]) -> list[Cohort]:
+        """Return COHORTs matching required performer platform categories.
+
+        :param performer_categories: Required platform categories such as ``AIR`` or ``GROUND``.
+        :returns: COHORT objects with compatible platform categories.
+        """
+
+        return [
+            cohort
+            for cohort in self.cohort_objects.values()
+            if platform_categories_match(cohort.performer_categories, performer_categories)
+        ]
+
     def cohorts_capable_of(self, mission_type: str) -> list[Cohort]:
-        """Return COHORTs that advertise support for a mission type.
+        """Return COHORTs that advertise support for a mission type and platform category.
 
         :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
-        :returns: COHORT objects with matching canonical mission type keys.
+        :returns: COHORT objects with matching mission type and performer category.
         """
 
         key = mission_type.strip().upper()
-        return [cohort for cohort in self.cohort_objects.values() if key in cohort.mission_type_keys]
+        spec = get_auftrag_type_spec(key)
+        cohorts = [cohort for cohort in self.cohort_objects.values() if key in cohort.mission_type_keys]
+        if spec is None:
+            return cohorts
+        return [
+            cohort
+            for cohort in cohorts
+            if platform_categories_match(cohort.performer_categories, spec.performer_categories)
+        ]
 
     def cohorts_with_stock_for_mission_type(self, mission_type: str) -> list[Cohort]:
         """Return mission-capable COHORTs with at least one stocked asset.
