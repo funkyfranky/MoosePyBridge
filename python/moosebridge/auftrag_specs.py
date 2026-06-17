@@ -9,6 +9,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+PLATFORM_CATEGORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
+    "AIR": ("AIR", "AIRPLANE", "HELICOPTER"),
+    "AIRPLANE": ("AIRPLANE",),
+    "HELICOPTER": ("HELICOPTER",),
+    "GROUND": ("GROUND",),
+    "NAVAL": ("NAVAL",),
+}
+
 
 @dataclass(slots=True, frozen=True)
 class AuftragParameterSpec:
@@ -45,12 +53,14 @@ class AuftragTypeSpec:
 
     :param mission_type: Canonical AUFTRAG mission type key.
     :param constructor: MOOSE constructor name.
+    :param performer_categories: Platform categories allowed to execute this AUFTRAG type.
     :param parameters: Ordered constructor parameters.
     :param description: Human-readable mission description.
     """
 
     mission_type: str
     constructor: str
+    performer_categories: tuple[str, ...]
     parameters: tuple[AuftragParameterSpec, ...] = field(default_factory=tuple)
     description: str = ""
 
@@ -72,6 +82,7 @@ class AuftragTypeSpec:
         return {
             "mission_type": self.mission_type,
             "constructor": self.constructor,
+            "performer_categories": list(self.performer_categories),
             "parameters": [parameter.to_dict() for parameter in self.parameters],
             "description": self.description,
         }
@@ -81,6 +92,7 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
     "BAI": AuftragTypeSpec(
         mission_type="BAI",
         constructor="AUFTRAG:NewBAI",
+        performer_categories=("AIR",),
         description="Battlefield air interdiction against a compatible target object.",
         parameters=(
             AuftragParameterSpec(
@@ -108,6 +120,43 @@ def canonical_mission_type(mission_type: str) -> str:
     """
 
     return mission_type.strip().upper()
+
+
+def canonical_platform_category(category: str) -> str:
+    """Return the canonical platform category key.
+
+    :param category: Platform category string.
+    :returns: Uppercase canonical platform category key.
+    """
+
+    return category.strip().upper()
+
+
+def expand_platform_categories(categories: tuple[str, ...] | list[str]) -> set[str]:
+    """Expand hierarchical platform categories.
+
+    ``AIR`` expands to ``AIR``, ``AIRPLANE`` and ``HELICOPTER``.
+
+    :param categories: Platform categories.
+    :returns: Expanded set of canonical platform categories.
+    """
+
+    expanded: set[str] = set()
+    for category in categories:
+        key = canonical_platform_category(category)
+        expanded.update(PLATFORM_CATEGORY_EXPANSIONS.get(key, (key,)))
+    return expanded
+
+
+def platform_categories_match(candidate_categories: tuple[str, ...] | list[str], required_categories: tuple[str, ...] | list[str]) -> bool:
+    """Return whether candidate platform categories can satisfy required categories.
+
+    :param candidate_categories: Categories advertised by a COHORT.
+    :param required_categories: Categories required by an AUFTRAG type.
+    :returns: ``True`` if any expanded category overlaps.
+    """
+
+    return bool(expand_platform_categories(candidate_categories) & expand_platform_categories(required_categories))
 
 
 def get_auftrag_type_spec(mission_type: str) -> AuftragTypeSpec | None:
