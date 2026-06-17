@@ -161,6 +161,60 @@ def coordinates_from_payload(payload: dict[str, Any] | None) -> tuple[float, flo
         return None
 
 
+def group_coordinates_from_units(state: MooseBridgeState, group_payload: dict[str, Any] | None) -> tuple[float, float] | None:
+    """Infer a GROUP coordinate from its UNIT snapshots.
+
+    GROUP snapshots intentionally stay lightweight, so they may not carry ``x`` and ``z``.
+    The advisory layer can still infer a useful group position from member UNIT snapshots.
+
+    :param state: State mirror containing UNIT snapshots.
+    :param group_payload: GROUP payload.
+    :returns: Average UNIT position in DCS meters or ``None``.
+    """
+
+    if not group_payload:
+        return None
+    group_name = group_payload.get("dcs_name") or group_payload.get("name")
+    if not group_name:
+        object_id = group_payload.get("object_id")
+        if isinstance(object_id, str) and ":" in object_id:
+            _, group_name = object_id.split(":", 1)
+    if not group_name:
+        return None
+
+    points: list[tuple[float, float]] = []
+    for unit in state.units.values():
+        if unit.get("group_name") != group_name:
+            continue
+        point = coordinates_from_payload(unit)
+        if point is not None:
+            points.append(point)
+
+    if not points:
+        return None
+    x = sum(point[0] for point in points) / len(points)
+    z = sum(point[1] for point in points) / len(points)
+    return x, z
+
+
+def coordinates_for_state_object(state: MooseBridgeState, object_id: str | None, payload: dict[str, Any] | None) -> tuple[float, float] | None:
+    """Return coordinates for a state object, including GROUP fallback from UNIT snapshots.
+
+    :param state: State mirror.
+    :param object_id: Stable object id.
+    :param payload: Raw object payload.
+    :returns: Horizontal coordinate pair or ``None``.
+    """
+
+    point = coordinates_from_payload(payload)
+    if point is not None:
+        return point
+    object_type = payload_object_type(payload or {}, object_id)
+    if object_type == "GROUP":
+        return group_coordinates_from_units(state, payload)
+    return None
+
+
 def distance_m_between(a: tuple[float, float] | None, b: tuple[float, float] | None) -> float | None:
     """Calculate horizontal distance between two DCS coordinate pairs.
 
@@ -290,7 +344,7 @@ def evaluate_auftrag_request(
     target_payload = find_state_object(state, target_id) if target_id else None
     target_type = payload_object_type(target_payload or {}, target_id) if target_id else None
     target_coalition = payload_coalition(target_payload)
-    target_coords = coordinates_from_payload(target_payload)
+    target_coords = coordinates_for_state_object(state, target_id, target_payload)
 
     if target_type in COMBAT_TARGET_TYPES and executing_coalition and target_coalition == executing_coalition:
         issues.append(
@@ -300,6 +354,9 @@ def evaluate_auftrag_request(
                 f"Combat target {target_id} has same coalition as executor ({executing_coalition}).",
             )
         )
+
+    if target_id and target_payload is not None and target_coords is None:
+        issues.append(AdvisoryIssue("warning", "TARGET_COORDINATE_UNKNOWN", f"No coordinate could be resolved for target {target_id}."))
 
     cohorts = state.cohorts_with_stock_for_mission_type(mission_key)
     candidates: list[AuftragCandidate] = []
