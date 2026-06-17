@@ -7,6 +7,7 @@ This example performs advisory-only validation:
     - combat friendly-fire check
     - executing coalition filter
     - LEGION-to-target distance ranking
+    - COHORT mission performance reporting
 
 Example:
     PYTHONPATH=python python examples/advisory/validate_auftrag_request.py --mission-type BAI --target GROUP:Enemy-1 --coalition blue --altitude-ft 15000 --host 127.0.0.1 --port 51000
@@ -83,9 +84,12 @@ def print_result(result: Any) -> None:
     for candidate in result.candidates:
         legion_id = candidate.legion.object_id if candidate.legion else "none"
         distance = f"{candidate.distance_nm:.1f} NM" if candidate.distance_nm is not None else "unknown"
+        performance = candidate.cohort.mission_performance_for(result.mission_type)
+        performance_text = f"{performance:.1f}" if performance is not None else "unknown"
         print(
             f"  {legion_id} / {candidate.cohort.object_id} "
             f"stock={candidate.cohort.stock_asset_count} "
+            f"performance={performance_text} "
             f"distance={distance}"
         )
 
