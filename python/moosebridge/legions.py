@@ -70,6 +70,18 @@ def _string_list(value: Any) -> list[str]:
     return [str(item) for item in value if item is not None]
 
 
+def _dict_or_empty(value: Any) -> dict[str, Any]:
+    """Convert a snapshot table to a dictionary.
+
+    :param value: Raw snapshot value.
+    :returns: Dictionary copy or empty dictionary.
+    """
+
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): item for key, item in value.items()}
+
+
 def _float_map(value: Any) -> dict[str, float]:
     """Convert a snapshot table to a string-float dictionary.
 
@@ -113,6 +125,21 @@ def _mission_performance_keys(mission_performance: dict[str, float]) -> dict[str
     """
 
     return {key.strip().upper(): value for key, value in mission_performance.items() if key.strip()}
+
+
+def _payloads_by_mission_keys(payloads_by_mission: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Normalize payload availability keys for robust Python-side lookup.
+
+    :param payloads_by_mission: Payload availability keyed by original MOOSE mission type names.
+    :returns: Payload availability keyed by uppercase mission type names.
+    """
+
+    result: dict[str, dict[str, Any]] = {}
+    for key, value in payloads_by_mission.items():
+        if not key.strip() or not isinstance(value, dict):
+            continue
+        result[key.strip().upper()] = value
+    return result
 
 
 def _performer_categories(payload: dict[str, Any], is_air: bool, is_ground: bool, is_naval: bool) -> list[str]:
@@ -184,6 +211,7 @@ class Cohort:
     name: str | None = None
     legion_id: str | None = None
     legion_name: str | None = None
+    unit_type: str | None = None
     is_air: bool = False
     is_ground: bool = False
     is_naval: bool = False
@@ -192,6 +220,8 @@ class Cohort:
     mission_type_keys: list[str] = field(default_factory=list)
     mission_performance: dict[str, float] = field(default_factory=dict)
     mission_performance_keys: dict[str, float] = field(default_factory=dict)
+    payloads_by_mission: dict[str, Any] = field(default_factory=dict)
+    payloads_by_mission_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     asset_count: int | None = None
     stock_asset_count: int | None = None
     spawned_asset_count: int | None = None
@@ -211,6 +241,46 @@ class Cohort:
 
         return self.mission_performance_keys.get(mission_type.strip().upper())
 
+    def payload_info_for(self, mission_type: str) -> dict[str, Any] | None:
+        """Return payload availability for a mission type.
+
+        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :returns: Payload availability dictionary or ``None``.
+        """
+
+        return self.payloads_by_mission_keys.get(mission_type.strip().upper())
+
+    def payload_performance_for(self, mission_type: str) -> float | None:
+        """Return best payload performance for a mission type.
+
+        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :returns: Best payload performance or ``None``.
+        """
+
+        payload_info = self.payload_info_for(mission_type)
+        if not payload_info:
+            return None
+        value = payload_info.get("best_performance")
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def has_payload_for(self, mission_type: str) -> bool | None:
+        """Return whether payload availability is positive for a mission type.
+
+        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :returns: ``True`` or ``False`` when payload information is known, otherwise ``None``.
+        """
+
+        payload_info = self.payload_info_for(mission_type)
+        if payload_info is None:
+            return None
+        available_count = _optional_int(payload_info.get("available_count")) or 0
+        total_available = _optional_int(payload_info.get("total_available")) or 0
+        unlimited_count = _optional_int(payload_info.get("unlimited_count")) or 0
+        return available_count > 0 and (total_available > 0 or unlimited_count > 0)
+
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "Cohort":
         """Create a COHORT model from a raw payload.
@@ -221,6 +291,7 @@ class Cohort:
 
         mission_types = _string_list(payload.get("mission_types"))
         mission_performance = _float_map(payload.get("mission_performance"))
+        payloads_by_mission = _dict_or_empty(payload.get("payloads_by_mission"))
         is_air = _bool_or_false(payload.get("is_air"))
         is_ground = _bool_or_false(payload.get("is_ground"))
         is_naval = _bool_or_false(payload.get("is_naval"))
@@ -234,6 +305,7 @@ class Cohort:
             name=_optional_str(payload.get("name")),
             legion_id=_optional_str(payload.get("legion_id")),
             legion_name=_optional_str(payload.get("legion_name")),
+            unit_type=_optional_str(payload.get("unit_type")),
             is_air=is_air,
             is_ground=is_ground,
             is_naval=is_naval,
@@ -242,6 +314,8 @@ class Cohort:
             mission_type_keys=_mission_type_keys(mission_types),
             mission_performance=mission_performance,
             mission_performance_keys=_mission_performance_keys(mission_performance),
+            payloads_by_mission=payloads_by_mission,
+            payloads_by_mission_keys=_payloads_by_mission_keys(payloads_by_mission),
             asset_count=_optional_int(payload.get("asset_count")),
             stock_asset_count=_optional_int(payload.get("stock_asset_count")),
             spawned_asset_count=_optional_int(payload.get("spawned_asset_count")),
