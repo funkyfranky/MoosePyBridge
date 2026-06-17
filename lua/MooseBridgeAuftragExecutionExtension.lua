@@ -1,0 +1,125 @@
+-- Optional approval-gated AUFTRAG execution extension for MOOSE Bridge.
+--
+-- Load after MooseBridge.lua. This file intentionally starts with one narrow,
+-- explicit command: auftrag.create_bai. Python should only call it after an
+-- advisory recommendation has passed all hard filters and the user explicitly
+-- requested execution.
+
+if not MOOSE_BRIDGE then error("Load MooseBridge.lua before MooseBridgeAuftragExecutionExtension.lua") end
+
+local function bridge_split_object_id(object_id)
+  if type(object_id) ~= "string" then return nil, nil end
+  local prefix, name = string.match(object_id, "^([^:]+):(.+)$")
+  if not prefix or not name then return nil, nil end
+  return string.upper(prefix), name
+end
+
+local function bridge_safe_tostring(value)
+  if value == nil then return "nil" end
+  return tostring(value)
+end
+
+function MOOSE_BRIDGE:_ResolveLegionById(legion_id)
+  local prefix, name = bridge_split_object_id(legion_id)
+  if prefix ~= "LEGION" or not name then return nil, "Invalid LEGION id " .. bridge_safe_tostring(legion_id) end
+
+  if _DATABASE then
+    local found = self:_SafeCallArg(_DATABASE, "FindLegion", name)
+    if found then return found, nil end
+
+    if type(_DATABASE.LEGIONS) == "table" then
+      for key, legion in pairs(_DATABASE.LEGIONS) do
+        local legion_name = self:_ObjectName(legion) or (type(key) == "string" and key or nil)
+        if legion_name == name then return legion, nil end
+      end
+    end
+  end
+
+  return nil, "LEGION not found: " .. name
+end
+
+function MOOSE_BRIDGE:_ResolveAuftragTargetById(target_id)
+  local prefix, name = bridge_split_object_id(target_id)
+  if not prefix or not name then return nil, "Invalid target id " .. bridge_safe_tostring(target_id) end
+
+  if prefix == "GROUP" then
+    if GROUP and GROUP.FindByName then
+      local target = GROUP:FindByName(name)
+      if target then return target, nil end
+    end
+    if Group and Group.getByName then
+      local dcs_group = Group.getByName(name)
+      if dcs_group then return dcs_group, nil end
+    end
+    return nil, "GROUP target not found: " .. name
+  end
+
+  if prefix == "UNIT" then
+    if UNIT and UNIT.FindByName then
+      local target = UNIT:FindByName(name)
+      if target then return target, nil end
+    end
+    if Unit and Unit.getByName then
+      local dcs_unit = Unit.getByName(name)
+      if dcs_unit then return dcs_unit, nil end
+    end
+    return nil, "UNIT target not found: " .. name
+  end
+
+  if prefix == "STATIC" then
+    if STATIC and STATIC.FindByName then
+      local target = STATIC:FindByName(name)
+      if target then return target, nil end
+    end
+    if StaticObject and StaticObject.getByName then
+      local dcs_static = StaticObject.getByName(name)
+      if dcs_static then return dcs_static, nil end
+    end
+    return nil, "STATIC target not found: " .. name
+  end
+
+  return nil, "Unsupported BAI target type: " .. prefix
+end
+
+function MOOSE_BRIDGE:_RegisterAuftragExecutionCommands()
+  self:RegisterCommand("auftrag.create_bai", function(cmd)
+    local p = cmd.params or {}
+    local legion, legion_err = self:_ResolveLegionById(p.legion_id)
+    if not legion then error(legion_err) end
+
+    local target, target_err = self:_ResolveAuftragTargetById(p.target or (p.params and p.params.target))
+    if not target then error(target_err) end
+
+    if not AUFTRAG or not AUFTRAG.NewBAI then error("AUFTRAG:NewBAI is not available") end
+
+    local altitude_ft = p.altitude_ft
+    if altitude_ft == nil and type(p.params) == "table" then altitude_ft = p.params.altitude_ft end
+
+    local auftrag = nil
+    if altitude_ft ~= nil then
+      auftrag = AUFTRAG:NewBAI(target, tonumber(altitude_ft))
+    else
+      auftrag = AUFTRAG:NewBAI(target)
+    end
+    if not auftrag then error("AUFTRAG:NewBAI returned nil") end
+
+    local add_ok, add_result = pcall(function() return legion:AddMission(auftrag) end)
+    if not add_ok then error("LEGION:AddMission failed: " .. bridge_safe_tostring(add_result)) end
+
+    local auftrag_id = self:_AuftragObjectId(auftrag)
+    return {
+      action="auftrag.create_bai",
+      legion_id=p.legion_id,
+      cohort_id=p.cohort_id,
+      target=p.target or (p.params and p.params.target),
+      altitude_ft=altitude_ft,
+      selected_payload_uid=p.selected_payload_uid,
+      auftrag_id=auftrag_id,
+      auftragsnummer=self:_AuftragNumber(auftrag),
+      auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
+      added=true,
+    }
+  end)
+end
+
+MOOSE_BRIDGE:_RegisterAuftragExecutionCommands()
