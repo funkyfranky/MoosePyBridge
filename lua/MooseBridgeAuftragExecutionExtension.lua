@@ -19,6 +19,13 @@ local function bridge_safe_tostring(value)
   return tostring(value)
 end
 
+function MOOSE_BRIDGE:_CommandParams(command)
+  if type(command) ~= "table" then return {} end
+  if type(command.params) == "table" then return command.params end
+  if type(command.payload) == "table" then return command.payload end
+  return {}
+end
+
 function MOOSE_BRIDGE:_ResolveLegionById(legion_id)
   local prefix, name = bridge_split_object_id(legion_id)
   if prefix ~= "LEGION" or not name then return nil, "Invalid LEGION id " .. bridge_safe_tostring(legion_id) end
@@ -83,17 +90,21 @@ end
 
 function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
   self:RegisterCommand("auftrag.create_bai", function(cmd)
-    local p = cmd.params or {}
-    local legion, legion_err = self:_ResolveLegionById(p.legion_id)
+    local p = self:_CommandParams(cmd)
+    local legacy_params = type(p.params) == "table" and p.params or {}
+    local legion_id = p.legion_id or legacy_params.legion_id
+    local cohort_id = p.cohort_id or legacy_params.cohort_id
+    local target_id = p.target or legacy_params.target
+    local altitude_ft = p.altitude_ft or legacy_params.altitude_ft
+    local selected_payload_uid = p.selected_payload_uid or legacy_params.selected_payload_uid
+
+    local legion, legion_err = self:_ResolveLegionById(legion_id)
     if not legion then error(legion_err) end
 
-    local target, target_err = self:_ResolveAuftragTargetById(p.target or (p.params and p.params.target))
+    local target, target_err = self:_ResolveAuftragTargetById(target_id)
     if not target then error(target_err) end
 
     if not AUFTRAG or not AUFTRAG.NewBAI then error("AUFTRAG:NewBAI is not available") end
-
-    local altitude_ft = p.altitude_ft
-    if altitude_ft == nil and type(p.params) == "table" then altitude_ft = p.params.altitude_ft end
 
     local auftrag = nil
     if altitude_ft ~= nil then
@@ -109,11 +120,11 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     local auftrag_id = self:_AuftragObjectId(auftrag)
     return {
       action="auftrag.create_bai",
-      legion_id=p.legion_id,
-      cohort_id=p.cohort_id,
-      target=p.target or (p.params and p.params.target),
+      legion_id=legion_id,
+      cohort_id=cohort_id,
+      target=target_id,
       altitude_ft=altitude_ft,
-      selected_payload_uid=p.selected_payload_uid,
+      selected_payload_uid=selected_payload_uid,
       auftrag_id=auftrag_id,
       auftragsnummer=self:_AuftragNumber(auftrag),
       auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
