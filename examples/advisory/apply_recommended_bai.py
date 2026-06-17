@@ -57,6 +57,26 @@ def build_params(args: argparse.Namespace) -> dict[str, Any]:
     return params
 
 
+def build_apply_command_params(recommendation: Any) -> dict[str, Any]:
+    """Build flat command parameters for the Lua AUFTRAG command.
+
+    :param recommendation: Structured AUFTRAG recommendation.
+    :returns: Flat command parameter dictionary.
+    """
+
+    params = recommendation.to_dict()
+    nested = params.get("params") if isinstance(params.get("params"), dict) else {}
+    return {
+        "legion_id": params.get("legion_id"),
+        "cohort_id": params.get("cohort_id"),
+        "target": nested.get("target"),
+        "altitude_ft": nested.get("altitude_ft"),
+        "selected_payload_uid": params.get("selected_payload_uid"),
+        "mission_type": params.get("mission_type"),
+        "constructor": params.get("constructor"),
+    }
+
+
 async def async_main(args: argparse.Namespace) -> int:
     """Run the approval-gated recommended BAI application example.
 
@@ -94,6 +114,11 @@ async def async_main(args: argparse.Namespace) -> int:
         for key, value in recommendation.to_dict().items():
             print(f"  {key}: {value}")
 
+        command_params = build_apply_command_params(recommendation)
+        print("\nCommand params:")
+        for key, value in command_params.items():
+            print(f"  {key}: {value}")
+
         if not args.apply:
             print("\nPreview only. Re-run with --apply to create and assign the AUFTRAG in DCS.")
             return 0
@@ -102,7 +127,7 @@ async def async_main(args: argparse.Namespace) -> int:
         ack = await server.send_command(
             BridgeCommand(
                 action="auftrag.create_bai",
-                params=recommendation.to_dict(),
+                params=command_params,
             ),
             timeout=args.command_timeout,
         )
