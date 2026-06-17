@@ -70,6 +70,23 @@ def _string_list(value: Any) -> list[str]:
     return [str(item) for item in value if item is not None]
 
 
+def _mission_type_keys(mission_types: list[str]) -> list[str]:
+    """Normalize MOOSE mission type names for robust Python-side lookup.
+
+    :param mission_types: MOOSE mission type names as received from DCS.
+    :returns: Uppercase canonical mission type keys.
+    """
+
+    keys: list[str] = []
+    seen: set[str] = set()
+    for mission_type in mission_types:
+        key = mission_type.strip().upper()
+        if key and key not in seen:
+            keys.append(key)
+            seen.add(key)
+    return keys
+
+
 @dataclass(slots=True, frozen=True)
 class CohortSummary:
     """Lightweight COHORT reference embedded in a LEGION snapshot."""
@@ -120,6 +137,7 @@ class Cohort:
     is_ground: bool = False
     is_naval: bool = False
     mission_types: list[str] = field(default_factory=list)
+    mission_type_keys: list[str] = field(default_factory=list)
     asset_count: int | None = None
     stock_asset_count: int | None = None
     spawned_asset_count: int | None = None
@@ -138,6 +156,7 @@ class Cohort:
         :returns: Typed COHORT object.
         """
 
+        mission_types = _string_list(payload.get("mission_types"))
         return cls(
             object_id=str(payload.get("object_id", "")),
             dcs_name=str(payload.get("dcs_name", "")),
@@ -151,7 +170,8 @@ class Cohort:
             is_air=_bool_or_false(payload.get("is_air")),
             is_ground=_bool_or_false(payload.get("is_ground")),
             is_naval=_bool_or_false(payload.get("is_naval")),
-            mission_types=_string_list(payload.get("mission_types")),
+            mission_types=mission_types,
+            mission_type_keys=_mission_type_keys(mission_types),
             asset_count=_optional_int(payload.get("asset_count")),
             stock_asset_count=_optional_int(payload.get("stock_asset_count")),
             spawned_asset_count=_optional_int(payload.get("spawned_asset_count")),
