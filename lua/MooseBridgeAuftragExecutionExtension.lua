@@ -19,10 +19,28 @@ local function bridge_safe_tostring(value)
   return tostring(value)
 end
 
+local function bridge_table_keys(value)
+  if type(value) ~= "table" then return "<" .. type(value) .. ">" end
+  local keys = {}
+  for key, _ in pairs(value) do keys[#keys + 1] = tostring(key) end
+  table.sort(keys)
+  return table.concat(keys, ",")
+end
+
+local function bridge_param_debug(command, params)
+  return "command_keys=[" .. bridge_table_keys(command) .. "] " ..
+         "params_keys=[" .. bridge_table_keys(command and command.params) .. "] " ..
+         "payload_keys=[" .. bridge_table_keys(command and command.payload) .. "] " ..
+         "resolved_keys=[" .. bridge_table_keys(params) .. "]"
+end
+
 function MOOSE_BRIDGE:_CommandParams(command)
   if type(command) ~= "table" then return {} end
   if type(command.params) == "table" then return command.params end
-  if type(command.payload) == "table" then return command.payload end
+  if type(command.payload) == "table" then
+    if type(command.payload.params) == "table" then return command.payload.params end
+    return command.payload
+  end
   return {}
 end
 
@@ -97,6 +115,9 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     local target_id = p.target or legacy_params.target
     local altitude_ft = p.altitude_ft or legacy_params.altitude_ft
     local selected_payload_uid = p.selected_payload_uid or legacy_params.selected_payload_uid
+
+    if not legion_id then error("Missing legion_id; " .. bridge_param_debug(cmd, p)) end
+    if not target_id then error("Missing target; " .. bridge_param_debug(cmd, p)) end
 
     local legion, legion_err = self:_ResolveLegionById(legion_id)
     if not legion then error(legion_err) end
