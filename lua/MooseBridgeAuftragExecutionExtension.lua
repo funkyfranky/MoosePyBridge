@@ -154,6 +154,39 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
   end)
 end
 
+function MOOSE_BRIDGE:_CollectAuftragCandidatesFromLegion(result, seen, legion)
+  if type(legion) ~= "table" then return end
+  local queues = {
+    legion.missionqueue,
+    legion.missions,
+    legion.auftraege,
+    legion.missionQueue,
+  }
+  for _, queue in ipairs(queues) do
+    if type(queue) == "table" then
+      for _, auftrag in pairs(queue) do self:_AddAuftragCandidate(result, seen, auftrag, "legion.missionqueue") end
+    end
+  end
+end
+
+local _moose_bridge_base_build_auftrag_snapshot = MOOSE_BRIDGE.BuildAuftragSnapshot
+
+function MOOSE_BRIDGE:BuildAuftragSnapshot()
+  local result = _moose_bridge_base_build_auftrag_snapshot(self) or {}
+  local seen = {}
+  for _, item in ipairs(result) do
+    if item.object_id then seen[item.object_id] = true end
+  end
+
+  if _DATABASE and type(_DATABASE.LEGIONS) == "table" then
+    for _, legion in pairs(_DATABASE.LEGIONS) do
+      self:_CollectAuftragCandidatesFromLegion(result, seen, legion)
+    end
+  end
+
+  return result
+end
+
 local _moose_bridge_base_register_default_commands = MOOSE_BRIDGE.RegisterDefaultCommands
 
 function MOOSE_BRIDGE:RegisterDefaultCommands()
