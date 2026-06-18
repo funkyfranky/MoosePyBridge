@@ -94,6 +94,14 @@ local function read_number_field(text, name)
   return nil
 end
 
+local function read_boolean_field(text, name)
+  local pattern = '"' .. name .. '"%s*:%s*(true|false)'
+  local value = text:match(pattern)
+  if value == "true" then return true end
+  if value == "false" then return false end
+  return nil
+end
+
 function json.decode(text)
   local result = {}
   result.version = read_number_field(text, "version")
@@ -114,6 +122,16 @@ function json.decode(text)
     result.params.x = read_number_field(params_text, "x")
     result.params.y = read_number_field(params_text, "y")
     result.params.z = read_number_field(params_text, "z")
+
+    -- AUFTRAG advisory/application command fields.
+    result.params.legion_id = read_string_field(params_text, "legion_id")
+    result.params.cohort_id = read_string_field(params_text, "cohort_id")
+    result.params.target = read_string_field(params_text, "target")
+    result.params.altitude_ft = read_number_field(params_text, "altitude_ft")
+    result.params.selected_payload_uid = read_number_field(params_text, "selected_payload_uid") or read_string_field(params_text, "selected_payload_uid")
+    result.params.mission_type = read_string_field(params_text, "mission_type")
+    result.params.constructor = read_string_field(params_text, "constructor")
+    result.params.apply = read_boolean_field(params_text, "apply")
   end
 
   return result
