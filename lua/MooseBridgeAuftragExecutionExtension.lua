@@ -34,6 +34,13 @@ local function bridge_param_debug(command, params)
          "resolved_keys=[" .. bridge_table_keys(params) .. "]"
 end
 
+local function bridge_optional_string_param(value)
+  if type(value) ~= "string" then return nil end
+  local trimmed = string.match(value, "^%s*(.-)%s*$")
+  if trimmed == "" or string.lower(trimmed) == "null" then return nil end
+  return trimmed
+end
+
 local function bridge_optional_bool(value)
   if value == nil then return nil end
   return value and true or false
@@ -175,9 +182,9 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   local legacy_params = type(p.params) == "table" and p.params or {}
   local inputs = {
     params=p,
-    legion_id=p.legion_id or legacy_params.legion_id,
-    cohort_id=p.cohort_id or legacy_params.cohort_id,
-    target_id=p.target or legacy_params.target,
+    legion_id=bridge_optional_string_param(p.legion_id) or bridge_optional_string_param(legacy_params.legion_id),
+    cohort_id=bridge_optional_string_param(p.cohort_id) or bridge_optional_string_param(legacy_params.cohort_id),
+    target_id=bridge_optional_string_param(p.target) or bridge_optional_string_param(legacy_params.target),
     x=p.x or legacy_params.x,
     y=p.y or legacy_params.y,
     z=p.z or legacy_params.z,
