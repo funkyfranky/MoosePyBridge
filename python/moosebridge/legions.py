@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .auftrag_specs import canonical_mission_type
+
 
 def _optional_str(value: Any) -> str | None:
     """Convert a snapshot value to an optional string.
@@ -104,13 +106,13 @@ def _mission_type_keys(mission_types: list[str]) -> list[str]:
     """Normalize MOOSE mission type names for robust Python-side lookup.
 
     :param mission_types: MOOSE mission type names as received from DCS.
-    :returns: Uppercase canonical mission type keys.
+    :returns: Canonical ``AUFTRAG.Type`` keys.
     """
 
     keys: list[str] = []
     seen: set[str] = set()
     for mission_type in mission_types:
-        key = mission_type.strip().upper()
+        key = canonical_mission_type(mission_type)
         if key and key not in seen:
             keys.append(key)
             seen.add(key)
@@ -121,24 +123,25 @@ def _mission_performance_keys(mission_performance: dict[str, float]) -> dict[str
     """Normalize mission performance keys for robust Python-side lookup.
 
     :param mission_performance: Mission performance keyed by original MOOSE mission type names.
-    :returns: Mission performance keyed by uppercase mission type names.
+    :returns: Mission performance keyed by canonical ``AUFTRAG.Type`` keys.
     """
 
-    return {key.strip().upper(): value for key, value in mission_performance.items() if key.strip()}
+    return {canonical_mission_type(key): value for key, value in mission_performance.items() if canonical_mission_type(key)}
 
 
 def _payloads_by_mission_keys(payloads_by_mission: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Normalize payload availability keys for robust Python-side lookup.
 
     :param payloads_by_mission: Payload availability keyed by original MOOSE mission type names.
-    :returns: Payload availability keyed by uppercase mission type names.
+    :returns: Payload availability keyed by canonical ``AUFTRAG.Type`` keys.
     """
 
     result: dict[str, dict[str, Any]] = {}
     for key, value in payloads_by_mission.items():
-        if not key.strip() or not isinstance(value, dict):
+        mission_key = canonical_mission_type(key)
+        if not mission_key or not isinstance(value, dict):
             continue
-        result[key.strip().upper()] = value
+        result[mission_key] = value
     return result
 
 
@@ -235,25 +238,25 @@ class Cohort:
     def mission_performance_for(self, mission_type: str) -> float | None:
         """Return mission performance for a mission type.
 
-        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :param mission_type: Mission type such as ``BAI`` or ``Bombing``.
         :returns: Performance value, or ``None`` when not present.
         """
 
-        return self.mission_performance_keys.get(mission_type.strip().upper())
+        return self.mission_performance_keys.get(canonical_mission_type(mission_type))
 
     def payload_info_for(self, mission_type: str) -> dict[str, Any] | None:
         """Return payload availability for a mission type.
 
-        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :param mission_type: Mission type such as ``BAI`` or ``Bombing``.
         :returns: Payload availability dictionary or ``None``.
         """
 
-        return self.payloads_by_mission_keys.get(mission_type.strip().upper())
+        return self.payloads_by_mission_keys.get(canonical_mission_type(mission_type))
 
     def payload_performance_for(self, mission_type: str) -> float | None:
         """Return best payload performance for a mission type.
 
-        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :param mission_type: Mission type such as ``BAI`` or ``Bombing``.
         :returns: Best payload performance or ``None``.
         """
 
@@ -269,7 +272,7 @@ class Cohort:
     def has_payload_for(self, mission_type: str) -> bool | None:
         """Return whether payload availability is positive for a mission type.
 
-        :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
+        :param mission_type: Mission type such as ``BAI`` or ``Bombing``.
         :returns: ``True`` or ``False`` when payload information is known, otherwise ``None``.
         """
 
