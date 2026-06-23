@@ -225,6 +225,7 @@ class Cohort:
     mission_performance_keys: dict[str, float] = field(default_factory=dict)
     payloads_by_mission: dict[str, Any] = field(default_factory=dict)
     payloads_by_mission_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
+    mission_range_m: float | None = None
     asset_count: int | None = None
     stock_asset_count: int | None = None
     spawned_asset_count: int | None = None
@@ -319,6 +320,7 @@ class Cohort:
             mission_performance_keys=_mission_performance_keys(mission_performance),
             payloads_by_mission=payloads_by_mission,
             payloads_by_mission_keys=_payloads_by_mission_keys(payloads_by_mission),
+            mission_range_m=_optional_float(payload.get("mission_range_m") or payload.get("mission_range")),
             asset_count=_optional_int(payload.get("asset_count")),
             stock_asset_count=_optional_int(payload.get("stock_asset_count")),
             spawned_asset_count=_optional_int(payload.get("spawned_asset_count")),
