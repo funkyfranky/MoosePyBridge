@@ -2,7 +2,7 @@
 
 By default this script only prints the recommendation. It creates and assigns the
 AUFTRAG in DCS only when ``--apply`` is provided. Add ``--monitor`` to poll
-AUFTRAG snapshots after application.
+AUFTRAG snapshots after application and wait for the MOOSE mission summary.
 """
 
 from __future__ import annotations
@@ -17,18 +17,24 @@ from moosebridge import BridgeCommand, MooseBridgeClient, MooseBridgeServer, eva
 from moosebridge.server import DEFAULT_PORT
 
 
-TERMINAL_STATUS_KEYS = {
+TERMINAL_LIFECYCLE_STATUS_KEYS = {
     "done",
-    "failed",
-    "failure",
-    "finished",
-    "success",
-    "successful",
     "cancelled",
     "canceled",
-    "stopped",
-    "over",
 }
+
+SUMMARY_FIELDS = (
+    "success",
+    "Ntargets0",
+    "Ntargets",
+    "damage",
+    "Ndestroyed",
+    "Nkills",
+    "Nelements",
+    "targetLife",
+    "category",
+    "Ncasualties",
+)
 
 
 async def wait_for_dcs_connection(server: MooseBridgeServer, timeout_s: float) -> None:
@@ -92,21 +98,46 @@ def build_apply_command_params(recommendation: Any) -> dict[str, Any]:
     }
 
 
-def is_terminal_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
-    """Return whether an AUFTRAG snapshot looks terminal.
+def is_terminal_lifecycle_snapshot(snapshot: dict[str, Any]) -> bool:
+    """Return whether an AUFTRAG reached the terminal lifecycle phase.
+
+    This does not mean the mission has been evaluated. MOOSE evaluates after
+    ``dTevaluate`` and then creates ``AUFTRAG.summary``.
 
     :param snapshot: Raw AUFTRAG snapshot dictionary.
-    :returns: ``True`` if the AUFTRAG appears to have reached a terminal state.
+    :returns: ``True`` for DONE/CANCELLED-style lifecycle states or ``t_over``.
     """
 
     status = str(snapshot.get("status") or "").strip().lower()
-    if status in TERMINAL_STATUS_KEYS:
+    if status in TERMINAL_LIFECYCLE_STATUS_KEYS:
         return True
     return snapshot.get("t_over") is not None
 
 
+def is_evaluated_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
+    """Return whether MOOSE has created ``AUFTRAG.summary``.
+
+    :param snapshot: Raw AUFTRAG snapshot dictionary.
+    :returns: ``True`` if the authoritative mission summary is present.
+    """
+
+    return isinstance(snapshot.get("summary"), dict)
+
+
+def print_auftrag_summary(summary: dict[str, Any], prefix: str = "  ") -> None:
+    """Print the MOOSE AUFTRAG summary fields.
+
+    :param summary: Raw ``AUFTRAG.summary`` snapshot dictionary.
+    :param prefix: Prefix printed before each line.
+    """
+
+    print(f"{prefix}summary:")
+    for field in SUMMARY_FIELDS:
+        print(f"{prefix}  {field}: {summary.get(field)}")
+
+
 def print_auftrag_snapshot(snapshot: dict[str, Any], prefix: str = "  ") -> None:
-    """Print the most relevant AUFTRAG status fields.
+    """Print the most relevant AUFTRAG status and evaluation fields.
 
     :param snapshot: Raw AUFTRAG snapshot dictionary.
     :param prefix: Prefix printed before each line.
@@ -124,27 +155,36 @@ def print_auftrag_snapshot(snapshot: dict[str, Any], prefix: str = "  ") -> None
         "t_started",
         "t_executing",
         "t_over",
+        "d_tevaluate",
+        "ready_to_evaluate",
+        "summary_available",
         "assigned_group_ids",
         "legion_names",
     )
     for field in fields:
         print(f"{prefix}{field}: {snapshot.get(field)}")
 
+    summary = snapshot.get("summary")
+    if isinstance(summary, dict):
+        print_auftrag_summary(summary, prefix=prefix)
+
 
 async def monitor_auftrag(client: MooseBridgeClient, auftrag_id: str, timeout_s: float, interval_s: float) -> int:
-    """Poll AUFTRAG snapshots until the AUFTRAG becomes terminal or times out.
+    """Poll AUFTRAG snapshots until MOOSE evaluation summary exists or times out.
 
     :param client: MOOSE Bridge SDK client.
     :param auftrag_id: Stable AUFTRAG object id from the ACK result.
     :param timeout_s: Maximum monitoring time in seconds.
     :param interval_s: Poll interval in seconds.
-    :returns: Exit code contribution: ``0`` if terminal or visible at timeout, ``4`` if never seen.
+    :returns: ``0`` for successful mission summary, ``6`` for unsuccessful mission summary,
+        ``4`` if the AUFTRAG was never seen, or ``5`` if it ended but was not evaluated.
     """
 
     print(f"\nMonitoring {auftrag_id} for up to {timeout_s:.1f} s ...")
     deadline = asyncio.get_running_loop().time() + timeout_s
     last_snapshot: dict[str, Any] | None = None
     seen = False
+    terminal_lifecycle_seen = False
 
     while asyncio.get_running_loop().time() < deadline:
         await request_snapshots(client, ("snapshot.auftraege", "snapshot.legions", "snapshot.opsgroups"))
@@ -158,9 +198,20 @@ async def monitor_auftrag(client: MooseBridgeClient, auftrag_id: str, timeout_s:
                 print("\nAUFTRAG snapshot:")
                 print_auftrag_snapshot(snapshot)
                 last_snapshot = dict(snapshot)
-            if is_terminal_auftrag_snapshot(snapshot):
-                print(f"\n{auftrag_id} appears terminal.")
-                return 0
+
+            if is_evaluated_auftrag_snapshot(snapshot):
+                summary = snapshot.get("summary") or {}
+                success = bool(summary.get("success"))
+                outcome = "SUCCESS" if success else "FAILURE"
+                print(f"\n{auftrag_id} evaluation complete: {outcome}")
+                return 0 if success else 6
+
+            if is_terminal_lifecycle_snapshot(snapshot):
+                terminal_lifecycle_seen = True
+                if snapshot.get("ready_to_evaluate"):
+                    print(f"  {auftrag_id}: terminal and ready to evaluate; waiting for AUFTRAG.summary ...")
+                else:
+                    print(f"  {auftrag_id}: terminal lifecycle; waiting for dTevaluate and AUFTRAG.summary ...")
 
         await asyncio.sleep(interval_s)
 
@@ -171,6 +222,9 @@ async def monitor_auftrag(client: MooseBridgeClient, auftrag_id: str, timeout_s:
     print(f"\nMonitor timeout reached. Last known {auftrag_id} snapshot:")
     if last_snapshot is not None:
         print_auftrag_snapshot(last_snapshot)
+    if terminal_lifecycle_seen:
+        print("AUFTRAG reached terminal lifecycle but no AUFTRAG.summary was observed.")
+        return 5
     return 0
 
 
