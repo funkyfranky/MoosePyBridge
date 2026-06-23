@@ -10,10 +10,11 @@ from .auftrag_specs import (
 )
 from .legions import Cohort, CohortSummary, Legion
 from .models import Auftrag, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
+from .outcomes import AuftragOutcome
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
 from .server import MooseBridgeServer
-from .sdk import MooseBridgeClient
+from .sdk import MooseBridgeAuftragNotFoundError, MooseBridgeAuftragTimeoutError, MooseBridgeClient, MooseBridgeCommandError
 from .state import MooseBridgeState, MooseObjectIdentity
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "Auftrag",
     "AuftragAdvisoryResult",
     "AuftragCandidate",
+    "AuftragOutcome",
     "AuftragParameterSpec",
     "AuftragRecommendation",
     "AuftragTypeSpec",
@@ -29,7 +31,10 @@ __all__ = [
     "Cohort",
     "CohortSummary",
     "Legion",
+    "MooseBridgeAuftragNotFoundError",
+    "MooseBridgeAuftragTimeoutError",
     "MooseBridgeClient",
+    "MooseBridgeCommandError",
     "MooseBridgeServer",
     "MooseBridgeState",
     "MooseSnapshotObject",
