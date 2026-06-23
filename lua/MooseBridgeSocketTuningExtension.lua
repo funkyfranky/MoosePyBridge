@@ -16,6 +16,17 @@ local function bridge_tuning_safe_tostring(value)
   return tostring(value)
 end
 
+local function bridge_should_log_connect_failure(bridge, err, now)
+  if bridge.LogConnectFailures == false then return false end
+  if err == "timeout" and bridge.LogConnectTimeouts ~= true then return false end
+
+  local interval = bridge.ConnectFailureLogInterval or 60
+  if bridge.LastConnectFailureLog and now - bridge.LastConnectFailureLog < interval then return false end
+
+  bridge.LastConnectFailureLog = now
+  return true
+end
+
 local _moose_bridge_tuning_base_new = MOOSE_BRIDGE.New
 
 function MOOSE_BRIDGE:New(host, port)
@@ -26,6 +37,12 @@ function MOOSE_BRIDGE:New(host, port)
   if bridge.ConnectRetryDelay == nil or bridge.ConnectRetryDelay == 5 then bridge.ConnectRetryDelay = 10 end
   if bridge.TickInterval == nil or bridge.TickInterval == 0.2 then bridge.TickInterval = 0.5 end
   if bridge.HeartbeatInterval == nil or bridge.HeartbeatInterval == 5 then bridge.HeartbeatInterval = 10 end
+
+  -- Keep expected idle reconnect timeouts out of dcs.log by default.
+  if bridge.LogConnectFailures == nil then bridge.LogConnectFailures = true end
+  if bridge.LogConnectTimeouts == nil then bridge.LogConnectTimeouts = false end
+  bridge.ConnectFailureLogInterval = bridge.ConnectFailureLogInterval or 60
+  bridge.LastConnectFailureLog = nil
 
   return bridge
 end
@@ -41,7 +58,9 @@ function MOOSE_BRIDGE:_Connect()
 
   local ok, err = conn:connect(self.Host, self.Port)
   if not ok then
-    self:_Log("Connect failed: " .. bridge_tuning_safe_tostring(err))
+    if bridge_should_log_connect_failure(self, err, now) then
+      self:_Log("Connect failed: " .. bridge_tuning_safe_tostring(err))
+    end
     conn:close()
     return
   end
