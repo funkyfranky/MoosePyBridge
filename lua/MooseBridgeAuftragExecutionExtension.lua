@@ -34,6 +34,36 @@ local function bridge_param_debug(command, params)
          "resolved_keys=[" .. bridge_table_keys(params) .. "]"
 end
 
+local function bridge_optional_bool(value)
+  if value == nil then return nil end
+  return value and true or false
+end
+
+local function bridge_auftrag_summary(summary)
+  if type(summary) ~= "table" then return nil end
+  return {
+    success=bridge_optional_bool(summary.success),
+    Ntargets0=summary.Ntargets0,
+    Ntargets=summary.Ntargets,
+    damage=summary.damage,
+    Ndestroyed=summary.Ndestroyed,
+    Nkills=summary.Nkills,
+    Nelements=summary.Nelements,
+    targetLife=summary.targetLife,
+    category=summary.category,
+    Ncasualties=summary.Ncasualties,
+  }
+end
+
+local function bridge_auftrag_ready_to_evaluate(auftrag)
+  local tover = auftrag and auftrag.Tover or nil
+  local dtevaluate = auftrag and auftrag.dTevaluate or nil
+  local now = nil
+  if timer and timer.getTime then now = timer.getTime() end
+  if tover and dtevaluate and now then return now - tover >= dtevaluate end
+  return false
+end
+
 function MOOSE_BRIDGE:_CommandParams(command)
   if type(command) ~= "table" then return {} end
   if type(command.params) == "table" then return command.params end
@@ -152,6 +182,21 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
       added=true,
     }
   end)
+end
+
+local _moose_bridge_base_build_auftrag_snapshot_item = MOOSE_BRIDGE._BuildAuftragSnapshotItem
+
+function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
+  local item = _moose_bridge_base_build_auftrag_snapshot_item(self, auftrag, source)
+  if type(item) ~= "table" or type(auftrag) ~= "table" then return item end
+
+  local summary = bridge_auftrag_summary(auftrag.summary)
+  item.d_tevaluate = auftrag.dTevaluate
+  item.ready_to_evaluate = bridge_auftrag_ready_to_evaluate(auftrag)
+  item.summary_available = summary ~= nil
+  item.summary = summary
+
+  return item
 end
 
 function MOOSE_BRIDGE:_CollectAuftragCandidatesFromLegion(result, seen, legion)
