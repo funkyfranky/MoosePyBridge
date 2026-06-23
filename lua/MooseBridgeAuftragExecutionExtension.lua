@@ -288,6 +288,18 @@ function MOOSE_BRIDGE:_AddAuftragCandidate(result, seen, auftrag, source)
   return _moose_bridge_base_add_auftrag_candidate(self, result, seen, auftrag, source)
 end
 
+local _moose_bridge_base_build_cohort_snapshot_item = MOOSE_BRIDGE._BuildCohortSnapshotItem
+
+function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
+  local item = _moose_bridge_base_build_cohort_snapshot_item(self, cohort_name, cohort, source)
+  if type(item) ~= "table" or type(cohort) ~= "table" then return item end
+
+  local mission_range = self:_SafeCall(cohort, "GetMissionRange") or cohort.missionRange or cohort.MissionRange
+  item.mission_range_m = mission_range
+
+  return item
+end
+
 local _moose_bridge_base_build_auftrag_snapshot_item = MOOSE_BRIDGE._BuildAuftragSnapshotItem
 
 function MOOSE_BRIDGE:_BuildAuftragSnapshotItem(auftrag, source)
