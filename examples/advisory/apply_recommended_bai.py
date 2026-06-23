@@ -1,8 +1,7 @@
 """Preview, apply, and optionally monitor the recommended BAI AUFTRAG.
 
-By default this script only prints the recommendation. It creates and assigns the
-AUFTRAG in DCS only when ``--apply`` is provided. Add ``--monitor`` to poll
-AUFTRAG snapshots after application and wait for the MOOSE mission summary.
+The AUFTRAG application and outcome waiting logic live in the SDK. This script is
+kept as a thin CLI wrapper around the advisory and SDK APIs.
 """
 
 from __future__ import annotations
@@ -13,28 +12,15 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from moosebridge import BridgeCommand, MooseBridgeClient, MooseBridgeServer, evaluate_auftrag_request, recommend_auftrag
-from moosebridge.server import DEFAULT_PORT
-
-
-TERMINAL_LIFECYCLE_STATUS_KEYS = {
-    "done",
-    "cancelled",
-    "canceled",
-}
-
-SUMMARY_FIELDS = (
-    "success",
-    "Ntargets0",
-    "Ntargets",
-    "damage",
-    "Ndestroyed",
-    "Nkills",
-    "Nelements",
-    "targetLife",
-    "category",
-    "Ncasualties",
+from moosebridge import (
+    MooseBridgeAuftragNotFoundError,
+    MooseBridgeAuftragTimeoutError,
+    MooseBridgeClient,
+    MooseBridgeServer,
+    evaluate_auftrag_request,
+    recommend_auftrag,
 )
+from moosebridge.server import DEFAULT_PORT
 
 
 async def wait_for_dcs_connection(server: MooseBridgeServer, timeout_s: float) -> None:
@@ -53,18 +39,6 @@ async def wait_for_dcs_connection(server: MooseBridgeServer, timeout_s: float) -
     raise TimeoutError(f"No DCS bridge connection after {timeout_s:.1f} s.")
 
 
-async def request_snapshots(client: MooseBridgeClient, actions: tuple[str, ...]) -> None:
-    """Request a sequence of snapshots.
-
-    :param client: MOOSE Bridge SDK client.
-    :param actions: Snapshot command actions.
-    """
-
-    for action in actions:
-        await client.server.send_command(BridgeCommand(action=action, params={}))
-        await asyncio.sleep(0.05)
-
-
 def build_params(args: argparse.Namespace) -> dict[str, Any]:
     """Build AUFTRAG advisory parameters from command-line arguments.
 
@@ -78,154 +52,16 @@ def build_params(args: argparse.Namespace) -> dict[str, Any]:
     return params
 
 
-def build_apply_command_params(recommendation: Any) -> dict[str, Any]:
-    """Build flat command parameters for the Lua AUFTRAG command.
+def print_mapping(title: str, values: dict[str, Any]) -> None:
+    """Print a title and key/value mapping.
 
-    :param recommendation: Structured AUFTRAG recommendation.
-    :returns: Flat command parameter dictionary.
+    :param title: Section title.
+    :param values: Mapping to print.
     """
 
-    params = recommendation.to_dict()
-    nested = params.get("params") if isinstance(params.get("params"), dict) else {}
-    return {
-        "legion_id": params.get("legion_id"),
-        "cohort_id": params.get("cohort_id"),
-        "target": nested.get("target"),
-        "altitude_ft": nested.get("altitude_ft"),
-        "selected_payload_uid": params.get("selected_payload_uid"),
-        "mission_type": params.get("mission_type"),
-        "constructor": params.get("constructor"),
-    }
-
-
-def is_terminal_lifecycle_snapshot(snapshot: dict[str, Any]) -> bool:
-    """Return whether an AUFTRAG reached the terminal lifecycle phase.
-
-    This does not mean the mission has been evaluated. MOOSE evaluates after
-    ``dTevaluate`` and then creates ``AUFTRAG.summary``.
-
-    :param snapshot: Raw AUFTRAG snapshot dictionary.
-    :returns: ``True`` for DONE/CANCELLED-style lifecycle states or ``t_over``.
-    """
-
-    status = str(snapshot.get("status") or "").strip().lower()
-    if status in TERMINAL_LIFECYCLE_STATUS_KEYS:
-        return True
-    return snapshot.get("t_over") is not None
-
-
-def is_evaluated_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
-    """Return whether MOOSE has created ``AUFTRAG.summary``.
-
-    :param snapshot: Raw AUFTRAG snapshot dictionary.
-    :returns: ``True`` if the authoritative mission summary is present.
-    """
-
-    return isinstance(snapshot.get("summary"), dict)
-
-
-def print_auftrag_summary(summary: dict[str, Any], prefix: str = "  ") -> None:
-    """Print the MOOSE AUFTRAG summary fields.
-
-    :param summary: Raw ``AUFTRAG.summary`` snapshot dictionary.
-    :param prefix: Prefix printed before each line.
-    """
-
-    print(f"{prefix}summary:")
-    for field in SUMMARY_FIELDS:
-        print(f"{prefix}  {field}: {summary.get(field)}")
-
-
-def print_auftrag_snapshot(snapshot: dict[str, Any], prefix: str = "  ") -> None:
-    """Print the most relevant AUFTRAG status and evaluation fields.
-
-    :param snapshot: Raw AUFTRAG snapshot dictionary.
-    :param prefix: Prefix printed before each line.
-    """
-
-    fields = (
-        "object_id",
-        "type",
-        "status",
-        "n_assigned",
-        "n_elements",
-        "n_dead",
-        "n_kills",
-        "n_casualties",
-        "t_started",
-        "t_executing",
-        "t_over",
-        "d_tevaluate",
-        "ready_to_evaluate",
-        "summary_available",
-        "assigned_group_ids",
-        "legion_names",
-    )
-    for field in fields:
-        print(f"{prefix}{field}: {snapshot.get(field)}")
-
-    summary = snapshot.get("summary")
-    if isinstance(summary, dict):
-        print_auftrag_summary(summary, prefix=prefix)
-
-
-async def monitor_auftrag(client: MooseBridgeClient, auftrag_id: str, timeout_s: float, interval_s: float) -> int:
-    """Poll AUFTRAG snapshots until MOOSE evaluation summary exists or times out.
-
-    :param client: MOOSE Bridge SDK client.
-    :param auftrag_id: Stable AUFTRAG object id from the ACK result.
-    :param timeout_s: Maximum monitoring time in seconds.
-    :param interval_s: Poll interval in seconds.
-    :returns: ``0`` for successful mission summary, ``6`` for unsuccessful mission summary,
-        ``4`` if the AUFTRAG was never seen, or ``5`` if it ended but was not evaluated.
-    """
-
-    print(f"\nMonitoring {auftrag_id} for up to {timeout_s:.1f} s ...")
-    deadline = asyncio.get_running_loop().time() + timeout_s
-    last_snapshot: dict[str, Any] | None = None
-    seen = False
-    terminal_lifecycle_seen = False
-
-    while asyncio.get_running_loop().time() < deadline:
-        await request_snapshots(client, ("snapshot.auftraege", "snapshot.legions", "snapshot.opsgroups"))
-        snapshot = client.state.auftraege.get(auftrag_id)
-
-        if snapshot is None:
-            print(f"  {auftrag_id}: not visible in snapshot yet")
-        else:
-            seen = True
-            if snapshot != last_snapshot:
-                print("\nAUFTRAG snapshot:")
-                print_auftrag_snapshot(snapshot)
-                last_snapshot = dict(snapshot)
-
-            if is_evaluated_auftrag_snapshot(snapshot):
-                summary = snapshot.get("summary") or {}
-                success = bool(summary.get("success"))
-                outcome = "SUCCESS" if success else "FAILURE"
-                print(f"\n{auftrag_id} evaluation complete: {outcome}")
-                return 0 if success else 6
-
-            if is_terminal_lifecycle_snapshot(snapshot):
-                terminal_lifecycle_seen = True
-                if snapshot.get("ready_to_evaluate"):
-                    print(f"  {auftrag_id}: terminal and ready to evaluate; waiting for AUFTRAG.summary ...")
-                else:
-                    print(f"  {auftrag_id}: terminal lifecycle; waiting for dTevaluate and AUFTRAG.summary ...")
-
-        await asyncio.sleep(interval_s)
-
-    if not seen:
-        print(f"\n{auftrag_id} was not visible before monitor timeout.")
-        return 4
-
-    print(f"\nMonitor timeout reached. Last known {auftrag_id} snapshot:")
-    if last_snapshot is not None:
-        print_auftrag_snapshot(last_snapshot)
-    if terminal_lifecycle_seen:
-        print("AUFTRAG reached terminal lifecycle but no AUFTRAG.summary was observed.")
-        return 5
-    return 0
+    print(f"\n{title}:")
+    for key, value in values.items():
+        print(f"  {key}: {value}")
 
 
 async def async_main(args: argparse.Namespace) -> int:
@@ -245,9 +81,8 @@ async def async_main(args: argparse.Namespace) -> int:
         await wait_for_dcs_connection(server, args.connect_timeout)
 
         print("DCS connected. Requesting advisory snapshots ...")
-        await request_snapshots(
-            client,
-            ("snapshot.groups", "snapshot.units", "snapshot.statics", "snapshot.zones", "snapshot.cohorts", "snapshot.legions"),
+        await client.request_snapshots(
+            ("snapshot.groups", "snapshot.units", "snapshot.statics", "snapshot.zones", "snapshot.cohorts", "snapshot.legions")
         )
 
         result = evaluate_auftrag_request(
@@ -261,43 +96,42 @@ async def async_main(args: argparse.Namespace) -> int:
             print("No executable BAI recommendation was found.")
             return 2
 
-        print("\nRecommendation:")
-        for key, value in recommendation.to_dict().items():
-            print(f"  {key}: {value}")
-
-        command_params = build_apply_command_params(recommendation)
-        print("\nCommand params:")
-        for key, value in command_params.items():
-            print(f"  {key}: {value}")
+        print_mapping("Recommendation", recommendation.to_dict())
 
         if not args.apply:
             print("\nPreview only. Re-run with --apply to create and assign the AUFTRAG in DCS.")
             return 0
 
-        print("\nApplying recommendation via action=auftrag.create_bai ...")
-        ack = await server.send_command(
-            BridgeCommand(
-                action="auftrag.create_bai",
-                params=command_params,
-            ),
-            timeout=args.command_timeout,
-        )
+        print("\nApplying recommendation via SDK ...")
+        ack = await client.apply_recommended_auftrag(recommendation, timeout=args.command_timeout)
         print("ACK:", ack)
-        if not ack.get("ok"):
-            return 3
-
-        print("\nRequesting post-application snapshots ...")
-        await request_snapshots(client, ("snapshot.auftraege", "snapshot.legions", "snapshot.opsgroups"))
 
         result_payload = ack.get("result") if isinstance(ack.get("result"), dict) else {}
         auftrag_id = result_payload.get("auftrag_id")
-        if args.monitor:
-            if auftrag_id:
-                return await monitor_auftrag(client, str(auftrag_id), args.monitor_timeout, args.monitor_interval)
+        if not args.monitor:
+            return 0
+
+        if not auftrag_id:
             print("Cannot monitor AUFTRAG because ACK result did not include auftrag_id.")
             return 4
 
-        return 0
+        print(f"\nWaiting for evaluated AUFTRAG outcome: {auftrag_id}")
+        try:
+            outcome = await client.wait_for_auftrag_outcome(
+                str(auftrag_id),
+                timeout_s=args.monitor_timeout,
+                interval_s=args.monitor_interval,
+            )
+        except MooseBridgeAuftragNotFoundError as exc:
+            print(f"AUFTRAG not found: {exc}")
+            return 4
+        except MooseBridgeAuftragTimeoutError as exc:
+            print(f"AUFTRAG outcome timeout: {exc}")
+            return 5
+
+        print_mapping("Outcome", outcome.to_dict())
+        print(f"\n{outcome.auftrag_id} evaluation complete: {'SUCCESS' if outcome.success else 'FAILURE'}")
+        return 0 if outcome.success else 6
 
     finally:
         await server.stop()
@@ -314,7 +148,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--coalition", default="blue", help="Executing coalition filter, for example blue or red.")
     parser.add_argument("--altitude-ft", type=float, default=None, help="Optional engage altitude in feet.")
     parser.add_argument("--apply", action="store_true", help="Create and assign the recommended AUFTRAG in DCS.")
-    parser.add_argument("--monitor", action="store_true", help="Poll AUFTRAG snapshots after applying the recommendation.")
+    parser.add_argument("--monitor", action="store_true", help="Wait for the evaluated AUFTRAG outcome after applying.")
     parser.add_argument("--monitor-timeout", type=float, default=600.0, help="Maximum AUFTRAG monitoring time in seconds.")
     parser.add_argument("--monitor-interval", type=float, default=5.0, help="AUFTRAG monitoring poll interval in seconds.")
     parser.add_argument("--host", default="127.0.0.1", help="Host/interface for the Python bridge server.")
