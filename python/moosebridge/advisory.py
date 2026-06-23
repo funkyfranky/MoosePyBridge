@@ -406,6 +406,9 @@ def evaluate_auftrag_request(
 
     cohorts = state.cohorts_with_stock_for_mission_type(mission_key)
     candidates: list[AuftragCandidate] = []
+    out_of_range_count = 0
+    min_out_of_range_distance_nm: float | None = None
+    min_out_of_range_radius_nm: float | None = None
     for cohort in cohorts:
         legion = state.legion(cohort.legion_id) if cohort.legion_id else None
         legion_coalition = normalize_coalition(legion.coalition if legion else None)
@@ -422,12 +425,34 @@ def evaluate_auftrag_request(
         legion_coords = coordinates_from_payload(legion.raw if legion else None)
         distance_m = distance_m_between(legion_coords, target_coords)
         distance_nm = distance_m / METERS_PER_NAUTICAL_MILE if distance_m is not None else None
+        mission_range_m = cohort.mission_range_m
+        if mission_range_m is not None and distance_m is not None and distance_m > mission_range_m:
+            out_of_range_count += 1
+            if distance_nm is not None:
+                mission_range_nm = mission_range_m / METERS_PER_NAUTICAL_MILE
+                if min_out_of_range_distance_nm is None or distance_nm < min_out_of_range_distance_nm:
+                    min_out_of_range_distance_nm = distance_nm
+                    min_out_of_range_radius_nm = mission_range_nm
+            continue
+
         candidates.append(AuftragCandidate(cohort=cohort, legion=legion, distance_m=distance_m, distance_nm=distance_nm))
 
     candidates.sort(key=lambda candidate: float("inf") if candidate.distance_m is None else candidate.distance_m)
 
     if not candidates and not any(issue.severity == "error" for issue in issues):
-        issues.append(AdvisoryIssue("warning", "NO_CANDIDATES", "No matching COHORT candidates with stock were found."))
+        if out_of_range_count:
+            detail = ""
+            if min_out_of_range_distance_nm is not None and min_out_of_range_radius_nm is not None:
+                detail = f" Nearest excluded candidate was {min_out_of_range_distance_nm:.1f} NM away with mission range {min_out_of_range_radius_nm:.1f} NM."
+            issues.append(
+                AdvisoryIssue(
+                    "warning",
+                    "NO_CANDIDATES_IN_RANGE",
+                    f"No matching COHORT candidates were within their mission range. Excluded {out_of_range_count} out-of-range candidate(s).{detail}",
+                )
+            )
+        else:
+            issues.append(AdvisoryIssue("warning", "NO_CANDIDATES", "No matching COHORT candidates with stock were found."))
 
     return AuftragAdvisoryResult(
         mission_type=mission_key,
