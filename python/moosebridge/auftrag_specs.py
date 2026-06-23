@@ -191,7 +191,14 @@ AIR_TARGET_PARAMETER = AuftragParameterSpec(
     name="target",
     optional=False,
     accepted_objects=("GROUP", "UNIT", "STATIC"),
-    description="Target object. For coordinate-style constructors, DCS/MOOSE resolves the object's current coordinate.",
+    description="Target object used by object-based AUFTRAG constructors.",
+)
+
+OPTIONAL_AIR_TARGET_PARAMETER = AuftragParameterSpec(
+    name="target",
+    optional=True,
+    accepted_objects=("GROUP", "UNIT", "STATIC"),
+    description="Optional object shortcut whose current coordinate is used as the mission target point.",
 )
 
 ALTITUDE_PARAMETER = AuftragParameterSpec(
@@ -199,6 +206,27 @@ ALTITUDE_PARAMETER = AuftragParameterSpec(
     optional=True,
     accepted_objects=("float",),
     description="Engage altitude in feet.",
+)
+
+X_COORDINATE_PARAMETER = AuftragParameterSpec(
+    name="x",
+    optional=True,
+    accepted_objects=("float",),
+    description="DCS world x coordinate in meters. Required with z when no target object is supplied.",
+)
+
+Y_COORDINATE_PARAMETER = AuftragParameterSpec(
+    name="y",
+    optional=True,
+    accepted_objects=("float",),
+    description="DCS world y coordinate in meters. Optional; defaults to 0 for 2D coordinate input.",
+)
+
+Z_COORDINATE_PARAMETER = AuftragParameterSpec(
+    name="z",
+    optional=True,
+    accepted_objects=("float",),
+    description="DCS world z coordinate in meters. Required with x when no target object is supplied.",
 )
 
 AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
@@ -216,9 +244,12 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
         mission_type=AuftragType.BOMBING.name,
         constructor="AUFTRAG:NewBOMBING",
         performer_categories=("AIR",),
-        description="Bombing attack against a coordinate resolved from a GROUP, UNIT or STATIC object.",
+        description="Bombing attack against a coordinate, optionally resolved from a GROUP, UNIT or STATIC object.",
         parameters=(
-            AIR_TARGET_PARAMETER,
+            OPTIONAL_AIR_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
             ALTITUDE_PARAMETER,
             AuftragParameterSpec(
                 name="engage_weapon_type",
