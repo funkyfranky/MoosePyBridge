@@ -88,6 +88,20 @@ class AuftragTypeSpec:
         }
 
 
+AIR_TARGET_PARAMETER = AuftragParameterSpec(
+    name="target",
+    optional=False,
+    accepted_objects=("GROUP", "UNIT", "STATIC"),
+    description="Target object. For coordinate-style constructors, DCS/MOOSE resolves the object's current coordinate.",
+)
+
+ALTITUDE_PARAMETER = AuftragParameterSpec(
+    name="altitude_ft",
+    optional=True,
+    accepted_objects=("float",),
+    description="Engage altitude in feet.",
+)
+
 AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
     "BAI": AuftragTypeSpec(
         mission_type="BAI",
@@ -95,17 +109,29 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
         performer_categories=("AIR",),
         description="Battlefield air interdiction against a compatible target object.",
         parameters=(
+            AIR_TARGET_PARAMETER,
+            ALTITUDE_PARAMETER,
+        ),
+    ),
+    "BOMBING": AuftragTypeSpec(
+        mission_type="BOMBING",
+        constructor="AUFTRAG:NewBOMBING",
+        performer_categories=("AIR",),
+        description="Bombing attack against a coordinate resolved from a GROUP, UNIT or STATIC object.",
+        parameters=(
+            AIR_TARGET_PARAMETER,
+            ALTITUDE_PARAMETER,
             AuftragParameterSpec(
-                name="target",
-                optional=False,
-                accepted_objects=("GROUP", "UNIT", "STATIC"),
-                description="Target object used to create the MOOSE TARGET for the BAI mission.",
+                name="engage_weapon_type",
+                optional=True,
+                accepted_objects=("int",),
+                description="Optional numeric ENUMS.WeaponFlag value used as EngageWeaponType.",
             ),
             AuftragParameterSpec(
-                name="altitude_ft",
+                name="divebomb",
                 optional=True,
-                accepted_objects=("float",),
-                description="Engage altitude in feet.",
+                accepted_objects=("bool",),
+                description="Optional dive-bombing attack approach flag.",
             ),
         ),
     ),
