@@ -17,6 +17,73 @@ PLATFORM_CATEGORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "NAVAL": ("NAVAL",),
 }
 
+AUFTRAG_TYPE_NAMES: dict[str, str] = {
+    "ANTISHIP": "Anti Ship",
+    "AWACS": "AWACS",
+    "BAI": "BAI",
+    "BOMBING": "Bombing",
+    "BOMBRUNWAY": "Bomb Runway",
+    "BOMBCARPET": "Carpet Bombing",
+    "CAP": "CAP",
+    "CAS": "CAS",
+    "ESCORT": "Escort",
+    "FAC": "FAC",
+    "FACA": "FAC-A",
+    "FERRY": "Ferry Flight",
+    "GROUNDESCORT": "Ground Escort",
+    "INTERCEPT": "Intercept",
+    "ORBIT": "Orbit",
+    "GCICAP": "Ground Controlled CAP",
+    "RECON": "Recon",
+    "RECOVERYTANKER": "Recovery Tanker",
+    "RESCUEHELO": "Rescue Helo",
+    "SEAD": "SEAD",
+    "STRIKE": "Strike",
+    "TANKER": "Tanker",
+    "TROOPTRANSPORT": "Troop Transport",
+    "ARTY": "Fire At Point",
+    "PATROLZONE": "Patrol Zone",
+    "OPSTRANSPORT": "Ops Transport",
+    "AMMOSUPPLY": "Ammo Supply",
+    "FUELSUPPLY": "Fuel Supply",
+    "ALERT5": "Alert5",
+    "ONGUARD": "On Guard",
+    "ARMOREDGUARD": "Armored Guard",
+    "BARRAGE": "Barrage",
+    "ARMORATTACK": "Armor Attack",
+    "CASENHANCED": "CAS Enhanced",
+    "HOVER": "Hover",
+    "LANDATCOORDINATE": "Land at Coordinate",
+    "GROUNDATTACK": "Ground Attack",
+    "NAVALENGAGEMENT": "Naval Engagement",
+    "CARGOTRANSPORT": "Cargo Transport",
+    "RELOCATECOHORT": "Relocate Cohort",
+    "AIRDEFENSE": "Air Defence",
+    "EWR": "Early Warning Radar",
+    "REARMING": "Rearming",
+    "CAPTUREZONE": "Capture Zone",
+    "NOTHING": "Nothing",
+    "PATROLRACETRACK": "Patrol Racetrack",
+    "STRAFING": "Strafing",
+    "FREIGHTTRANSPORT": "FREIGHTTRANSPORT",
+}
+
+
+def normalize_auftrag_type_token(value: str) -> str:
+    """Normalize an AUFTRAG type key or display name for lookup.
+
+    :param value: Raw AUFTRAG type key or MOOSE display name.
+    :returns: Uppercase alphanumeric lookup token.
+    """
+
+    return "".join(character for character in value.strip().upper() if character.isalnum())
+
+
+AUFTRAG_TYPE_KEYS_BY_TOKEN: dict[str, str] = {}
+for _auftrag_type_key, _auftrag_type_name in AUFTRAG_TYPE_NAMES.items():
+    AUFTRAG_TYPE_KEYS_BY_TOKEN[normalize_auftrag_type_token(_auftrag_type_key)] = _auftrag_type_key
+    AUFTRAG_TYPE_KEYS_BY_TOKEN[normalize_auftrag_type_token(_auftrag_type_name)] = _auftrag_type_key
+
 
 @dataclass(slots=True, frozen=True)
 class AuftragParameterSpec:
@@ -73,6 +140,15 @@ class AuftragTypeSpec:
 
         return tuple(parameter for parameter in self.parameters if not parameter.optional)
 
+    @property
+    def display_name(self) -> str:
+        """Return the MOOSE display name for this AUFTRAG type.
+
+        :returns: Display name from ``AUFTRAG.Type``.
+        """
+
+        return auftrag_type_name(self.mission_type)
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation.
 
@@ -81,6 +157,7 @@ class AuftragTypeSpec:
 
         return {
             "mission_type": self.mission_type,
+            "display_name": self.display_name,
             "constructor": self.constructor,
             "performer_categories": list(self.performer_categories),
             "parameters": [parameter.to_dict() for parameter in self.parameters],
@@ -139,13 +216,43 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
 
 
 def canonical_mission_type(mission_type: str) -> str:
-    """Return the canonical Python key for a MOOSE mission type string.
+    """Return the canonical Python key for a MOOSE AUFTRAG type string.
 
-    :param mission_type: MOOSE mission type string such as ``BAI`` or ``Orbit``.
-    :returns: Uppercase canonical mission type key.
+    Accepts both enum keys such as ``BOMBING`` and MOOSE display names such as
+    ``Bombing`` or ``Ground Controlled CAP``.
+
+    :param mission_type: MOOSE mission type string.
+    :returns: Canonical ``AUFTRAG.Type`` key, or uppercase fallback for unknown types.
     """
 
-    return mission_type.strip().upper()
+    if mission_type is None:
+        return ""
+    text = str(mission_type).strip()
+    if not text:
+        return ""
+    token = normalize_auftrag_type_token(text)
+    return AUFTRAG_TYPE_KEYS_BY_TOKEN.get(token, text.upper())
+
+
+def auftrag_type_name(mission_type: str) -> str:
+    """Return the MOOSE display name for an AUFTRAG type.
+
+    :param mission_type: AUFTRAG type key or display name.
+    :returns: MOOSE display name if known, otherwise the original string.
+    """
+
+    key = canonical_mission_type(mission_type)
+    return AUFTRAG_TYPE_NAMES.get(key, str(mission_type))
+
+
+def auftrag_action_suffix(mission_type: str) -> str:
+    """Return the stable Lua command suffix for an AUFTRAG type.
+
+    :param mission_type: AUFTRAG type key or display name.
+    :returns: Lowercase canonical key, for example ``bombing``.
+    """
+
+    return canonical_mission_type(mission_type).lower()
 
 
 def canonical_platform_category(category: str) -> str:
@@ -188,7 +295,7 @@ def platform_categories_match(candidate_categories: tuple[str, ...] | list[str],
 def get_auftrag_type_spec(mission_type: str) -> AuftragTypeSpec | None:
     """Return an AUFTRAG type specification by mission type.
 
-    :param mission_type: Mission type key.
+    :param mission_type: Mission type key or MOOSE display name.
     :returns: Matching AUFTRAG type specification or ``None``.
     """
 
