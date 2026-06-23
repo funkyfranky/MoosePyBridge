@@ -39,6 +39,12 @@ local function bridge_optional_bool(value)
   return value and true or false
 end
 
+local function bridge_auftrag_now()
+  if timer and timer.getAbsTime then return timer.getAbsTime() end
+  if timer and timer.getTime then return timer.getTime() end
+  return nil
+end
+
 local function bridge_auftrag_summary(summary)
   if type(summary) ~= "table" then return nil end
   return {
@@ -58,8 +64,7 @@ end
 local function bridge_auftrag_ready_to_evaluate(auftrag)
   local tover = auftrag and auftrag.Tover or nil
   local dtevaluate = auftrag and auftrag.dTevaluate or nil
-  local now = nil
-  if timer and timer.getTime then now = timer.getTime() end
+  local now = bridge_auftrag_now()
   if tover and dtevaluate and now then return now - tover >= dtevaluate end
   return false
 end
@@ -72,6 +77,15 @@ function MOOSE_BRIDGE:_CommandParams(command)
     return command.payload
   end
   return {}
+end
+
+function MOOSE_BRIDGE:_TrackAuftragReference(auftrag)
+  if type(auftrag) ~= "table" then return self end
+  local object_id = self:_AuftragObjectId(auftrag)
+  if not object_id then return self end
+  self.TrackedAuftraege = self.TrackedAuftraege or {}
+  self.TrackedAuftraege[object_id] = auftrag
+  return self
 end
 
 function MOOSE_BRIDGE:_ResolveLegionById(legion_id)
@@ -168,6 +182,8 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     local add_ok, add_result = pcall(function() return legion:AddMission(auftrag) end)
     if not add_ok then error("LEGION:AddMission failed: " .. bridge_safe_tostring(add_result)) end
 
+    self:_TrackAuftragReference(auftrag)
+
     local auftrag_id = self:_AuftragObjectId(auftrag)
     return {
       action="auftrag.create_bai",
@@ -182,6 +198,13 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
       added=true,
     }
   end)
+end
+
+local _moose_bridge_base_add_auftrag_candidate = MOOSE_BRIDGE._AddAuftragCandidate
+
+function MOOSE_BRIDGE:_AddAuftragCandidate(result, seen, auftrag, source)
+  self:_TrackAuftragReference(auftrag)
+  return _moose_bridge_base_add_auftrag_candidate(self, result, seen, auftrag, source)
 end
 
 local _moose_bridge_base_build_auftrag_snapshot_item = MOOSE_BRIDGE._BuildAuftragSnapshotItem
@@ -214,6 +237,17 @@ function MOOSE_BRIDGE:_CollectAuftragCandidatesFromLegion(result, seen, legion)
   end
 end
 
+function MOOSE_BRIDGE:_CollectAuftragCandidatesFromTracked(result, seen)
+  if type(self.TrackedAuftraege) ~= "table" then return end
+  for object_id, auftrag in pairs(self.TrackedAuftraege) do
+    if type(auftrag) == "table" then
+      self:_AddAuftragCandidate(result, seen, auftrag, "bridge.tracked")
+    else
+      self.TrackedAuftraege[object_id] = nil
+    end
+  end
+end
+
 local _moose_bridge_base_build_auftrag_snapshot = MOOSE_BRIDGE.BuildAuftragSnapshot
 
 function MOOSE_BRIDGE:BuildAuftragSnapshot()
@@ -228,6 +262,8 @@ function MOOSE_BRIDGE:BuildAuftragSnapshot()
       self:_CollectAuftragCandidatesFromLegion(result, seen, legion)
     end
   end
+
+  self:_CollectAuftragCandidatesFromTracked(result, seen)
 
   return result
 end
