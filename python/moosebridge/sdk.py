@@ -75,7 +75,7 @@ def build_recommended_auftrag_command_params(recommendation: Any) -> dict[str, A
     """Build flat Lua command parameters from an AUFTRAG recommendation.
 
     :param recommendation: Recommendation object with ``to_dict``.
-    :returns: Flat command parameter dictionary.
+    :returns: Flat command parameter dictionary without null-valued fields.
     """
 
     params = recommendation.to_dict()
@@ -89,7 +89,7 @@ def build_recommended_auftrag_command_params(recommendation: Any) -> dict[str, A
     }
     for key, value in nested.items():
         command_params[key] = value
-    return command_params
+    return {key: value for key, value in command_params.items() if value is not None}
 
 
 def is_evaluated_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
@@ -227,7 +227,8 @@ class MooseBridgeClient:
         """
 
         action = auftrag_action_for_mission_type(mission_type)
-        return require_ok(await self.server.send_command(BridgeCommand(action=action, params=params), timeout=timeout))
+        clean_params = {key: value for key, value in params.items() if value is not None}
+        return require_ok(await self.server.send_command(BridgeCommand(action=action, params=clean_params), timeout=timeout))
 
     async def apply_recommended_auftrag(self, recommendation: Any, timeout: float = 10.0) -> dict[str, Any]:
         """Apply an AUFTRAG recommendation produced by the advisory layer.
