@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+METERS_PER_NAUTICAL_MILE = 1852.0
+
 
 @dataclass(slots=True, frozen=True)
 class AuftragRecommendation:
@@ -19,6 +21,8 @@ class AuftragRecommendation:
     :param mission_performance: COHORT mission performance for the mission type.
     :param payload_performance: Best compatible payload performance.
     :param distance_nm: Distance from LEGION coordinate to target in nautical miles.
+    :param mission_range_nm: COHORT mission radius in nautical miles.
+    :param range_margin_nm: Positive distance margin to the COHORT mission radius in nautical miles.
     :param selected_payload_uid: Selected payload uid.
     :param selected_payload_unitname: Selected payload source/template unit name.
     :param selected_payload_aircrafttype: Selected payload aircraft type.
@@ -36,6 +40,8 @@ class AuftragRecommendation:
     mission_performance: float | None = None
     payload_performance: float | None = None
     distance_nm: float | None = None
+    mission_range_nm: float | None = None
+    range_margin_nm: float | None = None
     selected_payload_uid: int | float | str | None = None
     selected_payload_unitname: str | None = None
     selected_payload_aircrafttype: str | None = None
@@ -150,6 +156,16 @@ def best_payload_for_candidate(candidate: Any, mission_type: str) -> dict[str, A
     return sorted(valid_payloads, key=payload_sort_key)[0]
 
 
+def _meters_to_nm(value: float | None) -> float | None:
+    """Convert meters to nautical miles.
+
+    :param value: Distance in meters.
+    :returns: Distance in nautical miles or ``None``.
+    """
+
+    return value / METERS_PER_NAUTICAL_MILE if value is not None else None
+
+
 def recommend_auftrag(result: Any) -> AuftragRecommendation | None:
     """Build a structured recommendation from an AUFTRAG advisory result.
 
@@ -165,6 +181,8 @@ def recommend_auftrag(result: Any) -> AuftragRecommendation | None:
     payload = best_payload_for_candidate(candidate, result.mission_type)
     mission_performance = candidate.cohort.mission_performance_for(result.mission_type)
     payload_performance = candidate.cohort.payload_performance_for(result.mission_type)
+    mission_range_m = candidate.cohort.mission_range_m
+    range_margin_m = mission_range_m - candidate.distance_m if mission_range_m is not None and candidate.distance_m is not None else None
 
     return AuftragRecommendation(
         legion_id=candidate.legion.object_id if candidate.legion else "",
@@ -176,6 +194,8 @@ def recommend_auftrag(result: Any) -> AuftragRecommendation | None:
         mission_performance=mission_performance,
         payload_performance=payload_performance,
         distance_nm=candidate.distance_nm,
+        mission_range_nm=_meters_to_nm(mission_range_m),
+        range_margin_nm=_meters_to_nm(range_margin_m),
         selected_payload_uid=payload.get("uid") if payload else None,
         selected_payload_unitname=payload.get("unitname") if payload else None,
         selected_payload_aircrafttype=payload.get("aircrafttype") if payload else None,
@@ -186,6 +206,10 @@ def recommend_auftrag(result: Any) -> AuftragRecommendation | None:
             "payload_performance": payload_performance,
             "distance_m": candidate.distance_m,
             "distance_nm": candidate.distance_nm,
+            "mission_range_m": mission_range_m,
+            "mission_range_nm": _meters_to_nm(mission_range_m),
+            "range_margin_m": range_margin_m,
+            "range_margin_nm": _meters_to_nm(range_margin_m),
             "stock_asset_count": candidate.cohort.stock_asset_count,
         },
     )
