@@ -1,9 +1,9 @@
 -- Optional approval-gated AUFTRAG execution extension for MOOSE Bridge.
 --
 -- Load after MooseBridge.lua and before creating the bridge instance. This file
--- intentionally starts with one narrow, explicit command: auftrag.create_bai.
--- Python should only call it after an advisory recommendation has passed all hard
--- filters and the user explicitly requested execution.
+-- exposes narrow, explicit AUFTRAG creation commands. Python should only call
+-- them after an advisory recommendation has passed all hard filters and the user
+-- explicitly requested execution.
 
 if not MOOSE_BRIDGE then error("Load MooseBridge.lua before MooseBridgeAuftragExecutionExtension.lua") end
 
@@ -36,6 +36,15 @@ end
 
 local function bridge_optional_bool(value)
   if value == nil then return nil end
+  return value and true or false
+end
+
+local function bridge_bool_param(value)
+  if value == nil then return nil end
+  if type(value) == "boolean" then return value end
+  local text = string.lower(tostring(value))
+  if text == "true" or text == "1" or text == "yes" or text == "y" then return true end
+  if text == "false" or text == "0" or text == "no" or text == "n" then return false end
   return value and true or false
 end
 
@@ -147,56 +156,93 @@ function MOOSE_BRIDGE:_ResolveAuftragTargetById(target_id)
     return nil, "STATIC target not found: " .. name
   end
 
-  return nil, "Unsupported BAI target type: " .. prefix
+  return nil, "Unsupported AUFTRAG target type: " .. prefix
+end
+
+function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
+  local p = self:_CommandParams(cmd)
+  local legacy_params = type(p.params) == "table" and p.params or {}
+  local inputs = {
+    params=p,
+    legion_id=p.legion_id or legacy_params.legion_id,
+    cohort_id=p.cohort_id or legacy_params.cohort_id,
+    target_id=p.target or legacy_params.target,
+    altitude_ft=p.altitude_ft or legacy_params.altitude_ft,
+    selected_payload_uid=p.selected_payload_uid or legacy_params.selected_payload_uid,
+    engage_weapon_type=p.engage_weapon_type or p.EngageWeaponType or legacy_params.engage_weapon_type or legacy_params.EngageWeaponType,
+    divebomb=p.divebomb,
+  }
+  if inputs.divebomb == nil then inputs.divebomb = legacy_params.divebomb end
+
+  if not inputs.legion_id then error("Missing legion_id; " .. bridge_param_debug(cmd, p)) end
+  if not inputs.target_id then error("Missing target; " .. bridge_param_debug(cmd, p)) end
+
+  local legion, legion_err = self:_ResolveLegionById(inputs.legion_id)
+  if not legion then error(legion_err) end
+  inputs.legion = legion
+
+  local target, target_err = self:_ResolveAuftragTargetById(inputs.target_id)
+  if not target then error(target_err) end
+  inputs.target = target
+
+  return inputs
+end
+
+function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
+  if not auftrag then error("AUFTRAG constructor returned nil") end
+  local add_ok, add_result = pcall(function() return inputs.legion:AddMission(auftrag) end)
+  if not add_ok then error("LEGION:AddMission failed: " .. bridge_safe_tostring(add_result)) end
+  self:_TrackAuftragReference(auftrag)
+  return auftrag
+end
+
+function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
+  return {
+    action=action,
+    legion_id=inputs.legion_id,
+    cohort_id=inputs.cohort_id,
+    target=inputs.target_id,
+    altitude_ft=inputs.altitude_ft,
+    engage_weapon_type=inputs.engage_weapon_type,
+    divebomb=inputs.divebomb,
+    selected_payload_uid=inputs.selected_payload_uid,
+    auftrag_id=self:_AuftragObjectId(auftrag),
+    auftragsnummer=self:_AuftragNumber(auftrag),
+    auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
+    added=true,
+  }
 end
 
 function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
   self:RegisterCommand("auftrag.create_bai", function(cmd)
-    local p = self:_CommandParams(cmd)
-    local legacy_params = type(p.params) == "table" and p.params or {}
-    local legion_id = p.legion_id or legacy_params.legion_id
-    local cohort_id = p.cohort_id or legacy_params.cohort_id
-    local target_id = p.target or legacy_params.target
-    local altitude_ft = p.altitude_ft or legacy_params.altitude_ft
-    local selected_payload_uid = p.selected_payload_uid or legacy_params.selected_payload_uid
-
-    if not legion_id then error("Missing legion_id; " .. bridge_param_debug(cmd, p)) end
-    if not target_id then error("Missing target; " .. bridge_param_debug(cmd, p)) end
-
-    local legion, legion_err = self:_ResolveLegionById(legion_id)
-    if not legion then error(legion_err) end
-
-    local target, target_err = self:_ResolveAuftragTargetById(target_id)
-    if not target then error(target_err) end
+    local inputs = self:_CommonAuftragCommandInputs(cmd)
 
     if not AUFTRAG or not AUFTRAG.NewBAI then error("AUFTRAG:NewBAI is not available") end
 
     local auftrag = nil
-    if altitude_ft ~= nil then
-      auftrag = AUFTRAG:NewBAI(target, tonumber(altitude_ft))
+    if inputs.altitude_ft ~= nil then
+      auftrag = AUFTRAG:NewBAI(inputs.target, tonumber(inputs.altitude_ft))
     else
-      auftrag = AUFTRAG:NewBAI(target)
+      auftrag = AUFTRAG:NewBAI(inputs.target)
     end
-    if not auftrag then error("AUFTRAG:NewBAI returned nil") end
 
-    local add_ok, add_result = pcall(function() return legion:AddMission(auftrag) end)
-    if not add_ok then error("LEGION:AddMission failed: " .. bridge_safe_tostring(add_result)) end
+    self:_AddAuftragToLegion(auftrag, inputs)
+    return self:_BuildAuftragCommandResult("auftrag.create_bai", auftrag, inputs)
+  end)
 
-    self:_TrackAuftragReference(auftrag)
+  self:RegisterCommand("auftrag.create_bombing", function(cmd)
+    local inputs = self:_CommonAuftragCommandInputs(cmd)
 
-    local auftrag_id = self:_AuftragObjectId(auftrag)
-    return {
-      action="auftrag.create_bai",
-      legion_id=legion_id,
-      cohort_id=cohort_id,
-      target=target_id,
-      altitude_ft=altitude_ft,
-      selected_payload_uid=selected_payload_uid,
-      auftrag_id=auftrag_id,
-      auftragsnummer=self:_AuftragNumber(auftrag),
-      auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
-      added=true,
-    }
+    if not AUFTRAG or not AUFTRAG.NewBOMBING then error("AUFTRAG:NewBOMBING is not available") end
+
+    local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+    local engage_weapon_type = inputs.engage_weapon_type and tonumber(inputs.engage_weapon_type) or nil
+    local divebomb = bridge_bool_param(inputs.divebomb)
+
+    local auftrag = AUFTRAG:NewBOMBING(inputs.target, altitude_ft, engage_weapon_type, divebomb)
+
+    self:_AddAuftragToLegion(auftrag, inputs)
+    return self:_BuildAuftragCommandResult("auftrag.create_bombing", auftrag, inputs)
   end)
 end
 
