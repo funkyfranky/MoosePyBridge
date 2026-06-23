@@ -159,6 +159,17 @@ function MOOSE_BRIDGE:_ResolveAuftragTargetById(target_id)
   return nil, "Unsupported AUFTRAG target type: " .. prefix
 end
 
+function MOOSE_BRIDGE:_ResolveCoordinateFromInputs(inputs)
+  local x = inputs.x ~= nil and tonumber(inputs.x) or nil
+  local z = inputs.z ~= nil and tonumber(inputs.z) or nil
+  local y = inputs.y ~= nil and tonumber(inputs.y) or 0
+
+  if not x or not z then return nil, "Coordinate target requires numeric x and z" end
+  if not COORDINATE or not COORDINATE.New then return nil, "COORDINATE:New is not available" end
+
+  return COORDINATE:New(x, y, z), nil
+end
+
 function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   local p = self:_CommandParams(cmd)
   local legacy_params = type(p.params) == "table" and p.params or {}
@@ -167,6 +178,9 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     legion_id=p.legion_id or legacy_params.legion_id,
     cohort_id=p.cohort_id or legacy_params.cohort_id,
     target_id=p.target or legacy_params.target,
+    x=p.x or legacy_params.x,
+    y=p.y or legacy_params.y,
+    z=p.z or legacy_params.z,
     altitude_ft=p.altitude_ft or legacy_params.altitude_ft,
     selected_payload_uid=p.selected_payload_uid or legacy_params.selected_payload_uid,
     engage_weapon_type=p.engage_weapon_type or p.EngageWeaponType or legacy_params.engage_weapon_type or legacy_params.EngageWeaponType,
@@ -175,17 +189,24 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   if inputs.divebomb == nil then inputs.divebomb = legacy_params.divebomb end
 
   if not inputs.legion_id then error("Missing legion_id; " .. bridge_param_debug(cmd, p)) end
-  if not inputs.target_id then error("Missing target; " .. bridge_param_debug(cmd, p)) end
 
   local legion, legion_err = self:_ResolveLegionById(inputs.legion_id)
   if not legion then error(legion_err) end
   inputs.legion = legion
 
-  local target, target_err = self:_ResolveAuftragTargetById(inputs.target_id)
-  if not target then error(target_err) end
-  inputs.target = target
-
   return inputs
+end
+
+function MOOSE_BRIDGE:_ResolveObjectAuftragTarget(inputs)
+  if not inputs.target_id then return nil, "Missing target" end
+  return self:_ResolveAuftragTargetById(inputs.target_id)
+end
+
+function MOOSE_BRIDGE:_ResolveBombingTarget(inputs)
+  if inputs.target_id then
+    return self:_ResolveAuftragTargetById(inputs.target_id)
+  end
+  return self:_ResolveCoordinateFromInputs(inputs)
 end
 
 function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
@@ -202,6 +223,9 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     legion_id=inputs.legion_id,
     cohort_id=inputs.cohort_id,
     target=inputs.target_id,
+    x=inputs.x,
+    y=inputs.y,
+    z=inputs.z,
     altitude_ft=inputs.altitude_ft,
     engage_weapon_type=inputs.engage_weapon_type,
     divebomb=inputs.divebomb,
@@ -216,14 +240,16 @@ end
 function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
   self:RegisterCommand("auftrag.create_bai", function(cmd)
     local inputs = self:_CommonAuftragCommandInputs(cmd)
+    local target, target_err = self:_ResolveObjectAuftragTarget(inputs)
+    if not target then error(target_err) end
 
     if not AUFTRAG or not AUFTRAG.NewBAI then error("AUFTRAG:NewBAI is not available") end
 
     local auftrag = nil
     if inputs.altitude_ft ~= nil then
-      auftrag = AUFTRAG:NewBAI(inputs.target, tonumber(inputs.altitude_ft))
+      auftrag = AUFTRAG:NewBAI(target, tonumber(inputs.altitude_ft))
     else
-      auftrag = AUFTRAG:NewBAI(inputs.target)
+      auftrag = AUFTRAG:NewBAI(target)
     end
 
     self:_AddAuftragToLegion(auftrag, inputs)
@@ -232,6 +258,8 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.create_bombing", function(cmd)
     local inputs = self:_CommonAuftragCommandInputs(cmd)
+    local target, target_err = self:_ResolveBombingTarget(inputs)
+    if not target then error(target_err) end
 
     if not AUFTRAG or not AUFTRAG.NewBOMBING then error("AUFTRAG:NewBOMBING is not available") end
 
@@ -239,7 +267,7 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     local engage_weapon_type = inputs.engage_weapon_type and tonumber(inputs.engage_weapon_type) or nil
     local divebomb = bridge_bool_param(inputs.divebomb)
 
-    local auftrag = AUFTRAG:NewBOMBING(inputs.target, altitude_ft, engage_weapon_type, divebomb)
+    local auftrag = AUFTRAG:NewBOMBING(target, altitude_ft, engage_weapon_type, divebomb)
 
     self:_AddAuftragToLegion(auftrag, inputs)
     return self:_BuildAuftragCommandResult("auftrag.create_bombing", auftrag, inputs)
