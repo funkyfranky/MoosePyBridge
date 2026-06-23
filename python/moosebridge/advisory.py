@@ -10,7 +10,14 @@ from dataclasses import dataclass, field
 from math import sqrt
 from typing import Any
 
-from .auftrag_specs import AuftragParameterSpec, AuftragTypeSpec, get_auftrag_type_spec, platform_categories_match
+from .auftrag_specs import (
+    AuftragParameterSpec,
+    AuftragType,
+    AuftragTypeSpec,
+    canonical_mission_type,
+    get_auftrag_type_spec,
+    platform_categories_match,
+)
 from .legions import Cohort, Legion
 from .state import MooseBridgeState
 
@@ -157,6 +164,21 @@ def coordinates_from_payload(payload: dict[str, Any] | None) -> tuple[float, flo
         if x is None or z is None:
             return None
         return float(x), float(z)
+    except (TypeError, ValueError):
+        return None
+
+
+def coordinates_from_params(params: dict[str, Any]) -> tuple[float, float] | None:
+    """Return direct horizontal DCS coordinates from request parameters.
+
+    :param params: AUFTRAG request parameters.
+    :returns: ``(x, z)`` in DCS meters or ``None``.
+    """
+
+    if params.get("x") in (None, "") or params.get("z") in (None, ""):
+        return None
+    try:
+        return float(params["x"]), float(params["z"])
     except (TypeError, ValueError):
         return None
 
@@ -322,7 +344,7 @@ def evaluate_auftrag_request(
     :returns: Advisory result with validation issues and sorted candidates.
     """
 
-    mission_key = mission_type.strip().upper()
+    mission_key = canonical_mission_type(mission_type)
     executing_coalition = normalize_coalition(coalition)
     spec = get_auftrag_type_spec(mission_key)
     issues: list[AdvisoryIssue] = []
@@ -341,10 +363,34 @@ def evaluate_auftrag_request(
             issues.append(issue)
 
     target_id = params.get("target") if isinstance(params.get("target"), str) else None
+    direct_coords = coordinates_from_params(params)
+
+    if mission_key == AuftragType.BOMBING.name:
+        has_x = params.get("x") not in (None, "")
+        has_z = params.get("z") not in (None, "")
+        if not target_id and direct_coords is None:
+            issues.append(
+                AdvisoryIssue(
+                    "error",
+                    "MISSING_TARGET_COORDINATE",
+                    "BOMBING requires either a target object or direct x/z coordinates.",
+                )
+            )
+        elif not target_id and has_x != has_z:
+            issues.append(AdvisoryIssue("error", "INCOMPLETE_COORDINATE", "BOMBING direct coordinate input requires both x and z."))
+        elif target_id and direct_coords is not None:
+            issues.append(
+                AdvisoryIssue(
+                    "warning",
+                    "TARGET_OVERRIDES_COORDINATE",
+                    "Both target and x/z were supplied; the target object's coordinate will be used.",
+                )
+            )
+
     target_payload = find_state_object(state, target_id) if target_id else None
     target_type = payload_object_type(target_payload or {}, target_id) if target_id else None
     target_coalition = payload_coalition(target_payload)
-    target_coords = coordinates_for_state_object(state, target_id, target_payload)
+    target_coords = coordinates_for_state_object(state, target_id, target_payload) if target_id else direct_coords
 
     if target_type in COMBAT_TARGET_TYPES and executing_coalition and target_coalition == executing_coalition:
         issues.append(
