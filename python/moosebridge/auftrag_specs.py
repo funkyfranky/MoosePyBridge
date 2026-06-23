@@ -7,6 +7,7 @@ Python advisory layer can reason about before autonomous command execution exist
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 PLATFORM_CATEGORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
@@ -17,56 +18,65 @@ PLATFORM_CATEGORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "NAVAL": ("NAVAL",),
 }
 
-AUFTRAG_TYPE_NAMES: dict[str, str] = {
-    "ANTISHIP": "Anti Ship",
-    "AWACS": "AWACS",
-    "BAI": "BAI",
-    "BOMBING": "Bombing",
-    "BOMBRUNWAY": "Bomb Runway",
-    "BOMBCARPET": "Carpet Bombing",
-    "CAP": "CAP",
-    "CAS": "CAS",
-    "ESCORT": "Escort",
-    "FAC": "FAC",
-    "FACA": "FAC-A",
-    "FERRY": "Ferry Flight",
-    "GROUNDESCORT": "Ground Escort",
-    "INTERCEPT": "Intercept",
-    "ORBIT": "Orbit",
-    "GCICAP": "Ground Controlled CAP",
-    "RECON": "Recon",
-    "RECOVERYTANKER": "Recovery Tanker",
-    "RESCUEHELO": "Rescue Helo",
-    "SEAD": "SEAD",
-    "STRIKE": "Strike",
-    "TANKER": "Tanker",
-    "TROOPTRANSPORT": "Troop Transport",
-    "ARTY": "Fire At Point",
-    "PATROLZONE": "Patrol Zone",
-    "OPSTRANSPORT": "Ops Transport",
-    "AMMOSUPPLY": "Ammo Supply",
-    "FUELSUPPLY": "Fuel Supply",
-    "ALERT5": "Alert5",
-    "ONGUARD": "On Guard",
-    "ARMOREDGUARD": "Armored Guard",
-    "BARRAGE": "Barrage",
-    "ARMORATTACK": "Armor Attack",
-    "CASENHANCED": "CAS Enhanced",
-    "HOVER": "Hover",
-    "LANDATCOORDINATE": "Land at Coordinate",
-    "GROUNDATTACK": "Ground Attack",
-    "NAVALENGAGEMENT": "Naval Engagement",
-    "CARGOTRANSPORT": "Cargo Transport",
-    "RELOCATECOHORT": "Relocate Cohort",
-    "AIRDEFENSE": "Air Defence",
-    "EWR": "Early Warning Radar",
-    "REARMING": "Rearming",
-    "CAPTUREZONE": "Capture Zone",
-    "NOTHING": "Nothing",
-    "PATROLRACETRACK": "Patrol Racetrack",
-    "STRAFING": "Strafing",
-    "FREIGHTTRANSPORT": "FREIGHTTRANSPORT",
-}
+
+class AuftragType(str, Enum):
+    """MOOSE ``AUFTRAG.Type`` values.
+
+    The enum member name is the stable Python/protocol key and the enum value is
+    the original MOOSE display string.
+    """
+
+    ANTISHIP = "Anti Ship"
+    AWACS = "AWACS"
+    BAI = "BAI"
+    BOMBING = "Bombing"
+    BOMBRUNWAY = "Bomb Runway"
+    BOMBCARPET = "Carpet Bombing"
+    CAP = "CAP"
+    CAS = "CAS"
+    ESCORT = "Escort"
+    FAC = "FAC"
+    FACA = "FAC-A"
+    FERRY = "Ferry Flight"
+    GROUNDESCORT = "Ground Escort"
+    INTERCEPT = "Intercept"
+    ORBIT = "Orbit"
+    GCICAP = "Ground Controlled CAP"
+    RECON = "Recon"
+    RECOVERYTANKER = "Recovery Tanker"
+    RESCUEHELO = "Rescue Helo"
+    SEAD = "SEAD"
+    STRIKE = "Strike"
+    TANKER = "Tanker"
+    TROOPTRANSPORT = "Troop Transport"
+    ARTY = "Fire At Point"
+    PATROLZONE = "Patrol Zone"
+    OPSTRANSPORT = "Ops Transport"
+    AMMOSUPPLY = "Ammo Supply"
+    FUELSUPPLY = "Fuel Supply"
+    ALERT5 = "Alert5"
+    ONGUARD = "On Guard"
+    ARMOREDGUARD = "Armored Guard"
+    BARRAGE = "Barrage"
+    ARMORATTACK = "Armor Attack"
+    CASENHANCED = "CAS Enhanced"
+    HOVER = "Hover"
+    LANDATCOORDINATE = "Land at Coordinate"
+    GROUNDATTACK = "Ground Attack"
+    NAVALENGAGEMENT = "Naval Engagement"
+    CARGOTRANSPORT = "Cargo Transport"
+    RELOCATECOHORT = "Relocate Cohort"
+    AIRDEFENSE = "Air Defence"
+    EWR = "Early Warning Radar"
+    REARMING = "Rearming"
+    CAPTUREZONE = "Capture Zone"
+    NOTHING = "Nothing"
+    PATROLRACETRACK = "Patrol Racetrack"
+    STRAFING = "Strafing"
+    FREIGHTTRANSPORT = "FREIGHTTRANSPORT"
+
+
+AUFTRAG_TYPE_NAMES: dict[str, str] = {auftrag_type.name: auftrag_type.value for auftrag_type in AuftragType}
 
 
 def normalize_auftrag_type_token(value: str) -> str:
@@ -79,10 +89,13 @@ def normalize_auftrag_type_token(value: str) -> str:
     return "".join(character for character in value.strip().upper() if character.isalnum())
 
 
-AUFTRAG_TYPE_KEYS_BY_TOKEN: dict[str, str] = {}
-for _auftrag_type_key, _auftrag_type_name in AUFTRAG_TYPE_NAMES.items():
-    AUFTRAG_TYPE_KEYS_BY_TOKEN[normalize_auftrag_type_token(_auftrag_type_key)] = _auftrag_type_key
-    AUFTRAG_TYPE_KEYS_BY_TOKEN[normalize_auftrag_type_token(_auftrag_type_name)] = _auftrag_type_key
+AUFTRAG_TYPES_BY_TOKEN: dict[str, AuftragType] = {}
+for _auftrag_type in AuftragType:
+    AUFTRAG_TYPES_BY_TOKEN[normalize_auftrag_type_token(_auftrag_type.name)] = _auftrag_type
+    AUFTRAG_TYPES_BY_TOKEN[normalize_auftrag_type_token(_auftrag_type.value)] = _auftrag_type
+
+# Backward-compatible string mapping retained for external callers that used it.
+AUFTRAG_TYPE_KEYS_BY_TOKEN: dict[str, str] = {token: auftrag_type.name for token, auftrag_type in AUFTRAG_TYPES_BY_TOKEN.items()}
 
 
 @dataclass(slots=True, frozen=True)
@@ -130,6 +143,15 @@ class AuftragTypeSpec:
     performer_categories: tuple[str, ...]
     parameters: tuple[AuftragParameterSpec, ...] = field(default_factory=tuple)
     description: str = ""
+
+    @property
+    def auftrag_type(self) -> AuftragType | None:
+        """Return the typed AUFTRAG enum value for this spec.
+
+        :returns: Matching enum value or ``None``.
+        """
+
+        return canonical_auftrag_type(self.mission_type)
 
     @property
     def required_parameters(self) -> tuple[AuftragParameterSpec, ...]:
@@ -180,8 +202,8 @@ ALTITUDE_PARAMETER = AuftragParameterSpec(
 )
 
 AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
-    "BAI": AuftragTypeSpec(
-        mission_type="BAI",
+    AuftragType.BAI.name: AuftragTypeSpec(
+        mission_type=AuftragType.BAI.name,
         constructor="AUFTRAG:NewBAI",
         performer_categories=("AIR",),
         description="Battlefield air interdiction against a compatible target object.",
@@ -190,8 +212,8 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             ALTITUDE_PARAMETER,
         ),
     ),
-    "BOMBING": AuftragTypeSpec(
-        mission_type="BOMBING",
+    AuftragType.BOMBING.name: AuftragTypeSpec(
+        mission_type=AuftragType.BOMBING.name,
         constructor="AUFTRAG:NewBOMBING",
         performer_categories=("AIR",),
         description="Bombing attack against a coordinate resolved from a GROUP, UNIT or STATIC object.",
@@ -215,40 +237,61 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
 }
 
 
-def canonical_mission_type(mission_type: str) -> str:
+def canonical_auftrag_type(mission_type: str | AuftragType | None) -> AuftragType | None:
+    """Return the canonical AUFTRAG enum member for a key or display name.
+
+    :param mission_type: AUFTRAG type key, display name or enum member.
+    :returns: Canonical enum member or ``None`` for unknown/empty input.
+    """
+
+    if mission_type is None:
+        return None
+    if isinstance(mission_type, AuftragType):
+        return mission_type
+    text = str(mission_type).strip()
+    if not text:
+        return None
+    token = normalize_auftrag_type_token(text)
+    return AUFTRAG_TYPES_BY_TOKEN.get(token)
+
+
+def canonical_mission_type(mission_type: str | AuftragType | None) -> str:
     """Return the canonical Python key for a MOOSE AUFTRAG type string.
 
     Accepts both enum keys such as ``BOMBING`` and MOOSE display names such as
     ``Bombing`` or ``Ground Controlled CAP``.
 
-    :param mission_type: MOOSE mission type string.
+    :param mission_type: MOOSE mission type string or enum member.
     :returns: Canonical ``AUFTRAG.Type`` key, or uppercase fallback for unknown types.
     """
 
+    auftrag_type = canonical_auftrag_type(mission_type)
+    if auftrag_type is not None:
+        return auftrag_type.name
     if mission_type is None:
         return ""
-    text = str(mission_type).strip()
-    if not text:
-        return ""
-    token = normalize_auftrag_type_token(text)
-    return AUFTRAG_TYPE_KEYS_BY_TOKEN.get(token, text.upper())
+    return str(mission_type).strip().upper()
 
 
-def auftrag_type_name(mission_type: str) -> str:
+def auftrag_type_name(mission_type: str | AuftragType | None) -> str:
     """Return the MOOSE display name for an AUFTRAG type.
 
-    :param mission_type: AUFTRAG type key or display name.
+    :param mission_type: AUFTRAG type key, display name or enum member.
     :returns: MOOSE display name if known, otherwise the original string.
     """
 
-    key = canonical_mission_type(mission_type)
-    return AUFTRAG_TYPE_NAMES.get(key, str(mission_type))
+    auftrag_type = canonical_auftrag_type(mission_type)
+    if auftrag_type is not None:
+        return auftrag_type.value
+    if mission_type is None:
+        return ""
+    return str(mission_type)
 
 
-def auftrag_action_suffix(mission_type: str) -> str:
+def auftrag_action_suffix(mission_type: str | AuftragType | None) -> str:
     """Return the stable Lua command suffix for an AUFTRAG type.
 
-    :param mission_type: AUFTRAG type key or display name.
+    :param mission_type: AUFTRAG type key, display name or enum member.
     :returns: Lowercase canonical key, for example ``bombing``.
     """
 
@@ -292,10 +335,10 @@ def platform_categories_match(candidate_categories: tuple[str, ...] | list[str],
     return bool(expand_platform_categories(candidate_categories) & expand_platform_categories(required_categories))
 
 
-def get_auftrag_type_spec(mission_type: str) -> AuftragTypeSpec | None:
+def get_auftrag_type_spec(mission_type: str | AuftragType) -> AuftragTypeSpec | None:
     """Return an AUFTRAG type specification by mission type.
 
-    :param mission_type: Mission type key or MOOSE display name.
+    :param mission_type: Mission type key, enum member or MOOSE display name.
     :returns: Matching AUFTRAG type specification or ``None``.
     """
 
