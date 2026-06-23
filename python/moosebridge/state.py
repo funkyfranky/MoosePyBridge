@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
 
-from .auftrag_specs import get_auftrag_type_spec, platform_categories_match
+from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
 from .legions import Cohort, Legion
 from .models import Auftrag, OpsGroup, OpsZone
 
@@ -198,7 +198,7 @@ class MooseBridgeState:
         :returns: COHORT objects with matching mission type and performer category.
         """
 
-        key = mission_type.strip().upper()
+        key = canonical_mission_type(mission_type)
         spec = get_auftrag_type_spec(key)
         cohorts = [cohort for cohort in self.cohort_objects.values() if key in cohort.mission_type_keys]
         if spec is None:
