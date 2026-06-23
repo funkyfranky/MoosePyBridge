@@ -17,6 +17,7 @@ from moosebridge import (
     MooseBridgeAuftragTimeoutError,
     MooseBridgeClient,
     MooseBridgeServer,
+    canonical_mission_type,
     evaluate_auftrag_request,
     recommend_auftrag,
 )
@@ -30,7 +31,15 @@ def build_params(args: argparse.Namespace) -> dict[str, Any]:
     :returns: Advisory parameter dictionary.
     """
 
-    params: dict[str, Any] = {"target": args.target}
+    params: dict[str, Any] = {}
+    if args.target is not None:
+        params["target"] = args.target
+    if args.x is not None:
+        params["x"] = args.x
+    if args.y is not None:
+        params["y"] = args.y
+    if args.z is not None:
+        params["z"] = args.z
     if args.altitude_ft is not None:
         params["altitude_ft"] = args.altitude_ft
     if args.engage_weapon_type is not None:
@@ -75,7 +84,7 @@ async def async_main(args: argparse.Namespace) -> int:
     :returns: Process exit code.
     """
 
-    mission_type = args.mission_type.strip().upper()
+    mission_type = canonical_mission_type(args.mission_type)
     log_path = Path(args.log) if args.log else None
     server = MooseBridgeServer(host=args.host, port=args.port, log_path=log_path)
     client = MooseBridgeClient(server)
@@ -152,7 +161,10 @@ def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="Preview and optionally apply a recommended AUFTRAG.")
     parser.add_argument("--mission-type", required=True, help="Mission type, for example BAI or BOMBING.")
-    parser.add_argument("--target", required=True, help="Target object id, for example GROUP:Ground-1.")
+    parser.add_argument("--target", default=None, help="Optional target object id, for example GROUP:Ground-1.")
+    parser.add_argument("--x", type=float, default=None, help="Optional DCS world x coordinate in meters, used by coordinate-based missions.")
+    parser.add_argument("--y", type=float, default=None, help="Optional DCS world y coordinate in meters. Defaults to 0 in Lua when omitted.")
+    parser.add_argument("--z", type=float, default=None, help="Optional DCS world z coordinate in meters, used by coordinate-based missions.")
     parser.add_argument("--coalition", default="blue", help="Executing coalition filter, for example blue or red.")
     parser.add_argument("--altitude-ft", type=float, default=None, help="Optional engage altitude in feet.")
     parser.add_argument("--engage-weapon-type", type=int, default=None, help="Optional numeric ENUMS.WeaponFlag value.")
