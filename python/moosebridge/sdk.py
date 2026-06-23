@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from .auftrag_specs import auftrag_action_suffix
 from .models import Auftrag, OpsGroup, OpsZone
 from .outcomes import AuftragOutcome
 from .protocol import BridgeCommand
@@ -63,11 +64,11 @@ def validate_smoke_color(color: str) -> str:
 def auftrag_action_for_mission_type(mission_type: str) -> str:
     """Return the bridge command action for an AUFTRAG mission type.
 
-    :param mission_type: MOOSE mission type such as ``BAI`` or ``BOMBING``.
+    :param mission_type: MOOSE mission type such as ``BAI`` or ``Bombing``.
     :returns: Bridge command action string.
     """
 
-    return f"auftrag.create_{mission_type.strip().lower()}"
+    return f"auftrag.create_{auftrag_action_suffix(mission_type)}"
 
 
 def build_recommended_auftrag_command_params(recommendation: Any) -> dict[str, Any]:
@@ -218,7 +219,7 @@ class MooseBridgeClient:
     async def apply_auftrag(self, mission_type: str, params: dict[str, Any], timeout: float = 10.0) -> dict[str, Any]:
         """Apply an AUFTRAG command to DCS.
 
-        :param mission_type: Mission type such as ``BAI`` or ``BOMBING``.
+        :param mission_type: Mission type such as ``BAI`` or ``Bombing``.
         :param params: Flat command parameters accepted by the Lua extension.
         :param timeout: Maximum ACK wait time in seconds.
         :returns: Successful ACK payload.
