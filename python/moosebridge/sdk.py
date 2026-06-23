@@ -79,15 +79,16 @@ def build_recommended_auftrag_command_params(recommendation: Any) -> dict[str, A
 
     params = recommendation.to_dict()
     nested = params.get("params") if isinstance(params.get("params"), dict) else {}
-    return {
+    command_params = {
         "legion_id": params.get("legion_id"),
         "cohort_id": params.get("cohort_id"),
-        "target": nested.get("target"),
-        "altitude_ft": nested.get("altitude_ft"),
         "selected_payload_uid": params.get("selected_payload_uid"),
         "mission_type": params.get("mission_type"),
         "constructor": params.get("constructor"),
     }
+    for key, value in nested.items():
+        command_params[key] = value
+    return command_params
 
 
 def is_evaluated_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
