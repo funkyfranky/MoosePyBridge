@@ -4,6 +4,7 @@ from .advisory import AdvisoryIssue, AuftragAdvisoryResult, AuftragCandidate, ev
 from .auftrag_specs import (
     AUFTRAG_TYPE_NAMES,
     AuftragParameterSpec,
+    AuftragTargetType,
     AuftragType,
     AuftragTypeSpec,
     auftrag_action_suffix,
@@ -13,6 +14,7 @@ from .auftrag_specs import (
     expand_platform_categories,
     get_auftrag_type_spec,
     platform_categories_match,
+    target_type_values,
 )
 from .legions import Cohort, CohortSummary, Legion
 from .models import Auftrag, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
@@ -32,6 +34,7 @@ __all__ = [
     "AuftragOutcome",
     "AuftragParameterSpec",
     "AuftragRecommendation",
+    "AuftragTargetType",
     "AuftragType",
     "AuftragTypeSpec",
     "BridgeCommand",
@@ -62,4 +65,5 @@ __all__ = [
     "platform_categories_match",
     "recommend_auftrag",
     "rejected_candidates",
+    "target_type_values",
 ]
