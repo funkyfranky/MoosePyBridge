@@ -25,6 +25,7 @@ from .state import MooseBridgeState
 
 COMBAT_TARGET_TYPES = {AuftragTargetType.GROUP.value, AuftragTargetType.UNIT.value, AuftragTargetType.STATIC.value}
 METERS_PER_NAUTICAL_MILE = 1852.0
+RUNNING_LEGION_STATE = "running"
 
 
 @dataclass(slots=True, frozen=True)
@@ -104,6 +105,28 @@ def normalize_coalition(value: Any) -> str | None:
     if value is None or value == "":
         return None
     return str(value).strip().lower()
+
+
+def normalize_legion_state(value: Any) -> str | None:
+    """Normalize a LEGION FSM state value.
+
+    :param value: Raw LEGION state.
+    :returns: Lowercase state string or ``None``.
+    """
+
+    if value is None or value == "":
+        return None
+    return str(value).strip().lower()
+
+
+def legion_is_running(legion: Legion | None) -> bool:
+    """Return whether a LEGION is started and running.
+
+    :param legion: LEGION candidate.
+    :returns: ``True`` only for ``GetState() == Running``.
+    """
+
+    return normalize_legion_state(legion.state if legion else None) == RUNNING_LEGION_STATE
 
 
 def object_type_from_id(object_id: str) -> str | None:
@@ -425,11 +448,16 @@ def evaluate_auftrag_request(
     cohorts = state.cohorts_with_stock_for_mission_type(mission_key)
     candidates: list[AuftragCandidate] = []
     out_of_range_count = 0
+    non_running_legion_count = 0
     min_out_of_range_distance_nm: float | None = None
     min_out_of_range_radius_nm: float | None = None
     for cohort in cohorts:
         legion = state.legion(cohort.legion_id) if cohort.legion_id else None
         legion_coalition = normalize_coalition(legion.coalition if legion else None)
+
+        if not legion_is_running(legion):
+            non_running_legion_count += 1
+            continue
 
         if executing_coalition and legion_coalition != executing_coalition:
             continue
@@ -458,6 +486,14 @@ def evaluate_auftrag_request(
     candidates.sort(key=lambda candidate: float("inf") if candidate.distance_m is None else candidate.distance_m)
 
     if not candidates and not any(issue.severity == "error" for issue in issues):
+        if non_running_legion_count:
+            issues.append(
+                AdvisoryIssue(
+                    "warning",
+                    "NO_RUNNING_LEGION_CANDIDATES",
+                    f"No matching COHORT candidates belonged to a running LEGION. Excluded {non_running_legion_count} candidate(s) whose LEGION state was not Running.",
+                )
+            )
         if out_of_range_count:
             detail = ""
             if min_out_of_range_distance_nm is not None and min_out_of_range_radius_nm is not None:
@@ -469,7 +505,7 @@ def evaluate_auftrag_request(
                     f"No matching COHORT candidates were within their mission range. Excluded {out_of_range_count} out-of-range candidate(s).{detail}",
                 )
             )
-        else:
+        if not non_running_legion_count and not out_of_range_count:
             issues.append(AdvisoryIssue("warning", "NO_CANDIDATES", "No matching COHORT candidates with stock were found."))
 
     return AuftragAdvisoryResult(
