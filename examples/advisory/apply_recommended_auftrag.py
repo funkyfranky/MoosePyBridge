@@ -1,7 +1,7 @@
 """Preview, apply, and optionally monitor a recommended AUFTRAG mission.
 
 This generic example supports mission types backed by the advisory specs and Lua
-execution extension, currently including BAI and BOMBING.
+execution extension, currently including BAI, BOMBING and ARTY.
 """
 
 from __future__ import annotations
@@ -46,6 +46,10 @@ def build_params(args: argparse.Namespace) -> dict[str, Any]:
         params["engage_weapon_type"] = args.engage_weapon_type
     if args.divebomb:
         params["divebomb"] = True
+    if args.nshots is not None:
+        params["nshots"] = args.nshots
+    if args.radius_m is not None:
+        params["radius_m"] = args.radius_m
     return params
 
 
@@ -96,7 +100,16 @@ async def async_main(args: argparse.Namespace) -> int:
 
         print("DCS connected. Requesting advisory snapshots ...")
         await client.request_snapshots(
-            ("snapshot.groups", "snapshot.units", "snapshot.statics", "snapshot.zones", "snapshot.cohorts", "snapshot.legions")
+            (
+                "snapshot.groups",
+                "snapshot.units",
+                "snapshot.statics",
+                "snapshot.airbases",
+                "snapshot.zones",
+                "snapshot.opszones",
+                "snapshot.cohorts",
+                "snapshot.legions",
+            )
         )
 
         result = evaluate_auftrag_request(
@@ -160,15 +173,17 @@ def parse_args() -> argparse.Namespace:
     """
 
     parser = argparse.ArgumentParser(description="Preview and optionally apply a recommended AUFTRAG.")
-    parser.add_argument("--mission-type", required=True, help="Mission type, for example BAI or BOMBING.")
-    parser.add_argument("--target", default=None, help="Optional target object id, for example GROUP:Ground-1.")
+    parser.add_argument("--mission-type", required=True, help="Mission type, for example BAI, BOMBING or ARTY.")
+    parser.add_argument("--target", default=None, help="Optional target object id, for example GROUP:Ground-1, AIRBASE:Parchim, ZONE:Target, or OPSZONE:Alpha.")
     parser.add_argument("--x", type=float, default=None, help="Optional DCS world x coordinate in meters, used by coordinate-based missions.")
     parser.add_argument("--y", type=float, default=None, help="Optional DCS world y coordinate in meters. Defaults to 0 in Lua when omitted.")
     parser.add_argument("--z", type=float, default=None, help="Optional DCS world z coordinate in meters, used by coordinate-based missions.")
     parser.add_argument("--coalition", default="blue", help="Executing coalition filter, for example blue or red.")
-    parser.add_argument("--altitude-ft", type=float, default=None, help="Optional engage altitude in feet.")
-    parser.add_argument("--engage-weapon-type", type=int, default=None, help="Optional numeric ENUMS.WeaponFlag value.")
+    parser.add_argument("--altitude-ft", type=float, default=None, help="Optional engage altitude in feet for air missions.")
+    parser.add_argument("--engage-weapon-type", type=int, default=None, help="Optional numeric ENUMS.WeaponFlag value for BOMBING.")
     parser.add_argument("--divebomb", action="store_true", help="Use dive bombing for BOMBING missions.")
+    parser.add_argument("--nshots", type=float, default=None, help="Optional ARTY shot count. Values in (0, 1) are treated by MOOSE as ammo fraction.")
+    parser.add_argument("--radius-m", type=float, default=None, help="Optional ARTY impact radius in meters. MOOSE defaults to 100 m when omitted.")
     parser.add_argument("--apply", action="store_true", help="Create and assign the recommended AUFTRAG in DCS.")
     parser.add_argument("--monitor", action="store_true", help="Wait for the evaluated AUFTRAG outcome after applying.")
     parser.add_argument("--monitor-timeout", type=float, default=600.0, help="Maximum AUFTRAG monitoring time in seconds.")
