@@ -95,10 +95,10 @@ local function read_number_field(text, name)
 end
 
 local function read_boolean_field(text, name)
-  local pattern = '"' .. name .. '"%s*:%s*(true|false)'
-  local value = text:match(pattern)
-  if value == "true" then return true end
-  if value == "false" then return false end
+  local true_pattern = '"' .. name .. '"%s*:%s*true'
+  local false_pattern = '"' .. name .. '"%s*:%s*false'
+  if text:match(true_pattern) then return true end
+  if text:match(false_pattern) then return false end
   return nil
 end
 
@@ -132,6 +132,18 @@ function json.decode(text)
     result.params.mission_type = read_string_field(params_text, "mission_type")
     result.params.constructor = read_string_field(params_text, "constructor")
     result.params.apply = read_boolean_field(params_text, "apply")
+
+    -- AUFTRAG:BOMBING fields.
+    result.params.engage_weapon_type = read_number_field(params_text, "engage_weapon_type")
+    result.params.EngageWeaponType = read_number_field(params_text, "EngageWeaponType")
+    result.params.divebomb = read_boolean_field(params_text, "divebomb")
+
+    -- AUFTRAG:ARTY fields.
+    result.params.nshots = read_number_field(params_text, "nshots")
+    result.params.Nshots = read_number_field(params_text, "Nshots")
+    result.params.radius_m = read_number_field(params_text, "radius_m")
+    result.params.radius = read_number_field(params_text, "radius")
+    result.params.Radius = read_number_field(params_text, "Radius")
   end
 
   return result
