@@ -22,8 +22,9 @@ from moosebridge import (
     evaluate_auftrag_request,
     recommend_auftrag,
 )
+from moosebridge.outcomes import AuftragOutcome
 from moosebridge.protocol import BridgeCommand
-from moosebridge.sdk import build_recommended_auftrag_command_params, require_ok
+from moosebridge.sdk import build_recommended_auftrag_command_params, is_evaluated_auftrag_snapshot, require_ok
 from moosebridge.server import DEFAULT_PORT
 
 
@@ -139,23 +140,84 @@ def print_trace_result(title: str, trace: dict[str, Any], raw: bool = False) -> 
             )
 
 
-async def trace_auftrag(client: MooseBridgeClient, auftrag_id: str, raw: bool, title: str = "Trace") -> None:
-    """Request and print an AUFTRAG trace through the active bridge server.
+async def trace_auftrag(
+    client: MooseBridgeClient,
+    auftrag_id: str,
+    raw: bool,
+    title: str = "Trace",
+    command_timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Request, print, and return an AUFTRAG trace through the active bridge server.
 
     :param client: High-level client bound to the active local server.
     :param auftrag_id: Stable AUFTRAG id.
     :param raw: If true, print full JSON.
     :param title: Printed section title.
+    :param command_timeout: Maximum ACK wait time in seconds.
+    :returns: Raw trace result payload.
     """
 
     ack = require_ok(
         await client.server.send_command(
             BridgeCommand(action="auftrag.trace", params={"object_id": auftrag_id}),
-            timeout=10.0,
+            timeout=command_timeout,
         )
     )
     result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
     print_trace_result(title, result, raw=raw)
+    return result
+
+
+async def wait_for_auftrag_outcome_with_trace(
+    client: MooseBridgeClient,
+    auftrag_id: str,
+    timeout_s: float,
+    interval_s: float,
+    trace_raw: bool,
+    command_timeout: float,
+) -> AuftragOutcome:
+    """Wait for an AUFTRAG outcome while printing periodic traces.
+
+    :param client: High-level client bound to the active local server.
+    :param auftrag_id: Stable AUFTRAG object id.
+    :param timeout_s: Maximum monitoring time in seconds.
+    :param interval_s: Poll interval in seconds.
+    :param trace_raw: If true, print raw trace JSON.
+    :param command_timeout: Maximum trace command ACK wait time in seconds.
+    :returns: Stable AUFTRAG outcome model.
+    :raises MooseBridgeAuftragNotFoundError: If the AUFTRAG is never observed.
+    :raises MooseBridgeAuftragTimeoutError: If no summary appears before timeout.
+    """
+
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    seen = False
+    last_snapshot: dict[str, Any] | None = None
+    poll_index = 0
+
+    while asyncio.get_running_loop().time() < deadline:
+        await client.request_snapshots(("snapshot.auftraege", "snapshot.legions", "snapshot.opsgroups"))
+        snapshot = client.state.auftraege.get(auftrag_id)
+        if snapshot is not None:
+            seen = True
+            last_snapshot = snapshot
+
+        await trace_auftrag(
+            client,
+            auftrag_id,
+            raw=trace_raw,
+            title=f"Trace poll {poll_index}",
+            command_timeout=command_timeout,
+        )
+
+        if snapshot is not None and is_evaluated_auftrag_snapshot(snapshot):
+            return AuftragOutcome.from_snapshot(snapshot)
+
+        poll_index += 1
+        await asyncio.sleep(interval_s)
+
+    if not seen:
+        raise MooseBridgeAuftragNotFoundError(f"{auftrag_id} was not visible before monitor timeout")
+    raise MooseBridgeAuftragTimeoutError(f"{auftrag_id} was not evaluated before timeout; last_snapshot={last_snapshot!r}")
 
 
 async def wait_for_dcs_connection(server: MooseBridgeServer, timeout_s: float) -> None:
@@ -240,33 +302,38 @@ async def async_main(args: argparse.Namespace) -> int:
             return 0
 
         auftrag_id = str(auftrag_id)
-        if args.trace:
-            await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after apply")
+        if args.trace and not args.monitor:
+            await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after apply", command_timeout=args.command_timeout)
+            return 0
 
         if not args.monitor:
             return 0
 
         print(f"\nWaiting for evaluated AUFTRAG outcome: {auftrag_id}")
         try:
-            outcome = await client.wait_for_auftrag_outcome(
-                auftrag_id,
-                timeout_s=args.monitor_timeout,
-                interval_s=args.monitor_interval,
-            )
+            if args.trace:
+                outcome = await wait_for_auftrag_outcome_with_trace(
+                    client,
+                    auftrag_id,
+                    timeout_s=args.monitor_timeout,
+                    interval_s=args.monitor_interval,
+                    trace_raw=args.trace_raw,
+                    command_timeout=args.command_timeout,
+                )
+            else:
+                outcome = await client.wait_for_auftrag_outcome(
+                    auftrag_id,
+                    timeout_s=args.monitor_timeout,
+                    interval_s=args.monitor_interval,
+                )
         except MooseBridgeAuftragNotFoundError as exc:
             print(f"AUFTRAG not found: {exc}")
-            if args.trace:
-                await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after not-found")
             return 4
         except MooseBridgeAuftragTimeoutError as exc:
             print(f"AUFTRAG outcome timeout: {exc}")
-            if args.trace:
-                await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after timeout")
             return 5
 
         print_mapping("Outcome", outcome.to_dict())
-        if args.trace:
-            await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after outcome")
         print(f"\n{outcome.auftrag_id} evaluation complete: {'SUCCESS' if outcome.success else 'FAILURE'}")
         return 0 if outcome.success else 6
 
@@ -293,7 +360,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nshots", type=float, default=None, help="Optional ARTY shot count. Values in (0, 1) are treated by MOOSE as ammo fraction.")
     parser.add_argument("--radius-m", type=float, default=None, help="Optional ARTY impact radius in meters. MOOSE defaults to 100 m when omitted.")
     parser.add_argument("--apply", action="store_true", help="Create and assign the recommended AUFTRAG in DCS.")
-    parser.add_argument("--trace", action="store_true", help="Print AUFTRAG assignment/execution trace after applying and after monitoring.")
+    parser.add_argument("--trace", action="store_true", help="Print AUFTRAG assignment/execution trace after applying and during monitoring.")
     parser.add_argument("--trace-raw", action="store_true", help="Print full raw AUFTRAG trace JSON instead of compact trace output.")
     parser.add_argument("--monitor", action="store_true", help="Wait for the evaluated AUFTRAG outcome after applying.")
     parser.add_argument("--monitor-timeout", type=float, default=600.0, help="Maximum AUFTRAG monitoring time in seconds.")
