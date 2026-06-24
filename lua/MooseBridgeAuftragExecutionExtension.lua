@@ -177,6 +177,52 @@ function MOOSE_BRIDGE:_ResolveCoordinateFromInputs(inputs)
   return COORDINATE:New(x, y, z), nil
 end
 
+function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
+  local name = self:_OpsName(opszone, zone_name)
+  if not name then return nil end
+  local point = self:_PointFromMooseObject(opszone)
+  local state = self:_OpsState(opszone)
+  local item = {
+    object_id="OPSZONE:"..bridge_safe_tostring(name),
+    dcs_name=bridge_safe_tostring(name),
+    object_type="OPSZONE",
+    category=self:_OpsClassName(opszone, "OPSZONE"),
+    source=source,
+    name=bridge_safe_tostring(name),
+    zone_name=opszone and opszone.zoneName and tostring(opszone.zoneName) or nil,
+    zone_type=opszone and opszone.zoneType and tostring(opszone.zoneType) or nil,
+    zone_radius=opszone and opszone.zoneRadius or nil,
+    state=state and tostring(state) or nil,
+    owner_current_name=self:_CoalitionToName(opszone and opszone.ownerCurrent),
+    owner_previous_name=self:_CoalitionToName(opszone and opszone.ownerPrevious),
+    is_contested=self:_BoolOrFalse(opszone and opszone.isContested),
+    n_red=opszone and opszone.Nred or 0,
+    n_blue=opszone and opszone.Nblu or 0,
+    n_neutral=opszone and opszone.Nnut or 0,
+    threat_red=opszone and opszone.Tred or 0,
+    threat_blue=opszone and opszone.Tblu or 0,
+    threat_neutral=opszone and opszone.Tnut or 0,
+    airbase_name=opszone and opszone.airbaseName and tostring(opszone.airbaseName) or nil,
+  }
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
+end
+
+function MOOSE_BRIDGE:BuildOpsZoneSnapshot()
+  local result = {}; local seen = {}
+  for name, opszone in pairs(self.RegisteredOpsZones or {}) do
+    local ok, item = pcall(function() return self:_BuildOpsZoneSnapshotItem(name, opszone, "registered") end)
+    if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
+  end
+  if _DATABASE and type(_DATABASE.OPSZONES) == "table" then
+    for name, opszone in pairs(_DATABASE.OPSZONES) do
+      local ok, item = pcall(function() return self:_BuildOpsZoneSnapshotItem(name, opszone, "database.OPSZONES") end)
+      if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
+    end
+  end
+  return result
+end
+
 function MOOSE_BRIDGE:_PointForOpsZoneName(name)
   local opszone = self.RegisteredOpsZones and self.RegisteredOpsZones[name] or nil
   if not opszone and _DATABASE and type(_DATABASE.OPSZONES) == "table" then opszone = _DATABASE.OPSZONES[name] end
