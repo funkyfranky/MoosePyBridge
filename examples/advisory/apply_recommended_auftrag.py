@@ -21,6 +21,7 @@ from moosebridge import (
     evaluate_auftrag_request,
     recommend_auftrag,
 )
+from moosebridge.sdk import build_recommended_auftrag_command_params
 from moosebridge.server import DEFAULT_PORT
 
 
@@ -131,8 +132,11 @@ async def async_main(args: argparse.Namespace) -> int:
             print("\nPreview only. Re-run with --apply to create and assign the AUFTRAG in DCS.")
             return 0
 
+        command_params = build_recommended_auftrag_command_params(recommendation)
+        print_mapping("Command parameters", command_params)
+
         print("\nApplying recommendation via SDK ...")
-        ack = await client.apply_recommended_auftrag(recommendation, timeout=args.command_timeout)
+        ack = await client.apply_auftrag(mission_type, command_params, timeout=args.command_timeout)
         print("ACK:", ack)
 
         result_payload = ack.get("result") if isinstance(ack.get("result"), dict) else {}
