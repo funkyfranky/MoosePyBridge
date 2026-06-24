@@ -1,6 +1,6 @@
 """Module entry point for ``python -m moosebridge``."""
 
-from .server import main
+from .trace_cli import main
 
 
 if __name__ == "__main__":
