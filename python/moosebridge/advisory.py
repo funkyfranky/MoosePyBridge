@@ -11,18 +11,19 @@ from math import sqrt
 from typing import Any
 
 from .auftrag_specs import (
+    PRIMITIVE_PARAMETER_TYPES,
     AuftragParameterSpec,
-    AuftragType,
+    AuftragTargetType,
     AuftragTypeSpec,
     canonical_mission_type,
     get_auftrag_type_spec,
     platform_categories_match,
+    target_type_values,
 )
 from .legions import Cohort, Legion
 from .state import MooseBridgeState
 
-COMBAT_TARGET_TYPES = {"GROUP", "UNIT", "STATIC"}
-PRIMITIVE_PARAMETER_TYPES = {"float", "int", "str", "bool"}
+COMBAT_TARGET_TYPES = {AuftragTargetType.GROUP.value, AuftragTargetType.UNIT.value, AuftragTargetType.STATIC.value}
 METERS_PER_NAUTICAL_MILE = 1852.0
 
 
@@ -232,7 +233,7 @@ def coordinates_for_state_object(state: MooseBridgeState, object_id: str | None,
     if point is not None:
         return point
     object_type = payload_object_type(payload or {}, object_id)
-    if object_type == "GROUP":
+    if object_type == AuftragTargetType.GROUP.value:
         return group_coordinates_from_units(state, payload)
     return None
 
@@ -288,8 +289,9 @@ def validate_parameter_value(parameter: AuftragParameterSpec, value: Any, state:
     :returns: Validation issue or ``None``.
     """
 
-    accepted = {item.upper() for item in parameter.accepted_objects}
-    primitive_accepted = {item for item in parameter.accepted_objects if item in PRIMITIVE_PARAMETER_TYPES}
+    accepted_values = target_type_values(parameter.accepted_objects)
+    accepted = {item.upper() for item in accepted_values if item not in PRIMITIVE_PARAMETER_TYPES}
+    primitive_accepted = {item for item in accepted_values if item in PRIMITIVE_PARAMETER_TYPES}
 
     if primitive_accepted:
         if "float" in primitive_accepted:
@@ -319,7 +321,7 @@ def validate_parameter_value(parameter: AuftragParameterSpec, value: Any, state:
 
     object_type = payload_object_type(payload, value)
     if object_type not in accepted:
-        accepted_text = ", ".join(parameter.accepted_objects)
+        accepted_text = ", ".join(accepted_values)
         return AdvisoryIssue(
             "error",
             "INCOMPATIBLE_OBJECT_TYPE",
@@ -327,6 +329,43 @@ def validate_parameter_value(parameter: AuftragParameterSpec, value: Any, state:
         )
 
     return None
+
+
+def validate_coordinate_target_inputs(spec: AuftragTypeSpec, target_id: str | None, direct_coords: tuple[float, float] | None, params: dict[str, Any]) -> list[AdvisoryIssue]:
+    """Validate coordinate-target input for coordinate-capable AUFTRAGs.
+
+    :param spec: AUFTRAG type specification.
+    :param target_id: Optional target object id.
+    :param direct_coords: Optional direct x/z coordinate pair.
+    :param params: Raw AUFTRAG parameters.
+    :returns: Advisory issues.
+    """
+
+    issues: list[AdvisoryIssue] = []
+    if not spec.accepts_coordinate_target:
+        return issues
+
+    has_x = params.get("x") not in (None, "")
+    has_z = params.get("z") not in (None, "")
+    if not target_id and direct_coords is None:
+        issues.append(
+            AdvisoryIssue(
+                "error",
+                "MISSING_TARGET_COORDINATE",
+                f"{spec.mission_type} requires either a target object or direct x/z coordinates.",
+            )
+        )
+    elif not target_id and has_x != has_z:
+        issues.append(AdvisoryIssue("error", "INCOMPLETE_COORDINATE", f"{spec.mission_type} direct coordinate input requires both x and z."))
+    elif target_id and direct_coords is not None:
+        issues.append(
+            AdvisoryIssue(
+                "warning",
+                "TARGET_OVERRIDES_COORDINATE",
+                "Both target and x/z were supplied; the target object's coordinate will be used.",
+            )
+        )
+    return issues
 
 
 def evaluate_auftrag_request(
@@ -364,28 +403,7 @@ def evaluate_auftrag_request(
 
     target_id = params.get("target") if isinstance(params.get("target"), str) else None
     direct_coords = coordinates_from_params(params)
-
-    if mission_key == AuftragType.BOMBING.name:
-        has_x = params.get("x") not in (None, "")
-        has_z = params.get("z") not in (None, "")
-        if not target_id and direct_coords is None:
-            issues.append(
-                AdvisoryIssue(
-                    "error",
-                    "MISSING_TARGET_COORDINATE",
-                    "BOMBING requires either a target object or direct x/z coordinates.",
-                )
-            )
-        elif not target_id and has_x != has_z:
-            issues.append(AdvisoryIssue("error", "INCOMPLETE_COORDINATE", "BOMBING direct coordinate input requires both x and z."))
-        elif target_id and direct_coords is not None:
-            issues.append(
-                AdvisoryIssue(
-                    "warning",
-                    "TARGET_OVERRIDES_COORDINATE",
-                    "Both target and x/z were supplied; the target object's coordinate will be used.",
-                )
-            )
+    issues.extend(validate_coordinate_target_inputs(spec, target_id, direct_coords, params))
 
     target_payload = find_state_object(state, target_id) if target_id else None
     target_type = payload_object_type(target_payload or {}, target_id) if target_id else None
