@@ -18,6 +18,8 @@ PLATFORM_CATEGORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "NAVAL": ("NAVAL",),
 }
 
+PRIMITIVE_PARAMETER_TYPES = {"float", "int", "str", "bool"}
+
 
 class AuftragType(str, Enum):
     """MOOSE ``AUFTRAG.Type`` values.
@@ -76,6 +78,24 @@ class AuftragType(str, Enum):
     FREIGHTTRANSPORT = "FREIGHTTRANSPORT"
 
 
+class AuftragTargetType(str, Enum):
+    """Stable target classes accepted by AUFTRAG advisory specs.
+
+    ``COORDINATE`` is represented over the wire by DCS world ``x/y/z`` meters.
+    The object-valued target types use stable bridge object ids such as
+    ``GROUP:Armor-1`` or ``OPSZONE:Frontline``.
+    """
+
+    UNIT = "UNIT"
+    GROUP = "GROUP"
+    STATIC = "STATIC"
+    SCENERY = "SCENERY"
+    AIRBASE = "AIRBASE"
+    COORDINATE = "COORDINATE"
+    ZONE = "ZONE"
+    OPSZONE = "OPSZONE"
+
+
 AUFTRAG_TYPE_NAMES: dict[str, str] = {auftrag_type.name: auftrag_type.value for auftrag_type in AuftragType}
 
 
@@ -104,14 +124,31 @@ class AuftragParameterSpec:
 
     :param name: Stable parameter name used by Python-side planners.
     :param optional: Whether the parameter may be omitted.
-    :param accepted_objects: Accepted bridge object types or primitive types.
+    :param accepted_objects: Accepted bridge target types or primitive parameter types.
     :param description: Human-readable parameter description.
     """
 
     name: str
     optional: bool
-    accepted_objects: tuple[str, ...]
+    accepted_objects: tuple[str | AuftragTargetType, ...]
     description: str
+
+    @property
+    def accepted_object_values(self) -> tuple[str, ...]:
+        """Return accepted target/primitive types as string values.
+
+        :returns: Accepted type values.
+        """
+
+        return tuple(item.value if isinstance(item, AuftragTargetType) else str(item) for item in self.accepted_objects)
+
+    def accepts_coordinate(self) -> bool:
+        """Return whether this parameter allows coordinate input.
+
+        :returns: ``True`` if ``COORDINATE`` is accepted.
+        """
+
+        return AuftragTargetType.COORDINATE.value in self.accepted_object_values
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation.
@@ -122,7 +159,7 @@ class AuftragParameterSpec:
         return {
             "name": self.name,
             "optional": self.optional,
-            "accepted_objects": list(self.accepted_objects),
+            "accepted_objects": list(self.accepted_object_values),
             "description": self.description,
         }
 
@@ -171,6 +208,28 @@ class AuftragTypeSpec:
 
         return auftrag_type_name(self.mission_type)
 
+    @property
+    def target_parameter(self) -> AuftragParameterSpec | None:
+        """Return the semantic target parameter, if present.
+
+        :returns: Target parameter or ``None``.
+        """
+
+        for parameter in self.parameters:
+            if parameter.name == "target":
+                return parameter
+        return None
+
+    @property
+    def accepts_coordinate_target(self) -> bool:
+        """Return whether this AUFTRAG can use direct coordinate targets.
+
+        :returns: ``True`` if coordinate targets are supported.
+        """
+
+        target = self.target_parameter
+        return bool(target and target.accepts_coordinate())
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation.
 
@@ -187,18 +246,34 @@ class AuftragTypeSpec:
         }
 
 
+OBJECT_TARGET_TYPES = (
+    AuftragTargetType.UNIT,
+    AuftragTargetType.GROUP,
+    AuftragTargetType.STATIC,
+    AuftragTargetType.SCENERY,
+    AuftragTargetType.AIRBASE,
+    AuftragTargetType.ZONE,
+    AuftragTargetType.OPSZONE,
+)
+COMBAT_OBJECT_TARGET_TYPES = (
+    AuftragTargetType.GROUP,
+    AuftragTargetType.UNIT,
+    AuftragTargetType.STATIC,
+)
+COORDINATE_OR_OBJECT_TARGET_TYPES = (AuftragTargetType.COORDINATE, *OBJECT_TARGET_TYPES)
+
 AIR_TARGET_PARAMETER = AuftragParameterSpec(
     name="target",
     optional=False,
-    accepted_objects=("GROUP", "UNIT", "STATIC"),
+    accepted_objects=COMBAT_OBJECT_TARGET_TYPES,
     description="Target object used by object-based AUFTRAG constructors.",
 )
 
-OPTIONAL_AIR_TARGET_PARAMETER = AuftragParameterSpec(
+OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER = AuftragParameterSpec(
     name="target",
     optional=True,
-    accepted_objects=("GROUP", "UNIT", "STATIC"),
-    description="Optional object shortcut whose current coordinate is used as the mission target point.",
+    accepted_objects=COORDINATE_OR_OBJECT_TARGET_TYPES,
+    description="Optional object shortcut whose current coordinate is used as the mission target point; direct x/z coordinates are also accepted.",
 )
 
 ALTITUDE_PARAMETER = AuftragParameterSpec(
@@ -229,6 +304,20 @@ Z_COORDINATE_PARAMETER = AuftragParameterSpec(
     description="DCS world z coordinate in meters. Required with x when no target object is supplied.",
 )
 
+NSHOTS_PARAMETER = AuftragParameterSpec(
+    name="nshots",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional number of artillery shots. Values in (0, 1) are interpreted by MOOSE as a fraction of available ammunition.",
+)
+
+RADIUS_M_PARAMETER = AuftragParameterSpec(
+    name="radius_m",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional artillery impact radius in meters. MOOSE defaults to 100 m when omitted.",
+)
+
 AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
     AuftragType.BAI.name: AuftragTypeSpec(
         mission_type=AuftragType.BAI.name,
@@ -244,9 +333,9 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
         mission_type=AuftragType.BOMBING.name,
         constructor="AUFTRAG:NewBOMBING",
         performer_categories=("AIR",),
-        description="Bombing attack against a coordinate, optionally resolved from a GROUP, UNIT or STATIC object.",
+        description="Bombing attack against a coordinate, optionally resolved from an object target.",
         parameters=(
-            OPTIONAL_AIR_TARGET_PARAMETER,
+            OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
             X_COORDINATE_PARAMETER,
             Y_COORDINATE_PARAMETER,
             Z_COORDINATE_PARAMETER,
@@ -263,6 +352,20 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
                 accepted_objects=("bool",),
                 description="Optional dive-bombing attack approach flag.",
             ),
+        ),
+    ),
+    AuftragType.ARTY.name: AuftragTypeSpec(
+        mission_type=AuftragType.ARTY.name,
+        constructor="AUFTRAG:NewARTY",
+        performer_categories=("GROUND", "NAVAL"),
+        description="Artillery fire-at-point mission against a coordinate, optionally resolved from an object target.",
+        parameters=(
+            OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            NSHOTS_PARAMETER,
+            RADIUS_M_PARAMETER,
         ),
     ),
 }
@@ -327,6 +430,16 @@ def auftrag_action_suffix(mission_type: str | AuftragType | None) -> str:
     """
 
     return canonical_mission_type(mission_type).lower()
+
+
+def target_type_values(target_types: tuple[str | AuftragTargetType, ...] | list[str | AuftragTargetType]) -> tuple[str, ...]:
+    """Return target type values as strings.
+
+    :param target_types: Target type enum values or strings.
+    :returns: String target type values.
+    """
+
+    return tuple(item.value if isinstance(item, AuftragTargetType) else str(item) for item in target_types)
 
 
 def canonical_platform_category(category: str) -> str:
