@@ -8,6 +8,7 @@ from typing import Any, Callable, TypeVar
 from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
 from .legions import Cohort, Legion
 from .models import Auftrag, OpsGroup, OpsZone
+from .outcomes import AuftragOutcome
 
 
 T = TypeVar("T")
@@ -64,6 +65,8 @@ class MooseBridgeState:
     auftrag_objects: dict[str, Auftrag] = field(default_factory=dict)
     cohort_objects: dict[str, Cohort] = field(default_factory=dict)
     legion_objects: dict[str, Legion] = field(default_factory=dict)
+    auftrag_outcomes: dict[str, AuftragOutcome] = field(default_factory=dict)
+    auftrag_outcome_history: dict[str, list[AuftragOutcome]] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
 
     def apply_message(self, message: dict[str, Any]) -> None:
@@ -114,6 +117,24 @@ class MooseBridgeState:
         """
 
         return self.auftrag_objects.get(object_id)
+
+    def auftrag_outcome(self, object_id: str) -> AuftragOutcome | None:
+        """Return the latest evaluated outcome for an AUFTRAG.
+
+        :param object_id: Stable AUFTRAG object id such as ``AUFTRAG:1``.
+        :returns: Latest outcome or ``None``.
+        """
+
+        return self.auftrag_outcomes.get(object_id)
+
+    def auftrag_outcomes_for(self, object_id: str) -> list[AuftragOutcome]:
+        """Return the recorded outcome history for an AUFTRAG.
+
+        :param object_id: Stable AUFTRAG object id such as ``AUFTRAG:1``.
+        :returns: Outcome history entries.
+        """
+
+        return list(self.auftrag_outcome_history.get(object_id, []))
 
     def cohort(self, object_id: str) -> Cohort | None:
         """Return a typed COHORT by object id.
@@ -253,6 +274,8 @@ class MooseBridgeState:
             items = payload.get("auftraege", [])
             self.auftraege = self._index_objects(items)
             self.auftrag_objects = self._index_typed_objects(items, Auftrag.from_payload)
+            for item in items:
+                self._record_auftrag_outcome(item)
         elif kind == "cohorts":
             items = payload.get("cohorts", [])
             self.cohorts = self._index_objects(items)
@@ -261,6 +284,29 @@ class MooseBridgeState:
             items = payload.get("legions", [])
             self.legions = self._index_objects(items)
             self.legion_objects = self._index_typed_objects(items, Legion.from_payload)
+
+    def _record_auftrag_outcome(self, snapshot: dict[str, Any]) -> None:
+        """Record an evaluated AUFTRAG outcome if a summary is present.
+
+        Duplicate consecutive outcomes are ignored so polling the same evaluated
+        AUFTRAG does not grow history unboundedly.
+
+        :param snapshot: Raw AUFTRAG snapshot.
+        """
+
+        if not isinstance(snapshot.get("summary"), dict):
+            return
+        try:
+            outcome = AuftragOutcome.from_snapshot(snapshot)
+        except ValueError:
+            return
+        if not outcome.auftrag_id:
+            return
+
+        self.auftrag_outcomes[outcome.auftrag_id] = outcome
+        history = self.auftrag_outcome_history.setdefault(outcome.auftrag_id, [])
+        if not history or history[-1] != outcome:
+            history.append(outcome)
 
     @staticmethod
     def _index_objects(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
