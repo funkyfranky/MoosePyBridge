@@ -177,6 +177,41 @@ function MOOSE_BRIDGE:_ResolveCoordinateFromInputs(inputs)
   return COORDINATE:New(x, y, z), nil
 end
 
+function MOOSE_BRIDGE:_PointForOpsZoneName(name)
+  local opszone = self.RegisteredOpsZones and self.RegisteredOpsZones[name] or nil
+  if not opszone and _DATABASE and type(_DATABASE.OPSZONES) == "table" then opszone = _DATABASE.OPSZONES[name] end
+  if not opszone then return nil end
+  return self:_PointFromMooseObject(opszone)
+end
+
+function MOOSE_BRIDGE:_CoordinateTargetFromObjectId(target_id)
+  local prefix, name = bridge_split_object_id(target_id)
+  if not prefix or not name then return nil, "Invalid coordinate target id " .. bridge_safe_tostring(target_id) end
+
+  local point = nil
+  if prefix == "OPSZONE" then
+    point = self:_PointForOpsZoneName(name)
+  elseif prefix == "SCENERY" then
+    return nil, "SCENERY coordinate target resolution is not available yet"
+  else
+    local ok, value = pcall(function() return self:_PointForObjectId(target_id) end)
+    if ok then point = value else return nil, bridge_safe_tostring(value) end
+  end
+
+  if not point then return nil, "Coordinate target point not found for " .. bridge_safe_tostring(target_id) end
+
+  local ok_coordinate, coordinate = pcall(function() return self:_CoordinateFromPoint(point) end)
+  if ok_coordinate then return coordinate, nil end
+  return nil, bridge_safe_tostring(coordinate)
+end
+
+function MOOSE_BRIDGE:_ResolveCoordinateAuftragTarget(inputs)
+  if inputs.target_id then
+    return self:_CoordinateTargetFromObjectId(inputs.target_id)
+  end
+  return self:_ResolveCoordinateFromInputs(inputs)
+end
+
 function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   local p = self:_CommandParams(cmd)
   local legacy_params = type(p.params) == "table" and p.params or {}
@@ -192,6 +227,8 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     selected_payload_uid=p.selected_payload_uid or legacy_params.selected_payload_uid,
     engage_weapon_type=p.engage_weapon_type or p.EngageWeaponType or legacy_params.engage_weapon_type or legacy_params.EngageWeaponType,
     divebomb=p.divebomb,
+    nshots=p.nshots or p.Nshots or legacy_params.nshots or legacy_params.Nshots,
+    radius_m=p.radius_m or p.radius or p.Radius or legacy_params.radius_m or legacy_params.radius or legacy_params.Radius,
   }
   if inputs.divebomb == nil then inputs.divebomb = legacy_params.divebomb end
 
@@ -210,10 +247,11 @@ function MOOSE_BRIDGE:_ResolveObjectAuftragTarget(inputs)
 end
 
 function MOOSE_BRIDGE:_ResolveBombingTarget(inputs)
-  if inputs.target_id then
-    return self:_ResolveAuftragTargetById(inputs.target_id)
-  end
-  return self:_ResolveCoordinateFromInputs(inputs)
+  return self:_ResolveCoordinateAuftragTarget(inputs)
+end
+
+function MOOSE_BRIDGE:_ResolveArtyTarget(inputs)
+  return self:_ResolveCoordinateAuftragTarget(inputs)
 end
 
 function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
@@ -236,6 +274,8 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     altitude_ft=inputs.altitude_ft,
     engage_weapon_type=inputs.engage_weapon_type,
     divebomb=inputs.divebomb,
+    nshots=inputs.nshots,
+    radius_m=inputs.radius_m,
     selected_payload_uid=inputs.selected_payload_uid,
     auftrag_id=self:_AuftragObjectId(auftrag),
     auftragsnummer=self:_AuftragNumber(auftrag),
@@ -278,6 +318,21 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
     self:_AddAuftragToLegion(auftrag, inputs)
     return self:_BuildAuftragCommandResult("auftrag.create_bombing", auftrag, inputs)
+  end)
+
+  self:RegisterCommand("auftrag.create_arty", function(cmd)
+    local inputs = self:_CommonAuftragCommandInputs(cmd)
+    local target, target_err = self:_ResolveArtyTarget(inputs)
+    if not target then error(target_err) end
+
+    if not AUFTRAG or not AUFTRAG.NewARTY then error("AUFTRAG:NewARTY is not available") end
+
+    local nshots = inputs.nshots and tonumber(inputs.nshots) or nil
+    local radius_m = inputs.radius_m and tonumber(inputs.radius_m) or nil
+    local auftrag = AUFTRAG:NewARTY(target, nshots, radius_m)
+
+    self:_AddAuftragToLegion(auftrag, inputs)
+    return self:_BuildAuftragCommandResult("auftrag.create_arty", auftrag, inputs)
   end)
 end
 
