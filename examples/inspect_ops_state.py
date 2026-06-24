@@ -125,6 +125,17 @@ def matches_filter(*values: Any, text_filter: str | None) -> bool:
     return any(needle in str(value).lower() for value in values if value is not None)
 
 
+def list_text(values: Iterable[str] | None) -> str:
+    """Return a compact comma-separated list string.
+
+    :param values: Iterable of strings.
+    :returns: Comma-separated list or ``none``.
+    """
+
+    items = [str(value) for value in values or [] if value]
+    return ",".join(items) if items else "none"
+
+
 def print_legions(client: MooseBridgeClient, text_filter: str | None) -> None:
     """Print LEGION diagnostics.
 
@@ -135,14 +146,17 @@ def print_legions(client: MooseBridgeClient, text_filter: str | None) -> None:
     legions = list(client.state.legion_objects.values())
     print(f"\nLEGION objects: {len(legions)}")
     for legion in legions:
-        if not matches_filter(legion.object_id, legion.name, legion.airbase_name, text_filter=text_filter):
+        queue_text = list_text(legion.auftrag_queue_ids)
+        if not matches_filter(legion.object_id, legion.name, legion.airbase_name, queue_text, text_filter=text_filter):
             continue
         print(
             f"  {legion.object_id} "
             f"category={legion.category} "
+            f"state={legion.state or 'n/a'} "
             f"coalition={legion.coalition} "
             f"airbase={legion.airbase_name} "
             f"cohorts={len(legion.cohort_ids)} "
+            f"queue=[{queue_text}] "
             f"x={fmt_float(legion.x)} y={fmt_float(legion.y)} z={fmt_float(legion.z)}"
         )
 
@@ -157,7 +171,8 @@ def print_cohorts(client: MooseBridgeClient, text_filter: str | None) -> None:
     cohorts = list(client.state.cohort_objects.values())
     print(f"\nCOHORT objects: {len(cohorts)}")
     for cohort in cohorts:
-        if not matches_filter(cohort.object_id, cohort.name, cohort.legion_id, cohort.unit_type, text_filter=text_filter):
+        opsgroup_text = list_text(cohort.opsgroup_ids)
+        if not matches_filter(cohort.object_id, cohort.name, cohort.legion_id, cohort.unit_type, opsgroup_text, text_filter=text_filter):
             continue
         mission_range_nm = meters_to_nm(cohort.mission_range_m)
         mission_types = ",".join(cohort.mission_type_keys) or "none"
@@ -167,6 +182,8 @@ def print_cohorts(client: MooseBridgeClient, text_filter: str | None) -> None:
             f"category={cohort.category} "
             f"unit_type={cohort.unit_type} "
             f"stock={cohort.stock_asset_count} "
+            f"spawned={cohort.spawned_asset_count} "
+            f"opsgroups=[{opsgroup_text}] "
             f"mission_range_m={fmt_float(cohort.mission_range_m, 0)} "
             f"mission_range_nm={fmt_float(mission_range_nm)} "
             f"missions=[{mission_types}] "
@@ -184,7 +201,8 @@ def print_opsgroups(client: MooseBridgeClient, text_filter: str | None) -> None:
     groups = list(client.state.opsgroup_objects.values())
     print(f"\nOPSGROUP objects: {len(groups)}")
     for group in groups:
-        if not matches_filter(group.object_id, group.name, text_filter=text_filter):
+        queue_text = list_text(group.auftrag_queue_ids)
+        if not matches_filter(group.object_id, group.name, group.auftrag_current_id, queue_text, text_filter=text_filter):
             continue
         print(
             f"  {group.object_id} "
@@ -194,7 +212,7 @@ def print_opsgroups(client: MooseBridgeClient, text_filter: str | None) -> None:
             f"alive={group.alive} "
             f"active={group.active} "
             f"auftrag_current={group.auftrag_current_id or 'none'} "
-            f"queue={len(group.auftrag_queue_ids)} "
+            f"queue=[{queue_text}] "
             f"x={fmt_float(group.x)} y={fmt_float(group.y)} z={fmt_float(group.z)}"
         )
 
@@ -209,9 +227,9 @@ def print_auftraege(client: MooseBridgeClient, text_filter: str | None) -> None:
     auftraege = list(client.state.auftrag_objects.values())
     print(f"\nAUFTRAG objects: {len(auftraege)}")
     for auftrag in auftraege:
-        if not matches_filter(auftrag.object_id, auftrag.name, auftrag.type, auftrag.status, text_filter=text_filter):
-            continue
         assigned = ",".join(auftrag.assigned_group_ids) or "none"
+        if not matches_filter(auftrag.object_id, auftrag.name, auftrag.type, auftrag.status, assigned, text_filter=text_filter):
+            continue
         print(
             f"  {auftrag.object_id} "
             f"type={auftrag.type} "
