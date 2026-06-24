@@ -1,4 +1,4 @@
-"""Preview, apply, and optionally monitor a recommended AUFTRAG mission.
+"""Preview, apply, trace, and optionally monitor a recommended AUFTRAG mission.
 
 This generic example supports mission types backed by the advisory specs and Lua
 execution extension, currently including BAI, BOMBING and ARTY.
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,8 @@ from moosebridge import (
     evaluate_auftrag_request,
     recommend_auftrag,
 )
-from moosebridge.sdk import build_recommended_auftrag_command_params
+from moosebridge.protocol import BridgeCommand
+from moosebridge.sdk import build_recommended_auftrag_command_params, require_ok
 from moosebridge.server import DEFAULT_PORT
 
 
@@ -64,6 +66,96 @@ def print_mapping(title: str, values: dict[str, Any]) -> None:
     print(f"\n{title}:")
     for key, value in values.items():
         print(f"  {key}: {value}")
+
+
+def print_trace_result(title: str, trace: dict[str, Any], raw: bool = False) -> None:
+    """Print an AUFTRAG trace result.
+
+    :param title: Section title.
+    :param trace: Raw ``auftrag.trace`` result payload.
+    :param raw: If true, print full JSON.
+    """
+
+    print(f"\n{title}:")
+    if raw:
+        print(json.dumps(trace, ensure_ascii=False, indent=2, sort_keys=True))
+        return
+
+    print(f"  auftrag_id: {trace.get('auftrag_id')}")
+    print(f"  found: {trace.get('found')}")
+    print(f"  source: {trace.get('source')}")
+    print(f"  counts: {trace.get('counts')}")
+
+    auftrag = trace.get("auftrag") if isinstance(trace.get("auftrag"), dict) else {}
+    if auftrag:
+        print("  AUFTRAG:")
+        print(f"    type: {auftrag.get('type')}")
+        print(f"    status: {auftrag.get('status')}")
+        print(f"    summary_available: {auftrag.get('summary_available')}")
+        print(f"    assigned_group_ids: {auftrag.get('assigned_group_ids')}")
+        print(f"    target: {auftrag.get('target')}")
+
+    print(f"  matching_legion_ids: {trace.get('matching_legion_ids') or []}")
+    print(f"  matching_opsgroup_ids: {trace.get('matching_opsgroup_ids') or []}")
+
+    legions = trace.get("legions") if isinstance(trace.get("legions"), list) else []
+    if legions:
+        print("  LEGIONs:")
+        for legion in legions:
+            if not isinstance(legion, dict):
+                continue
+            marker = "*" if legion.get("missionqueue_contains_auftrag") else " "
+            print(
+                f"   {marker} {legion.get('object_id')} "
+                f"state={legion.get('state')} running={legion.get('is_running')} "
+                f"queue={legion.get('auftrag_queue_ids')}"
+            )
+
+    cohorts = trace.get("cohorts") if isinstance(trace.get("cohorts"), list) else []
+    if cohorts:
+        print("  COHORTs:")
+        for cohort in cohorts:
+            if not isinstance(cohort, dict):
+                continue
+            print(
+                f"     {cohort.get('object_id')} "
+                f"legion={cohort.get('legion_id')} "
+                f"stock={cohort.get('stock_asset_count')} "
+                f"spawned={cohort.get('spawned_asset_count')} "
+                f"opsgroups={cohort.get('opsgroup_ids')}"
+            )
+
+    opsgroups = trace.get("opsgroups") if isinstance(trace.get("opsgroups"), list) else []
+    if opsgroups:
+        print("  OPSGROUPs:")
+        for opsgroup in opsgroups:
+            if not isinstance(opsgroup, dict):
+                continue
+            marker = "*" if opsgroup.get("current_contains_auftrag") or opsgroup.get("queue_contains_auftrag") else " "
+            print(
+                f"   {marker} {opsgroup.get('object_id')} "
+                f"state={opsgroup.get('state')} alive={opsgroup.get('alive')} active={opsgroup.get('active')} "
+                f"current={opsgroup.get('auftrag_current_id')} queue={opsgroup.get('auftrag_queue_ids')}"
+            )
+
+
+async def trace_auftrag(client: MooseBridgeClient, auftrag_id: str, raw: bool, title: str = "Trace") -> None:
+    """Request and print an AUFTRAG trace through the active bridge server.
+
+    :param client: High-level client bound to the active local server.
+    :param auftrag_id: Stable AUFTRAG id.
+    :param raw: If true, print full JSON.
+    :param title: Printed section title.
+    """
+
+    ack = require_ok(
+        await client.server.send_command(
+            BridgeCommand(action="auftrag.trace", params={"object_id": auftrag_id}),
+            timeout=10.0,
+        )
+    )
+    result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+    print_trace_result(title, result, raw=raw)
 
 
 async def wait_for_dcs_connection(server: MooseBridgeServer, timeout_s: float) -> None:
@@ -141,28 +233,40 @@ async def async_main(args: argparse.Namespace) -> int:
 
         result_payload = ack.get("result") if isinstance(ack.get("result"), dict) else {}
         auftrag_id = result_payload.get("auftrag_id")
-        if not args.monitor:
+        if not auftrag_id:
+            if args.monitor or args.trace:
+                print("Cannot monitor or trace AUFTRAG because ACK result did not include auftrag_id.")
+                return 4
             return 0
 
-        if not auftrag_id:
-            print("Cannot monitor AUFTRAG because ACK result did not include auftrag_id.")
-            return 4
+        auftrag_id = str(auftrag_id)
+        if args.trace:
+            await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after apply")
+
+        if not args.monitor:
+            return 0
 
         print(f"\nWaiting for evaluated AUFTRAG outcome: {auftrag_id}")
         try:
             outcome = await client.wait_for_auftrag_outcome(
-                str(auftrag_id),
+                auftrag_id,
                 timeout_s=args.monitor_timeout,
                 interval_s=args.monitor_interval,
             )
         except MooseBridgeAuftragNotFoundError as exc:
             print(f"AUFTRAG not found: {exc}")
+            if args.trace:
+                await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after not-found")
             return 4
         except MooseBridgeAuftragTimeoutError as exc:
             print(f"AUFTRAG outcome timeout: {exc}")
+            if args.trace:
+                await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after timeout")
             return 5
 
         print_mapping("Outcome", outcome.to_dict())
+        if args.trace:
+            await trace_auftrag(client, auftrag_id, raw=args.trace_raw, title="Trace after outcome")
         print(f"\n{outcome.auftrag_id} evaluation complete: {'SUCCESS' if outcome.success else 'FAILURE'}")
         return 0 if outcome.success else 6
 
@@ -189,6 +293,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nshots", type=float, default=None, help="Optional ARTY shot count. Values in (0, 1) are treated by MOOSE as ammo fraction.")
     parser.add_argument("--radius-m", type=float, default=None, help="Optional ARTY impact radius in meters. MOOSE defaults to 100 m when omitted.")
     parser.add_argument("--apply", action="store_true", help="Create and assign the recommended AUFTRAG in DCS.")
+    parser.add_argument("--trace", action="store_true", help="Print AUFTRAG assignment/execution trace after applying and after monitoring.")
+    parser.add_argument("--trace-raw", action="store_true", help="Print full raw AUFTRAG trace JSON instead of compact trace output.")
     parser.add_argument("--monitor", action="store_true", help="Wait for the evaluated AUFTRAG outcome after applying.")
     parser.add_argument("--monitor-timeout", type=float, default=600.0, help="Maximum AUFTRAG monitoring time in seconds.")
     parser.add_argument("--monitor-interval", type=float, default=5.0, help="AUFTRAG monitoring poll interval in seconds.")
