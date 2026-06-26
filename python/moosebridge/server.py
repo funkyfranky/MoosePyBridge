@@ -322,6 +322,22 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.auftraege", params={}))
 
+    async def snapshot_cohorts(self) -> dict[str, Any]:
+        """Request a COHORT snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.cohorts", params={}))
+
+    async def snapshot_legions(self) -> dict[str, Any]:
+        """Request a LEGION snapshot from DCS/MOOSE.
+
+        :returns: ACK message received from DCS after the snapshot was queued.
+        """
+
+        return await self.send_command(BridgeCommand(action="snapshot.legions", params={}))
+
     def _write_raw(self, direction: str, line: str) -> None:
         """Write one raw protocol line to the JSONL log.
 
@@ -347,6 +363,8 @@ Interactive commands:
   opszones                Request and print an OPSZONE snapshot.
   opsgroups               Request and print an OPSGROUP snapshot.
   auftraege               Request and print an AUFTRAG snapshot.
+  cohorts                 Request and print a COHORT snapshot.
+  legions                 Request and print a LEGION snapshot.
   smoke <object_id> [color]       Smoke an object position.
   smokepoint <x> <z> [color]      Smoke a DCS world point.
   mark <object_id> <text>         Mark an object position.
@@ -586,6 +604,60 @@ def _print_auftrag_snapshot(auftraege: dict[str, dict[str, Any]], limit: int = 6
         print(f"  ... {len(items) - limit} more AUFTRAG objects not shown")
 
 
+def _print_cohort_snapshot(cohorts: dict[str, dict[str, Any]], limit: int = 60) -> None:
+    """Print a compact COHORT snapshot summary.
+
+    :param cohorts: Mapping from object id to COHORT payload.
+    :param limit: Maximum number of COHORT objects to print.
+    """
+
+    items = list(cohorts.values())
+    print(f"cohorts={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        legion_id = item.get("legion_id", "")
+        category = item.get("category", "")
+        unit_type = item.get("unit_type", "")
+        stock = item.get("stock_asset_count", "")
+        spawned = item.get("spawned_asset_count", "")
+        mission_types = item.get("mission_type_keys", [])
+        print(
+            f"  {object_id} legion={legion_id} category={category} unit_type={unit_type} "
+            f"stock={stock} spawned={spawned} missions={len(mission_types)}"
+        )
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more COHORT objects not shown")
+
+
+def _print_legion_snapshot(legions: dict[str, dict[str, Any]], limit: int = 60) -> None:
+    """Print a compact LEGION snapshot summary.
+
+    :param legions: Mapping from object id to LEGION payload.
+    :param limit: Maximum number of LEGION objects to print.
+    """
+
+    items = list(legions.values())
+    print(f"legions={len(items)}")
+
+    for item in items[:limit]:
+        object_id = item.get("object_id", "")
+        category = item.get("category", "")
+        coalition = item.get("coalition", "")
+        state = item.get("state", "")
+        airbase = item.get("airbase_name", "")
+        cohorts = item.get("cohort_ids", [])
+        queue = item.get("auftrag_queue_ids", [])
+        print(
+            f"  {object_id} category={category} coalition={coalition} state={state} "
+            f"airbase={airbase} cohorts={len(cohorts)} queue={len(queue)}"
+        )
+
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more LEGION objects not shown")
+
+
 async def run_interactive_console(server: MooseBridgeServer) -> None:
     """Run an interactive command console backed by a bridge server.
 
@@ -665,6 +737,16 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
                 ack = await server.snapshot_auftraege()
                 print(f"ACK: {ack}")
                 _print_auftrag_snapshot(server.state.auftraege)
+                continue
+            if command == "cohorts":
+                ack = await server.snapshot_cohorts()
+                print(f"ACK: {ack}")
+                _print_cohort_snapshot(server.state.cohorts)
+                continue
+            if command == "legions":
+                ack = await server.snapshot_legions()
+                print(f"ACK: {ack}")
+                _print_legion_snapshot(server.state.legions)
                 continue
             if command == "smoke":
                 object_id, _, color = argument.partition(" ")

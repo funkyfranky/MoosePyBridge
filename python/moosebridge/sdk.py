@@ -203,6 +203,24 @@ class MooseBridgeClient:
 
         return require_ok(await self.server.snapshot_auftraege())
 
+    async def snapshot_cohorts(self) -> dict[str, Any]:
+        """Request a COHORT snapshot through the SDK.
+
+        :returns: Successful ACK message received from DCS.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        return require_ok(await self.server.snapshot_cohorts())
+
+    async def snapshot_legions(self) -> dict[str, Any]:
+        """Request a LEGION snapshot through the SDK.
+
+        :returns: Successful ACK message received from DCS.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        return require_ok(await self.server.snapshot_legions())
+
     async def request_ops_state(self) -> MooseBridgeState:
         """Request OPS snapshots and return the updated local state mirror.
 

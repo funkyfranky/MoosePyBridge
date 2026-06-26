@@ -100,6 +100,7 @@ end
 function MOOSE_BRIDGE:_Disconnect(reason)
   if reason then self:_Log("Disconnected: " .. safe_tostring(reason)) end
   if self.Socket then self.Socket:close(); self.Socket = nil end
+  self.OutQueue = {}
   self.Connected = false
 end
 
@@ -118,6 +119,9 @@ function MOOSE_BRIDGE:_BaseMessage(message_type)
 end
 
 function MOOSE_BRIDGE:Send(message)
+  if not self.Socket then
+    return self
+  end
   self.OutQueue[#self.OutQueue + 1] = json.encode(message)
   return self
 end
@@ -1161,17 +1165,21 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     return {coalition=p.coalition, text=p.text, duration=p.duration or 10}
   end)
 
-  self:RegisterCommand("smoke.point", function(cmd)
+  local smoke_at_point_handler = function(cmd)
     local p = cmd.params or {}
     local point = self:_PointFromParams(p)
     return self:_SmokePoint(point, p.color or "white")
-  end)
+  end
+  self:RegisterCommand("smoke.at_point", smoke_at_point_handler)
+  self:RegisterCommand("smoke.point", smoke_at_point_handler)
 
-  self:RegisterCommand("mark.point", function(cmd)
+  local mark_at_point_handler = function(cmd)
     local p = cmd.params or {}
     local point = self:_PointFromParams(p)
     return self:_MarkPoint(point, p.text or "MOOSE Bridge mark")
-  end)
+  end
+  self:RegisterCommand("mark.at_point", mark_at_point_handler)
+  self:RegisterCommand("mark.point", mark_at_point_handler)
 
   self:RegisterCommand("smoke.object", function(cmd)
     local p = cmd.params or {}; local point = self:_PointForObjectId(p.object_id)

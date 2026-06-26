@@ -262,6 +262,8 @@ class MooseBridgeState:
             self.airbases = self._index_objects(payload.get("airbases", []))
         elif kind == "zones":
             self.zones = self._index_objects(payload.get("zones", []))
+        elif kind == "objects":
+            self.objects = self._index_objects(payload.get("objects", []))
         elif kind == "opszones":
             items = payload.get("opszones", [])
             self.opszones = self._index_objects(items)

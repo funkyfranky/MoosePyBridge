@@ -1,12 +1,42 @@
 # MoosePyBridge Roadmap
 
-## Final goal
+## Vision
 
-MoosePyBridge is intended to become a semantic Python control plane for DCS/MOOSE missions.
+MoosePyBridge is a semantic Python environment for DCS missions built on MOOSE.
+It should make DCS/MOOSE mission state available to Python, expose MOOSE and OPS
+objects as stable typed models, and provide controlled ways to command the
+mission through MOOSE semantics.
 
-The bridge should mirror MOOSE mission state, expose MOOSE and OPS abstractions as typed Python objects, and enable tactical analysis plus controlled execution of MOOSE commands from Python.
+The long-term target is an agent-capable command environment:
 
-The bridge is not meant to be a generic raw DCS scripting tunnel. DCS remains the simulation runtime, MOOSE remains the mission semantics layer, and Python becomes the external analysis, decision, and control layer.
+- Python mirrors the battlefield state.
+- Tactical and strategic reasoning layers interpret that state.
+- Operator tools and agents propose useful actions.
+- Approved or autonomous actions are executed only through semantic MOOSE/OPS
+  commands such as AUFTRAG and OPS tasking.
+
+The bridge is not meant to be a generic raw DCS scripting tunnel. DCS remains the
+simulation runtime, MOOSE remains the mission semantics layer, and Python becomes
+the external analysis, decision, and control layer.
+
+## Operating model
+
+MoosePyBridge should work in both single-player and multiplayer or dedicated
+server scenarios.
+
+The preferred runtime shape is:
+
+1. One DCS mission loads the Lua bridge.
+2. One Python bridge daemon owns the DCS-facing TCP connection.
+3. Multiple Python clients, tools, or agents connect to the daemon through a
+   local or network-facing control API.
+4. All command execution goes through validation, policy, and audit-friendly
+   semantic actions.
+
+Initial local defaults:
+
+- DCS-facing bridge port: `51000`
+- Python control port: `51001`
 
 ## Guiding principles
 
@@ -15,8 +45,12 @@ The bridge is not meant to be a generic raw DCS scripting tunnel. DCS remains th
 - Python consumes stable protocol objects, not raw MOOSE internals.
 - The external protocol should remain stable even if MOOSE internals evolve.
 - Commands should be MOOSE/OPS-semantic, not low-level DCS scripting snippets.
-- Autonomous execution and human-approval workflows must both be supported.
+- Agents command through AUFTRAG/OPS and do not micromanage units directly.
+- Human approval and autonomous execution should use the same validated command
+  path.
 - Dedicated server and multiplayer operation are first-class requirements.
+- Auditability matters: recommendations, approvals, commands, ACKs, and outcomes
+  should be traceable.
 
 ## Architecture layers
 
@@ -24,7 +58,7 @@ The bridge is not meant to be a generic raw DCS scripting tunnel. DCS remains th
 
 The first layer mirrors mission state from DCS/MOOSE into Python.
 
-Current baseline object types:
+Current object families:
 
 - GROUP
 - UNIT
@@ -34,69 +68,128 @@ Current baseline object types:
 - OPSZONE
 - OPSGROUP
 - AUFTRAG
+- COHORT
+- LEGION
 
-Planned object types:
+Planned object families:
 
 - AIRWING
 - BRIGADE
 - FLEET
 - COMMANDER
 - CHIEF
-- LEGION
-- COHORT
 - DETECTION
 - EVENT
 
-The Python mirror should preserve stable object identity, including:
+The Python mirror should preserve stable object identity:
 
-- object_id
-- dcs_name
-- object_type
-- category
-- coalition
-- birth_time where available
+- `object_id`
+- `dcs_name`
+- `object_type`
+- `category`
+- `coalition`
+- `birth_time` where available
 
-### 2. Tactical reasoning layer
+Raw snapshots remain useful for debugging and forward compatibility. Typed
+models should be added where the bridge has enough stable semantics.
 
-The second layer interprets the mirrored state.
+### 2. Tactical reasoning and advisory layer
 
-It should be able to answer operational questions such as:
+The second layer interprets the mirrored state and produces structured
+recommendations.
 
-- Which OPSZONE is threatened, empty, guarded, captured, or contested?
+It should answer operational questions such as:
+
+- Which OPSZONEs are threatened, empty, guarded, captured, or contested?
 - Which OPSGROUPs are available, assigned, moving, executing, or destroyed?
-- Which AUFTRAG objects are scheduled, started, executing, successful, failed, or cancelled?
-- Which groups are detected by which OPSGROUPs?
-- Which assets are suitable for a requested mission?
-- Which actions are tactically useful and safe?
+- Which AUFTRAG objects are scheduled, started, executing, successful, failed, or
+  cancelled?
+- Which LEGION/COHORT assets are available, stocked, in range, and suitable for
+  a requested mission?
+- Which friendly or neutral targets must be rejected?
+- Which attacks, defenses, patrols, or troop movements are tactically useful?
+- What confidence, risks, assumptions, and required approvals apply?
+
+Recommendations should be structured objects, not prose only. They should carry
+the intended action, rationale, risk, candidate assets, required command payload,
+and approval/autonomy requirements.
 
 ### 3. Controlled action layer
 
 The third layer sends controlled commands back into MOOSE.
 
-Initial command families:
+Current command families:
 
-- message.*
-- mark.*
-- smoke.*
-- snapshot.*
+- `message.*`
+- `mark.*`
+- `smoke.*`
+- `snapshot.*`
+- selected `auftrag.*`
+- AUFTRAG trace helpers
 
 Planned command families:
 
-- auftrag.*
-- opsgroup.*
-- opszone.*
-- commander.*
-- chief.*
-- airwing.*
-- brigade.*
-- fleet.*
+- broader `auftrag.*` creation, cancellation, assignment, and monitoring
+- `opsgroup.*`
+- `opszone.*`
+- `commander.*`
+- `chief.*`
+- `airwing.*`
+- `brigade.*`
+- `fleet.*`
+
+Commands should remain whitelisted, parameterized, and semantic. The controlled
+action layer should never become an arbitrary Lua execution API.
+
+### 4. Server and client layer
+
+The bridge daemon should be the central owner of the DCS connection. Client
+tools should connect to the daemon instead of each starting their own bridge.
+
+Near-term server needs:
+
+- stable multi-client state queries
+- command forwarding through the daemon
+- snapshot orchestration
+- raw protocol logging
+- error reporting suitable for tools and agents
+
+Later server needs:
+
+- remote client access
+- authentication and role-based permissions
+- session tracking
+- audit log for recommendations, approvals, commands, ACKs, and outcomes
+- replayable state and event history
+
+### 5. Agent layer
+
+The agent layer should support both strategic and tactical behavior.
+
+Strategic mode thinks like a commander:
+
+- maintain a situation picture
+- identify priorities and threats
+- decide where to attack, defend, patrol, or reinforce
+- allocate LEGION/COHORT resources through OPS semantics
+
+Tactical mode reasons closer to the current fight:
+
+- choose suitable targets
+- select available assets
+- validate range, coalition, payload, and mission type
+- create or recommend AUFTRAG actions
+- monitor outcomes and adapt
 
 Execution modes:
 
-- read_only
-- suggest_only
-- approval_required
-- autonomous
+- `observe`: no recommendations or commands
+- `recommend`: produce proposals only
+- `approval_required`: prepare executable commands but wait for approval
+- `autonomous`: execute within explicit policy constraints
+
+Autonomy should be a mode on top of the same advisory, validation, and command
+path used by human-operated tools.
 
 ## Protocol direction
 
@@ -104,31 +197,35 @@ The protocol should remain line-oriented JSON for now.
 
 Core message types:
 
-- heartbeat
-- snapshot
-- event
-- command
-- ack
-- error
+- `heartbeat`
+- `snapshot`
+- `event`
+- `command`
+- `ack`
+- `error`
 
 Snapshot kinds should be object-family oriented:
 
-- groups
-- units
-- statics
-- airbases
-- zones
-- opszones
-- opsgroups
-- auftraege
+- `groups`
+- `units`
+- `statics`
+- `airbases`
+- `zones`
+- `opszones`
+- `opsgroups`
+- `auftraege`
+- `cohorts`
+- `legions`
 
-The protocol should prefer references over nested objects. For example, an OPSGROUP references its current AUFTRAG with `auftrag_current_id`, while the AUFTRAG exists as a separate snapshot object.
+The protocol should prefer references over deeply nested objects. For example,
+an OPSGROUP references its current AUFTRAG with `auftrag_current_id`, while the
+AUFTRAG exists as a separate snapshot object.
 
 ## Phase 1: Stabilize state snapshots
 
 Goal: Python knows the mission world.
 
-### Current work
+Current baseline:
 
 - GROUP snapshot
 - UNIT snapshot
@@ -138,24 +235,29 @@ Goal: Python knows the mission world.
 - OPSZONE snapshot
 - OPSGROUP snapshot
 - AUFTRAG snapshot
+- COHORT snapshot
+- LEGION snapshot
+- typed Python models for OPSZONE, OPSGROUP, AUFTRAG, target snapshots, COHORT,
+  LEGION, and AUFTRAG outcomes
 
-### Next work items
+Next work items:
 
-1. Expand AUFTRAG snapshots with mission target information.
-2. Add AUFTRAG timing details in a stable form.
-3. Add AUFTRAG target/zone/coordinate references.
-4. Expand OPSGROUP snapshots with useful FLIGHTGROUP, ARMYGROUP, and NAVYGROUP-specific fields.
-5. Add AIRWING/BRIGADE/FLEET snapshots.
-6. Add COMMANDER/CHIEF snapshots.
-7. Add LEGION/COHORT snapshots.
+1. Reconcile README, roadmap, and example scripts with the current daemon/control
+   architecture.
+2. Expand and harden AUFTRAG snapshot details, especially timing, target, summary,
+   and outcome fields.
+3. Add AIRWING/BRIGADE/FLEET snapshots.
+4. Add COMMANDER/CHIEF snapshots.
+5. Add replayable event snapshots or event streams for state changes.
+6. Add tests for control API state payload round-trips and AUFTRAG advisory edge
+   cases.
 
 ## Phase 2: Typed Python state model
 
-Goal: Replace raw dict consumption with typed Python objects.
+Goal: Prefer typed access while preserving raw snapshot payloads.
 
-Initial Python model candidates:
+Typed model priorities:
 
-- MooseObject
 - Group
 - Unit
 - StaticObject
@@ -164,71 +266,103 @@ Initial Python model candidates:
 - OpsZone
 - OpsGroup
 - Auftrag
+- TargetSnapshot
+- Cohort
+- Legion
+- AuftragOutcome
+- later Airwing, Brigade, Fleet, Commander, Chief
 
 Example target API:
 
 ```python
-auftrag = bridge.state.auftraege["AUFTRAG:1"]
+auftrag = bridge.state.auftrag("AUFTRAG:1")
 print(auftrag.type)
 print(auftrag.status)
 print(auftrag.assigned_group_ids)
 ```
 
-## Phase 3: Event stream
+## Phase 3: Advisory and recommendation model
 
-Goal: Python understands what happened, not only what exists now.
+Goal: Convert state analysis into executable, explainable proposals.
 
-Initial event families:
+The advisory layer should produce structured recommendations for:
 
-- object birth/death
-- unit hit/kill/shot
-- OPSGROUP state changed
-- OPSZONE state/owner changed
-- AUFTRAG scheduled/started/executing/success/failed/cancelled
-- detection updates
+- attacking known targets
+- defending threatened OPSZONEs
+- patrolling or screening areas
+- reinforcing or moving ground/naval forces
+- selecting suitable LEGION/COHORT assets
+- rejecting unsafe or impossible missions
 
-Events should be logged and replayable.
+Each recommendation should include:
 
-## Phase 4: Command SDK
-
-Goal: Python can command MOOSE semantically.
-
-Initial command targets:
-
-- AUFTRAG cancellation
-- AUFTRAG assignment to OPSGROUP
-- OPSGROUP mission control
-- MOOSE MESSAGE/MARK/SMOKE support
-
-Later command targets:
-
-- AUFTRAG creation
-- AIRWING/BRIGADE/FLEET tasking
-- COMMANDER/CHIEF tasking
-- policy and approval workflows
-
-## Phase 5: Tactical agent
-
-Goal: Build an agent that can analyze the mission and propose or execute actions.
-
-The agent should be able to produce structured recommendations:
-
-- situation summary
-- threat assessment
-- available assets
-- recommended action
-- required command
+- intent
+- target or defended area
+- candidate asset
+- selected command family
+- command payload
+- rationale
+- risk and assumptions
 - confidence
-- risks
-- approval requirement
+- required approval mode
 
-Initial mode should be suggest_only or approval_required. Autonomous operation should be a later capability.
+## Phase 4: Command SDK and policies
+
+Goal: Python can command MOOSE semantically and safely.
+
+Work items:
+
+- broaden AUFTRAG creation helpers
+- add cancellation and reassignment helpers
+- add OPSGROUP and OPSZONE control helpers
+- map recommendations to command payloads
+- validate coalition, range, mission type, target type, and asset availability
+- define policy checks for autonomous execution
+- record command ACKs and outcomes
+
+## Phase 5: Multi-client server hardening
+
+Goal: Make the daemon a robust service for tools and agents.
+
+Work items:
+
+- stabilize the control protocol
+- define client-facing request and response schemas
+- add structured errors
+- add session and client identity fields
+- add audit log records
+- add remote access and authentication options
+- keep dedicated-server performance and blocking behavior under control
+
+## Phase 6: Agentic command layer
+
+Goal: Build agents that can analyze the mission and propose or execute actions.
+
+Initial behavior:
+
+- summarize the tactical situation
+- identify threatened zones and valuable targets
+- find available assets
+- produce recommendations with command payloads
+- wait for approval before execution
+- monitor AUFTRAG outcomes
+
+Later behavior:
+
+- strategic prioritization across multiple fronts
+- autonomous defensive responses
+- autonomous tasking inside policy limits
+- adaptive replanning based on outcomes and events
 
 ## Immediate next milestone
 
-The next concrete milestone is Phase 1 completion for OPS objects:
+The next concrete milestone is to align the project around the server plus
+advisory architecture:
 
-1. Expand AUFTRAG snapshot details.
-2. Add AIRWING/BRIGADE/FLEET snapshots.
-3. Add COMMANDER/CHIEF snapshots.
-4. Start a typed Python state model for OPSZONE, OPSGROUP, and AUFTRAG.
+1. Update documentation to match the current code and long-term goal.
+2. Make the daemon/control entry points first-class in packaging and examples.
+3. Add tests around the control API and state mirror round-trips.
+4. Define a small recommendation/intent schema that can represent attack,
+   defense, patrol, and movement proposals.
+5. Use that schema to turn the existing AUFTRAG advisory helpers into
+   operator-ready recommendations.

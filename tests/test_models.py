@@ -173,6 +173,28 @@ def test_state_indexes_typed_ops_models() -> None:
     assert state.auftrag_objects["AUFTRAG:1"].type == "Patrol Zone"
 
 
+def test_state_indexes_objects_snapshot() -> None:
+    state = MooseBridgeState()
+
+    state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "objects",
+            "payload": {
+                "objects": [
+                    {
+                        "object_id": "GROUP:Armor-1",
+                        "dcs_name": "Armor-1",
+                        "object_type": "GROUP",
+                    }
+                ]
+            },
+        }
+    )
+
+    assert state.objects["GROUP:Armor-1"]["dcs_name"] == "Armor-1"
+
+
 def test_state_resolves_group_auftrag_relationships() -> None:
     state = MooseBridgeState()
 

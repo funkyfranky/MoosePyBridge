@@ -97,6 +97,7 @@ async def run_interactive_console(server: server_module.MooseBridgeServer) -> No
     :param server: Running bridge server instance.
     """
 
+    server_module.HELP_TEXT = _with_trace_help(server_module.HELP_TEXT)
     print(server_module.HELP_TEXT)
 
     while True:
@@ -167,6 +168,16 @@ async def run_interactive_console(server: server_module.MooseBridgeServer) -> No
                 ack = await server.snapshot_auftraege()
                 print(f"ACK: {ack}")
                 server_module._print_auftrag_snapshot(server.state.auftraege)
+                continue
+            if command == "cohorts":
+                ack = await server.snapshot_cohorts()
+                print(f"ACK: {ack}")
+                server_module._print_cohort_snapshot(server.state.cohorts)
+                continue
+            if command == "legions":
+                ack = await server.snapshot_legions()
+                print(f"ACK: {ack}")
+                server_module._print_legion_snapshot(server.state.legions)
                 continue
             if command == "trace":
                 parts = argument.split()
