@@ -44,6 +44,15 @@ class MooseBridgeServer:
         self._pending: dict[str, PendingCommand] = {}
         self._raw_log_file = None
 
+    def _fail_pending(self, exc: BaseException) -> None:
+        """Fail all commands currently waiting for a DCS ACK."""
+
+        pending = list(self._pending.values())
+        self._pending.clear()
+        for item in pending:
+            if not item.future.done():
+                item.future.set_exception(exc)
+
     async def start(self) -> None:
         """Start listening for the DCS Lua bridge connection."""
 
@@ -71,6 +80,8 @@ class MooseBridgeServer:
     async def stop(self) -> None:
         """Stop the server and close active resources."""
 
+        self._fail_pending(RuntimeError("MOOSE Bridge server stopped"))
+
         if self._writer is not None:
             self._writer.close()
             await self._writer.wait_closed()
@@ -97,6 +108,7 @@ class MooseBridgeServer:
 
         if self._writer is not None:
             LOGGER.warning("Replacing previous DCS connection")
+            self._fail_pending(RuntimeError("DCS bridge connection was replaced"))
             self._writer.close()
 
         self._writer = writer
@@ -112,6 +124,7 @@ class MooseBridgeServer:
             LOGGER.warning("DCS disconnected from %s", peer)
             if self._writer is writer:
                 self._writer = None
+                self._fail_pending(RuntimeError("DCS bridge connection disconnected"))
             self.state.connected = False
             writer.close()
             await writer.wait_closed()
@@ -179,8 +192,12 @@ class MooseBridgeServer:
 
         LOGGER.debug("Python -> DCS: %s", data)
         self._write_raw("python", line)
-        self._writer.write((line + "\n").encode("utf-8"))
-        await self._writer.drain()
+        try:
+            self._writer.write((line + "\n").encode("utf-8"))
+            await self._writer.drain()
+        except Exception:
+            self._pending.pop(command.id, None)
+            raise
 
         try:
             return await asyncio.wait_for(future, timeout=timeout)

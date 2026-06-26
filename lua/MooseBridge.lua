@@ -762,6 +762,7 @@ function MOOSE_BRIDGE:BuildOpsGroupSnapshot()
     local ok, item = pcall(function() return self:_BuildOpsGroupSnapshotItem(name, opsgroup, "registered") end)
     if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
   end
+  -- MOOSE stores all OPSGROUP specializations here despite the FLIGHTGROUPS name.
   if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
     for name, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do
       local ok, item = pcall(function() return self:_BuildOpsGroupSnapshotItem(name, opsgroup, "database.FLIGHTGROUPS") end)
@@ -1144,6 +1145,7 @@ end
 function MOOSE_BRIDGE:BuildAuftragSnapshot()
   local result = {}; local seen = {}
   for _, opsgroup in pairs(self.RegisteredOpsGroups or {}) do self:_CollectAuftragCandidatesFromOpsGroup(result, seen, opsgroup) end
+  -- MOOSE stores all OPSGROUP specializations here despite the FLIGHTGROUPS name.
   if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
     for _, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do self:_CollectAuftragCandidatesFromOpsGroup(result, seen, opsgroup) end
   end

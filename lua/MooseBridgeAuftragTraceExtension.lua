@@ -80,6 +80,7 @@ function MOOSE_BRIDGE:_TraceFindAuftrag(auftrag_id)
     end
   end
 
+  -- MOOSE stores all OPSGROUP specializations here despite the FLIGHTGROUPS name.
   if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
     for _, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do
       local current = opsgroup.currentmission or opsgroup.missioncurrent or opsgroup.currentMission
@@ -164,6 +165,7 @@ function MOOSE_BRIDGE:_TraceCollectOpsGroups(auftrag_id)
       seen[item.object_id] = true
     end
   end
+  -- MOOSE stores all OPSGROUP specializations here despite the FLIGHTGROUPS name.
   if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
     for name, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do
       local ok, item = pcall(function() return self:_TraceOpsGroupItem(name, opsgroup, auftrag_id, "database.FLIGHTGROUPS") end)

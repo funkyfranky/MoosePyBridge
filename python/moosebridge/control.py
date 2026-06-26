@@ -246,6 +246,17 @@ class MooseBridgeControlClient:
         self.port = port
         self.state = MooseBridgeState()
 
+    @staticmethod
+    def _response_timeout(action: str, params: dict[str, Any], timeout: float) -> float:
+        """Return a client-side response timeout for one control request."""
+
+        if action == "control.snapshots":
+            actions = params.get("actions")
+            if isinstance(actions, list):
+                action_count = max(1, len(actions))
+                return action_count * timeout + max(0, action_count - 1) * 0.1 + 1.0
+        return timeout + 1.0
+
     async def request(self, action: str, params: dict[str, Any] | None = None, timeout: float = 10.0) -> dict[str, Any]:
         """Send one control request and return its result.
 
@@ -256,17 +267,18 @@ class MooseBridgeControlClient:
         :raises RuntimeError: If the control server rejects the request.
         """
 
+        request_params = params or {}
         reader, writer = await asyncio.open_connection(self.host, self.port, limit=DEFAULT_CONTROL_READER_LIMIT)
         try:
             request = {
                 "id": f"ctrl-{uuid.uuid4().hex[:12]}",
                 "action": action,
-                "params": params or {},
+                "params": request_params,
                 "timeout": timeout,
             }
             writer.write((json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
             await writer.drain()
-            line = await asyncio.wait_for(reader.readline(), timeout=timeout + 1.0)
+            line = await asyncio.wait_for(reader.readline(), timeout=self._response_timeout(action, request_params, timeout))
             if not line:
                 raise RuntimeError("Control server closed the connection without response")
             response = json.loads(line.decode("utf-8"))

@@ -6,6 +6,13 @@ from moosebridge.protocol import BridgeCommand
 from moosebridge.server import MooseBridgeServer
 
 
+def _bridge_port(server: MooseBridgeServer) -> int:
+    assert server._server is not None
+    sockets = server._server.sockets
+    assert sockets
+    return int(sockets[0].getsockname()[1])
+
+
 def test_point_commands_use_at_point_actions() -> None:
     server = MooseBridgeServer()
     sent: list[BridgeCommand] = []
@@ -38,3 +45,34 @@ def test_new_snapshot_helpers_use_registered_lua_actions() -> None:
     asyncio.run(server.snapshot_legions())
 
     assert [command.action for command in sent] == ["snapshot.cohorts", "snapshot.legions"]
+
+
+def test_pending_command_fails_when_dcs_disconnects() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer(host="127.0.0.1", port=0)
+        await server.start()
+        try:
+            _, writer = await asyncio.open_connection("127.0.0.1", _bridge_port(server))
+            try:
+                while server._writer is None:
+                    await asyncio.sleep(0.01)
+
+                task = asyncio.create_task(server.send_command(BridgeCommand(action="message.to_all", params={"text": "hello"}), timeout=5.0))
+                while not server._pending:
+                    await asyncio.sleep(0.01)
+
+                writer.close()
+                await writer.wait_closed()
+
+                try:
+                    await task
+                except RuntimeError as exc:
+                    assert "disconnected" in str(exc)
+                else:
+                    raise AssertionError("pending command did not fail after DCS disconnect")
+            finally:
+                writer.close()
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
