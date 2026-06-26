@@ -131,6 +131,8 @@ Additional installed entry points:
 - `moosebridge-control`: local control client
 - `moosebridge-standalone-server`: DCS-facing server without the local control API
 
+See `docs/CONTROL_API.md` for the local multi-client control protocol.
+
 ## First manual test
 
 1. Start the Python bridge daemon.

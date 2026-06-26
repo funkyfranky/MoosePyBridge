@@ -81,7 +81,7 @@ def state_payload(state: MooseBridgeState, kinds: Iterable[str] | None = None) -
     :returns: State payload with raw maps.
     """
 
-    selected = tuple(kinds or STATE_KINDS)
+    selected = tuple(STATE_KINDS if kinds is None else kinds)
     payload: dict[str, Any] = {
         "connected": state.connected,
         "last_heartbeat": state.last_heartbeat,
