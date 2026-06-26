@@ -223,13 +223,6 @@ function MOOSE_BRIDGE:BuildOpsZoneSnapshot()
   return result
 end
 
-function MOOSE_BRIDGE:_PointForOpsZoneName(name)
-  local opszone = self.RegisteredOpsZones and self.RegisteredOpsZones[name] or nil
-  if not opszone and _DATABASE and type(_DATABASE.OPSZONES) == "table" then opszone = _DATABASE.OPSZONES[name] end
-  if not opszone then return nil end
-  return self:_PointFromMooseObject(opszone)
-end
-
 function MOOSE_BRIDGE:_CoordinateTargetFromObjectId(target_id)
   local prefix, name = bridge_split_object_id(target_id)
   if not prefix or not name then return nil, "Invalid coordinate target id " .. bridge_safe_tostring(target_id) end

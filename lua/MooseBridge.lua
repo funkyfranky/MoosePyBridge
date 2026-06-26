@@ -369,6 +369,13 @@ function MOOSE_BRIDGE:_PointForAirbaseName(name)
   return nil
 end
 
+function MOOSE_BRIDGE:_PointForOpsZoneName(name)
+  local opszone = self.RegisteredOpsZones and self.RegisteredOpsZones[name]
+  if not opszone and _DATABASE and type(_DATABASE.OPSZONES) == "table" then opszone = _DATABASE.OPSZONES[name] end
+  if not opszone then return nil end
+  return self:_PointFromMooseObject(opszone)
+end
+
 function MOOSE_BRIDGE:_PointForZoneName(name)
   local zone = self.RegisteredZones and self.RegisteredZones[name]
   if not zone and _DATABASE and _DATABASE.ZONES then zone = _DATABASE.ZONES[name] end
@@ -376,6 +383,8 @@ function MOOSE_BRIDGE:_PointForZoneName(name)
     local point = self:_PointFromMooseObject(zone)
     if point then return point end
   end
+  local opszone_point = self:_PointForOpsZoneName(name)
+  if opszone_point then return opszone_point end
   if env and env.mission and env.mission.triggers and type(env.mission.triggers.zones) == "table" then
     for _, trigger_zone in pairs(env.mission.triggers.zones) do
       if trigger_zone.name == name then return {x=trigger_zone.x, y=0, z=trigger_zone.y} end
@@ -392,6 +401,7 @@ function MOOSE_BRIDGE:_PointForObjectId(object_id)
   if object_type == "STATIC" then return self:_PointForStaticName(name) end
   if object_type == "AIRBASE" then return self:_PointForAirbaseName(name) end
   if object_type == "ZONE" then return self:_PointForZoneName(name) end
+  if object_type == "OPSZONE" then return self:_PointForOpsZoneName(name) end
   error("Unsupported object_id type for point lookup: " .. safe_tostring(object_type))
 end
 

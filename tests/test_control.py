@@ -9,10 +9,15 @@ from typing import Any
 from moosebridge.control import MooseBridgeControlClient, MooseBridgeControlServer, apply_state_payload, state_payload
 from examples.control_server_client.interactive_control_client import (
     normalize_snapshot_actions,
+    normalize_legion_id,
+    parse_mission_argument,
     parse_message_argument,
+    print_mission_feedback,
     print_command_feedback,
     snapshot_actions_to_kinds,
+    split_object_argument,
 )
+from moosebridge.recommendations import AuftragRecommendation
 from moosebridge.protocol import BridgeCommand
 from moosebridge.state import MooseBridgeState
 
@@ -145,6 +150,98 @@ def test_interactive_message_argument_requires_text() -> None:
         assert "requires text" in str(exc)
     else:
         raise AssertionError("message recipient without text was accepted")
+
+
+def test_interactive_object_argument_accepts_quoted_ids_with_spaces() -> None:
+    object_id, rest = split_object_argument('"ZONE:Town Fight" Hello Mate', known_ids=set())
+
+    assert object_id == "ZONE:Town Fight"
+    assert rest == ["Hello", "Mate"]
+
+
+def test_interactive_object_argument_uses_longest_known_unquoted_id() -> None:
+    object_id, rest = split_object_argument(
+        "AIRBASE:Gross Mohrdorf Hello Mate",
+        known_ids={"AIRBASE:Gross Mohrdorf"},
+    )
+
+    assert object_id == "AIRBASE:Gross Mohrdorf"
+    assert rest == ["Hello", "Mate"]
+
+
+def test_interactive_mission_argument_parses_auftrag_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'ARTY --target UNIT:Ground-1-1 --Nshots 5 --radius 100 -legion "BRIGADE:Laage" --preview'
+    )
+
+    assert mission_type == "ARTY"
+    assert params == {"target": "UNIT:Ground-1-1", "nshots": 5.0, "radius_m": 100.0}
+    assert coalition is None
+    assert legion_id == "BRIGADE:Laage"
+    assert preview is True
+
+
+def test_interactive_mission_argument_parses_coalition() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument("BAI --target GROUP:Ground-1 -coalition blue")
+
+    assert mission_type == "BAI"
+    assert params == {"target": "GROUP:Ground-1"}
+    assert coalition == "blue"
+    assert legion_id is None
+    assert preview is False
+
+
+def test_interactive_legion_alias_normalizes_to_legion_object_id() -> None:
+    client = MooseBridgeControlClient()
+    client.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {
+                "legions": [
+                    {
+                        "object_id": "LEGION:Laage",
+                        "dcs_name": "Laage",
+                        "object_type": "LEGION",
+                        "category": "BRIGADE",
+                        "coalition": "blue",
+                    }
+                ]
+            },
+        }
+    )
+
+    assert normalize_legion_id(client, "BRIGADE:Laage") == "LEGION:Laage"
+    assert normalize_legion_id(client, "LEGION:Laage") == "LEGION:Laage"
+
+
+def test_interactive_mission_feedback_labels_payload_uid_zero() -> None:
+    output = io.StringIO()
+    recommendation = AuftragRecommendation(
+        legion_id="LEGION:Wing Parchim",
+        cohort_id="COHORT:F-4E Parchim Alpha",
+        constructor="AUFTRAG:NewBAI",
+        mission_type="BAI",
+        params={"target": "GROUP:Ground-1"},
+        distance_nm=63.6,
+        selected_payload_uid=0,
+        selected_payload_aircrafttype="F-4E-45MC",
+        selected_payload_available=1,
+    )
+
+    with redirect_stdout(output):
+        print_mission_feedback(
+            recommendation,
+            ack={"ok": True, "result": {"auftrag_id": "AUFTRAG:1"}},
+            preview=False,
+            debug=False,
+        )
+
+    text = output.getvalue().strip()
+    assert "payload_uid=0" in text
+    assert "payload=0" not in text
+    assert "aircraft=F-4E-45MC" in text
+    assert "payload_available=1" in text
 
 
 def test_control_status_and_state_roundtrip() -> None:

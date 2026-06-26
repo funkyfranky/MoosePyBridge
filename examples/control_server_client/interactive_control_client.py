@@ -18,11 +18,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import replace
 import json
 import shlex
 from typing import Any
 
+from moosebridge import evaluate_auftrag_request, recommend_auftrag
 from moosebridge.control import DEFAULT_CONTROL_PORT, STATE_KINDS, MooseBridgeControlClient
+from moosebridge.intents import auftrag_command_params_from_recommendation, command_action_for_auftrag_recommendation
 
 
 HELP_TEXT = """
@@ -33,6 +36,7 @@ Commands:
   snapshots [--list|--raw] <kind|action ...>
                                   Request DCS snapshots, e.g. groups units or snapshot.groups snapshot.units.
   send <action> [json-params]     Send a semantic DCS command through the daemon.
+  mission <type> [options]        Validate, select assets, and create an AUFTRAG.
   trace <AUFTRAG:id>              Trace an AUFTRAG.
   mark <object_id> <text>         Create a map mark at an object position.
   markpoint <x> <z> <text>        Create a map mark at a DCS world point.
@@ -48,14 +52,18 @@ Examples:
   state --list groups units cohorts legions
   state --raw cohorts
   mark GROUP:Enemy-1 Target area
+  mark "ZONE:Town Fight" Target area
   markpoint -33711 -510211 Fire mission
   send smoke.object {"object_id":"UNIT:Scout-1","color":"red"}
   message MoosePyBridge connected
   message blue Push now
+  mission BAI --target GROUP:Ground-1 --coalition blue
+  mission ARTY --target UNIT:Ground-1-1 --nshots 5 --radius 100 --legion BRIGADE:Laage
   trace AUFTRAG:1
 """.strip()
 
 OUTPUT_MODES = {"summary", "list", "raw"}
+SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
 
 
 def print_json(value: Any) -> None:
@@ -97,6 +105,43 @@ def print_command_feedback(ack: dict[str, Any], fallback_action: str, debug: boo
     print(f"ERROR {label}: {ack.get('error') or ack}")
 
 
+def print_advisory_issues(result: Any) -> None:
+    """Print advisory issues in compact form."""
+
+    for issue in result.issues:
+        print(f"{issue.severity.upper()} {issue.code}: {issue.message}")
+
+
+def print_mission_feedback(recommendation: Any, ack: dict[str, Any] | None, preview: bool, debug: bool) -> None:
+    """Print a compact mission recommendation or execution result."""
+
+    data = recommendation.to_dict()
+    prefix = "PREVIEW" if preview else "OK"
+    parts = [
+        prefix,
+        str(data.get("mission_type")),
+        f"legion={data.get('legion_id')}",
+        f"cohort={data.get('cohort_id')}",
+    ]
+    if data.get("distance_nm") is not None:
+        parts.append(f"distance={data['distance_nm']:.1f}NM")
+    if data.get("selected_payload_uid") is not None:
+        parts.append(f"payload_uid={data.get('selected_payload_uid')}")
+    if data.get("selected_payload_aircrafttype") is not None:
+        parts.append(f"aircraft={data.get('selected_payload_aircrafttype')}")
+    if data.get("selected_payload_available") is not None:
+        parts.append(f"payload_available={data.get('selected_payload_available')}")
+
+    if ack is not None:
+        result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+        if result.get("auftrag_id") is not None:
+            parts.append(f"auftrag={result.get('auftrag_id')}")
+
+    print(" ".join(parts))
+    if debug:
+        print_json({"recommendation": data, "ack": ack})
+
+
 def parse_json_params(text: str) -> dict[str, Any]:
     """Parse optional command parameter JSON."""
 
@@ -132,6 +177,161 @@ def parse_message_argument(argument: str) -> tuple[str, str]:
     if not text:
         raise ValueError("message requires text")
     return "all", text
+
+
+def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | None, str | None, bool]:
+    """Parse ``mission <type> [options]`` command arguments."""
+
+    parts = shlex.split(argument)
+    if not parts:
+        raise ValueError("mission requires a mission type")
+
+    mission_type = parts[0]
+    params: dict[str, Any] = {}
+    coalition: str | None = None
+    legion_id: str | None = None
+    preview = False
+
+    index = 1
+    while index < len(parts):
+        option = parts[index]
+        key = option.lower()
+        if key in {"--preview", "-preview"}:
+            preview = True
+            index += 1
+            continue
+        if key in {"--target", "-target"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["target"] = parts[index]
+        elif key in {"--coalition", "-coalition"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            coalition = parts[index].lower()
+        elif key in {"--legion", "-legion"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            legion_id = parts[index]
+        elif key in {"--altitude-ft", "--altitude", "-altitude"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["altitude_ft"] = float(parts[index])
+        elif key in {"--nshots", "--n-shots", "-nshots", "-nshots"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["nshots"] = float(parts[index])
+        elif key in {"--radius", "--radius-m", "-radius"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["radius_m"] = float(parts[index])
+        elif key in {"--x", "-x", "--y", "-y", "--z", "-z"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params[key.lstrip("-")] = float(parts[index])
+        elif key in {"--engage-weapon-type", "-engage-weapon-type"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["engage_weapon_type"] = int(parts[index])
+        elif key in {"--divebomb", "-divebomb"}:
+            params["divebomb"] = True
+        else:
+            raise ValueError(f"Unknown mission option: {option}")
+        index += 1
+
+    return mission_type, params, coalition, legion_id, preview
+
+
+def known_object_ids(client: MooseBridgeControlClient) -> set[str]:
+    """Return object ids currently known in the local client state."""
+
+    result: set[str] = set()
+    for kind in STATE_KINDS:
+        values = getattr(client.state, kind)
+        if not isinstance(values, dict):
+            continue
+        result.update(str(object_id) for object_id in values if object_id)
+    return result
+
+
+def normalize_legion_id(client: MooseBridgeControlClient, value: str) -> str:
+    """Normalize LEGION/AIRWING/BRIGADE/FLEET shortcuts to a LEGION object id."""
+
+    if not value:
+        raise ValueError("legion id is empty")
+    if value in client.state.legions:
+        return value
+
+    prefix, _, name = value.partition(":")
+    prefix = prefix.upper()
+    if not name:
+        raise ValueError(f"Invalid legion id: {value}")
+    if prefix == "LEGION":
+        return value
+
+    for legion in client.state.legion_objects.values():
+        names = {legion.object_id, legion.dcs_name, legion.name or "", legion.alias or ""}
+        if prefix == (legion.category or "").upper() and name in names:
+            return legion.object_id
+        if prefix == (legion.category or "").upper() and name in {item.removeprefix("LEGION:") for item in names}:
+            return legion.object_id
+
+    return f"LEGION:{name}"
+
+
+def filter_advisory_to_legion(result: Any, legion_id: str) -> Any:
+    """Return an advisory result limited to one selected LEGION."""
+
+    candidates = [candidate for candidate in result.candidates if candidate.legion and candidate.legion.object_id == legion_id]
+    return replace(result, candidates=candidates)
+
+
+async def refresh_mission_state(client: MooseBridgeControlClient, timeout: float) -> None:
+    """Refresh state needed for AUFTRAG advisory and execution."""
+
+    await client.request_snapshots(
+        (
+            "snapshot.groups",
+            "snapshot.units",
+            "snapshot.statics",
+            "snapshot.airbases",
+            "snapshot.zones",
+            "snapshot.opszones",
+            "snapshot.cohorts",
+            "snapshot.legions",
+        ),
+        timeout=timeout,
+    )
+
+
+def split_object_argument(argument: str, known_ids: set[str]) -> tuple[str, list[str]]:
+    """Split an object command into object id and remaining arguments.
+
+    Quoted ids such as ``"ZONE:Town Fight"`` are supported directly. For
+    unquoted ids with spaces, the longest known object id prefix is used when
+    the local client state already contains that object.
+    """
+
+    parts = shlex.split(argument)
+    if not parts:
+        return "", []
+
+    best_index = 0
+    best_id = parts[0]
+    for index in range(len(parts), 0, -1):
+        candidate = " ".join(parts[:index])
+        if candidate in known_ids:
+            best_index = index - 1
+            best_id = candidate
+            break
+    return best_id, parts[best_index + 1 :]
 
 
 def normalize_snapshot_actions(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -369,6 +569,39 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         ack = await client.send_dcs_command(action, parse_json_params(params_text), timeout=timeout)
         print_command_feedback(ack, action, debug)
         return True
+    if command == "mission":
+        mission_type, params, coalition, explicit_legion, preview = parse_mission_argument(argument)
+        await refresh_mission_state(client, timeout=timeout)
+
+        legion_id = normalize_legion_id(client, explicit_legion) if explicit_legion else None
+        if legion_id and coalition is None:
+            legion = client.state.legion(legion_id)
+            coalition = legion.coalition if legion else None
+
+        result = evaluate_auftrag_request(client.state, mission_type, params, coalition=coalition)
+        if result.issues:
+            print_advisory_issues(result)
+        if not result.ok:
+            return True
+
+        selected_result = filter_advisory_to_legion(result, legion_id) if legion_id else result
+        recommendation = recommend_auftrag(selected_result)
+        if recommendation is None:
+            if legion_id:
+                print(f"ERROR no executable {result.mission_type} candidate for {legion_id}")
+            else:
+                print(f"ERROR no executable {result.mission_type} candidate")
+            return True
+
+        if preview:
+            print_mission_feedback(recommendation, ack=None, preview=True, debug=debug)
+            return True
+
+        action = command_action_for_auftrag_recommendation(recommendation)
+        command_params = auftrag_command_params_from_recommendation(recommendation)
+        ack = await client.send_dcs_command(action, command_params, timeout=timeout)
+        print_mission_feedback(recommendation, ack=ack, preview=False, debug=debug)
+        return True
     if command == "trace":
         if not argument:
             print("Usage: trace <AUFTRAG:id>")
@@ -377,7 +610,8 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         print_json(ack.get("result") if isinstance(ack.get("result"), dict) else ack)
         return True
     if command == "mark":
-        object_id, _, text = argument.partition(" ")
+        object_id, rest = split_object_argument(argument, known_object_ids(client))
+        text = " ".join(rest)
         if not object_id or not text:
             print("Usage: mark <object_id> <text>")
             return True
@@ -397,11 +631,15 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         print_command_feedback(ack, "mark.at_point", debug)
         return True
     if command == "smoke":
-        object_id, _, color = argument.partition(" ")
+        object_id, rest = split_object_argument(argument, known_object_ids(client))
+        color = rest[0] if rest else "white"
         if not object_id:
             print("Usage: smoke <object_id> [color]")
             return True
-        ack = await client.send_dcs_command("smoke.object", {"object_id": object_id, "color": color.strip() or "white"}, timeout=timeout)
+        if color not in SMOKE_COLORS:
+            print(f"Unsupported smoke color: {color}. Expected one of {sorted(SMOKE_COLORS)}")
+            return True
+        ack = await client.send_dcs_command("smoke.object", {"object_id": object_id, "color": color}, timeout=timeout)
         print_command_feedback(ack, "smoke.object", debug)
         return True
     if command == "smokepoint":
