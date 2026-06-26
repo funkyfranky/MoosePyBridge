@@ -16,6 +16,14 @@ from .auftrag_specs import (
     platform_categories_match,
     target_type_values,
 )
+from .intents import (
+    CommandPayload,
+    TacticalIntent,
+    TacticalRecommendation,
+    auftrag_command_params_from_recommendation,
+    command_action_for_auftrag_recommendation,
+    tactical_recommendation_from_auftrag,
+)
 from .legions import Cohort, CohortSummary, Legion
 from .models import Auftrag, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
 from .outcomes import AuftragOutcome
@@ -41,6 +49,7 @@ __all__ = [
     "BridgeMessage",
     "Cohort",
     "CohortSummary",
+    "CommandPayload",
     "Legion",
     "MooseBridgeAuftragNotFoundError",
     "MooseBridgeAuftragTimeoutError",
@@ -54,10 +63,14 @@ __all__ = [
     "OpsZone",
     "TargetObjectSnapshot",
     "TargetSnapshot",
+    "TacticalIntent",
+    "TacticalRecommendation",
     "auftrag_action_suffix",
+    "auftrag_command_params_from_recommendation",
     "auftrag_type_name",
     "canonical_auftrag_type",
     "canonical_mission_type",
+    "command_action_for_auftrag_recommendation",
     "evaluate_auftrag_request",
     "executable_candidates",
     "expand_platform_categories",
@@ -65,5 +78,6 @@ __all__ = [
     "platform_categories_match",
     "recommend_auftrag",
     "rejected_candidates",
+    "tactical_recommendation_from_auftrag",
     "target_type_values",
 ]

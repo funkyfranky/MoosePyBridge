@@ -132,6 +132,7 @@ Additional installed entry points:
 - `moosebridge-standalone-server`: DCS-facing server without the local control API
 
 See `docs/CONTROL_API.md` for the local multi-client control protocol.
+See `docs/INTENTS.md` for the tactical intent and recommendation model.
 
 ## First manual test
 

@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from .auftrag_specs import auftrag_action_suffix
+from .intents import auftrag_command_params_from_recommendation
 from .models import Auftrag, OpsGroup, OpsZone
 from .outcomes import AuftragOutcome
 from .protocol import BridgeCommand
@@ -78,18 +79,7 @@ def build_recommended_auftrag_command_params(recommendation: Any) -> dict[str, A
     :returns: Flat command parameter dictionary without null-valued fields.
     """
 
-    params = recommendation.to_dict()
-    nested = params.get("params") if isinstance(params.get("params"), dict) else {}
-    command_params = {
-        "legion_id": params.get("legion_id"),
-        "cohort_id": params.get("cohort_id"),
-        "selected_payload_uid": params.get("selected_payload_uid"),
-        "mission_type": params.get("mission_type"),
-        "constructor": params.get("constructor"),
-    }
-    for key, value in nested.items():
-        command_params[key] = value
-    return {key: value for key, value in command_params.items() if value is not None}
+    return auftrag_command_params_from_recommendation(recommendation)
 
 
 def is_evaluated_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
