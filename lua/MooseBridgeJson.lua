@@ -82,6 +82,7 @@ end
 local function read_string_field(text, name)
   local pattern = '"' .. name .. '"%s*:%s*"(.-)"'
   local value = text:match(pattern)
+  if value == nil then return nil end
   return unescape(value)
 end
 
@@ -118,7 +119,15 @@ function json.decode(text)
     result.params.text = read_string_field(params_text, "text")
     result.params.duration = read_number_field(params_text, "duration")
     result.params.object_id = read_string_field(params_text, "object_id")
+    result.params.object_id_a = read_string_field(params_text, "object_id_a")
+    result.params.object_id_b = read_string_field(params_text, "object_id_b")
+    result.params.zone_id = read_string_field(params_text, "zone_id")
+    result.params.format = read_string_field(params_text, "format")
     result.params.color = read_string_field(params_text, "color")
+    result.params.alpha = read_number_field(params_text, "alpha")
+    result.params.fill_color = read_string_field(params_text, "fill_color")
+    result.params.fill_alpha = read_number_field(params_text, "fill_alpha")
+    result.params.line_type = read_number_field(params_text, "line_type") or read_string_field(params_text, "line_type")
     result.params.x = read_number_field(params_text, "x")
     result.params.y = read_number_field(params_text, "y")
     result.params.z = read_number_field(params_text, "z")

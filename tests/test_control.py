@@ -10,9 +10,16 @@ from moosebridge.control import MooseBridgeControlClient, MooseBridgeControlServ
 from examples.control_server_client.interactive_control_client import (
     normalize_snapshot_actions,
     normalize_legion_id,
+    normalize_drawzone_line_type,
+    normalize_drawzone_object_id,
+    parse_coords_argument,
+    parse_drawzone_argument,
+    parse_drawzone_options,
     parse_mission_argument,
     parse_message_argument,
+    parse_state_output_args,
     parse_trace_argument,
+    print_state,
     print_trace,
     print_mission_feedback,
     print_command_feedback,
@@ -111,6 +118,92 @@ def test_interactive_snapshot_aliases_normalize_to_bridge_actions() -> None:
     assert snapshot_actions_to_kinds(actions) is None
 
 
+def test_interactive_state_output_args_parse_filters() -> None:
+    mode, kinds, state_filter = parse_state_output_args('--list zones --contains "Town Fight" --coalition blue --alive --limit 5')
+
+    assert mode == "list"
+    assert kinds == ("zones",)
+    assert state_filter.contains == "Town Fight"
+    assert state_filter.coalition == "blue"
+    assert state_filter.alive is True
+    assert state_filter.limit == 5
+
+
+def test_interactive_state_output_filters_list_items() -> None:
+    client = MooseBridgeControlClient()
+    client.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "groups",
+            "payload": {
+                "groups": [
+                    {
+                        "object_id": "GROUP:Blue Armor",
+                        "dcs_name": "Blue Armor",
+                        "object_type": "GROUP",
+                        "coalition": "blue",
+                        "category": "Ground Unit",
+                        "alive": True,
+                    },
+                    {
+                        "object_id": "GROUP:Red Armor",
+                        "dcs_name": "Red Armor",
+                        "object_type": "GROUP",
+                        "coalition": "red",
+                        "category": "Ground Unit",
+                        "alive": True,
+                    },
+                    {
+                        "object_id": "GROUP:Blue Dead",
+                        "dcs_name": "Blue Dead",
+                        "object_type": "GROUP",
+                        "coalition": "blue",
+                        "category": "Ground Unit",
+                        "alive": False,
+                    },
+                ]
+            },
+        }
+    )
+    _, _, state_filter = parse_state_output_args("--coalition blue --alive")
+    output = io.StringIO()
+
+    with redirect_stdout(output):
+        print_state(client, kinds=("groups",), mode="list", state_filter=state_filter)
+
+    text = output.getvalue()
+    assert "GROUP:Blue Armor" in text
+    assert "GROUP:Red Armor" not in text
+    assert "GROUP:Blue Dead" not in text
+    assert '"connected"' not in text
+    assert '"counts"' not in text
+
+
+def test_interactive_state_output_filters_contains() -> None:
+    client = MooseBridgeControlClient()
+    client.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "zones",
+            "payload": {
+                "zones": [
+                    {"object_id": "ZONE:Town Fight", "dcs_name": "Town Fight", "object_type": "ZONE"},
+                    {"object_id": "ZONE:Rear Area", "dcs_name": "Rear Area", "object_type": "ZONE"},
+                ]
+            },
+        }
+    )
+    _, _, state_filter = parse_state_output_args('--contains "Town"')
+    output = io.StringIO()
+
+    with redirect_stdout(output):
+        print_state(client, kinds=("zones",), mode="list", state_filter=state_filter)
+
+    text = output.getvalue()
+    assert "ZONE:Town Fight" in text
+    assert "ZONE:Rear Area" not in text
+
+
 def test_interactive_command_feedback_is_concise_by_default() -> None:
     output = io.StringIO()
     ack = {
@@ -139,6 +232,58 @@ def test_interactive_command_feedback_debug_prints_raw_ack() -> None:
     assert '"result"' in output.getvalue()
 
 
+def test_interactive_command_feedback_prints_coordinate_fields() -> None:
+    output = io.StringIO()
+    ack = {
+        "ok": True,
+        "result": {
+            "action": "object.coords",
+            "format": "all",
+            "object_id": "GROUP:Enemy-1",
+            "x": -1.5,
+            "y": 12,
+            "z": -2.5,
+            "latitude": 54.1,
+            "longitude": 13.2,
+            "mgrs": "33U UV 46038 98158",
+        },
+    }
+
+    with redirect_stdout(output):
+        print_command_feedback(ack, "object.coords", debug=False)
+
+    text = output.getvalue().strip()
+    assert "OK object.coords" in text
+    assert "object=GROUP:Enemy-1" in text
+    assert "x=-1.500 y=12.000 z=-2.500" in text
+    assert "lat=54.10000 lon=13.20000" in text
+    assert "mgrs='33U UV 46038 98158'" in text
+
+
+def test_interactive_command_feedback_respects_mgrs_coordinate_format() -> None:
+    output = io.StringIO()
+    ack = {
+        "ok": True,
+        "result": {
+            "action": "object.coords",
+            "format": "mgrs",
+            "object_id": "ZONE:Town Fight",
+            "x": -33711.171875,
+            "y": 9.5332527160645,
+            "z": -510211,
+            "latitude": 54.108514182505,
+            "longitude": 12.644885348283,
+            "mgrs": "33U UV 46038 98158",
+        },
+    }
+
+    with redirect_stdout(output):
+        print_command_feedback(ack, "object.coords", debug=False)
+
+    text = output.getvalue().strip()
+    assert text == "OK object.coords object=ZONE:Town Fight mgrs='33U UV 46038 98158'"
+
+
 def test_interactive_message_argument_defaults_to_all() -> None:
     assert parse_message_argument("Hello Mate") == ("all", "Hello Mate")
     assert parse_message_argument("blue Push now") == ("blue", "Push now")
@@ -152,6 +297,60 @@ def test_interactive_message_argument_requires_text() -> None:
         assert "requires text" in str(exc)
     else:
         raise AssertionError("message recipient without text was accepted")
+
+
+def test_interactive_drawzone_options_parse_style_fields() -> None:
+    params = parse_drawzone_options(
+        ["--coalition", "blue", "--color", "red", "--alpha", "0.8", "--fill-color", "yellow", "--fill-alpha", "0.15", "--line-type", "dashed"]
+    )
+
+    assert params == {
+        "coalition": "blue",
+        "color": "red",
+        "alpha": 0.8,
+        "fill_color": "yellow",
+        "fill_alpha": 0.15,
+        "line_type": 2,
+    }
+
+
+def test_interactive_drawzone_line_type_accepts_names_and_numbers() -> None:
+    assert normalize_drawzone_line_type("solid") == 1
+    assert normalize_drawzone_line_type("dot-dash") == 4
+    assert normalize_drawzone_line_type("6") == 6
+
+
+def test_interactive_drawzone_object_id_defaults_bare_names_to_zone() -> None:
+    assert normalize_drawzone_object_id("Town Fight") == "ZONE:Town Fight"
+    assert normalize_drawzone_object_id("OPSZONE:Alpha") == "OPSZONE:Alpha"
+
+
+def test_interactive_drawzone_argument_accepts_unquoted_zone_id_with_spaces() -> None:
+    object_id, params = parse_drawzone_argument("ZONE:Town Fight")
+
+    assert object_id == "ZONE:Town Fight"
+    assert params == {}
+
+
+def test_interactive_drawzone_argument_splits_options_after_zone_id() -> None:
+    object_id, params = parse_drawzone_argument("ZONE:Town Fight --coalition blue --line-type dashed")
+
+    assert object_id == "ZONE:Town Fight"
+    assert params == {"coalition": "blue", "line_type": 2}
+
+
+def test_interactive_coords_argument_defaults_to_xyz() -> None:
+    object_id, params = parse_coords_argument("GROUP:Aerial-1")
+
+    assert object_id == "GROUP:Aerial-1"
+    assert params == {"object_id": "GROUP:Aerial-1"}
+
+
+def test_interactive_coords_argument_accepts_unquoted_id_with_spaces_and_format() -> None:
+    object_id, params = parse_coords_argument("AIRBASE:Gross Mohrdorf --format mgrs")
+
+    assert object_id == "AIRBASE:Gross Mohrdorf"
+    assert params == {"object_id": "AIRBASE:Gross Mohrdorf", "format": "mgrs"}
 
 
 def test_interactive_object_argument_accepts_quoted_ids_with_spaces() -> None:

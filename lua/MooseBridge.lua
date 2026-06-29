@@ -405,6 +405,134 @@ function MOOSE_BRIDGE:_PointForObjectId(object_id)
   error("Unsupported object_id type for point lookup: " .. safe_tostring(object_type))
 end
 
+function MOOSE_BRIDGE:_DrawZoneCoalition(value)
+  if value == nil or value == "" then return -1 end
+  if type(value) == "number" then return value end
+  local normalized = string.lower(tostring(value))
+  if normalized == "all" then return -1 end
+  if normalized == "neutral" then return 0 end
+  if normalized == "red" then return 1 end
+  if normalized == "blue" then return 2 end
+  local numeric = tonumber(value)
+  if numeric ~= nil then return numeric end
+  error("Unknown draw zone coalition: " .. safe_tostring(value))
+end
+
+function MOOSE_BRIDGE:_DrawZoneColor(value)
+  if value == nil or value == "" then return nil end
+  local normalized = string.lower(tostring(value))
+  local colors = {
+    red={1,0,0},
+    green={0,1,0},
+    blue={0,0,1},
+    yellow={1,1,0},
+    orange={1,0.5,0},
+    white={1,1,1},
+    black={0,0,0},
+    grey={0.5,0.5,0.5},
+    gray={0.5,0.5,0.5},
+  }
+  local color = colors[normalized]
+  if color then return color end
+  error("Unsupported draw zone color: " .. safe_tostring(value))
+end
+
+function MOOSE_BRIDGE:_DrawZoneLineType(value)
+  if value == nil or value == "" then return nil end
+  if type(value) == "number" then return value end
+  local normalized = string.lower(tostring(value)):gsub("[%s_-]", "")
+  local line_types = {none=0, solid=1, dashed=2, dotted=3, dotdash=4, longdash=5, twodash=6}
+  if line_types[normalized] ~= nil then return line_types[normalized] end
+  local numeric = tonumber(value)
+  if numeric ~= nil then return numeric end
+  error("Unsupported draw zone line_type: " .. safe_tostring(value))
+end
+
+function MOOSE_BRIDGE:_OptionalString(value)
+  if value == nil or value == "" then return nil end
+  return tostring(value)
+end
+
+function MOOSE_BRIDGE:_NormalizeCoordinateFormat(value)
+  if value == nil or value == "" then return "xyz" end
+  local normalized = string.lower(tostring(value))
+  if normalized == "xyz" then return "xyz" end
+  if normalized == "ll" or normalized == "latlon" or normalized == "latlong" or normalized == "latitude" then return "ll" end
+  if normalized == "mgrs" then return "mgrs" end
+  if normalized == "all" then return "all" end
+  error("Unsupported coordinate format: " .. safe_tostring(value))
+end
+
+function MOOSE_BRIDGE:_MGRSToString(mgrs)
+  if type(mgrs) ~= "table" then return nil end
+  local zone = mgrs.UTMZone or mgrs.utmZone or mgrs.zone
+  local digraph = mgrs.MGRSDigraph or mgrs.mgrsDigraph or mgrs.digraph
+  local easting = mgrs.Easting or mgrs.easting
+  local northing = mgrs.Northing or mgrs.northing
+  if not zone or not digraph or easting == nil or northing == nil then return nil end
+  return string.format("%s %s %05d %05d", tostring(zone), tostring(digraph), math.floor(easting + 0.5), math.floor(northing + 0.5))
+end
+
+function MOOSE_BRIDGE:_CoordinatesForPoint(point, format)
+  if not point then error("Point is nil") end
+  local normalized = self:_NormalizeCoordinateFormat(format)
+  local result = {format=normalized, x=point.x, y=point.y or 0, z=point.z}
+
+  if normalized == "ll" or normalized == "mgrs" or normalized == "all" then
+    if not coord or not coord.LOtoLL then error("DCS coord.LOtoLL is not available") end
+    local latitude, longitude = coord.LOtoLL({x=point.x, y=point.y or 0, z=point.z})
+    result.latitude = latitude
+    result.longitude = longitude
+    result.altitude = point.y or 0
+  end
+
+  if normalized == "mgrs" or normalized == "all" then
+    if not coord or not coord.LLtoMGRS then error("DCS coord.LLtoMGRS is not available") end
+    local mgrs = coord.LLtoMGRS(result.latitude, result.longitude)
+    result.mgrs = self:_MGRSToString(mgrs)
+    result.mgrs_zone = mgrs and (mgrs.UTMZone or mgrs.utmZone or mgrs.zone) or nil
+    result.mgrs_digraph = mgrs and (mgrs.MGRSDigraph or mgrs.mgrsDigraph or mgrs.digraph) or nil
+    result.mgrs_easting = mgrs and (mgrs.Easting or mgrs.easting) or nil
+    result.mgrs_northing = mgrs and (mgrs.Northing or mgrs.northing) or nil
+  end
+
+  return result
+end
+
+function MOOSE_BRIDGE:_DistanceBetweenPoints(point_a, point_b)
+  if not point_a or not point_b then error("Distance requires two points") end
+  local dx = (point_b.x or 0) - (point_a.x or 0)
+  local dy = (point_b.y or 0) - (point_a.y or 0)
+  local dz = (point_b.z or 0) - (point_a.z or 0)
+  return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+function MOOSE_BRIDGE:_ZoneForDrawObjectId(object_id)
+  local object_type, name = self:_SplitObjectId(object_id)
+  if not object_type or not name then error("Invalid zone object_id: " .. safe_tostring(object_id)) end
+
+  local zone = nil
+  if object_type == "ZONE" then
+    zone = self.RegisteredZones and self.RegisteredZones[name]
+    if not zone and _DATABASE and _DATABASE.ZONES then zone = _DATABASE.ZONES[name] end
+    if not zone and ZONE and ZONE.FindByName then zone = ZONE:FindByName(name) end
+    if not zone and ZONE and ZONE.New then
+      local ok, created = pcall(function() return ZONE:New(name) end)
+      if ok then zone = created end
+    end
+  elseif object_type == "OPSZONE" then
+    local opszone = self.RegisteredOpsZones and self.RegisteredOpsZones[name]
+    if not opszone and _DATABASE and type(_DATABASE.OPSZONES) == "table" then opszone = _DATABASE.OPSZONES[name] end
+    zone = self:_SafeCall(opszone, "GetZone") or opszone and (opszone.zone or opszone.Zone or opszone.ZONE) or opszone
+  else
+    error("DrawZone requires ZONE:<name> or OPSZONE:<name>, got " .. safe_tostring(object_type))
+  end
+
+  if not zone then error("Zone not found: " .. safe_tostring(object_id)) end
+  if not zone.DrawZone then error("Zone does not support DrawZone: " .. safe_tostring(object_id)) end
+  return zone, name, object_type
+end
+
 function MOOSE_BRIDGE:_CoordinateFromPoint(point)
   if not COORDINATE or not COORDINATE.NewFromVec3 then error("MOOSE COORDINATE is not available") end
   if not point then error("Point is nil") end
@@ -1201,6 +1329,41 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   self:RegisterCommand("mark.object", function(cmd)
     local p = cmd.params or {}; local point = self:_PointForObjectId(p.object_id)
     return self:_MarkPoint(point, p.text or "MOOSE Bridge mark")
+  end)
+
+  self:RegisterCommand("object.coords", function(cmd)
+    local p = cmd.params or {}
+    local object_id = self:_OptionalString(p.object_id)
+    local point = self:_PointForObjectId(object_id)
+    local result = self:_CoordinatesForPoint(point, p.format)
+    result.action = "object.coords"
+    result.object_id = object_id
+    return result
+  end)
+
+  self:RegisterCommand("zone.draw", function(cmd)
+    local p = cmd.params or {}
+    local object_id = self:_OptionalString(p.zone_id) or self:_OptionalString(p.object_id)
+    local zone, zone_name, zone_type = self:_ZoneForDrawObjectId(object_id)
+    local draw_coalition = self:_DrawZoneCoalition(p.coalition)
+    local color = self:_DrawZoneColor(p.color)
+    local alpha = self:_NumberOrNil(p.alpha)
+    local fill_color = self:_DrawZoneColor(p.fill_color)
+    local fill_alpha = self:_NumberOrNil(p.fill_alpha)
+    local line_type = self:_DrawZoneLineType(p.line_type)
+    zone:DrawZone(draw_coalition, color, alpha, fill_color, fill_alpha, line_type)
+    return {
+      action="zone.draw",
+      object_id=object_id,
+      zone_name=zone_name,
+      zone_type=zone_type,
+      coalition=draw_coalition,
+      color=p.color,
+      alpha=alpha,
+      fill_color=p.fill_color,
+      fill_alpha=fill_alpha,
+      line_type=line_type,
+    }
   end)
 
   self:RegisterCommand("snapshot.groups", function(cmd)

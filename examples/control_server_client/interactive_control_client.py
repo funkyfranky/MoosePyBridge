@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import json
 import shlex
 from typing import Any
@@ -32,14 +32,18 @@ HELP_TEXT = """
 Commands:
   help, ?                         Show this help.
   status                          Show daemon connection status and object counts.
-  state [--list|--raw] [kind ...] Fetch mirrored state, optionally limited to kinds.
+  state [--list|--raw] [kind ...] [filters]
+                                  Fetch mirrored state, optionally limited to kinds.
   snapshots [--list|--raw] <kind|action ...>
                                   Request DCS snapshots, e.g. groups units or snapshot.groups snapshot.units.
   send <action> [json-params]     Send a semantic DCS command through the daemon.
   mission <type> [options]        Validate, select assets, and create an AUFTRAG.
   trace [--raw|--verbose] <AUFTRAG:id>
                                   Trace an AUFTRAG assignment/execution path.
+  coords <object_id> [--format xyz|ll|mgrs|all]
+                                  Print object coordinates.
   mark <object_id> <text>         Create a map mark at an object position.
+  drawzone <zone_id> [options]    Draw a MOOSE ZONE or OPSZONE on the F10 map.
   markpoint <x> <z> <text>        Create a map mark at a DCS world point.
   smoke <object_id> [color]       Create smoke at an object position.
   smokepoint <x> <z> [color]      Create smoke at a DCS world point.
@@ -50,10 +54,15 @@ Commands:
 Examples:
   status
   snapshots --list groups units cohorts legions
+  snapshots --list zones --contains Town
+  state --list groups units --coalition blue --alive
   state --list groups units cohorts legions
   state --raw cohorts
+  coords GROUP:Enemy-1
+  coords AIRBASE:Gross Mohrdorf --format mgrs
   mark GROUP:Enemy-1 Target area
   mark "ZONE:Town Fight" Target area
+  drawzone "ZONE:Town Fight" --coalition blue --color red --alpha 0.8 --fill-alpha 0.15 --line-type dashed
   markpoint -33711 -510211 Fire mission
   send smoke.object {"object_id":"UNIT:Scout-1","color":"red"}
   message MoosePyBridge connected
@@ -66,6 +75,35 @@ Examples:
 
 OUTPUT_MODES = {"summary", "list", "raw"}
 SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
+DRAWZONE_COLORS = {"red", "green", "blue", "yellow", "orange", "white", "black", "grey", "gray"}
+DRAWZONE_COALITIONS = {"all", "neutral", "red", "blue", "-1", "0", "1", "2"}
+COORDINATE_FORMATS = {"xyz", "ll", "latlon", "latlong", "mgrs", "all"}
+DRAWZONE_LINE_TYPES = {
+    "none": 0,
+    "solid": 1,
+    "dashed": 2,
+    "dotted": 3,
+    "dotdash": 4,
+    "dot-dash": 4,
+    "dot_dash": 4,
+    "longdash": 5,
+    "long-dash": 5,
+    "long_dash": 5,
+    "twodash": 6,
+    "two-dash": 6,
+    "two_dash": 6,
+}
+
+
+@dataclass(slots=True, frozen=True)
+class StateFilter:
+    """Display filter for state output."""
+
+    contains: str | None = None
+    coalition: str | None = None
+    alive: bool | None = None
+    active: bool | None = None
+    limit: int = 25
 
 
 def print_json(value: Any) -> None:
@@ -81,6 +119,38 @@ def command_label(ack: dict[str, Any], fallback: str) -> str:
     return str(result.get("action") or fallback)
 
 
+def format_number(value: Any, decimals: int) -> str:
+    """Format a numeric value with fixed decimal precision."""
+
+    try:
+        return f"{float(value):.{decimals}f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def append_coordinate_feedback(details: list[str], result: dict[str, Any]) -> None:
+    """Append coordinate details according to the requested output format."""
+
+    coordinate_format = str(result.get("format") or "xyz").lower()
+    show_xyz = coordinate_format in {"xyz", "all"}
+    show_ll = coordinate_format in {"ll", "latlon", "latlong", "all"}
+    show_mgrs = coordinate_format in {"mgrs", "all"}
+
+    if show_xyz:
+        if result.get("x") is not None and result.get("y") is not None and result.get("z") is not None:
+            details.append(
+                f"x={format_number(result.get('x'), 3)} "
+                f"y={format_number(result.get('y'), 3)} "
+                f"z={format_number(result.get('z'), 3)}"
+            )
+        elif result.get("x") is not None and result.get("z") is not None:
+            details.append(f"x={format_number(result.get('x'), 3)} z={format_number(result.get('z'), 3)}")
+    if show_ll and result.get("latitude") is not None and result.get("longitude") is not None:
+        details.append(f"lat={format_number(result.get('latitude'), 5)} lon={format_number(result.get('longitude'), 5)}")
+    if show_mgrs and result.get("mgrs") is not None:
+        details.append(f"mgrs={result.get('mgrs')!r}")
+
+
 def print_command_feedback(ack: dict[str, Any], fallback_action: str, debug: bool) -> None:
     """Print a command ACK in normal or debug form."""
 
@@ -92,11 +162,27 @@ def print_command_feedback(ack: dict[str, Any], fallback_action: str, debug: boo
     if ack.get("ok", False):
         result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
         details: list[str] = []
+        if result.get("object_id") is not None:
+            details.append(f"object={result.get('object_id')}")
         if result.get("text") is not None:
             details.append(f"text={result.get('text')!r}")
         if result.get("coalition") is not None:
             details.append(f"coalition={result.get('coalition')}")
-        if result.get("x") is not None and result.get("z") is not None:
+        if result.get("color") is not None:
+            details.append(f"color={result.get('color')}")
+        if result.get("alpha") is not None:
+            details.append(f"alpha={result.get('alpha')}")
+        if result.get("fill_color") is not None:
+            details.append(f"fill_color={result.get('fill_color')}")
+        if result.get("fill_alpha") is not None:
+            details.append(f"fill_alpha={result.get('fill_alpha')}")
+        if result.get("line_type") is not None:
+            details.append(f"line_type={result.get('line_type')}")
+        if label == "object.coords":
+            append_coordinate_feedback(details, result)
+        elif result.get("x") is not None and result.get("y") is not None and result.get("z") is not None:
+            details.append(f"x={result.get('x')} y={result.get('y')} z={result.get('z')}")
+        elif result.get("x") is not None and result.get("z") is not None:
             details.append(f"x={result.get('x')} z={result.get('z')}")
         if result.get("auftrag_id") is not None:
             details.append(f"auftrag={result.get('auftrag_id')}")
@@ -299,6 +385,154 @@ def parse_message_argument(argument: str) -> tuple[str, str]:
     if not text:
         raise ValueError("message requires text")
     return "all", text
+
+
+def normalize_drawzone_line_type(value: str) -> int:
+    """Normalize a MOOSE DrawZone line type name or number."""
+
+    key = value.strip().lower()
+    if key in DRAWZONE_LINE_TYPES:
+        return DRAWZONE_LINE_TYPES[key]
+    try:
+        line_type = int(key)
+    except ValueError as exc:
+        raise ValueError(f"Invalid line type: {value}") from exc
+    if line_type < 0 or line_type > 6:
+        raise ValueError(f"Invalid line type: {value}")
+    return line_type
+
+
+def parse_alpha(value: str, name: str) -> float:
+    """Parse an alpha option in the inclusive [0, 1] range."""
+
+    alpha = parse_float(value, name)
+    if alpha < 0 or alpha > 1:
+        raise ValueError(f"Invalid {name}: {value} (expected 0..1)")
+    return alpha
+
+
+def parse_drawzone_options(parts: list[str]) -> dict[str, Any]:
+    """Parse DrawZone style options after the zone id."""
+
+    params: dict[str, Any] = {}
+    index = 0
+    while index < len(parts):
+        option = parts[index]
+        key = option.lower()
+        if key in {"--coalition", "-coalition"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            coalition = parts[index].lower()
+            if coalition not in DRAWZONE_COALITIONS:
+                raise ValueError(f"Invalid coalition: {parts[index]}")
+            params["coalition"] = coalition
+        elif key in {"--color", "-color"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            color = parts[index].lower()
+            if color not in DRAWZONE_COLORS:
+                raise ValueError(f"Invalid color: {parts[index]}")
+            params["color"] = color
+        elif key in {"--alpha", "-alpha"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["alpha"] = parse_alpha(parts[index], "alpha")
+        elif key in {"--fill-color", "--fill_color", "-fill-color", "-fill_color"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            color = parts[index].lower()
+            if color not in DRAWZONE_COLORS:
+                raise ValueError(f"Invalid fill color: {parts[index]}")
+            params["fill_color"] = color
+        elif key in {"--fill-alpha", "--fill_alpha", "-fill-alpha", "-fill_alpha"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["fill_alpha"] = parse_alpha(parts[index], "fill_alpha")
+        elif key in {"--line-type", "--line_type", "-line-type", "-line_type"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["line_type"] = normalize_drawzone_line_type(parts[index])
+        else:
+            raise ValueError(f"Unknown drawzone option: {option}")
+        index += 1
+
+    return params
+
+
+def normalize_drawzone_object_id(value: str) -> str:
+    """Return a DrawZone object id, defaulting bare names to ZONE ids."""
+
+    object_id = value.strip()
+    if not object_id:
+        raise ValueError("drawzone requires a zone id")
+    if ":" in object_id:
+        return object_id
+    return f"ZONE:{object_id}"
+
+
+def parse_drawzone_argument(argument: str) -> tuple[str, dict[str, Any]]:
+    """Parse ``drawzone <zone_id> [options]`` arguments.
+
+    Zone ids commonly contain spaces, so all tokens up to the first option are
+    treated as the zone id. This allows ``drawzone ZONE:Town Fight --color red``
+    without requiring quotes.
+    """
+
+    parts = shlex.split(argument)
+    if not parts:
+        raise ValueError("drawzone requires a zone id")
+
+    option_start = len(parts)
+    for index, part in enumerate(parts):
+        if part.startswith("-"):
+            option_start = index
+            break
+
+    zone_id = normalize_drawzone_object_id(" ".join(parts[:option_start]))
+    return zone_id, parse_drawzone_options(parts[option_start:])
+
+
+def parse_coords_argument(argument: str) -> tuple[str, dict[str, Any]]:
+    """Parse ``coords <object_id> [--format xyz|ll|mgrs|all]`` arguments."""
+
+    parts = shlex.split(argument)
+    if not parts:
+        raise ValueError("coords requires an object id")
+
+    option_start = len(parts)
+    for index, part in enumerate(parts):
+        if part.startswith("-"):
+            option_start = index
+            break
+
+    object_id = " ".join(parts[:option_start]).strip()
+    if not object_id:
+        raise ValueError("coords requires an object id")
+
+    params: dict[str, Any] = {"object_id": object_id}
+    index = option_start
+    while index < len(parts):
+        option = parts[index]
+        key = option.lower()
+        if key in {"--format", "-format"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            coordinate_format = parts[index].lower()
+            if coordinate_format not in COORDINATE_FORMATS:
+                raise ValueError(f"Invalid coordinate format: {parts[index]}")
+            params["format"] = coordinate_format
+        else:
+            raise ValueError(f"Unknown coords option: {option}")
+        index += 1
+
+    return object_id, params
 
 
 def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | None, str | None, bool]:
@@ -515,19 +749,56 @@ def validate_snapshot_actions(actions: tuple[str, ...]) -> None:
     raise ValueError(message)
 
 
-def parse_output_mode(argument: str) -> tuple[str, str]:
-    """Parse an optional output mode flag from a command argument."""
+def parse_state_output_args(argument: str) -> tuple[str, tuple[str, ...] | None, StateFilter]:
+    """Parse state/snapshot display arguments into mode, items and filters."""
 
-    parts = argument.split(maxsplit=1)
-    if not parts:
-        return "summary", ""
-    if parts[0] == "--list":
-        return "list", parts[1] if len(parts) > 1 else ""
-    if parts[0] == "--raw":
-        return "raw", parts[1] if len(parts) > 1 else ""
-    if parts[0] == "--summary":
-        return "summary", parts[1] if len(parts) > 1 else ""
-    return "summary", argument
+    parts = shlex.split(argument)
+    mode = "summary"
+    items: list[str] = []
+    contains: str | None = None
+    coalition: str | None = None
+    alive: bool | None = None
+    active: bool | None = None
+    limit = 25
+
+    index = 0
+    while index < len(parts):
+        part = parts[index]
+        key = part.lower()
+        if key in {"--list", "-list"}:
+            mode = "list"
+        elif key in {"--raw", "-raw"}:
+            mode = "raw"
+        elif key in {"--summary", "-summary"}:
+            mode = "summary"
+        elif key in {"--contains", "--name", "-contains", "-name"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{part} requires a value")
+            contains = parts[index]
+        elif key in {"--coalition", "-coalition"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{part} requires a value")
+            coalition = parts[index].lower()
+        elif key in {"--alive", "-alive"}:
+            alive = True
+        elif key in {"--dead", "-dead"}:
+            alive = False
+        elif key in {"--active", "-active"}:
+            active = True
+        elif key in {"--inactive", "-inactive"}:
+            active = False
+        elif key in {"--limit", "-limit"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{part} requires a value")
+            limit = int(parts[index])
+        else:
+            items.append(part)
+        index += 1
+
+    return mode, tuple(items) if items else None, StateFilter(contains=contains, coalition=coalition, alive=alive, active=active, limit=limit)
 
 
 def selected_kinds(kinds: tuple[str, ...] | None) -> tuple[str, ...]:
@@ -540,6 +811,47 @@ def object_label(item: dict[str, Any]) -> str:
     """Return a stable display label for a state object."""
 
     return str(item.get("object_id") or item.get("dcs_name") or item.get("name") or "<unknown>")
+
+
+def searchable_text(item: dict[str, Any]) -> str:
+    """Return lower-case searchable text for a state item."""
+
+    fields = (
+        "object_id",
+        "dcs_name",
+        "name",
+        "group_name",
+        "zone_name",
+        "airbase_name",
+        "unit_type",
+        "dcs_type",
+        "type",
+        "category",
+    )
+    return " ".join(str(item.get(field) or "") for field in fields).lower()
+
+
+def normalized_coalition(item: dict[str, Any]) -> str | None:
+    """Return a normalized coalition value from a state item."""
+
+    value = item.get("coalition") or item.get("coalition_name") or item.get("owner_current_name")
+    if value is None or value == "":
+        return None
+    return str(value).strip().lower()
+
+
+def item_matches_filter(item: dict[str, Any], state_filter: StateFilter) -> bool:
+    """Return whether an item matches a display filter."""
+
+    if state_filter.contains and state_filter.contains.lower() not in searchable_text(item):
+        return False
+    if state_filter.coalition and normalized_coalition(item) != state_filter.coalition:
+        return False
+    if state_filter.alive is not None and bool(item.get("alive", False)) is not state_filter.alive:
+        return False
+    if state_filter.active is not None and bool(item.get("active", False)) is not state_filter.active:
+        return False
+    return True
 
 
 def compact_item(kind: str, item: dict[str, Any]) -> str:
@@ -593,51 +905,54 @@ def compact_item(kind: str, item: dict[str, Any]) -> str:
     return f"{label} type={item.get('object_type')} name={item.get('dcs_name')}"
 
 
-def state_items(client: MooseBridgeControlClient, kind: str) -> list[dict[str, Any]]:
+def state_items(client: MooseBridgeControlClient, kind: str, state_filter: StateFilter | None = None) -> list[dict[str, Any]]:
     """Return state items for a kind."""
 
     values = getattr(client.state, kind)
-    return list(values.values()) if isinstance(values, dict) else []
+    items = list(values.values()) if isinstance(values, dict) else []
+    if state_filter is None:
+        return items
+    return [item for item in items if item_matches_filter(item, state_filter)]
 
 
-def print_state_summary(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None = None) -> None:
+def print_state_summary(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None = None, state_filter: StateFilter | None = None) -> None:
     """Print local client state counts."""
 
-    counts = {kind: len(getattr(client.state, kind)) for kind in selected_kinds(kinds)}
+    counts = {kind: len(state_items(client, kind, state_filter=state_filter)) for kind in selected_kinds(kinds)}
     print_json({"connected": client.state.connected, "counts": counts})
 
 
-def print_state_list(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None = None, limit: int = 25) -> None:
+def print_state_list(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None = None, state_filter: StateFilter | None = None) -> None:
     """Print compact object lists for selected state kinds."""
 
-    print_state_summary(client, kinds=kinds)
+    state_filter = state_filter or StateFilter()
     for kind in selected_kinds(kinds):
-        items = state_items(client, kind)
+        items = state_items(client, kind, state_filter=state_filter)
         print(f"\n{kind}: {len(items)}")
-        for item in items[:limit]:
+        for item in items[: state_filter.limit]:
             print(f"  {compact_item(kind, item)}")
-        if len(items) > limit:
-            print(f"  ... {len(items) - limit} more")
+        if len(items) > state_filter.limit:
+            print(f"  ... {len(items) - state_filter.limit} more")
 
 
-def print_state_raw(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None = None) -> None:
+def print_state_raw(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None = None, state_filter: StateFilter | None = None) -> None:
     """Print raw state payloads for selected kinds."""
 
     payload: dict[str, Any] = {"connected": client.state.connected}
     for kind in selected_kinds(kinds):
-        payload[kind] = state_items(client, kind)
+        payload[kind] = state_items(client, kind, state_filter=state_filter)
     print_json(payload)
 
 
-def print_state(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None, mode: str) -> None:
+def print_state(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None, mode: str, state_filter: StateFilter | None = None) -> None:
     """Print state in the requested mode."""
 
     if mode == "raw":
-        print_state_raw(client, kinds=kinds)
+        print_state_raw(client, kinds=kinds, state_filter=state_filter)
     elif mode == "list":
-        print_state_list(client, kinds=kinds)
+        print_state_list(client, kinds=kinds, state_filter=state_filter)
     else:
-        print_state_summary(client, kinds=kinds)
+        print_state_summary(client, kinds=kinds, state_filter=state_filter)
 
 
 async def read_input(prompt: str) -> str:
@@ -665,14 +980,12 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         print_json(await client.status(timeout=timeout))
         return True
     if command == "state":
-        mode, rest = parse_output_mode(argument)
-        kinds = tuple(rest.split()) if rest else None
+        mode, kinds, state_filter = parse_state_output_args(argument)
         await client.get_state(kinds=kinds, timeout=timeout)
-        print_state(client, kinds=kinds, mode=mode)
+        print_state(client, kinds=kinds, mode=mode, state_filter=state_filter)
         return True
     if command == "snapshots":
-        mode, rest = parse_output_mode(argument)
-        action_inputs = tuple(rest.split())
+        mode, action_inputs, state_filter = parse_state_output_args(argument)
         if not action_inputs:
             print("Usage: snapshots [--list|--raw] <kind|action ...>")
             return True
@@ -681,7 +994,7 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         result = await client.request("control.snapshots", params={"actions": list(actions)}, timeout=timeout)
         if debug:
             print_json({"acks": result.get("acks", [])})
-        print_state(client, kinds=snapshot_actions_to_kinds(actions), mode=mode)
+        print_state(client, kinds=snapshot_actions_to_kinds(actions), mode=mode, state_filter=state_filter)
         return True
     if command == "send":
         action, _, params_text = argument.partition(" ")
@@ -734,6 +1047,17 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         result = ack.get("result") if isinstance(ack.get("result"), dict) else ack
         print_trace(result, mode=mode)
         return True
+    if command == "coords":
+        try:
+            _, params = parse_coords_argument(argument)
+        except ValueError as exc:
+            print("Usage: coords <object_id> [--format xyz|ll|mgrs|all]")
+            if str(exc):
+                print(f"ERROR: {exc}")
+            return True
+        ack = await client.send_dcs_command("object.coords", params, timeout=timeout)
+        print_command_feedback(ack, "object.coords", debug)
+        return True
     if command == "mark":
         object_id, rest = split_object_argument(argument, known_object_ids(client))
         text = " ".join(rest)
@@ -742,6 +1066,18 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
             return True
         ack = await client.send_dcs_command("mark.object", {"object_id": object_id, "text": text}, timeout=timeout)
         print_command_feedback(ack, "mark.object", debug)
+        return True
+    if command == "drawzone":
+        try:
+            object_id, params = parse_drawzone_argument(argument)
+        except ValueError as exc:
+            print("Usage: drawzone <ZONE:name|OPSZONE:name> [--coalition all|blue|red|neutral] [--color red] [--alpha 1] [--fill-color red] [--fill-alpha 0.15] [--line-type solid|dashed|0..6]")
+            if str(exc):
+                print(f"ERROR: {exc}")
+            return True
+        params["object_id"] = object_id
+        ack = await client.send_dcs_command("zone.draw", params, timeout=timeout)
+        print_command_feedback(ack, "zone.draw", debug)
         return True
     if command == "markpoint":
         parts = argument.split(maxsplit=2)
