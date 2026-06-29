@@ -17,14 +17,17 @@ from examples.control_server_client.interactive_control_client import (
     parse_drawzone_options,
     parse_mission_argument,
     parse_message_argument,
+    parse_nearest_argument,
     parse_state_output_args,
     parse_trace_argument,
+    print_nearest,
     print_state,
     print_trace,
     print_mission_feedback,
     print_command_feedback,
     snapshot_actions_to_kinds,
     split_object_argument,
+    split_two_object_arguments,
 )
 from moosebridge.recommendations import AuftragRecommendation
 from moosebridge.protocol import BridgeCommand
@@ -284,6 +287,25 @@ def test_interactive_command_feedback_respects_mgrs_coordinate_format() -> None:
     assert text == "OK object.coords object=ZONE:Town Fight mgrs='33U UV 46038 98158'"
 
 
+def test_interactive_command_feedback_prints_distance_fields() -> None:
+    output = io.StringIO()
+    ack = {
+        "ok": True,
+        "result": {
+            "action": "object.distance",
+            "object_id_a": "GROUP:Aerial-1",
+            "object_id_b": "ZONE:Town Fight",
+            "distance_m": 1852,
+            "distance_nm": 1,
+        },
+    }
+
+    with redirect_stdout(output):
+        print_command_feedback(ack, "object.distance", debug=False)
+
+    assert output.getvalue().strip() == "OK object.distance from=GROUP:Aerial-1 to=ZONE:Town Fight meters=1852.0 nm=1.00"
+
+
 def test_interactive_message_argument_defaults_to_all() -> None:
     assert parse_message_argument("Hello Mate") == ("all", "Hello Mate")
     assert parse_message_argument("blue Push now") == ("blue", "Push now")
@@ -351,6 +373,42 @@ def test_interactive_coords_argument_accepts_unquoted_id_with_spaces_and_format(
 
     assert object_id == "AIRBASE:Gross Mohrdorf"
     assert params == {"object_id": "AIRBASE:Gross Mohrdorf", "format": "mgrs"}
+
+
+def test_interactive_distance_argument_splits_two_object_ids() -> None:
+    object_id_a, object_id_b = split_two_object_arguments(
+        '"ZONE:Town Fight" AIRBASE:Gross Mohrdorf',
+        known_ids=set(),
+    )
+
+    assert object_id_a == "ZONE:Town Fight"
+    assert object_id_b == "AIRBASE:Gross Mohrdorf"
+
+
+def test_interactive_nearest_argument_parses_target_and_filters() -> None:
+    kind, target_id, state_filter = parse_nearest_argument('units "ZONE:Town Fight" --coalition red --alive --limit 3')
+
+    assert kind == "units"
+    assert target_id == "ZONE:Town Fight"
+    assert state_filter.coalition == "red"
+    assert state_filter.alive is True
+    assert state_filter.limit == 3
+
+
+def test_interactive_print_nearest_sorts_by_distance() -> None:
+    _, _, state_filter = parse_nearest_argument("units ZONE:Target --limit 2")
+    items = [
+        {"object_id": "UNIT:Far", "dcs_name": "Far", "object_type": "UNIT", "x": 1000, "z": 0, "alive": True},
+        {"object_id": "UNIT:Near", "dcs_name": "Near", "object_type": "UNIT", "x": 100, "z": 0, "alive": True},
+    ]
+    output = io.StringIO()
+
+    with redirect_stdout(output):
+        print_nearest("units", "ZONE:Target", (0, 0), items, state_filter)
+
+    text = output.getvalue()
+    assert text.index("UNIT:Near") < text.index("UNIT:Far")
+    assert "100.0m 0.05NM" in text
 
 
 def test_interactive_object_argument_accepts_quoted_ids_with_spaces() -> None:

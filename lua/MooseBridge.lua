@@ -635,7 +635,10 @@ function MOOSE_BRIDGE:_BuildGroupSnapshotItem(group_name, group)
   local active = self:_SafeCall(group, "IsActive")
   local unit_count = self:_CountGroupUnits(group, false)
   local alive_unit_count = self:_CountGroupUnits(group, true)
-  return {object_id="GROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="GROUP",category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active),unit_count=self:_NumberOrZero(unit_count),alive_unit_count=self:_NumberOrZero(alive_unit_count)}
+  local point = self:_PointForGroupName(name)
+  local item = {object_id="GROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="GROUP",category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active),unit_count=self:_NumberOrZero(unit_count),alive_unit_count=self:_NumberOrZero(alive_unit_count)}
+  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  return item
 end
 
 function MOOSE_BRIDGE:BuildGroupSnapshot()
@@ -1339,6 +1342,23 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     result.action = "object.coords"
     result.object_id = object_id
     return result
+  end)
+
+  self:RegisterCommand("object.distance", function(cmd)
+    local p = cmd.params or {}
+    local object_id_a = self:_OptionalString(p.object_id_a)
+    local object_id_b = self:_OptionalString(p.object_id_b)
+    local point_a = self:_PointForObjectId(object_id_a)
+    local point_b = self:_PointForObjectId(object_id_b)
+    local meters = self:_DistanceBetweenPoints(point_a, point_b)
+    return {
+      action="object.distance",
+      object_id_a=object_id_a,
+      object_id_b=object_id_b,
+      distance_m=meters,
+      distance_km=meters / 1000,
+      distance_nm=meters / 1852,
+    }
   end)
 
   self:RegisterCommand("zone.draw", function(cmd)

@@ -20,6 +20,7 @@ import argparse
 import asyncio
 from dataclasses import dataclass, replace
 import json
+import math
 import shlex
 from typing import Any
 
@@ -42,6 +43,9 @@ Commands:
                                   Trace an AUFTRAG assignment/execution path.
   coords <object_id> [--format xyz|ll|mgrs|all]
                                   Print object coordinates.
+  distance <object_a> <object_b>  Measure distance between two objects.
+  nearest <kind> <object_id> [filters]
+                                  List nearest snapshot items to an object.
   mark <object_id> <text>         Create a map mark at an object position.
   drawzone <zone_id> [options]    Draw a MOOSE ZONE or OPSZONE on the F10 map.
   markpoint <x> <z> <text>        Create a map mark at a DCS world point.
@@ -60,6 +64,8 @@ Examples:
   state --raw cohorts
   coords GROUP:Enemy-1
   coords AIRBASE:Gross Mohrdorf --format mgrs
+  distance GROUP:Aerial-1 "ZONE:Town Fight"
+  nearest units "ZONE:Town Fight" --coalition red --alive --limit 5
   mark GROUP:Enemy-1 Target area
   mark "ZONE:Town Fight" Target area
   drawzone "ZONE:Town Fight" --coalition blue --color red --alpha 0.8 --fill-alpha 0.15 --line-type dashed
@@ -128,6 +134,18 @@ def format_number(value: Any, decimals: int) -> str:
         return str(value)
 
 
+def format_distance_m(value: Any) -> str:
+    """Format meters for compact command output."""
+
+    return format_number(value, 1)
+
+
+def format_distance_nm(value: Any) -> str:
+    """Format nautical miles for compact command output."""
+
+    return format_number(value, 2)
+
+
 def append_coordinate_feedback(details: list[str], result: dict[str, Any]) -> None:
     """Append coordinate details according to the requested output format."""
 
@@ -180,6 +198,15 @@ def print_command_feedback(ack: dict[str, Any], fallback_action: str, debug: boo
             details.append(f"line_type={result.get('line_type')}")
         if label == "object.coords":
             append_coordinate_feedback(details, result)
+        elif label == "object.distance":
+            if result.get("object_id_a") is not None:
+                details.append(f"from={result.get('object_id_a')}")
+            if result.get("object_id_b") is not None:
+                details.append(f"to={result.get('object_id_b')}")
+            if result.get("distance_m") is not None:
+                details.append(f"meters={format_distance_m(result.get('distance_m'))}")
+            if result.get("distance_nm") is not None:
+                details.append(f"nm={format_distance_nm(result.get('distance_nm'))}")
         elif result.get("x") is not None and result.get("y") is not None and result.get("z") is not None:
             details.append(f"x={result.get('x')} y={result.get('y')} z={result.get('z')}")
         elif result.get("x") is not None and result.get("z") is not None:
@@ -533,6 +560,49 @@ def parse_coords_argument(argument: str) -> tuple[str, dict[str, Any]]:
         index += 1
 
     return object_id, params
+
+
+def split_two_object_arguments(argument: str, known_ids: set[str]) -> tuple[str, str]:
+    """Split a command argument into two object ids."""
+
+    first_id, rest = split_object_argument(argument, known_ids)
+    if not first_id or not rest:
+        raise ValueError("expected two object ids")
+    second_text = " ".join(rest)
+    second_id, second_rest = split_object_argument(second_text, known_ids)
+    if not second_id:
+        raise ValueError("expected second object id")
+    if second_rest:
+        second_id = " ".join([second_id, *second_rest]).strip()
+    return first_id, second_id
+
+
+def parse_nearest_argument(argument: str) -> tuple[str, str, StateFilter]:
+    """Parse ``nearest <kind> <object_id> [filters]`` arguments."""
+
+    parts = shlex.split(argument)
+    if len(parts) < 2:
+        raise ValueError("nearest requires a kind and target object id")
+
+    kind = parts[0]
+    if kind not in STATE_KINDS:
+        raise ValueError(f"Invalid nearest kind: {kind}")
+
+    option_start = len(parts)
+    for index in range(1, len(parts)):
+        if parts[index].startswith("-"):
+            option_start = index
+            break
+
+    target_id = " ".join(parts[1:option_start]).strip()
+    if not target_id:
+        raise ValueError("nearest requires a target object id")
+
+    option_text = " ".join(parts[option_start:])
+    _, _, state_filter = parse_state_output_args(option_text)
+    if state_filter.limit == 25:
+        state_filter = replace(state_filter, limit=5)
+    return kind, target_id, state_filter
 
 
 def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | None, str | None, bool]:
@@ -915,6 +985,43 @@ def state_items(client: MooseBridgeControlClient, kind: str, state_filter: State
     return [item for item in items if item_matches_filter(item, state_filter)]
 
 
+def item_point(item: dict[str, Any]) -> tuple[float, float] | None:
+    """Return an item's x/z point if present."""
+
+    try:
+        x = float(item["x"])
+        z = float(item["z"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return x, z
+
+
+def distance_between_xz(a: tuple[float, float], b: tuple[float, float]) -> float:
+    """Return flat DCS world distance in meters between two x/z points."""
+
+    return math.hypot(b[0] - a[0], b[1] - a[1])
+
+
+def print_nearest(kind: str, target_id: str, target_point: tuple[float, float], items: list[dict[str, Any]], state_filter: StateFilter) -> None:
+    """Print nearest state items to a target point."""
+
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    for item in items:
+        if object_label(item) == target_id:
+            continue
+        point = item_point(item)
+        if point is None:
+            continue
+        ranked.append((distance_between_xz(target_point, point), item))
+
+    ranked.sort(key=lambda value: value[0])
+    print(f"\nnearest {kind} to {target_id}: {len(ranked)}")
+    for distance_m, item in ranked[: state_filter.limit]:
+        print(f"  {format_distance_m(distance_m)}m {format_distance_nm(distance_m / 1852)}NM  {compact_item(kind, item)}")
+    if len(ranked) > state_filter.limit:
+        print(f"  ... {len(ranked) - state_filter.limit} more")
+
+
 def print_state_summary(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None = None, state_filter: StateFilter | None = None) -> None:
     """Print local client state counts."""
 
@@ -1057,6 +1164,41 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
             return True
         ack = await client.send_dcs_command("object.coords", params, timeout=timeout)
         print_command_feedback(ack, "object.coords", debug)
+        return True
+    if command == "distance":
+        try:
+            object_id_a, object_id_b = split_two_object_arguments(argument, known_object_ids(client))
+        except ValueError as exc:
+            print("Usage: distance <object_a> <object_b>")
+            if str(exc):
+                print(f"ERROR: {exc}")
+            return True
+        ack = await client.send_dcs_command(
+            "object.distance",
+            {"object_id_a": object_id_a, "object_id_b": object_id_b},
+            timeout=timeout,
+        )
+        print_command_feedback(ack, "object.distance", debug)
+        return True
+    if command == "nearest":
+        try:
+            kind, target_id, state_filter = parse_nearest_argument(argument)
+        except ValueError as exc:
+            print("Usage: nearest <kind> <object_id> [--coalition red|blue] [--alive|--dead] [--active|--inactive] [--contains text] [--limit n]")
+            if str(exc):
+                print(f"ERROR: {exc}")
+            return True
+        target_ack = await client.send_dcs_command("object.coords", {"object_id": target_id, "format": "xyz"}, timeout=timeout)
+        if not target_ack.get("ok", False):
+            print_command_feedback(target_ack, "object.coords", debug)
+            return True
+        target_result = target_ack.get("result") if isinstance(target_ack.get("result"), dict) else {}
+        target_point = item_point(target_result)
+        if target_point is None:
+            print(f"ERROR nearest: target has no x/z coordinates: {target_id}")
+            return True
+        await client.request("control.snapshots", params={"actions": [f"snapshot.{kind}"]}, timeout=timeout)
+        print_nearest(kind, target_id, target_point, state_items(client, kind, state_filter=state_filter), state_filter)
         return True
     if command == "mark":
         object_id, rest = split_object_argument(argument, known_object_ids(client))
