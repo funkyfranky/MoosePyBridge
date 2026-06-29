@@ -37,7 +37,8 @@ Commands:
                                   Request DCS snapshots, e.g. groups units or snapshot.groups snapshot.units.
   send <action> [json-params]     Send a semantic DCS command through the daemon.
   mission <type> [options]        Validate, select assets, and create an AUFTRAG.
-  trace <AUFTRAG:id>              Trace an AUFTRAG.
+  trace [--raw|--verbose] <AUFTRAG:id>
+                                  Trace an AUFTRAG assignment/execution path.
   mark <object_id> <text>         Create a map mark at an object position.
   markpoint <x> <z> <text>        Create a map mark at a DCS world point.
   smoke <object_id> [color]       Create smoke at an object position.
@@ -60,6 +61,7 @@ Examples:
   mission BAI --target GROUP:Ground-1 --coalition blue
   mission ARTY --target UNIT:Ground-1-1 --nshots 5 --radius 100 --legion BRIGADE:Laage
   trace AUFTRAG:1
+  trace --raw AUFTRAG:1
 """.strip()
 
 OUTPUT_MODES = {"summary", "list", "raw"}
@@ -140,6 +142,126 @@ def print_mission_feedback(recommendation: Any, ack: dict[str, Any] | None, prev
     print(" ".join(parts))
     if debug:
         print_json({"recommendation": data, "ack": ack})
+
+
+def format_count(value: Any) -> str:
+    """Return a compact count string."""
+
+    return str(value) if value is not None else "0"
+
+
+def print_trace_compact(trace: dict[str, Any]) -> None:
+    """Print a compact AUFTRAG trace summary."""
+
+    auftrag = trace.get("auftrag") if isinstance(trace.get("auftrag"), dict) else {}
+    counts = trace.get("counts") if isinstance(trace.get("counts"), dict) else {}
+    target = auftrag.get("target") if isinstance(auftrag.get("target"), dict) else {}
+    assigned = auftrag.get("assigned_group_ids") if isinstance(auftrag.get("assigned_group_ids"), list) else []
+
+    parts = [
+        f"TRACE {trace.get('auftrag_id')}",
+        f"found={trace.get('found')}",
+        f"source={trace.get('source')}",
+    ]
+    if auftrag:
+        parts.extend(
+            [
+                f"type={auftrag.get('type')}",
+                f"status={auftrag.get('status')}",
+                f"summary={auftrag.get('summary_available')}",
+                f"assigned={len(assigned)}",
+            ]
+        )
+    parts.extend(
+        [
+            f"matching_legions={format_count(counts.get('matching_legions'))}",
+            f"matching_opsgroups={format_count(counts.get('matching_opsgroups'))}",
+        ]
+    )
+    print(" ".join(parts))
+
+    if target:
+        print(
+            f"  target={target.get('category')}:{target.get('name')} "
+            f"x={target.get('x')} z={target.get('z')} destroyed={target.get('n_destroyed')} damage={target.get('damage')}"
+        )
+
+    matching_legions = trace.get("matching_legion_ids") if isinstance(trace.get("matching_legion_ids"), list) else []
+    matching_opsgroups = trace.get("matching_opsgroup_ids") if isinstance(trace.get("matching_opsgroup_ids"), list) else []
+    if matching_legions:
+        print("  legions=" + ", ".join(str(value) for value in matching_legions))
+    if matching_opsgroups:
+        print("  opsgroups=" + ", ".join(str(value) for value in matching_opsgroups))
+
+
+def print_trace_verbose(trace: dict[str, Any]) -> None:
+    """Print a medium-detail AUFTRAG trace summary."""
+
+    print_trace_compact(trace)
+
+    legions = trace.get("legions") if isinstance(trace.get("legions"), list) else []
+    if legions:
+        print("  LEGIONs:")
+        for legion in legions:
+            if not isinstance(legion, dict):
+                continue
+            marker = "*" if legion.get("missionqueue_contains_auftrag") else " "
+            print(
+                f"   {marker} {legion.get('object_id')} state={legion.get('state')} "
+                f"queue={legion.get('auftrag_queue_ids')}"
+            )
+
+    cohorts = trace.get("cohorts") if isinstance(trace.get("cohorts"), list) else []
+    if cohorts:
+        print("  COHORTs:")
+        for cohort in cohorts:
+            if not isinstance(cohort, dict):
+                continue
+            print(
+                f"     {cohort.get('object_id')} legion={cohort.get('legion_id')} "
+                f"stock={cohort.get('stock_asset_count')} spawned={cohort.get('spawned_asset_count')} "
+                f"opsgroups={len(cohort.get('opsgroup_ids') or [])}"
+            )
+
+    opsgroups = trace.get("opsgroups") if isinstance(trace.get("opsgroups"), list) else []
+    if opsgroups:
+        print("  OPSGROUPs:")
+        for opsgroup in opsgroups:
+            if not isinstance(opsgroup, dict):
+                continue
+            marker = "*" if opsgroup.get("current_contains_auftrag") or opsgroup.get("queue_contains_auftrag") else " "
+            print(
+                f"   {marker} {opsgroup.get('object_id')} state={opsgroup.get('state')} "
+                f"current={opsgroup.get('auftrag_current_id')} queue={opsgroup.get('auftrag_queue_ids')}"
+            )
+
+
+def print_trace(trace: dict[str, Any], mode: str) -> None:
+    """Print a trace payload in the requested mode."""
+
+    if mode == "raw":
+        print_json(trace)
+    elif mode == "verbose":
+        print_trace_verbose(trace)
+    else:
+        print_trace_compact(trace)
+
+
+def parse_trace_argument(argument: str) -> tuple[str, str]:
+    """Parse ``trace [--raw|--verbose] <AUFTRAG:id>`` arguments."""
+
+    parts = shlex.split(argument)
+    if not parts:
+        raise ValueError("trace requires an AUFTRAG:id")
+    if parts[0] == "--raw":
+        if len(parts) < 2:
+            raise ValueError("trace --raw requires an AUFTRAG:id")
+        return "raw", parts[1]
+    if parts[0] == "--verbose":
+        if len(parts) < 2:
+            raise ValueError("trace --verbose requires an AUFTRAG:id")
+        return "verbose", parts[1]
+    return "summary", parts[0]
 
 
 def parse_json_params(text: str) -> dict[str, Any]:
@@ -603,11 +725,14 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         print_mission_feedback(recommendation, ack=ack, preview=False, debug=debug)
         return True
     if command == "trace":
-        if not argument:
-            print("Usage: trace <AUFTRAG:id>")
+        try:
+            mode, auftrag_id = parse_trace_argument(argument)
+        except ValueError as exc:
+            print(f"Usage: trace [--raw|--verbose] <AUFTRAG:id> ({exc})")
             return True
-        ack = await client.send_dcs_command("auftrag.trace", {"object_id": argument}, timeout=timeout)
-        print_json(ack.get("result") if isinstance(ack.get("result"), dict) else ack)
+        ack = await client.send_dcs_command("auftrag.trace", {"object_id": auftrag_id}, timeout=timeout)
+        result = ack.get("result") if isinstance(ack.get("result"), dict) else ack
+        print_trace(result, mode=mode)
         return True
     if command == "mark":
         object_id, rest = split_object_argument(argument, known_object_ids(client))

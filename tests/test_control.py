@@ -12,6 +12,8 @@ from examples.control_server_client.interactive_control_client import (
     normalize_legion_id,
     parse_mission_argument,
     parse_message_argument,
+    parse_trace_argument,
+    print_trace,
     print_mission_feedback,
     print_command_feedback,
     snapshot_actions_to_kinds,
@@ -242,6 +244,47 @@ def test_interactive_mission_feedback_labels_payload_uid_zero() -> None:
     assert "payload=0" not in text
     assert "aircraft=F-4E-45MC" in text
     assert "payload_available=1" in text
+
+
+def test_interactive_trace_argument_parses_modes() -> None:
+    assert parse_trace_argument("AUFTRAG:2") == ("summary", "AUFTRAG:2")
+    assert parse_trace_argument("--raw AUFTRAG:2") == ("raw", "AUFTRAG:2")
+    assert parse_trace_argument("--verbose AUFTRAG:2") == ("verbose", "AUFTRAG:2")
+
+
+def test_interactive_trace_summary_is_compact() -> None:
+    output = io.StringIO()
+    trace = {
+        "auftrag_id": "AUFTRAG:2",
+        "found": True,
+        "source": "bridge.tracked",
+        "auftrag": {
+            "type": "Bombing",
+            "status": "requested",
+            "summary_available": False,
+            "assigned_group_ids": [],
+            "target": {
+                "category": "Coordinate",
+                "name": "MGRS 33U UV 46038 98158",
+                "x": -33711.171875,
+                "z": -510211,
+                "n_destroyed": 0,
+                "damage": 0,
+            },
+        },
+        "counts": {"matching_legions": 1, "matching_opsgroups": 0},
+        "matching_legion_ids": ["LEGION:Wing Parchim"],
+    }
+
+    with redirect_stdout(output):
+        print_trace(trace, mode="summary")
+
+    text = output.getvalue()
+    assert "TRACE AUFTRAG:2" in text
+    assert "type=Bombing" in text
+    assert "matching_legions=1" in text
+    assert "LEGION:Wing Parchim" in text
+    assert '"auftrag"' not in text
 
 
 def test_control_status_and_state_roundtrip() -> None:
