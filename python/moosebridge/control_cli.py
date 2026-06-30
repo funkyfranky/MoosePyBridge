@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from .control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
+from .control_sdk import sdk_from_control_client
 
 
 def parse_params(text: str | None) -> dict[str, Any]:
@@ -45,7 +46,7 @@ async def async_main(args: argparse.Namespace) -> int:
     elif args.command == "send":
         result = await client.send_dcs_command(args.action, parse_params(args.params_json), timeout=args.timeout)
     elif args.command == "trace":
-        result = await client.send_dcs_command("auftrag.trace", {"object_id": args.auftrag_id}, timeout=args.timeout)
+        result = await sdk_from_control_client(client, timeout=args.timeout).trace_auftrag(args.auftrag_id, timeout=args.timeout)
     else:
         raise ValueError(f"Unsupported command: {args.command}")
 

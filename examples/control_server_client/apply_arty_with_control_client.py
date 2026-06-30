@@ -39,6 +39,7 @@ from typing import Any
 
 from moosebridge import evaluate_auftrag_request, recommend_auftrag
 from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient, MooseBridgeControlServer
+from moosebridge.control_sdk import sdk_from_control_client
 from moosebridge.sdk import build_recommended_auftrag_command_params
 from moosebridge.server import DEFAULT_PORT, MooseBridgeServer
 
@@ -134,10 +135,9 @@ def print_trace(trace: dict[str, Any]) -> None:
 async def trace_auftrag(client: MooseBridgeControlClient, auftrag_id: str, timeout: float) -> dict[str, Any]:
     """Request fresh trace-related snapshots and then call ``auftrag.trace``."""
 
-    await client.request_snapshots(TRACE_SNAPSHOTS, timeout=timeout)
-    ack = await client.send_dcs_command("auftrag.trace", {"object_id": auftrag_id}, timeout=timeout)
-    result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
-    return result
+    sdk = sdk_from_control_client(client, timeout=timeout)
+    await sdk.request_snapshots(TRACE_SNAPSHOTS)
+    return await sdk.trace_auftrag(auftrag_id, timeout=timeout)
 
 
 async def trace_loop(client: MooseBridgeControlClient, auftrag_id: str, args: argparse.Namespace) -> None:
@@ -190,7 +190,8 @@ async def async_main(args: argparse.Namespace) -> int:
         print_json("Control status", status)
 
         print("\nRequesting advisory snapshots through the control client ...")
-        await client.request_snapshots(ADVISORY_SNAPSHOTS, timeout=args.command_timeout)
+        sdk = sdk_from_control_client(client, timeout=args.command_timeout)
+        await sdk.request_snapshots(ADVISORY_SNAPSHOTS)
 
         advisory = evaluate_auftrag_request(
             client.state,

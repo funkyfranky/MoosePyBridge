@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 from . import server as server_module
-from .protocol import BridgeCommand
+from .sdk import MooseBridgeClient
 
 
 TRACE_HELP = """
@@ -186,9 +186,7 @@ async def run_interactive_console(server: server_module.MooseBridgeServer) -> No
                     continue
                 auftrag_id = parts[0]
                 raw = "--raw" in parts[1:]
-                ack = await server.send_command(BridgeCommand(action="auftrag.trace", params={"object_id": auftrag_id}))
-                print(f"ACK: {ack}")
-                result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+                result = await MooseBridgeClient(server).trace_auftrag(auftrag_id)
                 if raw:
                     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
                 else:

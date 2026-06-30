@@ -53,10 +53,16 @@ Implemented baseline:
   - `message.*`
   - `mark.*`
   - `smoke.*`
+  - `object.coords`
+  - `object.distance`
+  - `zone.draw`
   - `snapshot.*`
   - selected `auftrag.*` execution and trace commands
 - advisory helpers for validating AUFTRAG requests and finding suitable
   LEGION/COHORT candidates
+- SDK helpers for coordinate lookup, distance measurement, zone drawing,
+  nearest-object queries, AUFTRAG tracing, snapshot refresh, and control-client
+  adaptation
 
 ## Architecture
 
@@ -139,8 +145,8 @@ See `docs/INTENTS.md` for the tactical intent and recommendation model.
 1. Start the Python bridge daemon.
 2. Start the DCS mission with the Lua bridge loaded.
 3. Confirm that Python logs the DCS connection and heartbeat.
-4. Use the interactive console or a Python client to request snapshots or send a
-   simple message command.
+4. Use the interactive control client or a Python SDK client to request
+   snapshots or send a simple semantic command.
 
 Example:
 
@@ -150,6 +156,65 @@ ack = await server.message_to_coalition(
     text="MoosePyBridge connected",
     duration=10,
 )
+```
+
+## Interactive control client
+
+The local control client is the preferred manual test surface when a daemon is
+already running:
+
+```powershell
+.\run_control_interactive.ps1
+```
+
+Useful commands:
+
+```text
+status
+snapshots --list groups units zones
+snapshots --list units --coalition red --alive --limit 20
+coords "ZONE:Town Fight" --format mgrs
+distance GROUP:Aerial-1 "ZONE:Town Fight"
+nearest units "ZONE:Town Fight" --coalition red --alive --limit 5
+drawzone "ZONE:Town Fight" --coalition blue --color red --line-type dashed
+message blue Push now
+mission BAI --target GROUP:Ground-1 --coalition blue
+trace AUFTRAG:1
+```
+
+The interactive client uses the same SDK command path as Python tools for
+coordinate lookup, distance, nearest-object queries, zone drawing, and AUFTRAG
+trace.
+
+## Python SDK examples
+
+Server-backed SDK:
+
+```python
+from moosebridge import MooseBridgeClient, MooseBridgeServer
+
+server = MooseBridgeServer(host="127.0.0.1", port=51000)
+await server.start()
+bridge = MooseBridgeClient(server)
+
+coords = await bridge.coords("ZONE:Town Fight", format="mgrs")
+distance = await bridge.distance("GROUP:Aerial-1", "ZONE:Town Fight")
+await bridge.draw_zone("ZONE:Town Fight", coalition="blue", color="red", line_type="dashed")
+nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True, limit=5)
+trace = await bridge.trace_auftrag("AUFTRAG:1")
+```
+
+Control-client backed SDK:
+
+```python
+from moosebridge.control import MooseBridgeControlClient
+from moosebridge.control_sdk import sdk_from_control_client
+
+control = MooseBridgeControlClient("127.0.0.1", 51001)
+bridge = sdk_from_control_client(control, timeout=10.0)
+
+await bridge.snapshot_kind("units")
+nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True)
 ```
 
 ## Protocol example

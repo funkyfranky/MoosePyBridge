@@ -39,6 +39,7 @@ from .sdk import (
     MooseBridgeCommandError,
     NearestResult,
 )
+from .control_sdk import ControlSdkAdapter, sdk_from_control_client
 from .state import MooseBridgeState, MooseObjectIdentity
 
 __all__ = [
@@ -58,6 +59,7 @@ __all__ = [
     "Cohort",
     "CohortSummary",
     "CommandPayload",
+    "ControlSdkAdapter",
     "CoordinateResult",
     "DistanceResult",
     "Legion",
@@ -89,6 +91,7 @@ __all__ = [
     "platform_categories_match",
     "recommend_auftrag",
     "rejected_candidates",
+    "sdk_from_control_client",
     "tactical_recommendation_from_auftrag",
     "target_type_values",
 ]

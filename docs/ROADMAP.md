@@ -123,6 +123,9 @@ Current command families:
 - `message.*`
 - `mark.*`
 - `smoke.*`
+- `object.coords`
+- `object.distance`
+- `zone.draw`
 - `snapshot.*`
 - selected `auftrag.*`
 - AUFTRAG trace helpers
@@ -148,9 +151,10 @@ tools should connect to the daemon instead of each starting their own bridge.
 
 Near-term server needs:
 
-- stable multi-client state queries
-- command forwarding through the daemon
-- snapshot orchestration
+- stable multi-client state queries (baseline implemented)
+- command forwarding through the daemon (baseline implemented)
+- snapshot orchestration (baseline implemented)
+- SDK adapter for daemon-backed control clients (baseline implemented)
 - raw protocol logging
 - error reporting suitable for tools and agents
 
@@ -211,6 +215,7 @@ Snapshot kinds should be object-family oriented:
 - `statics`
 - `airbases`
 - `zones`
+- `objects`
 - `opszones`
 - `opsgroups`
 - `auftraege`
@@ -242,14 +247,12 @@ Current baseline:
 
 Next work items:
 
-1. Reconcile README, roadmap, and example scripts with the current daemon/control
-   architecture.
-2. Expand and harden AUFTRAG snapshot details, especially timing, target, summary,
+1. Expand and harden AUFTRAG snapshot details, especially timing, target, summary,
    and outcome fields.
-3. Add AIRWING/BRIGADE/FLEET snapshots.
-4. Add COMMANDER/CHIEF snapshots.
-5. Add replayable event snapshots or event streams for state changes.
-6. Add tests for control API state payload round-trips and AUFTRAG advisory edge
+2. Add AIRWING/BRIGADE/FLEET snapshots.
+3. Add COMMANDER/CHIEF snapshots.
+4. Add replayable event snapshots or event streams for state changes.
+5. Add tests for additional AUFTRAG advisory edge
    cases.
 
 ## Phase 2: Typed Python state model
@@ -312,11 +315,15 @@ Goal: Python can command MOOSE semantically and safely.
 
 Work items:
 
-- broaden AUFTRAG creation helpers
+- broaden AUFTRAG creation helpers beyond the current BAI, BOMBING, and ARTY
+  baseline
 - add cancellation and reassignment helpers
 - add OPSGROUP and OPSZONE control helpers
-- map recommendations to command payloads
+- map recommendations to command payloads (baseline implemented for AUFTRAG
+  recommendations)
 - validate coalition, range, mission type, target type, and asset availability
+  (baseline implemented in the advisory layer)
+- keep human tools and agents on the same SDK/control command path
 - define policy checks for autonomous execution
 - record command ACKs and outcomes
 
@@ -326,8 +333,10 @@ Goal: Make the daemon a robust service for tools and agents.
 
 Work items:
 
-- stabilize the control protocol
-- define client-facing request and response schemas
+- stabilize the control protocol beyond the current local JSONL baseline
+- define client-facing request and response schemas beyond the current
+  `control.status`, `control.state`, `control.snapshots`, and
+  `control.command` baseline
 - add structured errors
 - add session and client identity fields
 - add audit log records
@@ -356,13 +365,14 @@ Later behavior:
 
 ## Immediate next milestone
 
-The next concrete milestone is to align the project around the server plus
-advisory architecture:
+The next concrete milestone is to deepen the current daemon, SDK, and advisory
+baseline:
 
-1. Update documentation to match the current code and long-term goal.
-2. Make the daemon/control entry points first-class in packaging and examples.
-3. Add tests around the control API and state mirror round-trips.
-4. Define a small recommendation/intent schema that can represent attack,
-   defense, patrol, and movement proposals.
-5. Use that schema to turn the existing AUFTRAG advisory helpers into
-   operator-ready recommendations.
+1. Add AIRWING/BRIGADE/FLEET snapshots and typed models.
+2. Expand AUFTRAG lifecycle support with cancellation, reassignment, and richer
+   outcome/trace details.
+3. Add OPSGROUP and OPSZONE command helpers.
+4. Add structured audit records for recommendations, approvals, commands, ACKs,
+   and outcomes.
+5. Start policy checks for approval-required and autonomous modes on top of the
+   existing SDK/control command path.

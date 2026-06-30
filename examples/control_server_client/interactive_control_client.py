@@ -25,10 +25,9 @@ from typing import Any
 
 from moosebridge import evaluate_auftrag_request, recommend_auftrag
 from moosebridge.control import DEFAULT_CONTROL_PORT, STATE_KINDS, MooseBridgeControlClient
+from moosebridge.control_sdk import sdk_from_control_client
 from moosebridge.intents import auftrag_command_params_from_recommendation, command_action_for_auftrag_recommendation
-from moosebridge.protocol import BridgeCommand
 from moosebridge.sdk import (
-    MooseBridgeClient,
     NearestResult,
     normalize_draw_zone_line_type,
     validate_coordinate_format,
@@ -100,61 +99,6 @@ class StateFilter:
     alive: bool | None = None
     active: bool | None = None
     limit: int = 25
-
-
-class ControlSdkAdapter:
-    """Adapt the local control client to the SDK server-facing interface."""
-
-    def __init__(self, client: MooseBridgeControlClient, timeout: float) -> None:
-        self.client = client
-        self.timeout = timeout
-
-    @property
-    def state(self) -> Any:
-        """Return the shared control-client state mirror."""
-
-        return self.client.state
-
-    async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
-        """Forward one SDK command through the control API."""
-
-        return await self.client.send_dcs_command(command.action, command.params, timeout=timeout)
-
-    async def _snapshot(self, kind: str) -> dict[str, Any]:
-        action = f"snapshot.{kind}"
-        result = await self.client.request("control.snapshots", params={"actions": [action]}, timeout=self.timeout)
-        acks = result.get("acks") if isinstance(result.get("acks"), list) else []
-        return acks[0] if acks else {"ok": True, "result": {"kind": kind, "count": 0}}
-
-    async def snapshot_groups(self) -> dict[str, Any]:
-        return await self._snapshot("groups")
-
-    async def snapshot_units(self) -> dict[str, Any]:
-        return await self._snapshot("units")
-
-    async def snapshot_statics(self) -> dict[str, Any]:
-        return await self._snapshot("statics")
-
-    async def snapshot_airbases(self) -> dict[str, Any]:
-        return await self._snapshot("airbases")
-
-    async def snapshot_zones(self) -> dict[str, Any]:
-        return await self._snapshot("zones")
-
-    async def snapshot_opszones(self) -> dict[str, Any]:
-        return await self._snapshot("opszones")
-
-    async def snapshot_opsgroups(self) -> dict[str, Any]:
-        return await self._snapshot("opsgroups")
-
-    async def snapshot_auftraege(self) -> dict[str, Any]:
-        return await self._snapshot("auftraege")
-
-    async def snapshot_cohorts(self) -> dict[str, Any]:
-        return await self._snapshot("cohorts")
-
-    async def snapshot_legions(self) -> dict[str, Any]:
-        return await self._snapshot("legions")
 
 
 def print_json(value: Any) -> None:
@@ -1073,7 +1017,7 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
     command, _, argument = line.partition(" ")
     command = command.lower().strip()
     argument = argument.strip()
-    sdk = MooseBridgeClient(ControlSdkAdapter(client, timeout))  # type: ignore[arg-type]
+    sdk = sdk_from_control_client(client, timeout=timeout)
 
     if command in {"quit", "exit"}:
         return False
@@ -1147,8 +1091,7 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         except ValueError as exc:
             print(f"Usage: trace [--raw|--verbose] <AUFTRAG:id> ({exc})")
             return True
-        ack = await client.send_dcs_command("auftrag.trace", {"object_id": auftrag_id}, timeout=timeout)
-        result = ack.get("result") if isinstance(ack.get("result"), dict) else ack
+        result = await sdk.trace_auftrag(auftrag_id, timeout=timeout)
         print_trace(result, mode=mode)
         return True
     if command == "coords":

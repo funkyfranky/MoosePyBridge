@@ -10,6 +10,7 @@ from typing import Any
 
 from moosebridge import canonical_mission_type, evaluate_auftrag_request, recommend_auftrag
 from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
+from moosebridge.control_sdk import sdk_from_control_client
 from moosebridge.outcomes import AuftragOutcome
 from moosebridge.sdk import auftrag_action_for_mission_type, build_recommended_auftrag_command_params, is_evaluated_auftrag_snapshot
 
@@ -39,8 +40,8 @@ async def print_trace(client: MooseBridgeControlClient, auftrag_id: str, timeout
     :param timeout: Command timeout.
     """
 
-    ack = await client.send_dcs_command("auftrag.trace", {"object_id": auftrag_id}, timeout=timeout)
-    result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+    sdk = sdk_from_control_client(client, timeout=timeout)
+    result = await sdk.trace_auftrag(auftrag_id, timeout=timeout)
     auftrag = result.get("auftrag") if isinstance(result.get("auftrag"), dict) else {}
     counts = result.get("counts") if isinstance(result.get("counts"), dict) else {}
     print(
@@ -63,8 +64,9 @@ async def wait_for_outcome(client: MooseBridgeControlClient, auftrag_id: str, ti
     """
 
     deadline = asyncio.get_running_loop().time() + timeout_s
+    sdk = sdk_from_control_client(client, timeout=command_timeout)
     while asyncio.get_running_loop().time() < deadline:
-        await client.request_snapshots(("snapshot.auftraege", "snapshot.legions", "snapshot.opsgroups"), timeout=command_timeout)
+        await sdk.request_snapshots(("snapshot.auftraege", "snapshot.legions", "snapshot.opsgroups"))
         snapshot = client.state.auftraege.get(auftrag_id)
         if trace:
             await print_trace(client, auftrag_id, command_timeout)
@@ -89,7 +91,8 @@ async def async_main(args: argparse.Namespace) -> int:
 
     mission_type = canonical_mission_type(args.mission_type)
     params = parse_json_object(args.params_json)
-    await client.request_snapshots(SNAPSHOTS, timeout=args.command_timeout)
+    sdk = sdk_from_control_client(client, timeout=args.command_timeout)
+    await sdk.request_snapshots(SNAPSHOTS)
     result = evaluate_auftrag_request(client.state, mission_type, params, coalition=args.coalition)
     recommendation = recommend_auftrag(result)
     if recommendation is None:

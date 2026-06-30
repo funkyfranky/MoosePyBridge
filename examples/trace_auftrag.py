@@ -18,9 +18,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from moosebridge import MooseBridgeServer
-from moosebridge.protocol import BridgeCommand
-from moosebridge.sdk import require_ok
+from moosebridge import MooseBridgeClient, MooseBridgeServer
 from moosebridge.server import DEFAULT_PORT
 
 
@@ -132,12 +130,8 @@ async def async_main(args: argparse.Namespace) -> int:
     try:
         print(f"Waiting for DCS bridge connection on {args.host}:{args.port} ...")
         await wait_for_dcs_connection(server, args.connect_timeout)
-        ack = await server.send_command(
-            BridgeCommand(action="auftrag.trace", params={"object_id": args.auftrag_id}),
-            timeout=args.command_timeout,
-        )
-        require_ok(ack)
-        result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+        client = MooseBridgeClient(server)
+        result = await client.trace_auftrag(args.auftrag_id, timeout=args.command_timeout)
         if args.raw:
             print(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
         else:

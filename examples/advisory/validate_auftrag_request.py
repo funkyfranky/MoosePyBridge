@@ -23,7 +23,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from moosebridge import BridgeCommand, MooseBridgeClient, MooseBridgeServer, evaluate_auftrag_request
+from moosebridge import MooseBridgeClient, MooseBridgeServer, evaluate_auftrag_request
 from moosebridge.server import DEFAULT_PORT
 
 
@@ -53,9 +53,7 @@ async def request_required_snapshots(client: MooseBridgeClient) -> None:
     :param client: MOOSE Bridge SDK client.
     """
 
-    for action in ("snapshot.groups", "snapshot.units", "snapshot.statics", "snapshot.zones", "snapshot.cohorts", "snapshot.legions"):
-        await client.server.send_command(BridgeCommand(action=action, params={}))
-        await asyncio.sleep(0.05)
+    await client.request_snapshots(("snapshot.groups", "snapshot.units", "snapshot.statics", "snapshot.zones", "snapshot.cohorts", "snapshot.legions"))
 
 
 def payload_rejection_reason(candidate: Any, mission_type: str) -> str | None:

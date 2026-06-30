@@ -19,7 +19,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from moosebridge import BridgeCommand, MooseBridgeClient, MooseBridgeServer, get_auftrag_type_spec
+from moosebridge import MooseBridgeClient, MooseBridgeServer, get_auftrag_type_spec
 from moosebridge.server import DEFAULT_PORT
 
 
@@ -49,7 +49,7 @@ async def request_required_snapshots(client: MooseBridgeClient) -> None:
     :param client: MOOSE Bridge SDK client.
     """
 
-    await client.server.send_command(BridgeCommand(action="snapshot.cohorts", params={}))
+    await client.snapshot_cohorts()
     await asyncio.sleep(0.1)
 
 

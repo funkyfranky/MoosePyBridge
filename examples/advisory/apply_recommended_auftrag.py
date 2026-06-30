@@ -23,8 +23,7 @@ from moosebridge import (
     recommend_auftrag,
 )
 from moosebridge.outcomes import AuftragOutcome
-from moosebridge.protocol import BridgeCommand
-from moosebridge.sdk import build_recommended_auftrag_command_params, is_evaluated_auftrag_snapshot, require_ok
+from moosebridge.sdk import build_recommended_auftrag_command_params, is_evaluated_auftrag_snapshot
 from moosebridge.server import DEFAULT_PORT
 
 
@@ -255,13 +254,7 @@ async def trace_auftrag(
     :returns: Raw trace result payload.
     """
 
-    ack = require_ok(
-        await client.server.send_command(
-            BridgeCommand(action="auftrag.trace", params={"object_id": auftrag_id}),
-            timeout=command_timeout,
-        )
-    )
-    result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+    result = await client.trace_auftrag(auftrag_id, timeout=command_timeout)
     print_trace_result(title, result, raw=raw, verbose=verbose)
     return result
 

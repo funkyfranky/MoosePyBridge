@@ -19,24 +19,12 @@ from pathlib import Path
 from typing import Any
 
 from moosebridge import MooseBridgeClient, MooseBridgeServer
-from moosebridge.protocol import BridgeCommand
-from moosebridge.sdk import require_ok
+from moosebridge.sdk import SNAPSHOT_KINDS
 from moosebridge.server import DEFAULT_PORT
 
 METERS_PER_NAUTICAL_MILE = 1852.0
 DEFAULT_SNAPSHOTS = ("legions", "cohorts", "opsgroups", "auftraege")
-VALID_SNAPSHOTS = {
-    "groups",
-    "units",
-    "statics",
-    "airbases",
-    "zones",
-    "opszones",
-    "opsgroups",
-    "auftraege",
-    "legions",
-    "cohorts",
-}
+VALID_SNAPSHOTS = SNAPSHOT_KINDS - {"objects"}
 
 
 async def wait_for_dcs_connection(server: MooseBridgeServer, timeout_s: float) -> None:
@@ -70,8 +58,7 @@ async def request_snapshot(client: MooseBridgeClient, snapshot: str, timeout_s: 
 
     if snapshot not in VALID_SNAPSHOTS:
         raise ValueError(f"Unsupported snapshot {snapshot!r}; expected one of {sorted(VALID_SNAPSHOTS)}")
-    ack = await client.server.send_command(BridgeCommand(action=f"snapshot.{snapshot}", params={}), timeout=timeout_s)
-    require_ok(ack)
+    await client.snapshot_kind(snapshot)
     await asyncio.sleep(0.05)
 
 

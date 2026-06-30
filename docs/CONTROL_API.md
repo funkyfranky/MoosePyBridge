@@ -178,7 +178,8 @@ is equivalent to `control.command` with `params.action = "snapshot.groups"`.
 
 ## Client Helper
 
-Python code should usually use `MooseBridgeControlClient`:
+Python code can use `MooseBridgeControlClient` directly for low-level control
+requests:
 
 ```python
 from moosebridge.control import MooseBridgeControlClient
@@ -191,6 +192,58 @@ ack = await client.send_dcs_command("message.to_all", {"text": "hello"})
 
 The client maintains a local `MooseBridgeState` mirror and updates it whenever a
 response contains a `state` payload.
+
+For application code, prefer adapting the control client into the high-level
+SDK. This keeps daemon-backed tools on the same validated command path as the
+interactive client and server-backed SDK users:
+
+```python
+from moosebridge.control import MooseBridgeControlClient
+from moosebridge.control_sdk import sdk_from_control_client
+
+control = MooseBridgeControlClient("127.0.0.1", 51001)
+bridge = sdk_from_control_client(control, timeout=10.0)
+
+status = await control.status()
+await bridge.snapshot_kind("units")
+
+coords = await bridge.coords("ZONE:Town Fight", format="mgrs")
+distance = await bridge.distance("GROUP:Aerial-1", "ZONE:Town Fight")
+nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True, limit=5)
+trace = await bridge.trace_auftrag("AUFTRAG:1")
+```
+
+The SDK currently exposes helpers for:
+
+- snapshots: `snapshot_kind`, `snapshot_all`, `request_snapshots`
+- tactical annotations: `mark_object`, `smoke_object`, `draw_zone`
+- object utilities: `coords`, `distance`, `nearest`
+- messages: `message_all`, `message_coalition`
+- AUFTRAG: `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
+  `wait_for_auftrag_outcome`
+
+## Interactive Shell
+
+The interactive control client is an operator-friendly wrapper around the same
+control API and SDK path:
+
+```powershell
+.\run_control_interactive.ps1
+```
+
+Representative commands:
+
+```text
+status
+snapshots --list groups units zones
+snapshots --list units --coalition red --alive --limit 20
+coords "ZONE:Town Fight" --format mgrs
+distance GROUP:Aerial-1 "ZONE:Town Fight"
+nearest units "ZONE:Town Fight" --coalition red --alive --limit 5
+drawzone "ZONE:Town Fight" --coalition blue --color red --line-type dashed
+message blue Push now
+trace AUFTRAG:1
+```
 
 ## Current Limits
 
