@@ -30,7 +30,15 @@ from .outcomes import AuftragOutcome
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
 from .server import MooseBridgeServer
-from .sdk import MooseBridgeAuftragNotFoundError, MooseBridgeAuftragTimeoutError, MooseBridgeClient, MooseBridgeCommandError
+from .sdk import (
+    CoordinateResult,
+    DistanceResult,
+    MooseBridgeAuftragNotFoundError,
+    MooseBridgeAuftragTimeoutError,
+    MooseBridgeClient,
+    MooseBridgeCommandError,
+    NearestResult,
+)
 from .state import MooseBridgeState, MooseObjectIdentity
 
 __all__ = [
@@ -50,6 +58,8 @@ __all__ = [
     "Cohort",
     "CohortSummary",
     "CommandPayload",
+    "CoordinateResult",
+    "DistanceResult",
     "Legion",
     "MooseBridgeAuftragNotFoundError",
     "MooseBridgeAuftragTimeoutError",
@@ -59,6 +69,7 @@ __all__ = [
     "MooseBridgeState",
     "MooseSnapshotObject",
     "MooseObjectIdentity",
+    "NearestResult",
     "OpsGroup",
     "OpsZone",
     "TargetObjectSnapshot",

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+import math
 from typing import Any
 
 from .auftrag_specs import auftrag_action_suffix
@@ -14,6 +16,120 @@ from .server import MooseBridgeServer
 from .state import MooseBridgeState
 
 SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
+COORDINATE_FORMATS = {"xyz", "ll", "latlon", "latlong", "mgrs", "all"}
+DRAW_ZONE_COLORS = {"red", "green", "blue", "yellow", "orange", "white", "black", "grey", "gray"}
+DRAW_ZONE_COALITIONS = {"all", "neutral", "red", "blue", "-1", "0", "1", "2"}
+DRAW_ZONE_LINE_TYPES = {
+    "none": 0,
+    "solid": 1,
+    "dashed": 2,
+    "dotted": 3,
+    "dotdash": 4,
+    "dot-dash": 4,
+    "dot_dash": 4,
+    "longdash": 5,
+    "long-dash": 5,
+    "long_dash": 5,
+    "twodash": 6,
+    "two-dash": 6,
+    "two_dash": 6,
+}
+SNAPSHOT_KINDS = {
+    "groups",
+    "units",
+    "statics",
+    "airbases",
+    "zones",
+    "objects",
+    "opszones",
+    "opsgroups",
+    "auftraege",
+    "legions",
+    "cohorts",
+}
+
+
+@dataclass(slots=True, frozen=True)
+class CoordinateResult:
+    """Resolved object coordinates returned by ``object.coords``."""
+
+    object_id: str
+    format: str
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    mgrs: str | None = None
+    raw: dict[str, Any] | None = None
+    ack: dict[str, Any] | None = None
+
+    @classmethod
+    def from_ack(cls, ack: dict[str, Any]) -> "CoordinateResult":
+        """Build a coordinate result from a successful ACK."""
+
+        result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+        return cls(
+            object_id=str(result.get("object_id") or ""),
+            format=str(result.get("format") or "xyz"),
+            x=_optional_float(result.get("x")),
+            y=_optional_float(result.get("y")),
+            z=_optional_float(result.get("z")),
+            latitude=_optional_float(result.get("latitude")),
+            longitude=_optional_float(result.get("longitude")),
+            mgrs=str(result.get("mgrs")) if result.get("mgrs") is not None else None,
+            raw=result,
+            ack=ack,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class DistanceResult:
+    """Distance between two resolved DCS objects."""
+
+    object_id_a: str
+    object_id_b: str
+    distance_m: float
+    distance_km: float
+    distance_nm: float
+    raw: dict[str, Any] | None = None
+    ack: dict[str, Any] | None = None
+
+    @classmethod
+    def from_ack(cls, ack: dict[str, Any]) -> "DistanceResult":
+        """Build a distance result from a successful ACK."""
+
+        result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+        return cls(
+            object_id_a=str(result.get("object_id_a") or ""),
+            object_id_b=str(result.get("object_id_b") or ""),
+            distance_m=float(result.get("distance_m") or 0.0),
+            distance_km=float(result.get("distance_km") or 0.0),
+            distance_nm=float(result.get("distance_nm") or 0.0),
+            raw=result,
+            ack=ack,
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class NearestResult:
+    """One snapshot item ranked by distance from a target object."""
+
+    object_id: str
+    distance_m: float
+    distance_nm: float
+    item: dict[str, Any]
+
+
+def _optional_float(value: Any) -> float | None:
+    """Return a float or ``None`` for absent/non-numeric values."""
+
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class MooseBridgeCommandError(RuntimeError):
@@ -60,6 +176,103 @@ def validate_smoke_color(color: str) -> str:
     if normalized not in SMOKE_COLORS:
         raise ValueError(f"Unsupported smoke color: {color!r}. Expected one of {sorted(SMOKE_COLORS)}")
     return normalized
+
+
+def validate_coordinate_format(format: str) -> str:
+    """Validate and normalize a coordinate output format."""
+
+    normalized = format.lower().strip()
+    if normalized not in COORDINATE_FORMATS:
+        raise ValueError(f"Unsupported coordinate format: {format!r}. Expected one of {sorted(COORDINATE_FORMATS)}")
+    if normalized in {"latlon", "latlong"}:
+        return "ll"
+    return normalized
+
+
+def validate_draw_zone_color(color: str | None) -> str | None:
+    """Validate and normalize an optional DrawZone color name."""
+
+    if color is None:
+        return None
+    normalized = color.lower().strip()
+    if normalized not in DRAW_ZONE_COLORS:
+        raise ValueError(f"Unsupported DrawZone color: {color!r}. Expected one of {sorted(DRAW_ZONE_COLORS)}")
+    return normalized
+
+
+def validate_draw_zone_coalition(coalition: str | int) -> str | int:
+    """Validate a DrawZone coalition value."""
+
+    if isinstance(coalition, int):
+        if coalition in {-1, 0, 1, 2}:
+            return coalition
+        raise ValueError("DrawZone coalition integer must be one of -1, 0, 1, 2")
+    normalized = coalition.lower().strip()
+    if normalized not in DRAW_ZONE_COALITIONS:
+        raise ValueError(f"Unsupported DrawZone coalition: {coalition!r}. Expected one of {sorted(DRAW_ZONE_COALITIONS)}")
+    return normalized
+
+
+def normalize_draw_zone_line_type(line_type: str | int | None) -> int | None:
+    """Normalize an optional MOOSE DrawZone line type."""
+
+    if line_type is None:
+        return None
+    if isinstance(line_type, int):
+        value = line_type
+    else:
+        key = line_type.lower().strip()
+        if key in DRAW_ZONE_LINE_TYPES:
+            value = DRAW_ZONE_LINE_TYPES[key]
+        else:
+            try:
+                value = int(key)
+            except ValueError as exc:
+                raise ValueError(f"Unsupported DrawZone line type: {line_type!r}") from exc
+    if value < 0 or value > 6:
+        raise ValueError("DrawZone line type must be in range 0..6")
+    return value
+
+
+def clean_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Return params without ``None`` values."""
+
+    return {key: value for key, value in params.items() if value is not None}
+
+
+def point_from_item(item: dict[str, Any]) -> tuple[float, float] | None:
+    """Return an x/z point from a snapshot item."""
+
+    try:
+        return float(item["x"]), float(item["z"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def item_matches(
+    item: dict[str, Any],
+    *,
+    coalition: str | None = None,
+    alive: bool | None = None,
+    active: bool | None = None,
+    contains: str | None = None,
+) -> bool:
+    """Return whether a snapshot item matches common SDK filters."""
+
+    if coalition is not None:
+        value = item.get("coalition") or item.get("coalition_name") or item.get("owner_current_name")
+        if str(value or "").lower() != coalition.lower():
+            return False
+    if alive is not None and bool(item.get("alive", False)) is not alive:
+        return False
+    if active is not None and bool(item.get("active", False)) is not active:
+        return False
+    if contains is not None:
+        fields = ("object_id", "dcs_name", "name", "group_name", "zone_name", "airbase_name", "unit_type", "dcs_type", "type", "category")
+        text = " ".join(str(item.get(field) or "") for field in fields).lower()
+        if contains.lower() not in text:
+            return False
+    return True
 
 
 def auftrag_action_for_mission_type(mission_type: str) -> str:
@@ -166,6 +379,31 @@ class MooseBridgeClient:
             require_ok(await self.server.send_command(BridgeCommand(action=action, params={})))
             await asyncio.sleep(0.05)
 
+    async def snapshot_groups(self) -> dict[str, Any]:
+        """Request a GROUP snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_groups())
+
+    async def snapshot_units(self) -> dict[str, Any]:
+        """Request a UNIT snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_units())
+
+    async def snapshot_statics(self) -> dict[str, Any]:
+        """Request a STATIC snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_statics())
+
+    async def snapshot_airbases(self) -> dict[str, Any]:
+        """Request an AIRBASE snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_airbases())
+
+    async def snapshot_zones(self) -> dict[str, Any]:
+        """Request a ZONE snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_zones())
+
     async def snapshot_opszones(self) -> dict[str, Any]:
         """Request an OPSZONE snapshot through the SDK.
 
@@ -210,6 +448,27 @@ class MooseBridgeClient:
         """
 
         return require_ok(await self.server.snapshot_legions())
+
+    async def snapshot_objects(self) -> dict[str, Any]:
+        """Request a combined object snapshot through the SDK."""
+
+        return require_ok(await self.server.send_command(BridgeCommand(action="snapshot.objects", params={})))
+
+    async def snapshot_all(self) -> dict[str, Any]:
+        """Request all supported snapshots through the SDK."""
+
+        return require_ok(await self.server.send_command(BridgeCommand(action="snapshot.all", params={})))
+
+    async def snapshot_kind(self, kind: str) -> dict[str, Any]:
+        """Request one snapshot by short kind name."""
+
+        normalized = kind.removeprefix("snapshot.").lower().strip()
+        if normalized not in SNAPSHOT_KINDS:
+            raise ValueError(f"Unsupported snapshot kind: {kind!r}. Expected one of {sorted(SNAPSHOT_KINDS)}")
+        method = getattr(self, f"snapshot_{normalized}", None)
+        if method is not None:
+            return await method()
+        return require_ok(await self.server.send_command(BridgeCommand(action=f"snapshot.{normalized}", params={})))
 
     async def request_ops_state(self) -> MooseBridgeState:
         """Request OPS snapshots and return the updated local state mirror.
@@ -405,3 +664,152 @@ class MooseBridgeClient:
         """
 
         return require_ok(await self.server.mark_object(object_id, text))
+
+    async def coords(self, object_id: str, format: str = "xyz", timeout: float = 10.0) -> CoordinateResult:
+        """Resolve coordinates for a bridge object id.
+
+        :param object_id: Stable bridge object id such as ``ZONE:Town Fight``.
+        :param format: Coordinate format: ``xyz``, ``ll``, ``mgrs`` or ``all``.
+        :param timeout: Maximum ACK wait time in seconds.
+        :returns: Typed coordinate result.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        ack = require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="object.coords", params={"object_id": object_id, "format": validate_coordinate_format(format)}),
+                timeout=timeout,
+            )
+        )
+        return CoordinateResult.from_ack(ack)
+
+    async def distance(self, object_id_a: str, object_id_b: str, timeout: float = 10.0) -> DistanceResult:
+        """Measure distance between two bridge object ids.
+
+        :param object_id_a: First object id.
+        :param object_id_b: Second object id.
+        :param timeout: Maximum ACK wait time in seconds.
+        :returns: Typed distance result.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        ack = require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="object.distance", params={"object_id_a": object_id_a, "object_id_b": object_id_b}),
+                timeout=timeout,
+            )
+        )
+        return DistanceResult.from_ack(ack)
+
+    async def draw_zone(
+        self,
+        zone_id: str,
+        *,
+        coalition: str | int = "all",
+        color: str | None = None,
+        alpha: float | None = None,
+        fill_color: str | None = None,
+        fill_alpha: float | None = None,
+        line_type: str | int | None = None,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Draw a MOOSE ZONE or OPSZONE on the F10 map.
+
+        :param zone_id: ``ZONE:<name>`` or ``OPSZONE:<name>``.
+        :param coalition: Visibility coalition: all, neutral, red, blue or -1/0/1/2.
+        :param color: Optional line color name.
+        :param alpha: Optional line alpha in range 0..1.
+        :param fill_color: Optional fill color name.
+        :param fill_alpha: Optional fill alpha in range 0..1.
+        :param line_type: Optional MOOSE line type name or number 0..6.
+        :param timeout: Maximum ACK wait time in seconds.
+        :returns: Successful ACK payload.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        params = clean_params(
+            {
+                "object_id": zone_id,
+                "coalition": validate_draw_zone_coalition(coalition),
+                "color": validate_draw_zone_color(color),
+                "alpha": alpha,
+                "fill_color": validate_draw_zone_color(fill_color),
+                "fill_alpha": fill_alpha,
+                "line_type": normalize_draw_zone_line_type(line_type),
+            }
+        )
+        return require_ok(await self.server.send_command(BridgeCommand(action="zone.draw", params=params), timeout=timeout))
+
+    async def trace_auftrag(self, auftrag_id: str, timeout: float = 10.0) -> dict[str, Any]:
+        """Trace AUFTRAG assignment and execution state.
+
+        :param auftrag_id: Stable AUFTRAG object id.
+        :param timeout: Maximum ACK wait time in seconds.
+        :returns: Trace result payload.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        ack = require_ok(
+            await self.server.send_command(BridgeCommand(action="auftrag.trace", params={"object_id": auftrag_id}), timeout=timeout)
+        )
+        result = ack.get("result")
+        return result if isinstance(result, dict) else ack
+
+    async def nearest(
+        self,
+        kind: str,
+        target_id: str,
+        *,
+        coalition: str | None = None,
+        alive: bool | None = None,
+        active: bool | None = None,
+        contains: str | None = None,
+        limit: int = 5,
+        refresh: bool = True,
+        timeout: float = 10.0,
+    ) -> list[NearestResult]:
+        """Return nearest snapshot items to a target object.
+
+        The target point is resolved live through DCS. Candidate items come
+        from the selected local snapshot kind, optionally refreshed first.
+
+        :param kind: Snapshot kind such as ``units``, ``groups`` or ``airbases``.
+        :param target_id: Target object id.
+        :param coalition: Optional coalition filter.
+        :param alive: Optional alive/dead filter.
+        :param active: Optional active/inactive filter.
+        :param contains: Optional substring filter.
+        :param limit: Maximum result count.
+        :param refresh: Request the snapshot kind before ranking.
+        :param timeout: Maximum ACK wait time in seconds for DCS commands.
+        :returns: Ranked nearest results.
+        :raises MooseBridgeCommandError: If DCS rejects a command.
+        """
+
+        normalized_kind = kind.removeprefix("snapshot.").lower().strip()
+        if normalized_kind not in SNAPSHOT_KINDS:
+            raise ValueError(f"Unsupported snapshot kind: {kind!r}. Expected one of {sorted(SNAPSHOT_KINDS)}")
+
+        target = await self.coords(target_id, format="xyz", timeout=timeout)
+        if target.x is None or target.z is None:
+            raise ValueError(f"Target has no x/z coordinates: {target_id}")
+        if refresh:
+            await self.snapshot_kind(normalized_kind)
+
+        values = getattr(self.state, normalized_kind)
+        items = list(values.values()) if isinstance(values, dict) else []
+        ranked: list[NearestResult] = []
+        for item in items:
+            object_id = str(item.get("object_id") or "")
+            if object_id == target_id:
+                continue
+            if not item_matches(item, coalition=coalition, alive=alive, active=active, contains=contains):
+                continue
+            point = point_from_item(item)
+            if point is None:
+                continue
+            distance_m = math.hypot(point[0] - target.x, point[1] - target.z)
+            ranked.append(NearestResult(object_id=object_id, distance_m=distance_m, distance_nm=distance_m / 1852, item=item))
+
+        ranked.sort(key=lambda value: value.distance_m)
+        return ranked[: max(0, limit)]
