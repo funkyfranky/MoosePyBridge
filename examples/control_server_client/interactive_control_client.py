@@ -20,13 +20,21 @@ import argparse
 import asyncio
 from dataclasses import dataclass, replace
 import json
-import math
 import shlex
 from typing import Any
 
 from moosebridge import evaluate_auftrag_request, recommend_auftrag
 from moosebridge.control import DEFAULT_CONTROL_PORT, STATE_KINDS, MooseBridgeControlClient
 from moosebridge.intents import auftrag_command_params_from_recommendation, command_action_for_auftrag_recommendation
+from moosebridge.protocol import BridgeCommand
+from moosebridge.sdk import (
+    MooseBridgeClient,
+    NearestResult,
+    normalize_draw_zone_line_type,
+    validate_coordinate_format,
+    validate_draw_zone_coalition,
+    validate_draw_zone_color,
+)
 
 
 HELP_TEXT = """
@@ -81,24 +89,6 @@ Examples:
 
 OUTPUT_MODES = {"summary", "list", "raw"}
 SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
-DRAWZONE_COLORS = {"red", "green", "blue", "yellow", "orange", "white", "black", "grey", "gray"}
-DRAWZONE_COALITIONS = {"all", "neutral", "red", "blue", "-1", "0", "1", "2"}
-COORDINATE_FORMATS = {"xyz", "ll", "latlon", "latlong", "mgrs", "all"}
-DRAWZONE_LINE_TYPES = {
-    "none": 0,
-    "solid": 1,
-    "dashed": 2,
-    "dotted": 3,
-    "dotdash": 4,
-    "dot-dash": 4,
-    "dot_dash": 4,
-    "longdash": 5,
-    "long-dash": 5,
-    "long_dash": 5,
-    "twodash": 6,
-    "two-dash": 6,
-    "two_dash": 6,
-}
 
 
 @dataclass(slots=True, frozen=True)
@@ -110,6 +100,61 @@ class StateFilter:
     alive: bool | None = None
     active: bool | None = None
     limit: int = 25
+
+
+class ControlSdkAdapter:
+    """Adapt the local control client to the SDK server-facing interface."""
+
+    def __init__(self, client: MooseBridgeControlClient, timeout: float) -> None:
+        self.client = client
+        self.timeout = timeout
+
+    @property
+    def state(self) -> Any:
+        """Return the shared control-client state mirror."""
+
+        return self.client.state
+
+    async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
+        """Forward one SDK command through the control API."""
+
+        return await self.client.send_dcs_command(command.action, command.params, timeout=timeout)
+
+    async def _snapshot(self, kind: str) -> dict[str, Any]:
+        action = f"snapshot.{kind}"
+        result = await self.client.request("control.snapshots", params={"actions": [action]}, timeout=self.timeout)
+        acks = result.get("acks") if isinstance(result.get("acks"), list) else []
+        return acks[0] if acks else {"ok": True, "result": {"kind": kind, "count": 0}}
+
+    async def snapshot_groups(self) -> dict[str, Any]:
+        return await self._snapshot("groups")
+
+    async def snapshot_units(self) -> dict[str, Any]:
+        return await self._snapshot("units")
+
+    async def snapshot_statics(self) -> dict[str, Any]:
+        return await self._snapshot("statics")
+
+    async def snapshot_airbases(self) -> dict[str, Any]:
+        return await self._snapshot("airbases")
+
+    async def snapshot_zones(self) -> dict[str, Any]:
+        return await self._snapshot("zones")
+
+    async def snapshot_opszones(self) -> dict[str, Any]:
+        return await self._snapshot("opszones")
+
+    async def snapshot_opsgroups(self) -> dict[str, Any]:
+        return await self._snapshot("opsgroups")
+
+    async def snapshot_auftraege(self) -> dict[str, Any]:
+        return await self._snapshot("auftraege")
+
+    async def snapshot_cohorts(self) -> dict[str, Any]:
+        return await self._snapshot("cohorts")
+
+    async def snapshot_legions(self) -> dict[str, Any]:
+        return await self._snapshot("legions")
 
 
 def print_json(value: Any) -> None:
@@ -417,16 +462,7 @@ def parse_message_argument(argument: str) -> tuple[str, str]:
 def normalize_drawzone_line_type(value: str) -> int:
     """Normalize a MOOSE DrawZone line type name or number."""
 
-    key = value.strip().lower()
-    if key in DRAWZONE_LINE_TYPES:
-        return DRAWZONE_LINE_TYPES[key]
-    try:
-        line_type = int(key)
-    except ValueError as exc:
-        raise ValueError(f"Invalid line type: {value}") from exc
-    if line_type < 0 or line_type > 6:
-        raise ValueError(f"Invalid line type: {value}")
-    return line_type
+    return normalize_draw_zone_line_type(value) or 1
 
 
 def parse_alpha(value: str, name: str) -> float:
@@ -450,18 +486,12 @@ def parse_drawzone_options(parts: list[str]) -> dict[str, Any]:
             index += 1
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
-            coalition = parts[index].lower()
-            if coalition not in DRAWZONE_COALITIONS:
-                raise ValueError(f"Invalid coalition: {parts[index]}")
-            params["coalition"] = coalition
+            params["coalition"] = validate_draw_zone_coalition(parts[index])
         elif key in {"--color", "-color"}:
             index += 1
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
-            color = parts[index].lower()
-            if color not in DRAWZONE_COLORS:
-                raise ValueError(f"Invalid color: {parts[index]}")
-            params["color"] = color
+            params["color"] = validate_draw_zone_color(parts[index])
         elif key in {"--alpha", "-alpha"}:
             index += 1
             if index >= len(parts):
@@ -471,10 +501,7 @@ def parse_drawzone_options(parts: list[str]) -> dict[str, Any]:
             index += 1
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
-            color = parts[index].lower()
-            if color not in DRAWZONE_COLORS:
-                raise ValueError(f"Invalid fill color: {parts[index]}")
-            params["fill_color"] = color
+            params["fill_color"] = validate_draw_zone_color(parts[index])
         elif key in {"--fill-alpha", "--fill_alpha", "-fill-alpha", "-fill_alpha"}:
             index += 1
             if index >= len(parts):
@@ -552,9 +579,7 @@ def parse_coords_argument(argument: str) -> tuple[str, dict[str, Any]]:
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             coordinate_format = parts[index].lower()
-            if coordinate_format not in COORDINATE_FORMATS:
-                raise ValueError(f"Invalid coordinate format: {parts[index]}")
-            params["format"] = coordinate_format
+            params["format"] = validate_coordinate_format(coordinate_format)
         else:
             raise ValueError(f"Unknown coords option: {option}")
         index += 1
@@ -985,41 +1010,12 @@ def state_items(client: MooseBridgeControlClient, kind: str, state_filter: State
     return [item for item in items if item_matches_filter(item, state_filter)]
 
 
-def item_point(item: dict[str, Any]) -> tuple[float, float] | None:
-    """Return an item's x/z point if present."""
+def print_nearest(kind: str, target_id: str, results: list[NearestResult]) -> None:
+    """Print nearest SDK results."""
 
-    try:
-        x = float(item["x"])
-        z = float(item["z"])
-    except (KeyError, TypeError, ValueError):
-        return None
-    return x, z
-
-
-def distance_between_xz(a: tuple[float, float], b: tuple[float, float]) -> float:
-    """Return flat DCS world distance in meters between two x/z points."""
-
-    return math.hypot(b[0] - a[0], b[1] - a[1])
-
-
-def print_nearest(kind: str, target_id: str, target_point: tuple[float, float], items: list[dict[str, Any]], state_filter: StateFilter) -> None:
-    """Print nearest state items to a target point."""
-
-    ranked: list[tuple[float, dict[str, Any]]] = []
-    for item in items:
-        if object_label(item) == target_id:
-            continue
-        point = item_point(item)
-        if point is None:
-            continue
-        ranked.append((distance_between_xz(target_point, point), item))
-
-    ranked.sort(key=lambda value: value[0])
-    print(f"\nnearest {kind} to {target_id}: {len(ranked)}")
-    for distance_m, item in ranked[: state_filter.limit]:
-        print(f"  {format_distance_m(distance_m)}m {format_distance_nm(distance_m / 1852)}NM  {compact_item(kind, item)}")
-    if len(ranked) > state_filter.limit:
-        print(f"  ... {len(ranked) - state_filter.limit} more")
+    print(f"\nnearest {kind} to {target_id}: {len(results)}")
+    for result in results:
+        print(f"  {format_distance_m(result.distance_m)}m {format_distance_nm(result.distance_nm)}NM  {compact_item(kind, result.item)}")
 
 
 def print_state_summary(client: MooseBridgeControlClient, kinds: tuple[str, ...] | None = None, state_filter: StateFilter | None = None) -> None:
@@ -1077,6 +1073,7 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
     command, _, argument = line.partition(" ")
     command = command.lower().strip()
     argument = argument.strip()
+    sdk = MooseBridgeClient(ControlSdkAdapter(client, timeout))  # type: ignore[arg-type]
 
     if command in {"quit", "exit"}:
         return False
@@ -1156,14 +1153,14 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         return True
     if command == "coords":
         try:
-            _, params = parse_coords_argument(argument)
+            object_id, params = parse_coords_argument(argument)
         except ValueError as exc:
             print("Usage: coords <object_id> [--format xyz|ll|mgrs|all]")
             if str(exc):
                 print(f"ERROR: {exc}")
             return True
-        ack = await client.send_dcs_command("object.coords", params, timeout=timeout)
-        print_command_feedback(ack, "object.coords", debug)
+        result = await sdk.coords(object_id, format=str(params.get("format") or "xyz"), timeout=timeout)
+        print_command_feedback(result.ack or {}, "object.coords", debug)
         return True
     if command == "distance":
         try:
@@ -1173,12 +1170,8 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
             if str(exc):
                 print(f"ERROR: {exc}")
             return True
-        ack = await client.send_dcs_command(
-            "object.distance",
-            {"object_id_a": object_id_a, "object_id_b": object_id_b},
-            timeout=timeout,
-        )
-        print_command_feedback(ack, "object.distance", debug)
+        result = await sdk.distance(object_id_a, object_id_b, timeout=timeout)
+        print_command_feedback(result.ack or {}, "object.distance", debug)
         return True
     if command == "nearest":
         try:
@@ -1188,17 +1181,17 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
             if str(exc):
                 print(f"ERROR: {exc}")
             return True
-        target_ack = await client.send_dcs_command("object.coords", {"object_id": target_id, "format": "xyz"}, timeout=timeout)
-        if not target_ack.get("ok", False):
-            print_command_feedback(target_ack, "object.coords", debug)
-            return True
-        target_result = target_ack.get("result") if isinstance(target_ack.get("result"), dict) else {}
-        target_point = item_point(target_result)
-        if target_point is None:
-            print(f"ERROR nearest: target has no x/z coordinates: {target_id}")
-            return True
-        await client.request("control.snapshots", params={"actions": [f"snapshot.{kind}"]}, timeout=timeout)
-        print_nearest(kind, target_id, target_point, state_items(client, kind, state_filter=state_filter), state_filter)
+        results = await sdk.nearest(
+            kind,
+            target_id,
+            coalition=state_filter.coalition,
+            alive=state_filter.alive,
+            active=state_filter.active,
+            contains=state_filter.contains,
+            limit=state_filter.limit,
+            timeout=timeout,
+        )
+        print_nearest(kind, target_id, results)
         return True
     if command == "mark":
         object_id, rest = split_object_argument(argument, known_object_ids(client))
@@ -1217,8 +1210,16 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
             if str(exc):
                 print(f"ERROR: {exc}")
             return True
-        params["object_id"] = object_id
-        ack = await client.send_dcs_command("zone.draw", params, timeout=timeout)
+        ack = await sdk.draw_zone(
+            object_id,
+            coalition=params.get("coalition", "all"),
+            color=params.get("color"),
+            alpha=params.get("alpha"),
+            fill_color=params.get("fill_color"),
+            fill_alpha=params.get("fill_alpha"),
+            line_type=params.get("line_type"),
+            timeout=timeout,
+        )
         print_command_feedback(ack, "zone.draw", debug)
         return True
     if command == "markpoint":

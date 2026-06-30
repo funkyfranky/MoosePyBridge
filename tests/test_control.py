@@ -31,6 +31,7 @@ from examples.control_server_client.interactive_control_client import (
 )
 from moosebridge.recommendations import AuftragRecommendation
 from moosebridge.protocol import BridgeCommand
+from moosebridge.sdk import NearestResult
 from moosebridge.state import MooseBridgeState
 
 
@@ -395,16 +396,25 @@ def test_interactive_nearest_argument_parses_target_and_filters() -> None:
     assert state_filter.limit == 3
 
 
-def test_interactive_print_nearest_sorts_by_distance() -> None:
-    _, _, state_filter = parse_nearest_argument("units ZONE:Target --limit 2")
-    items = [
-        {"object_id": "UNIT:Far", "dcs_name": "Far", "object_type": "UNIT", "x": 1000, "z": 0, "alive": True},
-        {"object_id": "UNIT:Near", "dcs_name": "Near", "object_type": "UNIT", "x": 100, "z": 0, "alive": True},
+def test_interactive_print_nearest_displays_sdk_results() -> None:
+    results = [
+        NearestResult(
+            object_id="UNIT:Near",
+            distance_m=100,
+            distance_nm=100 / 1852,
+            item={"object_id": "UNIT:Near", "dcs_name": "Near", "object_type": "UNIT", "x": 100, "z": 0, "alive": True},
+        ),
+        NearestResult(
+            object_id="UNIT:Far",
+            distance_m=1000,
+            distance_nm=1000 / 1852,
+            item={"object_id": "UNIT:Far", "dcs_name": "Far", "object_type": "UNIT", "x": 1000, "z": 0, "alive": True},
+        ),
     ]
     output = io.StringIO()
 
     with redirect_stdout(output):
-        print_nearest("units", "ZONE:Target", (0, 0), items, state_filter)
+        print_nearest("units", "ZONE:Target", results)
 
     text = output.getvalue()
     assert text.index("UNIT:Near") < text.index("UNIT:Far")
