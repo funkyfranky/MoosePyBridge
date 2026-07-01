@@ -76,3 +76,20 @@ def test_pending_command_fails_when_dcs_disconnects() -> None:
             await server.stop()
 
     asyncio.run(scenario())
+
+
+def test_wait_for_event_resolves_from_dcs_event() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        waiter = asyncio.create_task(server.wait_for_event("auftrag.evaluated", filters={"auftrag_id": "AUFTRAG:1"}, timeout=1.0))
+        await asyncio.sleep(0)
+
+        await server._handle_line(
+            '{"type":"event","event":"auftrag.evaluated","payload":{"auftrag_id":"AUFTRAG:1","summary":{"success":true}}}'
+        )
+
+        event = await waiter
+        assert event["event"] == "auftrag.evaluated"
+        assert event["payload"]["auftrag_id"] == "AUFTRAG:1"
+
+    asyncio.run(scenario())

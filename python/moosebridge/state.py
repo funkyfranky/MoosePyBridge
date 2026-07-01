@@ -86,6 +86,7 @@ class MooseBridgeState:
             self.events.append(message)
             if len(self.events) > 10_000:
                 del self.events[:1_000]
+            self._apply_event(message)
             return
 
         if message_type == "snapshot":
@@ -286,6 +287,22 @@ class MooseBridgeState:
             items = payload.get("legions", [])
             self.legions = self._index_objects(items)
             self.legion_objects = self._index_typed_objects(items, Legion.from_payload)
+
+    def _apply_event(self, message: dict[str, Any]) -> None:
+        """Apply an incoming event to derived state indexes."""
+
+        payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+        event_name = str(message.get("event") or payload.get("event") or "")
+        if event_name != "auftrag.evaluated":
+            return
+
+        auftrag_payload = payload.get("auftrag") if isinstance(payload.get("auftrag"), dict) else {}
+        snapshot = dict(auftrag_payload)
+        snapshot.setdefault("object_id", payload.get("auftrag_id"))
+        snapshot.setdefault("type", payload.get("auftrag_type"))
+        snapshot.setdefault("status", payload.get("status"))
+        snapshot.setdefault("summary", payload.get("summary"))
+        self._record_auftrag_outcome(snapshot)
 
     def _record_auftrag_outcome(self, snapshot: dict[str, Any]) -> None:
         """Record an evaluated AUFTRAG outcome if a summary is present.

@@ -121,6 +121,92 @@ class NearestResult:
     item: dict[str, Any]
 
 
+class AuftragCommand:
+    """Python-side AUFTRAG description that can be sent through the bridge."""
+
+    mission_type = ""
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this AUFTRAG."""
+
+        return {}
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragBAI(AuftragCommand):
+    """Battlefield air interdiction AUFTRAG."""
+
+    target: str
+    altitude_ft: float | None = None
+    mission_type = "BAI"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this BAI AUFTRAG."""
+
+        return clean_params({"target": self.target, "altitude_ft": self.altitude_ft})
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragBOMBING(AuftragCommand):
+    """Bombing AUFTRAG against a coordinate or object target."""
+
+    target: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    altitude_ft: float | None = None
+    engage_weapon_type: int | None = None
+    divebomb: bool | None = None
+    mission_type = "BOMBING"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this BOMBING AUFTRAG."""
+
+        return clean_params(
+            {
+                "target": self.target,
+                "x": self.x,
+                "y": self.y,
+                "z": self.z,
+                "altitude_ft": self.altitude_ft,
+                "engage_weapon_type": self.engage_weapon_type,
+                "divebomb": self.divebomb,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragARTY(AuftragCommand):
+    """Artillery fire-at-point AUFTRAG."""
+
+    target: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    nshots: float | None = None
+    radius_m: float | None = None
+    mission_type = "ARTY"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this ARTY AUFTRAG."""
+
+        return clean_params(
+            {
+                "target": self.target,
+                "x": self.x,
+                "y": self.y,
+                "z": self.z,
+                "nshots": self.nshots,
+                "radius_m": self.radius_m,
+            }
+        )
+
+
+Auftrag_BAI = AuftragBAI
+Auftrag_BOMBING = AuftragBOMBING
+Auftrag_ARTY = AuftragARTY
+
+
 def _optional_float(value: Any) -> float | None:
     """Return a float or ``None`` for absent/non-numeric values."""
 
@@ -295,6 +381,29 @@ def build_recommended_auftrag_command_params(recommendation: Any) -> dict[str, A
     return auftrag_command_params_from_recommendation(recommendation)
 
 
+def auftrag_id_from_ack(ack: dict[str, Any]) -> str | None:
+    """Return the created AUFTRAG id from an ACK payload."""
+
+    result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+    value = result.get("auftrag_id")
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def auftrag_outcome_from_event(event: dict[str, Any]) -> AuftragOutcome:
+    """Build an AUFTRAG outcome from an ``auftrag.evaluated`` event."""
+
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    auftrag_payload = payload.get("auftrag") if isinstance(payload.get("auftrag"), dict) else {}
+    snapshot = dict(auftrag_payload)
+    snapshot.setdefault("object_id", payload.get("auftrag_id"))
+    snapshot.setdefault("type", payload.get("auftrag_type"))
+    snapshot.setdefault("status", payload.get("status"))
+    snapshot.setdefault("summary", payload.get("summary"))
+    return AuftragOutcome.from_snapshot(snapshot)
+
+
 def is_evaluated_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
     """Return whether an AUFTRAG snapshot contains MOOSE's summary table.
 
@@ -313,6 +422,7 @@ class MooseBridgeClient:
 
     def __init__(self, server: MooseBridgeServer) -> None:
         self.server = server
+        self._auftrag_ids_by_object: dict[int, str] = {}
 
     @property
     def state(self) -> MooseBridgeState:
@@ -497,6 +607,73 @@ class MooseBridgeClient:
         clean_params = {key: value for key, value in params.items() if value is not None}
         return require_ok(await self.server.send_command(BridgeCommand(action=action, params=clean_params), timeout=timeout))
 
+    async def add_auftrag(
+        self,
+        auftrag: AuftragCommand,
+        *,
+        legion: str | None = None,
+        opsgroup: str | None = None,
+        cohort: str | None = None,
+        selected_payload_uid: int | str | None = None,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Create an AUFTRAG in DCS and add it to a LEGION or OPSGROUP.
+
+        :param auftrag: Python-side AUFTRAG description, e.g. ``Auftrag_BAI``.
+        :param legion: Target LEGION object id.
+        :param opsgroup: Target OPSGROUP object id.
+        :param cohort: Optional COHORT object id for LEGION-based tasking.
+        :param selected_payload_uid: Optional selected payload UID.
+        :param timeout: Maximum ACK wait time in seconds.
+        :returns: Successful ACK payload.
+        :raises ValueError: If neither or both ``legion`` and ``opsgroup`` are set.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        if (legion is None) == (opsgroup is None):
+            raise ValueError("Specify exactly one of legion or opsgroup")
+
+        params = auftrag.to_params()
+        params.update(
+            clean_params(
+                {
+                    "legion_id": legion,
+                    "opsgroup_id": opsgroup,
+                    "cohort_id": cohort,
+                    "selected_payload_uid": selected_payload_uid,
+                }
+            )
+        )
+        ack = await self.apply_auftrag(auftrag.mission_type, params, timeout=timeout)
+        auftrag_id = auftrag_id_from_ack(ack)
+        if auftrag_id:
+            self._auftrag_ids_by_object[id(auftrag)] = auftrag_id
+        return ack
+
+    async def get_auftrag_summary(
+        self,
+        auftrag: AuftragCommand | str,
+        *,
+        timeout_s: float = 600.0,
+        interval_s: float = 5.0,
+    ) -> AuftragOutcome:
+        """Wait until an AUFTRAG evaluated event arrives and return its outcome.
+
+        ``auftrag`` can be the same Python AUFTRAG object previously passed to
+        :meth:`add_auftrag`, or a direct ``AUFTRAG:id`` string.
+
+        :param auftrag: Python AUFTRAG description or stable ``AUFTRAG:id``.
+        :param timeout_s: Maximum monitoring time in seconds.
+        :param interval_s: Backward-compatible no-op; event waiting does not poll.
+        :returns: Stable evaluated AUFTRAG outcome.
+        :raises ValueError: If the Python object was not created through this client.
+        """
+
+        auftrag_id = auftrag if isinstance(auftrag, str) else self._auftrag_ids_by_object.get(id(auftrag))
+        if not auftrag_id:
+            raise ValueError("No AUFTRAG id is known for this object. Call add_auftrag first or pass an AUFTRAG:id string.")
+        return await self.wait_for_auftrag_outcome(auftrag_id, timeout_s=timeout_s, interval_s=interval_s)
+
     async def apply_recommended_auftrag(self, recommendation: Any, timeout: float = 10.0) -> dict[str, Any]:
         """Apply an AUFTRAG recommendation produced by the advisory layer.
 
@@ -518,10 +695,11 @@ class MooseBridgeClient:
         timeout_s: float = 600.0,
         interval_s: float = 5.0,
     ) -> AuftragOutcome:
-        """Wait until an AUFTRAG has been evaluated and return its outcome.
+        """Wait until an AUFTRAG evaluated event arrives and return its outcome.
 
-        The method waits for MOOSE to create ``AUFTRAG.summary`` and uses
-        ``summary.success`` as the authoritative result.
+        The method waits for the Lua bridge's ``auftrag.evaluated`` event and
+        uses ``summary.success`` as the authoritative result. ``interval_s`` is
+        accepted for backward-compatible call sites but is not used.
 
         :param auftrag_id: Stable AUFTRAG object id from the apply ACK.
         :param timeout_s: Maximum monitoring time in seconds.
@@ -531,23 +709,16 @@ class MooseBridgeClient:
         :raises MooseBridgeAuftragTimeoutError: If no summary appears before timeout.
         """
 
-        deadline = asyncio.get_running_loop().time() + timeout_s
-        seen = False
-        last_snapshot: dict[str, Any] | None = None
-
-        while asyncio.get_running_loop().time() < deadline:
-            await self.request_snapshots(("snapshot.auftraege", "snapshot.legions", "snapshot.opsgroups"))
-            snapshot = self.state.auftraege.get(auftrag_id)
-            if snapshot is not None:
-                seen = True
-                last_snapshot = snapshot
-                if is_evaluated_auftrag_snapshot(snapshot):
-                    return AuftragOutcome.from_snapshot(snapshot)
-            await asyncio.sleep(interval_s)
-
-        if not seen:
-            raise MooseBridgeAuftragNotFoundError(f"{auftrag_id} was not visible before monitor timeout")
-        raise MooseBridgeAuftragTimeoutError(f"{auftrag_id} was not evaluated before timeout; last_snapshot={last_snapshot!r}")
+        try:
+            event = await self.server.wait_for_event("auftrag.evaluated", filters={"auftrag_id": auftrag_id}, timeout=timeout_s)
+        except TimeoutError as exc:
+            raise MooseBridgeAuftragTimeoutError(f"{auftrag_id} was not evaluated before timeout") from exc
+        try:
+            outcome = auftrag_outcome_from_event(event)
+        except ValueError as exc:
+            raise MooseBridgeAuftragNotFoundError(f"{auftrag_id} evaluated event did not contain a usable summary") from exc
+        self.state.apply_message(event)
+        return outcome
 
     async def message_coalition(self, coalition: str, text: str, duration: int = 10) -> dict[str, Any]:
         """Send a message to a coalition in DCS.

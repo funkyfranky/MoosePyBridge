@@ -229,6 +229,13 @@ class MooseBridgeControlServer:
             dcs_params = request.params.get("params") if isinstance(request.params.get("params"), dict) else {}
             ack = await self.bridge_server.send_command(BridgeCommand(action=dcs_action, params=dcs_params), timeout=request.timeout)
             return {"ack": ack, "state": state_payload(self.bridge_server.state)}
+        if action == "control.event.wait":
+            event_name = str(request.params.get("event") or "").strip()
+            if not event_name:
+                raise ValueError("control.event.wait requires params.event")
+            filters = request.params.get("filters") if isinstance(request.params.get("filters"), dict) else {}
+            event = await self.bridge_server.wait_for_event(event_name, filters=filters, timeout=request.timeout)
+            return {"event": event}
 
         ack = await self.bridge_server.send_command(BridgeCommand(action=action, params=request.params), timeout=request.timeout)
         return {"ack": ack, "state": state_payload(self.bridge_server.state)}
@@ -344,3 +351,13 @@ class MooseBridgeControlClient:
         if not ack.get("ok", False):
             raise RuntimeError(str(ack.get("error") or ack))
         return ack
+
+    async def wait_for_event(self, event_name: str, filters: dict[str, Any] | None = None, timeout: float = 600.0) -> dict[str, Any]:
+        """Wait for one daemon event matching name and filters."""
+
+        result = await self.request("control.event.wait", params={"event": event_name, "filters": filters or {}}, timeout=timeout)
+        event = result.get("event") if isinstance(result.get("event"), dict) else {}
+        if not event:
+            raise RuntimeError("Control server returned no event")
+        self.state.apply_message(event)
+        return event

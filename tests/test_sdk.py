@@ -4,7 +4,7 @@ import asyncio
 from typing import Any
 
 from moosebridge.protocol import BridgeCommand
-from moosebridge.sdk import CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
+from moosebridge.sdk import Auftrag_ARTY, Auftrag_BAI, CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
 from moosebridge.state import MooseBridgeState
 
 
@@ -55,7 +55,55 @@ class FakeSdkServer:
                 }
             )
             return {"ok": True, "result": {"kind": "units", "count": 3}}
+        if command.action == "snapshot.auftraege":
+            self.state.apply_message(
+                {
+                    "type": "snapshot",
+                    "kind": "auftraege",
+                    "payload": {
+                        "auftraege": [
+                            {
+                                "object_id": "AUFTRAG:1",
+                                "type": "BAI",
+                                "status": "Done",
+                                "summary_available": True,
+                                "summary": {
+                                    "success": True,
+                                    "damage": 100,
+                                    "Ntargets0": 1,
+                                    "Ntargets": 0,
+                                    "Ndestroyed": 1,
+                                },
+                            }
+                        ]
+                    },
+                }
+            )
+            return {"ok": True, "result": {"kind": "auftraege", "count": 1}}
+        if command.action.startswith("auftrag.create_"):
+            return {"ok": True, "result": {"action": command.action, "params": command.params, "auftrag_id": "AUFTRAG:1"}}
         return {"ok": True, "result": {"action": command.action, "params": command.params}}
+
+    async def wait_for_event(self, event_name: str, filters: dict[str, Any] | None = None, timeout: float = 600.0) -> dict[str, Any]:
+        event = {
+            "type": "event",
+            "event": event_name,
+            "payload": {
+                "event": event_name,
+                "auftrag_id": (filters or {}).get("auftrag_id", "AUFTRAG:1"),
+                "auftrag_type": "BAI",
+                "status": "Done",
+                "summary": {
+                    "success": True,
+                    "damage": 100,
+                    "Ntargets0": 1,
+                    "Ntargets": 0,
+                    "Ndestroyed": 1,
+                },
+            },
+        }
+        self.state.apply_message(event)
+        return event
 
     async def snapshot_groups(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.groups", params={}))
@@ -157,5 +205,104 @@ def test_sdk_nearest_refreshes_snapshot_and_filters_results() -> None:
         assert all(isinstance(result, NearestResult) for result in results)
         assert [result.object_id for result in results] == ["UNIT:Near", "UNIT:Far"]
         assert [command.action for command, _ in server.commands] == ["object.coords", "snapshot.units"]
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_auftrag_to_legion_uses_moose_like_object() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_bai"
+        assert command.params == {
+            "target": "UNIT:Ground-1-1",
+            "altitude_ft": 15000,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_auftrag_to_opsgroup_uses_opsgroup_id() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_ARTY(target="UNIT:Ground-1-1", nshots=6)
+
+        await client.add_auftrag(auftrag=auftrag, opsgroup="OPSGROUP:Group-1")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_arty"
+        assert command.params == {
+            "target": "UNIT:Ground-1-1",
+            "nshots": 6,
+            "opsgroup_id": "OPSGROUP:Group-1",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_auftrag_requires_one_assignment_target() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_BAI(target="GROUP:Ground-1")
+
+        try:
+            await client.add_auftrag(auftrag=auftrag)
+        except ValueError as exc:
+            assert "exactly one" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError")
+
+    asyncio.run(scenario())
+
+
+def test_sdk_get_auftrag_summary_waits_for_object_created_by_add() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+        summary = await client.get_auftrag_summary(auftrag, timeout_s=1.0, interval_s=0.01)
+
+        assert summary.auftrag_id == "AUFTRAG:1"
+        assert summary.success is True
+        assert summary.n_destroyed == 1
+        assert [command.action for command, _ in server.commands] == ["auftrag.create_bai"]
+
+    asyncio.run(scenario())
+
+
+def test_sdk_get_auftrag_summary_accepts_direct_auftrag_id() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        summary = await client.get_auftrag_summary("AUFTRAG:1", timeout_s=1.0, interval_s=0.01)
+
+        assert summary.success is True
+
+    asyncio.run(scenario())
+
+
+def test_sdk_get_auftrag_summary_requires_known_object() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_BAI(target="GROUP:Ground-1")
+
+        try:
+            await client.get_auftrag_summary(auftrag, timeout_s=0.01, interval_s=0.01)
+        except ValueError as exc:
+            assert "add_auftrag" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError")
 
     asyncio.run(scenario())

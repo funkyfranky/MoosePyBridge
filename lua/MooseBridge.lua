@@ -139,6 +139,14 @@ function MOOSE_BRIDGE:SendSnapshot(kind, payload)
   self:Send(msg)
 end
 
+function MOOSE_BRIDGE:SendEvent(event_name, payload)
+  local msg = self:_BaseMessage("event")
+  msg.event = event_name
+  msg.payload = payload or {}
+  if type(msg.payload) == "table" then msg.payload.event = event_name end
+  self:Send(msg)
+end
+
 function MOOSE_BRIDGE:SendAck(command, ok, result, error_message)
   local msg = self:_BaseMessage("ack")
   msg.correlation_id = command and command.id or nil

@@ -123,6 +123,27 @@ function MOOSE_BRIDGE:_ResolveLegionById(legion_id)
   return nil, "LEGION not found: " .. name
 end
 
+function MOOSE_BRIDGE:_ResolveOpsGroupById(opsgroup_id)
+  local prefix, name = bridge_split_object_id(opsgroup_id)
+  if prefix ~= "OPSGROUP" or not name then return nil, "Invalid OPSGROUP id " .. bridge_safe_tostring(opsgroup_id) end
+
+  if type(self.RegisteredOpsGroups) == "table" then
+    for key, opsgroup in pairs(self.RegisteredOpsGroups) do
+      local opsgroup_name = self:_OpsName(opsgroup, type(key) == "string" and key or nil)
+      if opsgroup_name == name then return opsgroup, nil end
+    end
+  end
+
+  if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
+    for key, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do
+      local opsgroup_name = self:_OpsName(opsgroup, type(key) == "string" and key or nil)
+      if opsgroup_name == name then return opsgroup, nil end
+    end
+  end
+
+  return nil, "OPSGROUP not found: " .. name
+end
+
 function MOOSE_BRIDGE:_ResolveAuftragTargetById(target_id)
   local prefix, name = bridge_split_object_id(target_id)
   if not prefix or not name then return nil, "Invalid target id " .. bridge_safe_tostring(target_id) end
@@ -257,6 +278,7 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   local inputs = {
     params=p,
     legion_id=bridge_optional_string_param(p.legion_id) or bridge_optional_string_param(legacy_params.legion_id),
+    opsgroup_id=bridge_optional_string_param(p.opsgroup_id) or bridge_optional_string_param(legacy_params.opsgroup_id),
     cohort_id=bridge_optional_string_param(p.cohort_id) or bridge_optional_string_param(legacy_params.cohort_id),
     target_id=bridge_optional_string_param(p.target) or bridge_optional_string_param(legacy_params.target),
     x=p.x or legacy_params.x,
@@ -271,11 +293,20 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   }
   if inputs.divebomb == nil then inputs.divebomb = legacy_params.divebomb end
 
-  if not inputs.legion_id then error("Missing legion_id; " .. bridge_param_debug(cmd, p)) end
+  if inputs.legion_id and inputs.opsgroup_id then error("Specify only one of legion_id or opsgroup_id; " .. bridge_param_debug(cmd, p)) end
+  if not inputs.legion_id and not inputs.opsgroup_id then error("Missing legion_id or opsgroup_id; " .. bridge_param_debug(cmd, p)) end
 
-  local legion, legion_err = self:_ResolveLegionById(inputs.legion_id)
-  if not legion then error(legion_err) end
-  inputs.legion = legion
+  if inputs.legion_id then
+    local legion, legion_err = self:_ResolveLegionById(inputs.legion_id)
+    if not legion then error(legion_err) end
+    inputs.legion = legion
+  end
+
+  if inputs.opsgroup_id then
+    local opsgroup, opsgroup_err = self:_ResolveOpsGroupById(inputs.opsgroup_id)
+    if not opsgroup then error(opsgroup_err) end
+    inputs.opsgroup = opsgroup
+  end
 
   return inputs
 end
@@ -295,16 +326,73 @@ end
 
 function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
   if not auftrag then error("AUFTRAG constructor returned nil") end
+  self:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
   local add_ok, add_result = pcall(function() return inputs.legion:AddMission(auftrag) end)
   if not add_ok then error("LEGION:AddMission failed: " .. bridge_safe_tostring(add_result)) end
   self:_TrackAuftragReference(auftrag)
   return auftrag
 end
 
+function MOOSE_BRIDGE:_AddAuftragToOpsGroup(auftrag, inputs)
+  if not auftrag then error("AUFTRAG constructor returned nil") end
+  if type(inputs.opsgroup.AddMission) ~= "function" then error("OPSGROUP:AddMission is not available") end
+  self:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
+  local add_ok, add_result = pcall(function() return inputs.opsgroup:AddMission(auftrag) end)
+  if not add_ok then error("OPSGROUP:AddMission failed: " .. bridge_safe_tostring(add_result)) end
+  self:_TrackAuftragReference(auftrag)
+  return auftrag
+end
+
+function MOOSE_BRIDGE:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
+  if type(auftrag) ~= "table" then return end
+  if auftrag.MooseBridgeEvaluatedEventRegistered then return end
+
+  local bridge = self
+  local previous_on_after_evaluated = auftrag.OnAfterEvaluated
+  auftrag.MooseBridgeEvaluatedEventRegistered = true
+
+  function auftrag:OnAfterEvaluated(From, Event, To, Summary)
+    if type(previous_on_after_evaluated) == "function" then
+      pcall(function() previous_on_after_evaluated(self, From, Event, To, Summary) end)
+    end
+
+    local summary = bridge_auftrag_summary(Summary)
+    local object_id = bridge:_AuftragObjectId(self)
+    bridge:SendEvent("auftrag.evaluated", {
+      auftrag_id=object_id,
+      auftragsnummer=bridge:_AuftragNumber(self),
+      auftrag_type=bridge:_SafeCall(self, "GetType") or self.type,
+      status=bridge:_SafeCall(self, "GetState") or bridge:_SafeCall(self, "GetStatus"),
+      from=From,
+      event=Event,
+      to=To,
+      legion_id=inputs and inputs.legion_id or nil,
+      opsgroup_id=inputs and inputs.opsgroup_id or nil,
+      cohort_id=inputs and inputs.cohort_id or nil,
+      target=inputs and inputs.target_id or nil,
+      summary=summary,
+      auftrag={
+        object_id=object_id,
+        auftragsnummer=bridge:_AuftragNumber(self),
+        type=bridge:_SafeCall(self, "GetType") or self.type,
+        status=bridge:_SafeCall(self, "GetState") or bridge:_SafeCall(self, "GetStatus"),
+        summary_available=summary ~= nil,
+        summary=summary,
+      },
+    })
+  end
+end
+
+function MOOSE_BRIDGE:_AddAuftragToTarget(auftrag, inputs)
+  if inputs.opsgroup then return self:_AddAuftragToOpsGroup(auftrag, inputs) end
+  return self:_AddAuftragToLegion(auftrag, inputs)
+end
+
 function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
   return {
     action=action,
     legion_id=inputs.legion_id,
+    opsgroup_id=inputs.opsgroup_id,
     cohort_id=inputs.cohort_id,
     target=inputs.target_id,
     x=inputs.x,
@@ -338,7 +426,7 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
       auftrag = AUFTRAG:NewBAI(target)
     end
 
-    self:_AddAuftragToLegion(auftrag, inputs)
+    self:_AddAuftragToTarget(auftrag, inputs)
     return self:_BuildAuftragCommandResult("auftrag.create_bai", auftrag, inputs)
   end)
 
@@ -355,7 +443,7 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
     local auftrag = AUFTRAG:NewBOMBING(target, altitude_ft, engage_weapon_type, divebomb)
 
-    self:_AddAuftragToLegion(auftrag, inputs)
+    self:_AddAuftragToTarget(auftrag, inputs)
     return self:_BuildAuftragCommandResult("auftrag.create_bombing", auftrag, inputs)
   end)
 
@@ -370,7 +458,7 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     local radius_m = inputs.radius_m and tonumber(inputs.radius_m) or nil
     local auftrag = AUFTRAG:NewARTY(target, nshots, radius_m)
 
-    self:_AddAuftragToLegion(auftrag, inputs)
+    self:_AddAuftragToTarget(auftrag, inputs)
     return self:_BuildAuftragCommandResult("auftrag.create_arty", auftrag, inputs)
   end)
 end

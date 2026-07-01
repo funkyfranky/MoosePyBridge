@@ -217,6 +217,34 @@ await bridge.snapshot_kind("units")
 nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True)
 ```
 
+MOOSE-like AUFTRAG helper objects:
+
+```python
+from moosebridge import Auftrag_ARTY, Auftrag_BAI
+
+auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
+ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
+summary = await bridge.get_auftrag_summary(auftrag_bai)
+if summary.success is True:
+    print("BAI succeeded")
+
+auftrag_arty = Auftrag_ARTY(target="UNIT:Ground-1-1", nshots=6)
+ack = await bridge.add_auftrag(auftrag=auftrag_arty, opsgroup="OPSGROUP:Group-1")
+```
+
+`get_auftrag_summary` waits for the MOOSE FSM `OnAfterEvaluated` event sent by
+the Lua bridge. It does not poll AUFTRAG snapshots.
+
+Example script for SDK experimentation:
+
+```bash
+python examples/sdk/monitor_group_distance.py
+```
+
+The script is a pure client example. It assumes the MoosePyBridge daemon/control
+server is already running and DCS is already connected to that daemon. Change
+the group ids and timing options directly at the top of the script.
+
 ## Protocol example
 
 Python command:

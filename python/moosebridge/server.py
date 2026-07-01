@@ -17,6 +17,35 @@ DEFAULT_PORT = 51000
 DEFAULT_READER_LIMIT = 16 * 1024 * 1024
 
 
+def event_name(message: dict[str, Any]) -> str:
+    """Return the semantic event name from an event message."""
+
+    payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+    return str(message.get("event") or payload.get("event") or "")
+
+
+def event_value(message: dict[str, Any], key: str) -> Any:
+    """Return an event filter value from top-level or payload fields."""
+
+    if key in message:
+        return message.get(key)
+    payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+    return payload.get(key)
+
+
+def event_matches(message: dict[str, Any], expected_event: str, filters: dict[str, Any] | None = None) -> bool:
+    """Return whether a DCS event message matches name and filters."""
+
+    if message.get("type") != "event":
+        return False
+    if event_name(message) != expected_event:
+        return False
+    for key, expected_value in (filters or {}).items():
+        if event_value(message, key) != expected_value:
+            return False
+    return True
+
+
 class MooseBridgeServer:
     """Single-DCS, multi-client bridge server.
 
@@ -42,6 +71,8 @@ class MooseBridgeServer:
         self._writer: asyncio.StreamWriter | None = None
         self._sequence = 0
         self._pending: dict[str, PendingCommand] = {}
+        self._event_history: list[dict[str, Any]] = []
+        self._event_waiters: list[tuple[str, dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
         self._raw_log_file = None
 
     def _fail_pending(self, exc: BaseException) -> None:
@@ -151,6 +182,42 @@ class MooseBridgeServer:
 
         if message.get("type") == "ack":
             self._resolve_ack(message)
+        elif message.get("type") == "event":
+            self._publish_event(message)
+
+    def _publish_event(self, message: dict[str, Any]) -> None:
+        """Store and publish one DCS event message."""
+
+        self._event_history.append(message)
+        if len(self._event_history) > 1_000:
+            del self._event_history[:100]
+
+        remaining: list[tuple[str, dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
+        for event_name, filters, future in self._event_waiters:
+            if future.done():
+                continue
+            if event_matches(message, event_name, filters):
+                future.set_result(message)
+            else:
+                remaining.append((event_name, filters, future))
+        self._event_waiters = remaining
+
+    async def wait_for_event(self, event_name: str, filters: dict[str, Any] | None = None, timeout: float = 600.0) -> dict[str, Any]:
+        """Wait for a DCS event matching name and payload filters."""
+
+        event_filters = filters or {}
+        for event in reversed(self._event_history):
+            if event_matches(event, event_name, event_filters):
+                return event
+
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        waiter = (event_name, event_filters, future)
+        self._event_waiters.append(waiter)
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._event_waiters = [item for item in self._event_waiters if item is not waiter]
 
     def _resolve_ack(self, message: dict[str, Any]) -> None:
         """Resolve a pending command future from an ACK message.

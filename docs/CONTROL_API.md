@@ -219,8 +219,28 @@ The SDK currently exposes helpers for:
 - tactical annotations: `mark_object`, `smoke_object`, `draw_zone`
 - object utilities: `coords`, `distance`, `nearest`
 - messages: `message_all`, `message_coalition`
-- AUFTRAG: `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
-  `wait_for_auftrag_outcome`
+- AUFTRAG: `add_auftrag`, `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
+  `get_auftrag_summary`, `wait_for_auftrag_outcome`
+
+For code that should read closer to the MOOSE AUFTRAG API, use the lightweight
+Python AUFTRAG descriptions and let the SDK convert them to bridge commands:
+
+```python
+from moosebridge import Auftrag_ARTY, Auftrag_BAI
+
+auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
+ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
+summary = await bridge.get_auftrag_summary(auftrag_bai)
+if summary.success is True:
+    print("BAI succeeded")
+
+auftrag_arty = Auftrag_ARTY(target="UNIT:Ground-1-1", nshots=6)
+ack = await bridge.add_auftrag(auftrag=auftrag_arty, opsgroup="OPSGROUP:Group-1")
+```
+
+`get_auftrag_summary` and `wait_for_auftrag_outcome` wait for the Lua bridge's
+`auftrag.evaluated` event, which is emitted from MOOSE's `OnAfterEvaluated`
+FSM hook. They do not poll AUFTRAG snapshots.
 
 ## Interactive Shell
 

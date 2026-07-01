@@ -26,6 +26,11 @@ class ControlSdkAdapter:
 
         return await self.client.send_dcs_command(command.action, command.params, timeout=timeout)
 
+    async def wait_for_event(self, event_name: str, filters: dict[str, Any] | None = None, timeout: float = 600.0) -> dict[str, Any]:
+        """Wait for one daemon event through the control API."""
+
+        return await self.client.wait_for_event(event_name, filters=filters, timeout=timeout)
+
     async def _snapshot(self, kind: str) -> dict[str, Any]:
         action = f"snapshot.{kind}"
         result = await self.client.request("control.snapshots", params={"actions": [action]}, timeout=self.timeout)

@@ -33,6 +33,7 @@ from moosebridge.recommendations import AuftragRecommendation
 from moosebridge.protocol import BridgeCommand
 from moosebridge.sdk import NearestResult
 from moosebridge.state import MooseBridgeState
+from moosebridge.server import MooseBridgeServer
 
 
 class FakeBridgeServer:
@@ -633,6 +634,27 @@ def test_control_command_forwards_action_params_and_returns_ack() -> None:
             assert command.params == {"text": "hello"}
             assert timeout == 4.0
             assert ack["result"]["params"] == {"text": "hello"}
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_control_client_wait_for_event_roundtrip() -> None:
+    async def scenario() -> None:
+        bridge = MooseBridgeServer()
+        server = MooseBridgeControlServer(bridge, host="127.0.0.1", port=0)
+        await server.start()
+        client = MooseBridgeControlClient("127.0.0.1", _control_port(server))
+        try:
+            task = asyncio.create_task(client.wait_for_event("auftrag.evaluated", filters={"auftrag_id": "AUFTRAG:1"}, timeout=1.0))
+            await asyncio.sleep(0)
+            await bridge._handle_line(
+                '{"type":"event","event":"auftrag.evaluated","payload":{"auftrag_id":"AUFTRAG:1","summary":{"success":true}}}'
+            )
+            event = await task
+            assert event["event"] == "auftrag.evaluated"
+            assert client.state.events[-1]["payload"]["auftrag_id"] == "AUFTRAG:1"
         finally:
             await server.stop()
 
