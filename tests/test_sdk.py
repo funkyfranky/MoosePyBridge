@@ -12,6 +12,7 @@ class FakeSdkServer:
     def __init__(self) -> None:
         self.state = MooseBridgeState(connected=True)
         self.commands: list[tuple[BridgeCommand, float]] = []
+        self.events_to_emit: list[dict[str, Any]] = []
 
     async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
         self.commands.append((command, timeout))
@@ -84,12 +85,19 @@ class FakeSdkServer:
             return {"ok": True, "result": {"action": command.action, "params": command.params, "auftrag_id": "AUFTRAG:1"}}
         return {"ok": True, "result": {"action": command.action, "params": command.params}}
 
-    async def wait_for_event(self, event_name: str, filters: dict[str, Any] | None = None, timeout: float = 600.0) -> dict[str, Any]:
-        event = {
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        event = self.events_to_emit.pop(0) if self.events_to_emit else {
             "type": "event",
-            "event": event_name,
+            "id": "event-evaluated",
+            "event": "auftrag.evaluated",
             "payload": {
-                "event": event_name,
+                "event": "auftrag.evaluated",
                 "auftrag_id": (filters or {}).get("auftrag_id", "AUFTRAG:1"),
                 "auftrag_type": "BAI",
                 "status": "Done",
@@ -288,6 +296,46 @@ def test_sdk_get_auftrag_summary_accepts_direct_auftrag_id() -> None:
         summary = await client.get_auftrag_summary("AUFTRAG:1", timeout_s=1.0, interval_s=0.01)
 
         assert summary.success is True
+
+    asyncio.run(scenario())
+
+
+def test_sdk_get_auftrag_summary_calls_status_callback_for_intermediate_events() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        server.events_to_emit = [
+            {
+                "type": "event",
+                "id": "event-started",
+                "event": "auftrag.status",
+                "payload": {
+                    "event": "auftrag.status",
+                    "auftrag_id": "AUFTRAG:1",
+                    "status": "Started",
+                    "from": "Planned",
+                    "to": "Started",
+                },
+            },
+            {
+                "type": "event",
+                "id": "event-evaluated",
+                "event": "auftrag.evaluated",
+                "payload": {
+                    "event": "auftrag.evaluated",
+                    "auftrag_id": "AUFTRAG:1",
+                    "auftrag_type": "BAI",
+                    "status": "Done",
+                    "summary": {"success": True, "Ndestroyed": 1},
+                },
+            },
+        ]
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        seen: list[str] = []
+
+        summary = await client.get_auftrag_summary("AUFTRAG:1", timeout_s=1.0, on_status=lambda event: seen.append(str(event)))
+
+        assert summary.success is True
+        assert seen == ["AUFTRAG:1 auftrag.status status=Started Planned->Started"]
 
     asyncio.run(scenario())
 

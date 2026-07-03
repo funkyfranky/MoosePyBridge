@@ -326,9 +326,10 @@ end
 
 function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
   if not auftrag then error("AUFTRAG constructor returned nil") end
-  self:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
   local add_ok, add_result = pcall(function() return inputs.legion:AddMission(auftrag) end)
   if not add_ok then error("LEGION:AddMission failed: " .. bridge_safe_tostring(add_result)) end
+  self:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
+  self:_SendAuftragStatusEvent(auftrag, inputs, "Added")
   self:_TrackAuftragReference(auftrag)
   return auftrag
 end
@@ -336,11 +337,31 @@ end
 function MOOSE_BRIDGE:_AddAuftragToOpsGroup(auftrag, inputs)
   if not auftrag then error("AUFTRAG constructor returned nil") end
   if type(inputs.opsgroup.AddMission) ~= "function" then error("OPSGROUP:AddMission is not available") end
-  self:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
   local add_ok, add_result = pcall(function() return inputs.opsgroup:AddMission(auftrag) end)
   if not add_ok then error("OPSGROUP:AddMission failed: " .. bridge_safe_tostring(add_result)) end
+  self:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
+  self:_SendAuftragStatusEvent(auftrag, inputs, "Added")
   self:_TrackAuftragReference(auftrag)
   return auftrag
+end
+
+function MOOSE_BRIDGE:_SendAuftragStatusEvent(auftrag, inputs, fsm_event)
+  if type(auftrag) ~= "table" then return end
+  local object_id = self:_AuftragObjectId(auftrag)
+  local ok, err = pcall(function()
+    self:SendEvent("auftrag.status", {
+      auftrag_id=object_id,
+      auftragsnummer=self:_AuftragNumber(auftrag),
+      auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
+      status=self:_SafeCall(auftrag, "GetState") or self:_SafeCall(auftrag, "GetStatus"),
+      fsm_event=fsm_event,
+      legion_id=inputs and inputs.legion_id or nil,
+      opsgroup_id=inputs and inputs.opsgroup_id or nil,
+      cohort_id=inputs and inputs.cohort_id or nil,
+      target=inputs and inputs.target_id or nil,
+    })
+  end)
+  if not ok and env and env.error then env.error("MooseBridge AUFTRAG status event failed: " .. bridge_safe_tostring(err)) end
 end
 
 function MOOSE_BRIDGE:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
@@ -348,8 +369,8 @@ function MOOSE_BRIDGE:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
   if auftrag.MooseBridgeEvaluatedEventRegistered then return end
 
   local bridge = self
-  local previous_on_after_evaluated = auftrag.OnAfterEvaluated
   auftrag.MooseBridgeEvaluatedEventRegistered = true
+  local previous_on_after_evaluated = auftrag.OnAfterEvaluated
 
   function auftrag:OnAfterEvaluated(From, Event, To, Summary)
     if type(previous_on_after_evaluated) == "function" then
@@ -358,28 +379,32 @@ function MOOSE_BRIDGE:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
 
     local summary = bridge_auftrag_summary(Summary)
     local object_id = bridge:_AuftragObjectId(self)
-    bridge:SendEvent("auftrag.evaluated", {
-      auftrag_id=object_id,
-      auftragsnummer=bridge:_AuftragNumber(self),
-      auftrag_type=bridge:_SafeCall(self, "GetType") or self.type,
-      status=bridge:_SafeCall(self, "GetState") or bridge:_SafeCall(self, "GetStatus"),
-      from=From,
-      event=Event,
-      to=To,
-      legion_id=inputs and inputs.legion_id or nil,
-      opsgroup_id=inputs and inputs.opsgroup_id or nil,
-      cohort_id=inputs and inputs.cohort_id or nil,
-      target=inputs and inputs.target_id or nil,
-      summary=summary,
-      auftrag={
-        object_id=object_id,
+    local ok, err = pcall(function()
+      bridge:SendEvent("auftrag.evaluated", {
+        auftrag_id=object_id,
         auftragsnummer=bridge:_AuftragNumber(self),
-        type=bridge:_SafeCall(self, "GetType") or self.type,
-        status=bridge:_SafeCall(self, "GetState") or bridge:_SafeCall(self, "GetStatus"),
-        summary_available=summary ~= nil,
+        auftrag_type=bridge:_SafeCall(self, "GetType") or self.type,
+        status=bridge:_SafeCall(self, "GetState") or bridge:_SafeCall(self, "GetStatus") or To,
+        fsm_event="Evaluated",
+        from=From,
+        fsm_event_name=Event,
+        to=To,
+        legion_id=inputs and inputs.legion_id or nil,
+        opsgroup_id=inputs and inputs.opsgroup_id or nil,
+        cohort_id=inputs and inputs.cohort_id or nil,
+        target=inputs and inputs.target_id or nil,
         summary=summary,
-      },
-    })
+        auftrag={
+          object_id=object_id,
+          auftragsnummer=bridge:_AuftragNumber(self),
+          type=bridge:_SafeCall(self, "GetType") or self.type,
+          status=bridge:_SafeCall(self, "GetState") or bridge:_SafeCall(self, "GetStatus") or To,
+          summary_available=summary ~= nil,
+          summary=summary,
+        },
+      })
+    end)
+    if not ok and env and env.error then env.error("MooseBridge OnAfterEvaluated send failed: " .. bridge_safe_tostring(err)) end
   end
 end
 

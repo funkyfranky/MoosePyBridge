@@ -224,7 +224,8 @@ from moosebridge import Auftrag_ARTY, Auftrag_BAI
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
-summary = await bridge.get_auftrag_summary(auftrag_bai)
+
+summary = await bridge.get_auftrag_summary(auftrag_bai, on_status=print)
 if summary.success is True:
     print("BAI succeeded")
 
@@ -233,7 +234,9 @@ ack = await bridge.add_auftrag(auftrag=auftrag_arty, opsgroup="OPSGROUP:Group-1"
 ```
 
 `get_auftrag_summary` waits for the MOOSE FSM `OnAfterEvaluated` event sent by
-the Lua bridge. It does not poll AUFTRAG snapshots.
+the Lua bridge. It does not poll AUFTRAG snapshots. The optional `on_status`
+callback receives lightweight AUFTRAG status events while the final summary is
+not available yet.
 
 Example script for SDK experimentation:
 

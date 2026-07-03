@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import math
 from typing import Any
@@ -119,6 +120,42 @@ class NearestResult:
     distance_m: float
     distance_nm: float
     item: dict[str, Any]
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragEvent:
+    """One AUFTRAG FSM event emitted by the Lua bridge."""
+
+    event: str
+    auftrag_id: str
+    status: str | None = None
+    from_state: str | None = None
+    to_state: str | None = None
+    raw: dict[str, Any] | None = None
+
+    @classmethod
+    def from_message(cls, message: dict[str, Any]) -> "AuftragEvent":
+        """Build an AUFTRAG event from a bridge event message."""
+
+        payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+        return cls(
+            event=str(message.get("event") or payload.get("event") or ""),
+            auftrag_id=str(payload.get("auftrag_id") or ""),
+            status=str(payload.get("status")) if payload.get("status") is not None else None,
+            from_state=str(payload.get("from")) if payload.get("from") is not None else None,
+            to_state=str(payload.get("to")) if payload.get("to") is not None else None,
+            raw=message,
+        )
+
+    def __str__(self) -> str:
+        """Return a compact status line."""
+
+        parts = [self.auftrag_id or "<unknown>", self.event]
+        if self.status:
+            parts.append(f"status={self.status}")
+        if self.from_state or self.to_state:
+            parts.append(f"{self.from_state or '?'}->{self.to_state or '?'}")
+        return " ".join(parts)
 
 
 class AuftragCommand:
@@ -404,6 +441,19 @@ def auftrag_outcome_from_event(event: dict[str, Any]) -> AuftragOutcome:
     return AuftragOutcome.from_snapshot(snapshot)
 
 
+async def maybe_call_auftrag_status_callback(
+    callback: Callable[[AuftragEvent], Any | Awaitable[Any]] | None,
+    event: AuftragEvent,
+) -> None:
+    """Call an optional sync or async AUFTRAG status callback."""
+
+    if callback is None:
+        return
+    result = callback(event)
+    if isinstance(result, Awaitable):
+        await result
+
+
 def is_evaluated_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
     """Return whether an AUFTRAG snapshot contains MOOSE's summary table.
 
@@ -656,6 +706,7 @@ class MooseBridgeClient:
         *,
         timeout_s: float = 600.0,
         interval_s: float = 5.0,
+        on_status: Callable[[AuftragEvent], Any | Awaitable[Any]] | None = None,
     ) -> AuftragOutcome:
         """Wait until an AUFTRAG evaluated event arrives and return its outcome.
 
@@ -665,6 +716,7 @@ class MooseBridgeClient:
         :param auftrag: Python AUFTRAG description or stable ``AUFTRAG:id``.
         :param timeout_s: Maximum monitoring time in seconds.
         :param interval_s: Backward-compatible no-op; event waiting does not poll.
+        :param on_status: Optional callback called for intermediate AUFTRAG events.
         :returns: Stable evaluated AUFTRAG outcome.
         :raises ValueError: If the Python object was not created through this client.
         """
@@ -672,7 +724,7 @@ class MooseBridgeClient:
         auftrag_id = auftrag if isinstance(auftrag, str) else self._auftrag_ids_by_object.get(id(auftrag))
         if not auftrag_id:
             raise ValueError("No AUFTRAG id is known for this object. Call add_auftrag first or pass an AUFTRAG:id string.")
-        return await self.wait_for_auftrag_outcome(auftrag_id, timeout_s=timeout_s, interval_s=interval_s)
+        return await self.wait_for_auftrag_outcome(auftrag_id, timeout_s=timeout_s, interval_s=interval_s, on_status=on_status)
 
     async def apply_recommended_auftrag(self, recommendation: Any, timeout: float = 10.0) -> dict[str, Any]:
         """Apply an AUFTRAG recommendation produced by the advisory layer.
@@ -694,6 +746,7 @@ class MooseBridgeClient:
         auftrag_id: str,
         timeout_s: float = 600.0,
         interval_s: float = 5.0,
+        on_status: Callable[[AuftragEvent], Any | Awaitable[Any]] | None = None,
     ) -> AuftragOutcome:
         """Wait until an AUFTRAG evaluated event arrives and return its outcome.
 
@@ -703,22 +756,44 @@ class MooseBridgeClient:
 
         :param auftrag_id: Stable AUFTRAG object id from the apply ACK.
         :param timeout_s: Maximum monitoring time in seconds.
-        :param interval_s: Poll interval in seconds.
+        :param interval_s: Backward-compatible no-op; event waiting does not poll.
+        :param on_status: Optional callback called for intermediate AUFTRAG events.
         :returns: Stable AUFTRAG outcome model.
         :raises MooseBridgeAuftragNotFoundError: If the AUFTRAG is never observed.
         :raises MooseBridgeAuftragTimeoutError: If no summary appears before timeout.
         """
 
-        try:
-            event = await self.server.wait_for_event("auftrag.evaluated", filters={"auftrag_id": auftrag_id}, timeout=timeout_s)
-        except TimeoutError as exc:
-            raise MooseBridgeAuftragTimeoutError(f"{auftrag_id} was not evaluated before timeout") from exc
-        try:
-            outcome = auftrag_outcome_from_event(event)
-        except ValueError as exc:
-            raise MooseBridgeAuftragNotFoundError(f"{auftrag_id} evaluated event did not contain a usable summary") from exc
-        self.state.apply_message(event)
-        return outcome
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        seen = False
+        last_event_id: str | None = None
+
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                if seen:
+                    raise MooseBridgeAuftragTimeoutError(f"{auftrag_id} was not evaluated before timeout")
+                raise MooseBridgeAuftragNotFoundError(f"{auftrag_id} produced no AUFTRAG events before timeout")
+
+            try:
+                event = await self.server.wait_for_event("auftrag.*", filters={"auftrag_id": auftrag_id}, timeout=remaining, after_id=last_event_id)
+            except TimeoutError as exc:
+                if seen:
+                    raise MooseBridgeAuftragTimeoutError(f"{auftrag_id} was not evaluated before timeout") from exc
+                raise MooseBridgeAuftragNotFoundError(f"{auftrag_id} produced no AUFTRAG events before timeout") from exc
+
+            seen = True
+            last_event_id = str(event.get("id") or "") or last_event_id
+            self.state.apply_message(event)
+            auftrag_event = AuftragEvent.from_message(event)
+            if auftrag_event.event != "auftrag.evaluated":
+                await maybe_call_auftrag_status_callback(on_status, auftrag_event)
+                continue
+
+            try:
+                outcome = auftrag_outcome_from_event(event)
+            except ValueError as exc:
+                raise MooseBridgeAuftragNotFoundError(f"{auftrag_id} evaluated event did not contain a usable summary") from exc
+            return outcome
 
     async def message_coalition(self, coalition: str, text: str, duration: int = 10) -> dict[str, Any]:
         """Send a message to a coalition in DCS.

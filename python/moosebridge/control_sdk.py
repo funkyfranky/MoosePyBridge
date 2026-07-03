@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .control import MooseBridgeControlClient
 from .protocol import BridgeCommand
+from .state import MooseBridgeState
+
+if TYPE_CHECKING:
+    from .sdk import MooseBridgeClient
 
 
 class ControlSdkAdapter:
@@ -16,7 +20,7 @@ class ControlSdkAdapter:
         self.timeout = timeout
 
     @property
-    def state(self) -> Any:
+    def state(self) -> MooseBridgeState:
         """Return the shared control-client state mirror."""
 
         return self.client.state
@@ -26,10 +30,16 @@ class ControlSdkAdapter:
 
         return await self.client.send_dcs_command(command.action, command.params, timeout=timeout)
 
-    async def wait_for_event(self, event_name: str, filters: dict[str, Any] | None = None, timeout: float = 600.0) -> dict[str, Any]:
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
         """Wait for one daemon event through the control API."""
 
-        return await self.client.wait_for_event(event_name, filters=filters, timeout=timeout)
+        return await self.client.wait_for_event(event_name, filters=filters, timeout=timeout, after_id=after_id)
 
     async def _snapshot(self, kind: str) -> dict[str, Any]:
         action = f"snapshot.{kind}"
@@ -88,7 +98,7 @@ class ControlSdkAdapter:
         return await self._snapshot("legions")
 
 
-def sdk_from_control_client(client: MooseBridgeControlClient, timeout: float = 10.0) -> Any:
+def sdk_from_control_client(client: MooseBridgeControlClient, timeout: float = 10.0) -> "MooseBridgeClient":
     """Return a high-level SDK client backed by a control client."""
 
     from .sdk import MooseBridgeClient

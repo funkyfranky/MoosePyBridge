@@ -38,7 +38,13 @@ def event_matches(message: dict[str, Any], expected_event: str, filters: dict[st
 
     if message.get("type") != "event":
         return False
-    if event_name(message) != expected_event:
+    actual_event = event_name(message)
+    if expected_event == "*":
+        pass
+    elif expected_event.endswith(".*"):
+        if not actual_event.startswith(expected_event[:-1]):
+            return False
+    elif actual_event != expected_event:
         return False
     for key, expected_value in (filters or {}).items():
         if event_value(message, key) != expected_value:
@@ -202,11 +208,23 @@ class MooseBridgeServer:
                 remaining.append((event_name, filters, future))
         self._event_waiters = remaining
 
-    async def wait_for_event(self, event_name: str, filters: dict[str, Any] | None = None, timeout: float = 600.0) -> dict[str, Any]:
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
         """Wait for a DCS event matching name and payload filters."""
 
         event_filters = filters or {}
-        for event in reversed(self._event_history):
+        history = self._event_history
+        if after_id:
+            for index, event in enumerate(history):
+                if str(event.get("id") or "") == after_id:
+                    history = history[index + 1 :]
+                    break
+        for event in reversed(history):
             if event_matches(event, event_name, event_filters):
                 return event
 
