@@ -220,7 +220,7 @@ nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", aliv
 MOOSE-like AUFTRAG helper objects:
 
 ```python
-from moosebridge import Auftrag_ARTY, Auftrag_BAI
+from moosebridge import Auftrag_ARTY, Auftrag_BAI, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ORBIT
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
@@ -231,12 +231,25 @@ if summary.success is True:
 
 auftrag_arty = Auftrag_ARTY(target="UNIT:Ground-1-1", nshots=6)
 ack = await bridge.add_auftrag(auftrag=auftrag_arty, opsgroup="OPSGROUP:Group-1")
+
+auftrag_orbit = Auftrag_ORBIT(target="ZONE:CAP Station", altitude_ft=15000, speed_kts=300)
+ack = await bridge.add_auftrag(auftrag=auftrag_orbit, legion="LEGION:Wing Parchim")
+
+auftrag_cap = Auftrag_CAP(zone="ZONE:Town Fight", altitude_ft=15000, speed_kts=300, target_types=["Air"])
+ack = await bridge.add_auftrag(auftrag=auftrag_cap, legion="LEGION:Wing Parchim")
+
+auftrag_cas = Auftrag_CAS(zone="ZONE:Town Fight", altitude_ft=12000, speed_kts=280)
+ack = await bridge.add_auftrag(auftrag=auftrag_cas, legion="LEGION:Wing Parchim")
+
+auftrag_casenhanced = Auftrag_CASENHANCED(zone="ZONE:Town Fight", range_max_nm=25)
+ack = await bridge.add_auftrag(auftrag=auftrag_casenhanced, legion="LEGION:Wing Parchim")
 ```
 
 `get_auftrag_summary` waits for the MOOSE FSM `OnAfterEvaluated` event sent by
 the Lua bridge. It does not poll AUFTRAG snapshots. The optional `on_status`
 callback receives lightweight AUFTRAG status events while the final summary is
-not available yet.
+not available yet, including `Planned`, `Queued`, `Requested`, `Scheduled`,
+`Started`, `Executing`, `Done`, and `Cancel` when MOOSE emits them.
 
 Example script for SDK experimentation:
 

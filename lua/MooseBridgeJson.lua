@@ -103,6 +103,146 @@ local function read_boolean_field(text, name)
   return nil
 end
 
+local function extract_object_text(text, name)
+  local pattern = '"' .. name .. '"%s*:%s*{'
+  local start_pos, end_pos = text:find(pattern)
+  if not end_pos then return nil end
+
+  local depth = 1
+  local in_string = false
+  local escaped = false
+  local index = end_pos + 1
+
+  while index <= #text do
+    local char = text:sub(index, index)
+    if in_string then
+      if escaped then
+        escaped = false
+      elseif char == "\\" then
+        escaped = true
+      elseif char == '"' then
+        in_string = false
+      end
+    else
+      if char == '"' then
+        in_string = true
+      elseif char == "{" then
+        depth = depth + 1
+      elseif char == "}" then
+        depth = depth - 1
+        if depth == 0 then
+          return text:sub(end_pos + 1, index - 1)
+        end
+      end
+    end
+    index = index + 1
+  end
+
+  return nil
+end
+
+local function decode_scalar_value(value)
+  value = value:gsub("^%s+", ""):gsub("%s+$", "")
+  if value == "true" then return true end
+  if value == "false" then return false end
+  if value == "null" then return nil end
+
+  if value:sub(1, 1) == "[" and value:sub(-1) == "]" then
+    local result = {}
+    local inner = value:sub(2, -2)
+    local index = 1
+    local element_start = 1
+    local in_string = false
+    local escaped = false
+
+    while index <= #inner + 1 do
+      local char = inner:sub(index, index)
+      local at_end = index > #inner
+      if in_string then
+        if escaped then
+          escaped = false
+        elseif char == "\\" then
+          escaped = true
+        elseif char == '"' then
+          in_string = false
+        end
+      else
+        if char == '"' then
+          in_string = true
+        elseif char == "," or at_end then
+          local raw_element = inner:sub(element_start, index - 1)
+          result[#result + 1] = decode_scalar_value(raw_element)
+          element_start = index + 1
+        end
+      end
+      index = index + 1
+    end
+
+    return result
+  end
+
+  local string_value = value:match('^"(.*)"$')
+  if string_value ~= nil then return unescape(string_value) end
+
+  local number_value = tonumber(value)
+  if number_value ~= nil then return number_value end
+  return nil
+end
+
+local function read_flat_object_fields(text)
+  local result = {}
+  local index = 1
+
+  while index <= #text do
+    local key_start, key_end, key = text:find('"%s*([^"]-)%s*"%s*:', index)
+    if not key_start then break end
+
+    local value_start = key_end + 1
+    while value_start <= #text and text:sub(value_start, value_start):match("%s") do
+      value_start = value_start + 1
+    end
+
+    local value_end = value_start
+    local in_string = false
+    local escaped = false
+    local object_depth = 0
+    local array_depth = 0
+    while value_end <= #text do
+      local char = text:sub(value_end, value_end)
+      if in_string then
+        if escaped then
+          escaped = false
+        elseif char == "\\" then
+          escaped = true
+        elseif char == '"' then
+          in_string = false
+        end
+      else
+        if char == '"' then
+          in_string = true
+        elseif char == "{" then
+          object_depth = object_depth + 1
+        elseif char == "}" then
+          object_depth = object_depth - 1
+        elseif char == "[" then
+          array_depth = array_depth + 1
+        elseif char == "]" then
+          array_depth = array_depth - 1
+        elseif char == "," and object_depth == 0 and array_depth == 0 then
+          break
+        end
+      end
+      value_end = value_end + 1
+    end
+
+    local raw_value = text:sub(value_start, value_end - 1)
+    result[unescape(key)] = decode_scalar_value(raw_value)
+    index = value_end + 1
+  end
+
+  return result
+end
+
 function json.decode(text)
   local result = {}
   result.version = read_number_field(text, "version")
@@ -113,8 +253,10 @@ function json.decode(text)
   result.action = read_string_field(text, "action")
   result.params = {}
 
-  local params_text = text:match('"params"%s*:%s*{(.-)}')
+  local params_text = extract_object_text(text, "params")
   if params_text then
+    result.params = read_flat_object_fields(params_text)
+
     result.params.coalition = read_string_field(params_text, "coalition")
     result.params.text = read_string_field(params_text, "text")
     result.params.duration = read_number_field(params_text, "duration")
@@ -153,6 +295,17 @@ function json.decode(text)
     result.params.radius_m = read_number_field(params_text, "radius_m")
     result.params.radius = read_number_field(params_text, "radius")
     result.params.Radius = read_number_field(params_text, "Radius")
+
+    -- AUFTRAG:ORBIT fields.
+    result.params.speed_kts = read_number_field(params_text, "speed_kts")
+    result.params.speed = read_number_field(params_text, "speed")
+    result.params.Speed = read_number_field(params_text, "Speed")
+    result.params.heading_deg = read_number_field(params_text, "heading_deg")
+    result.params.heading = read_number_field(params_text, "heading")
+    result.params.Heading = read_number_field(params_text, "Heading")
+    result.params.leg_nm = read_number_field(params_text, "leg_nm")
+    result.params.leg = read_number_field(params_text, "leg")
+    result.params.Leg = read_number_field(params_text, "Leg")
   end
 
   return result

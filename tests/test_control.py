@@ -461,6 +461,86 @@ def test_interactive_mission_argument_parses_coalition() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_orbit_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'ORBIT --target "ZONE:CAP Station" --altitude 15000 --speed 300 --heading 90 --leg 20 -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "ORBIT"
+    assert params == {
+        "target": "ZONE:CAP Station",
+        "altitude_ft": 15000.0,
+        "speed_kts": 300.0,
+        "heading_deg": 90.0,
+        "leg_nm": 20.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_cap_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'CAP --target "ZONE:Town Fight" --coordinate "ZONE:CAP Station" --altitude 15000 --speed 300 '
+        '--heading 90 --leg 20 --target-types Air -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "CAP"
+    assert params == {
+        "zone": "ZONE:Town Fight",
+        "coordinate": "ZONE:CAP Station",
+        "altitude_ft": 15000.0,
+        "speed_kts": 300.0,
+        "heading_deg": 90.0,
+        "leg_nm": 20.0,
+        "target_types": ["Air"],
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_cas_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'CAS --target "ZONE:Town Fight" --altitude 12000 --speed 280 --heading 45 --leg 12 '
+        '--target-types "Ground Units,Light armed ships" -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "CAS"
+    assert params == {
+        "zone": "ZONE:Town Fight",
+        "altitude_ft": 12000.0,
+        "speed_kts": 280.0,
+        "heading_deg": 45.0,
+        "leg_nm": 12.0,
+        "target_types": ["Ground Units", "Light armed ships"],
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_casenhanced_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'CASENHANCED --target "ZONE:Town Fight" --altitude 2000 --speed 250 --range-max 25 '
+        '--no-engage-zones "ZONE:Friendly Area,ZONE:Blue FARP" '
+        '--target-types "Ground Units,Light armed ships" -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "CASENHANCED"
+    assert params == {
+        "zone": "ZONE:Town Fight",
+        "altitude_ft": 2000.0,
+        "speed_kts": 250.0,
+        "range_max_nm": 25.0,
+        "no_engage_zones": ["ZONE:Friendly Area", "ZONE:Blue FARP"],
+        "target_types": ["Ground Units", "Light armed ships"],
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
 def test_interactive_legion_alias_normalizes_to_legion_object_id() -> None:
     client = MooseBridgeControlClient()
     client.state.apply_message(

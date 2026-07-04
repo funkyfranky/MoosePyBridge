@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from moosebridge.auftraege import Auftrag_ARTY, Auftrag_BAI, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ORBIT, AuftragEvent
 from moosebridge.protocol import BridgeCommand
-from moosebridge.sdk import Auftrag_ARTY, Auftrag_BAI, CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
+from moosebridge.sdk import CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
 from moosebridge.state import MooseBridgeState
 
 
@@ -255,6 +256,126 @@ def test_sdk_add_auftrag_to_opsgroup_uses_opsgroup_id() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_add_orbit_auftrag_to_legion_uses_orbit_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_ORBIT(
+            target="ZONE:CAP Station",
+            altitude_ft=15000,
+            speed_kts=300,
+            heading_deg=90,
+            leg_nm=20,
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_orbit"
+        assert command.params == {
+            "target": "ZONE:CAP Station",
+            "altitude_ft": 15000,
+            "speed_kts": 300,
+            "heading_deg": 90,
+            "leg_nm": 20,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_cap_auftrag_to_legion_uses_cap_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_CAP(
+            zone="ZONE:Town Fight",
+            altitude_ft=15000,
+            speed_kts=300,
+            coordinate="ZONE:CAP Station",
+            heading_deg=90,
+            leg_nm=20,
+            target_types=("Air",),
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_cap"
+        assert command.params == {
+            "zone": "ZONE:Town Fight",
+            "altitude_ft": 15000,
+            "speed_kts": 300,
+            "coordinate": "ZONE:CAP Station",
+            "heading_deg": 90,
+            "leg_nm": 20,
+            "target_types": ["Air"],
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_cas_auftrag_to_legion_uses_cas_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_CAS(
+            zone="ZONE:Town Fight",
+            altitude_ft=12000,
+            speed_kts=280,
+            heading_deg=45,
+            leg_nm=12,
+            target_types=("Ground Units", "Light armed ships"),
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_cas"
+        assert command.params == {
+            "zone": "ZONE:Town Fight",
+            "altitude_ft": 12000,
+            "speed_kts": 280,
+            "heading_deg": 45,
+            "leg_nm": 12,
+            "target_types": ["Ground Units", "Light armed ships"],
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_casenhanced_auftrag_to_legion_uses_casenhanced_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_CASENHANCED(
+            zone="ZONE:Town Fight",
+            altitude_ft=2000,
+            speed_kts=250,
+            range_max_nm=25,
+            no_engage_zones=("ZONE:Friendly Area",),
+            target_types=("Ground Units", "Light armed ships"),
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_casenhanced"
+        assert command.params == {
+            "zone": "ZONE:Town Fight",
+            "altitude_ft": 2000,
+            "speed_kts": 250,
+            "range_max_nm": 25,
+            "no_engage_zones": ["ZONE:Friendly Area"],
+            "target_types": ["Ground Units", "Light armed ships"],
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
 def test_sdk_add_auftrag_requires_one_assignment_target() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -311,6 +432,7 @@ def test_sdk_get_auftrag_summary_calls_status_callback_for_intermediate_events()
                 "payload": {
                     "event": "auftrag.status",
                     "auftrag_id": "AUFTRAG:1",
+                    "fsm_event": "Started",
                     "status": "Started",
                     "from": "Planned",
                     "to": "Started",
@@ -335,9 +457,84 @@ def test_sdk_get_auftrag_summary_calls_status_callback_for_intermediate_events()
         summary = await client.get_auftrag_summary("AUFTRAG:1", timeout_s=1.0, on_status=lambda event: seen.append(str(event)))
 
         assert summary.success is True
-        assert seen == ["AUFTRAG:1 auftrag.status status=Started Planned->Started"]
+        assert seen == ["AUFTRAG:1 Started status=Started Planned->Started"]
 
     asyncio.run(scenario())
+
+
+def test_sdk_get_auftrag_summary_deduplicates_repeated_status_events() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        queued_event = {
+            "type": "event",
+            "event": "auftrag.status",
+            "payload": {
+                "event": "auftrag.status",
+                "auftrag_id": "AUFTRAG:1",
+                "fsm_event": "Queued",
+                "status": "queued",
+                "from": "planned",
+                "to": "queued",
+            },
+        }
+        server.events_to_emit = [
+            {**queued_event, "id": "event-queued-1"},
+            {**queued_event, "id": "event-queued-2"},
+            {**queued_event, "id": "event-queued-3"},
+            {
+                "type": "event",
+                "id": "event-evaluated",
+                "event": "auftrag.evaluated",
+                "payload": {
+                    "event": "auftrag.evaluated",
+                    "auftrag_id": "AUFTRAG:1",
+                    "auftrag_type": "BAI",
+                    "status": "Done",
+                    "summary": {"success": True, "Ndestroyed": 1},
+                },
+            },
+        ]
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        seen: list[str] = []
+
+        summary = await client.get_auftrag_summary("AUFTRAG:1", timeout_s=1.0, on_status=lambda event: seen.append(str(event)))
+
+        assert summary.success is True
+        assert seen == ["AUFTRAG:1 Queued status=queued planned->queued"]
+
+    asyncio.run(scenario())
+
+
+def test_auftrag_event_uses_fsm_event_for_display() -> None:
+    event = {
+        "type": "event",
+        "event": "auftrag.status",
+        "payload": {
+            "auftrag_id": "AUFTRAG:1",
+            "fsm_event": "Executing",
+            "status": "executing",
+            "from": "started",
+            "to": "executing",
+        },
+    }
+
+    assert str(AuftragEvent.from_message(event)) == "AUFTRAG:1 Executing status=executing started->executing"
+
+
+def test_auftrag_event_displays_cancel_event() -> None:
+    event = {
+        "type": "event",
+        "event": "auftrag.status",
+        "payload": {
+            "auftrag_id": "AUFTRAG:1",
+            "fsm_event": "Cancel",
+            "status": "cancelled",
+            "from": "started",
+            "to": "cancelled",
+        },
+    }
+
+    assert str(AuftragEvent.from_message(event)) == "AUFTRAG:1 Cancel status=cancelled started->cancelled"
 
 
 def test_sdk_get_auftrag_summary_requires_known_object() -> None:

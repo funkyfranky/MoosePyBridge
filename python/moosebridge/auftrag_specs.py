@@ -18,7 +18,7 @@ PLATFORM_CATEGORY_EXPANSIONS: dict[str, tuple[str, ...]] = {
     "NAVAL": ("NAVAL",),
 }
 
-PRIMITIVE_PARAMETER_TYPES = {"float", "int", "str", "bool"}
+PRIMITIVE_PARAMETER_TYPES = {"float", "int", "str", "bool", "list"}
 
 
 class AuftragType(str, Enum):
@@ -221,6 +221,15 @@ class AuftragTypeSpec:
         return None
 
     @property
+    def coordinate_parameter(self) -> AuftragParameterSpec | None:
+        """Return the optional coordinate parameter, if present."""
+
+        for parameter in self.parameters:
+            if parameter.name == "coordinate":
+                return parameter
+        return None
+
+    @property
     def accepts_coordinate_target(self) -> bool:
         """Return whether this AUFTRAG can use direct coordinate targets.
 
@@ -229,6 +238,13 @@ class AuftragTypeSpec:
 
         target = self.target_parameter
         return bool(target and target.accepts_coordinate())
+
+    @property
+    def accepts_optional_coordinate(self) -> bool:
+        """Return whether this AUFTRAG accepts an optional direct coordinate."""
+
+        coordinate = self.coordinate_parameter
+        return bool(coordinate and coordinate.accepts_coordinate())
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation.
@@ -276,6 +292,20 @@ OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER = AuftragParameterSpec(
     description="Optional object shortcut whose current coordinate is used as the mission target point; direct x/z coordinates are also accepted.",
 )
 
+CAP_ZONE_PARAMETER = AuftragParameterSpec(
+    name="zone",
+    optional=False,
+    accepted_objects=(AuftragTargetType.ZONE,),
+    description="ZONE_RADIUS object used as the circular CAP zone.",
+)
+
+OPTIONAL_COORDINATE_OBJECT_PARAMETER = AuftragParameterSpec(
+    name="coordinate",
+    optional=True,
+    accepted_objects=COORDINATE_OR_OBJECT_TARGET_TYPES,
+    description="Optional object shortcut whose current coordinate is used as the orbit point; direct x/z coordinates are also accepted.",
+)
+
 ALTITUDE_PARAMETER = AuftragParameterSpec(
     name="altitude_ft",
     optional=True,
@@ -316,6 +346,48 @@ RADIUS_M_PARAMETER = AuftragParameterSpec(
     optional=True,
     accepted_objects=("float",),
     description="Optional artillery impact radius in meters. MOOSE defaults to 100 m when omitted.",
+)
+
+SPEED_KTS_PARAMETER = AuftragParameterSpec(
+    name="speed_kts",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional orbit indicated airspeed in knots at altitude. MOOSE defaults to 350 KIAS when omitted.",
+)
+
+HEADING_DEG_PARAMETER = AuftragParameterSpec(
+    name="heading_deg",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional race-track orbit heading in degrees. Omit for a circular orbit.",
+)
+
+LEG_NM_PARAMETER = AuftragParameterSpec(
+    name="leg_nm",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional race-track leg length in nautical miles. Omit for a circular orbit.",
+)
+
+TARGET_TYPES_PARAMETER = AuftragParameterSpec(
+    name="target_types",
+    optional=True,
+    accepted_objects=("list", "str"),
+    description="Optional list of MOOSE target type strings.",
+)
+
+RANGE_MAX_NM_PARAMETER = AuftragParameterSpec(
+    name="range_max_nm",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional max engagement range in nautical miles. MOOSE defaults to 25 NM when omitted.",
+)
+
+NO_ENGAGE_ZONES_PARAMETER = AuftragParameterSpec(
+    name="no_engage_zones",
+    optional=True,
+    accepted_objects=("list", "str"),
+    description="Optional ZONE object id or list of ZONE object ids used to build the NoEngageZoneSet.",
 )
 
 AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
@@ -366,6 +438,72 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             Z_COORDINATE_PARAMETER,
             NSHOTS_PARAMETER,
             RADIUS_M_PARAMETER,
+        ),
+    ),
+    AuftragType.ORBIT.name: AuftragTypeSpec(
+        mission_type=AuftragType.ORBIT.name,
+        constructor="AUFTRAG:NewORBIT",
+        performer_categories=("AIR",),
+        description="Aircraft/helicopter orbit at a coordinate, optionally resolved from an object target.",
+        parameters=(
+            OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            SPEED_KTS_PARAMETER,
+            HEADING_DEG_PARAMETER,
+            LEG_NM_PARAMETER,
+        ),
+    ),
+    AuftragType.CAP.name: AuftragTypeSpec(
+        mission_type=AuftragType.CAP.name,
+        constructor="AUFTRAG:NewCAP",
+        performer_categories=("AIR",),
+        description="Combat air patrol inside a ZONE_RADIUS, with optional explicit orbit point.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            SPEED_KTS_PARAMETER,
+            OPTIONAL_COORDINATE_OBJECT_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            HEADING_DEG_PARAMETER,
+            LEG_NM_PARAMETER,
+            TARGET_TYPES_PARAMETER,
+        ),
+    ),
+    AuftragType.CAS.name: AuftragTypeSpec(
+        mission_type=AuftragType.CAS.name,
+        constructor="AUFTRAG:NewCAS",
+        performer_categories=("AIR",),
+        description="Close air support inside a ZONE_RADIUS, with optional explicit orbit point.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            SPEED_KTS_PARAMETER,
+            OPTIONAL_COORDINATE_OBJECT_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            HEADING_DEG_PARAMETER,
+            LEG_NM_PARAMETER,
+            TARGET_TYPES_PARAMETER,
+        ),
+    ),
+    AuftragType.CASENHANCED.name: AuftragTypeSpec(
+        mission_type=AuftragType.CASENHANCED.name,
+        constructor="AUFTRAG:NewCASENHANCED",
+        performer_categories=("AIR",),
+        description="Enhanced close air support inside a ZONE with random patrol and optional engagement range limits.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            SPEED_KTS_PARAMETER,
+            RANGE_MAX_NM_PARAMETER,
+            NO_ENGAGE_ZONES_PARAMETER,
+            TARGET_TYPES_PARAMETER,
         ),
     ),
 }

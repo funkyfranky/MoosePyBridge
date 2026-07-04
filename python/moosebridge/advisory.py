@@ -329,11 +329,14 @@ def validate_parameter_value(parameter: AuftragParameterSpec, value: Any, state:
                 return None
             except (TypeError, ValueError):
                 return AdvisoryIssue("error", "INVALID_PARAMETER_TYPE", f"Parameter {parameter.name} must be an int.")
-        if "bool" in primitive_accepted and not isinstance(value, bool):
-            return AdvisoryIssue("error", "INVALID_PARAMETER_TYPE", f"Parameter {parameter.name} must be a bool.")
-        if "str" in primitive_accepted and not isinstance(value, str):
-            return AdvisoryIssue("error", "INVALID_PARAMETER_TYPE", f"Parameter {parameter.name} must be a string.")
-        return None
+        if "bool" in primitive_accepted and isinstance(value, bool):
+            return None
+        if "str" in primitive_accepted and isinstance(value, str):
+            return None
+        if "list" in primitive_accepted and isinstance(value, (list, tuple)):
+            return None
+        expected_text = " or ".join(sorted(primitive_accepted))
+        return AdvisoryIssue("error", "INVALID_PARAMETER_TYPE", f"Parameter {parameter.name} must be a {expected_text}.")
 
     if not isinstance(value, str):
         return AdvisoryIssue("error", "INVALID_PARAMETER_TYPE", f"Parameter {parameter.name} must be an object id string.")
@@ -391,6 +394,30 @@ def validate_coordinate_target_inputs(spec: AuftragTypeSpec, target_id: str | No
     return issues
 
 
+def validate_optional_coordinate_inputs(
+    mission_type: str,
+    coordinate_id: str | None,
+    direct_coords: tuple[float, float] | None,
+    params: dict[str, Any],
+) -> list[AdvisoryIssue]:
+    """Validate optional coordinate input for AUFTRAGs with an orbit point."""
+
+    issues: list[AdvisoryIssue] = []
+    has_x = params.get("x") not in (None, "")
+    has_z = params.get("z") not in (None, "")
+    if not coordinate_id and has_x != has_z:
+        issues.append(AdvisoryIssue("error", "INCOMPLETE_COORDINATE", f"{mission_type} direct coordinate input requires both x and z."))
+    elif coordinate_id and direct_coords is not None:
+        issues.append(
+            AdvisoryIssue(
+                "warning",
+                "TARGET_OVERRIDES_COORDINATE",
+                "Both coordinate and x/z were supplied; the coordinate object's position will be used.",
+            )
+        )
+    return issues
+
+
 def evaluate_auftrag_request(
     state: MooseBridgeState,
     mission_type: str,
@@ -425,8 +452,13 @@ def evaluate_auftrag_request(
             issues.append(issue)
 
     target_id = params.get("target") if isinstance(params.get("target"), str) else None
+    if target_id is None and isinstance(params.get("zone"), str):
+        target_id = params.get("zone")
     direct_coords = coordinates_from_params(params)
     issues.extend(validate_coordinate_target_inputs(spec, target_id, direct_coords, params))
+    if spec.accepts_optional_coordinate:
+        coordinate_id = params.get("coordinate") if isinstance(params.get("coordinate"), str) else None
+        issues.extend(validate_optional_coordinate_inputs(spec.mission_type, coordinate_id, direct_coords, params))
 
     target_payload = find_state_object(state, target_id) if target_id else None
     target_type = payload_object_type(target_payload or {}, target_id) if target_id else None

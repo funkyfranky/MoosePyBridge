@@ -220,9 +220,11 @@ class MooseBridgeServer:
         event_filters = filters or {}
         history = self._event_history
         if after_id:
-            for index, event in enumerate(history):
+            full_history = history
+            history = []
+            for index, event in enumerate(full_history):
                 if str(event.get("id") or "") == after_id:
-                    history = history[index + 1 :]
+                    history = full_history[index + 1 :]
                     break
         for event in reversed(history):
             if event_matches(event, event_name, event_filters):

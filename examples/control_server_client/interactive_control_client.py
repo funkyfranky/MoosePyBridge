@@ -600,6 +600,16 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["target"] = parts[index]
+        elif key in {"--zone", "-zone"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["zone"] = parts[index]
+        elif key in {"--coordinate", "--orbit", "-coordinate", "-orbit"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["coordinate"] = parts[index]
         elif key in {"--coalition", "-coalition"}:
             index += 1
             if index >= len(parts):
@@ -625,6 +635,36 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["radius_m"] = float(parts[index])
+        elif key in {"--speed", "--speed-kts", "-speed"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["speed_kts"] = float(parts[index])
+        elif key in {"--heading", "--heading-deg", "-heading"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["heading_deg"] = float(parts[index])
+        elif key in {"--leg", "--leg-nm", "-leg"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["leg_nm"] = float(parts[index])
+        elif key in {"--target-types", "--target-type", "-target-types"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["target_types"] = [item.strip() for item in parts[index].split(",") if item.strip()]
+        elif key in {"--range-max", "--range-max-nm", "-range-max"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["range_max_nm"] = float(parts[index])
+        elif key in {"--no-engage-zones", "--no-engage-zone", "-no-engage-zones"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["no_engage_zones"] = [item.strip() for item in parts[index].split(",") if item.strip()]
         elif key in {"--x", "-x", "--y", "-y", "--z", "-z"}:
             index += 1
             if index >= len(parts):
@@ -640,6 +680,9 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
         else:
             raise ValueError(f"Unknown mission option: {option}")
         index += 1
+
+    if mission_type.upper() in {"CAP", "CAS", "CASENHANCED"} and "target" in params and "zone" not in params:
+        params["zone"] = params.pop("target")
 
     return mission_type, params, coalition, legion_id, preview
 

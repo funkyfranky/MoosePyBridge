@@ -1,6 +1,24 @@
 """MOOSE Bridge Python package."""
 
 from .advisory import AdvisoryIssue, AuftragAdvisoryResult, AuftragCandidate, evaluate_auftrag_request
+from .auftraege import (
+    AuftragARTY,
+    AuftragBAI,
+    AuftragBOMBING,
+    AuftragCAP,
+    AuftragCAS,
+    AuftragCASENHANCED,
+    AuftragCommand,
+    AuftragEvent,
+    AuftragORBIT,
+    Auftrag_ARTY,
+    Auftrag_BAI,
+    Auftrag_BOMBING,
+    Auftrag_CAP,
+    Auftrag_CAS,
+    Auftrag_CASENHANCED,
+    Auftrag_ORBIT,
+)
 from .auftrag_specs import (
     AUFTRAG_TYPE_NAMES,
     AuftragParameterSpec,
@@ -31,14 +49,6 @@ from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
 from .server import MooseBridgeServer
 from .sdk import (
-    AuftragARTY,
-    AuftragBAI,
-    AuftragBOMBING,
-    AuftragCommand,
-    AuftragEvent,
-    Auftrag_ARTY,
-    Auftrag_BAI,
-    Auftrag_BOMBING,
     CoordinateResult,
     DistanceResult,
     MooseBridgeAuftragNotFoundError,
@@ -58,9 +68,13 @@ __all__ = [
     "AuftragARTY",
     "AuftragBAI",
     "AuftragBOMBING",
+    "AuftragCAP",
+    "AuftragCAS",
+    "AuftragCASENHANCED",
     "AuftragCandidate",
     "AuftragCommand",
     "AuftragEvent",
+    "AuftragORBIT",
     "AuftragOutcome",
     "AuftragParameterSpec",
     "AuftragRecommendation",
@@ -70,6 +84,10 @@ __all__ = [
     "Auftrag_ARTY",
     "Auftrag_BAI",
     "Auftrag_BOMBING",
+    "Auftrag_CAP",
+    "Auftrag_CAS",
+    "Auftrag_CASENHANCED",
+    "Auftrag_ORBIT",
     "BridgeCommand",
     "BridgeMessage",
     "Cohort",

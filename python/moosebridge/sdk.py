@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
+from .auftraege import AuftragCommand, AuftragEvent
 from .auftrag_specs import auftrag_action_suffix
 from .intents import auftrag_command_params_from_recommendation
 from .models import Auftrag, OpsGroup, OpsZone
@@ -120,128 +121,6 @@ class NearestResult:
     distance_m: float
     distance_nm: float
     item: dict[str, Any]
-
-
-@dataclass(slots=True, frozen=True)
-class AuftragEvent:
-    """One AUFTRAG FSM event emitted by the Lua bridge."""
-
-    event: str
-    auftrag_id: str
-    status: str | None = None
-    from_state: str | None = None
-    to_state: str | None = None
-    raw: dict[str, Any] | None = None
-
-    @classmethod
-    def from_message(cls, message: dict[str, Any]) -> "AuftragEvent":
-        """Build an AUFTRAG event from a bridge event message."""
-
-        payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
-        return cls(
-            event=str(message.get("event") or payload.get("event") or ""),
-            auftrag_id=str(payload.get("auftrag_id") or ""),
-            status=str(payload.get("status")) if payload.get("status") is not None else None,
-            from_state=str(payload.get("from")) if payload.get("from") is not None else None,
-            to_state=str(payload.get("to")) if payload.get("to") is not None else None,
-            raw=message,
-        )
-
-    def __str__(self) -> str:
-        """Return a compact status line."""
-
-        parts = [self.auftrag_id or "<unknown>", self.event]
-        if self.status:
-            parts.append(f"status={self.status}")
-        if self.from_state or self.to_state:
-            parts.append(f"{self.from_state or '?'}->{self.to_state or '?'}")
-        return " ".join(parts)
-
-
-class AuftragCommand:
-    """Python-side AUFTRAG description that can be sent through the bridge."""
-
-    mission_type = ""
-
-    def to_params(self) -> dict[str, Any]:
-        """Return flat Lua command parameters for this AUFTRAG."""
-
-        return {}
-
-
-@dataclass(slots=True, frozen=True)
-class AuftragBAI(AuftragCommand):
-    """Battlefield air interdiction AUFTRAG."""
-
-    target: str
-    altitude_ft: float | None = None
-    mission_type = "BAI"
-
-    def to_params(self) -> dict[str, Any]:
-        """Return flat Lua command parameters for this BAI AUFTRAG."""
-
-        return clean_params({"target": self.target, "altitude_ft": self.altitude_ft})
-
-
-@dataclass(slots=True, frozen=True)
-class AuftragBOMBING(AuftragCommand):
-    """Bombing AUFTRAG against a coordinate or object target."""
-
-    target: str | None = None
-    x: float | None = None
-    y: float | None = None
-    z: float | None = None
-    altitude_ft: float | None = None
-    engage_weapon_type: int | None = None
-    divebomb: bool | None = None
-    mission_type = "BOMBING"
-
-    def to_params(self) -> dict[str, Any]:
-        """Return flat Lua command parameters for this BOMBING AUFTRAG."""
-
-        return clean_params(
-            {
-                "target": self.target,
-                "x": self.x,
-                "y": self.y,
-                "z": self.z,
-                "altitude_ft": self.altitude_ft,
-                "engage_weapon_type": self.engage_weapon_type,
-                "divebomb": self.divebomb,
-            }
-        )
-
-
-@dataclass(slots=True, frozen=True)
-class AuftragARTY(AuftragCommand):
-    """Artillery fire-at-point AUFTRAG."""
-
-    target: str | None = None
-    x: float | None = None
-    y: float | None = None
-    z: float | None = None
-    nshots: float | None = None
-    radius_m: float | None = None
-    mission_type = "ARTY"
-
-    def to_params(self) -> dict[str, Any]:
-        """Return flat Lua command parameters for this ARTY AUFTRAG."""
-
-        return clean_params(
-            {
-                "target": self.target,
-                "x": self.x,
-                "y": self.y,
-                "z": self.z,
-                "nshots": self.nshots,
-                "radius_m": self.radius_m,
-            }
-        )
-
-
-Auftrag_BAI = AuftragBAI
-Auftrag_BOMBING = AuftragBOMBING
-Auftrag_ARTY = AuftragARTY
 
 
 def _optional_float(value: Any) -> float | None:
@@ -766,6 +645,7 @@ class MooseBridgeClient:
         deadline = asyncio.get_running_loop().time() + timeout_s
         seen = False
         last_event_id: str | None = None
+        seen_status_keys: set[tuple[str, str | None, str | None, str | None, str | None]] = set()
 
         while True:
             remaining = deadline - asyncio.get_running_loop().time()
@@ -786,7 +666,16 @@ class MooseBridgeClient:
             self.state.apply_message(event)
             auftrag_event = AuftragEvent.from_message(event)
             if auftrag_event.event != "auftrag.evaluated":
-                await maybe_call_auftrag_status_callback(on_status, auftrag_event)
+                status_key = (
+                    auftrag_event.auftrag_id,
+                    auftrag_event.fsm_event,
+                    auftrag_event.status,
+                    auftrag_event.from_state,
+                    auftrag_event.to_state,
+                )
+                if status_key not in seen_status_keys:
+                    seen_status_keys.add(status_key)
+                    await maybe_call_auftrag_status_callback(on_status, auftrag_event)
                 continue
 
             try:

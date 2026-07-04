@@ -7,6 +7,8 @@
 
 if not MOOSE_BRIDGE then error("Load MooseBridge.lua before MooseBridgeAuftragExecutionExtension.lua") end
 
+local bridge_unpack = table.unpack or unpack
+
 local function bridge_split_object_id(object_id)
   if type(object_id) ~= "string" then return nil, nil end
   local prefix, name = string.match(object_id, "^([^:]+):(.+)$")
@@ -281,6 +283,8 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     opsgroup_id=bridge_optional_string_param(p.opsgroup_id) or bridge_optional_string_param(legacy_params.opsgroup_id),
     cohort_id=bridge_optional_string_param(p.cohort_id) or bridge_optional_string_param(legacy_params.cohort_id),
     target_id=bridge_optional_string_param(p.target) or bridge_optional_string_param(legacy_params.target),
+    zone_id=bridge_optional_string_param(p.zone) or bridge_optional_string_param(p.zone_id) or bridge_optional_string_param(legacy_params.zone) or bridge_optional_string_param(legacy_params.zone_id),
+    coordinate_id=bridge_optional_string_param(p.coordinate) or bridge_optional_string_param(p.coordinate_id) or bridge_optional_string_param(legacy_params.coordinate) or bridge_optional_string_param(legacy_params.coordinate_id),
     x=p.x or legacy_params.x,
     y=p.y or legacy_params.y,
     z=p.z or legacy_params.z,
@@ -290,6 +294,12 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     divebomb=p.divebomb,
     nshots=p.nshots or p.Nshots or legacy_params.nshots or legacy_params.Nshots,
     radius_m=p.radius_m or p.radius or p.Radius or legacy_params.radius_m or legacy_params.radius or legacy_params.Radius,
+    speed_kts=p.speed_kts or p.speed or p.Speed or legacy_params.speed_kts or legacy_params.speed or legacy_params.Speed,
+    heading_deg=p.heading_deg or p.heading or p.Heading or legacy_params.heading_deg or legacy_params.heading or legacy_params.Heading,
+    leg_nm=p.leg_nm or p.leg or p.Leg or legacy_params.leg_nm or legacy_params.leg or legacy_params.Leg,
+    target_types=p.target_types or p.TargetTypes or legacy_params.target_types or legacy_params.TargetTypes,
+    range_max_nm=p.range_max_nm or p.range_max or p.RangeMax or legacy_params.range_max_nm or legacy_params.range_max or legacy_params.RangeMax,
+    no_engage_zones=p.no_engage_zones or p.no_engage_zone or p.NoEngageZones or legacy_params.no_engage_zones or legacy_params.no_engage_zone or legacy_params.NoEngageZones,
   }
   if inputs.divebomb == nil then inputs.divebomb = legacy_params.divebomb end
 
@@ -324,12 +334,83 @@ function MOOSE_BRIDGE:_ResolveArtyTarget(inputs)
   return self:_ResolveCoordinateAuftragTarget(inputs)
 end
 
+function MOOSE_BRIDGE:_ResolveOrbitTarget(inputs)
+  return self:_ResolveCoordinateAuftragTarget(inputs)
+end
+
+function MOOSE_BRIDGE:_ResolveZonePatrolZone(inputs)
+  if not inputs.zone_id then return nil, "Missing zone" end
+  local ok, zone = pcall(function() return self:_ZoneForDrawObjectId(inputs.zone_id) end)
+  if ok and zone then return zone, nil end
+  return nil, bridge_safe_tostring(zone)
+end
+
+function MOOSE_BRIDGE:_ResolveZonePatrolCoordinate(inputs)
+  if inputs.coordinate_id then
+    return self:_CoordinateTargetFromObjectId(inputs.coordinate_id)
+  end
+  if inputs.x ~= nil or inputs.z ~= nil then
+    return self:_ResolveCoordinateFromInputs(inputs)
+  end
+  return nil, nil
+end
+
+function MOOSE_BRIDGE:_NormalizeTargetTypes(value)
+  if type(value) == "table" then return value end
+  if type(value) ~= "string" or value == "" then return nil end
+
+  local result = {}
+  for item in string.gmatch(value, "([^,]+)") do
+    item = item:gsub("^%s+", ""):gsub("%s+$", "")
+    if item ~= "" then result[#result + 1] = item end
+  end
+  if #result > 0 then return result end
+  return nil
+end
+
+function MOOSE_BRIDGE:_NormalizeStringList(value)
+  if type(value) == "table" then return value end
+  if type(value) ~= "string" or value == "" then return nil end
+
+  local result = {}
+  for item in string.gmatch(value, "([^,]+)") do
+    item = item:gsub("^%s+", ""):gsub("%s+$", "")
+    if item ~= "" then result[#result + 1] = item end
+  end
+  if #result > 0 then return result end
+  return nil
+end
+
+function MOOSE_BRIDGE:_BuildNoEngageZoneSet(value)
+  local zone_ids = self:_NormalizeStringList(value)
+  if not zone_ids then return nil end
+  if not SET_ZONE or not SET_ZONE.New then error("SET_ZONE:New is not available") end
+
+  local set_zone = SET_ZONE:New()
+  for _, zone_id in ipairs(zone_ids) do
+    local ok_zone, zone = pcall(function() return self:_ZoneForDrawObjectId(zone_id) end)
+    if not ok_zone or not zone then error("NoEngage zone not found: " .. bridge_safe_tostring(zone_id)) end
+
+    if type(set_zone.AddZone) == "function" then
+      set_zone:AddZone(zone)
+    elseif type(set_zone.Add) == "function" then
+      set_zone:Add(zone)
+    elseif type(set_zone.AddObject) == "function" then
+      set_zone:AddObject(zone)
+    else
+      error("SET_ZONE add method is not available")
+    end
+  end
+
+  return set_zone
+end
+
 function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
   if not auftrag then error("AUFTRAG constructor returned nil") end
+  self:_RegisterAuftragEvents(auftrag, inputs)
+  self:_SendAuftragStatusEvent(auftrag, inputs, "Planned")
   local add_ok, add_result = pcall(function() return inputs.legion:AddMission(auftrag) end)
   if not add_ok then error("LEGION:AddMission failed: " .. bridge_safe_tostring(add_result)) end
-  self:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
-  self:_SendAuftragStatusEvent(auftrag, inputs, "Added")
   self:_TrackAuftragReference(auftrag)
   return auftrag
 end
@@ -337,15 +418,15 @@ end
 function MOOSE_BRIDGE:_AddAuftragToOpsGroup(auftrag, inputs)
   if not auftrag then error("AUFTRAG constructor returned nil") end
   if type(inputs.opsgroup.AddMission) ~= "function" then error("OPSGROUP:AddMission is not available") end
+  self:_RegisterAuftragEvents(auftrag, inputs)
+  self:_SendAuftragStatusEvent(auftrag, inputs, "Planned")
   local add_ok, add_result = pcall(function() return inputs.opsgroup:AddMission(auftrag) end)
   if not add_ok then error("OPSGROUP:AddMission failed: " .. bridge_safe_tostring(add_result)) end
-  self:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
-  self:_SendAuftragStatusEvent(auftrag, inputs, "Added")
   self:_TrackAuftragReference(auftrag)
   return auftrag
 end
 
-function MOOSE_BRIDGE:_SendAuftragStatusEvent(auftrag, inputs, fsm_event)
+function MOOSE_BRIDGE:_SendAuftragStatusEvent(auftrag, inputs, fsm_event, From, Event, To)
   if type(auftrag) ~= "table" then return end
   local object_id = self:_AuftragObjectId(auftrag)
   local ok, err = pcall(function()
@@ -353,59 +434,89 @@ function MOOSE_BRIDGE:_SendAuftragStatusEvent(auftrag, inputs, fsm_event)
       auftrag_id=object_id,
       auftragsnummer=self:_AuftragNumber(auftrag),
       auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
-      status=self:_SafeCall(auftrag, "GetState") or self:_SafeCall(auftrag, "GetStatus"),
+      status=self:_SafeCall(auftrag, "GetState") or self:_SafeCall(auftrag, "GetStatus") or To,
       fsm_event=fsm_event,
+      from=From,
+      fsm_event_name=Event,
+      to=To,
       legion_id=inputs and inputs.legion_id or nil,
       opsgroup_id=inputs and inputs.opsgroup_id or nil,
       cohort_id=inputs and inputs.cohort_id or nil,
-      target=inputs and inputs.target_id or nil,
+      target=inputs and (inputs.target_id or inputs.zone_id) or nil,
     })
   end)
   if not ok and env and env.error then env.error("MooseBridge AUFTRAG status event failed: " .. bridge_safe_tostring(err)) end
 end
 
-function MOOSE_BRIDGE:_RegisterAuftragEvaluatedEvent(auftrag, inputs)
+function MOOSE_BRIDGE:_SendAuftragEvaluatedEvent(auftrag, inputs, From, Event, To, Summary)
+  if type(auftrag) ~= "table" then return end
+  local summary = bridge_auftrag_summary(Summary)
+  local object_id = self:_AuftragObjectId(auftrag)
+  local ok, err = pcall(function()
+    self:SendEvent("auftrag.evaluated", {
+      auftrag_id=object_id,
+      auftragsnummer=self:_AuftragNumber(auftrag),
+      auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
+      status=self:_SafeCall(auftrag, "GetState") or self:_SafeCall(auftrag, "GetStatus") or To,
+      fsm_event="Evaluated",
+      from=From,
+      fsm_event_name=Event,
+      to=To,
+      legion_id=inputs and inputs.legion_id or nil,
+      opsgroup_id=inputs and inputs.opsgroup_id or nil,
+      cohort_id=inputs and inputs.cohort_id or nil,
+      target=inputs and (inputs.target_id or inputs.zone_id) or nil,
+      summary=summary,
+      auftrag={
+        object_id=object_id,
+        auftragsnummer=self:_AuftragNumber(auftrag),
+        type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
+        status=self:_SafeCall(auftrag, "GetState") or self:_SafeCall(auftrag, "GetStatus") or To,
+        summary_available=summary ~= nil,
+        summary=summary,
+      },
+    })
+  end)
+  if not ok and env and env.error then env.error("MooseBridge OnAfterEvaluated send failed: " .. bridge_safe_tostring(err)) end
+end
+
+function MOOSE_BRIDGE:_RegisterAuftragEvents(auftrag, inputs)
   if type(auftrag) ~= "table" then return end
   if auftrag.MooseBridgeEvaluatedEventRegistered then return end
 
   local bridge = self
   auftrag.MooseBridgeEvaluatedEventRegistered = true
-  local previous_on_after_evaluated = auftrag.OnAfterEvaluated
+  local sent_status_events = {}
 
-  function auftrag:OnAfterEvaluated(From, Event, To, Summary)
-    if type(previous_on_after_evaluated) == "function" then
-      pcall(function() previous_on_after_evaluated(self, From, Event, To, Summary) end)
+  local function register_after_event(method_event, output_event)
+    output_event = output_event or method_event
+    local method_name = "OnAfter" .. method_event
+    local previous_handler = auftrag[method_name]
+    auftrag[method_name] = function(auftrag_object, From, Event, To, ...)
+      local extra = {...}
+      if type(previous_handler) == "function" then
+        pcall(function() previous_handler(auftrag_object, From, Event, To, bridge_unpack(extra)) end)
+      end
+
+      if output_event == "Evaluated" then
+        bridge:_SendAuftragEvaluatedEvent(auftrag_object, inputs, From, Event, To, extra[1])
+        return
+      end
+
+      if sent_status_events[output_event] then return end
+      sent_status_events[output_event] = true
+      bridge:_SendAuftragStatusEvent(auftrag_object, inputs, output_event, From, Event, To)
     end
-
-    local summary = bridge_auftrag_summary(Summary)
-    local object_id = bridge:_AuftragObjectId(self)
-    local ok, err = pcall(function()
-      bridge:SendEvent("auftrag.evaluated", {
-        auftrag_id=object_id,
-        auftragsnummer=bridge:_AuftragNumber(self),
-        auftrag_type=bridge:_SafeCall(self, "GetType") or self.type,
-        status=bridge:_SafeCall(self, "GetState") or bridge:_SafeCall(self, "GetStatus") or To,
-        fsm_event="Evaluated",
-        from=From,
-        fsm_event_name=Event,
-        to=To,
-        legion_id=inputs and inputs.legion_id or nil,
-        opsgroup_id=inputs and inputs.opsgroup_id or nil,
-        cohort_id=inputs and inputs.cohort_id or nil,
-        target=inputs and inputs.target_id or nil,
-        summary=summary,
-        auftrag={
-          object_id=object_id,
-          auftragsnummer=bridge:_AuftragNumber(self),
-          type=bridge:_SafeCall(self, "GetType") or self.type,
-          status=bridge:_SafeCall(self, "GetState") or bridge:_SafeCall(self, "GetStatus") or To,
-          summary_available=summary ~= nil,
-          summary=summary,
-        },
-      })
-    end)
-    if not ok and env and env.error then env.error("MooseBridge OnAfterEvaluated send failed: " .. bridge_safe_tostring(err)) end
   end
+
+  register_after_event("Queued")
+  register_after_event("Requested")
+  register_after_event("Scheduled")
+  register_after_event("Started")
+  register_after_event("Executing")
+  register_after_event("Done")
+  register_after_event("Cancel")
+  register_after_event("Evaluated")
 end
 
 function MOOSE_BRIDGE:_AddAuftragToTarget(auftrag, inputs)
@@ -420,6 +531,8 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     opsgroup_id=inputs.opsgroup_id,
     cohort_id=inputs.cohort_id,
     target=inputs.target_id,
+    zone=inputs.zone_id,
+    coordinate=inputs.coordinate_id,
     x=inputs.x,
     y=inputs.y,
     z=inputs.z,
@@ -428,12 +541,62 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     divebomb=inputs.divebomb,
     nshots=inputs.nshots,
     radius_m=inputs.radius_m,
+    speed_kts=inputs.speed_kts,
+    heading_deg=inputs.heading_deg,
+    leg_nm=inputs.leg_nm,
+    range_max_nm=inputs.range_max_nm,
+    no_engage_zones=inputs.no_engage_zones,
+    target_types=inputs.target_types,
     selected_payload_uid=inputs.selected_payload_uid,
     auftrag_id=self:_AuftragObjectId(auftrag),
     auftragsnummer=self:_AuftragNumber(auftrag),
     auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
     added=true,
   }
+end
+
+function MOOSE_BRIDGE:_CreateZonePatrolAuftrag(cmd, action, constructor_name)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local zone, zone_err = self:_ResolveZonePatrolZone(inputs)
+  if not zone then error(zone_err) end
+
+  local coordinate, coordinate_err = self:_ResolveZonePatrolCoordinate(inputs)
+  if coordinate_err then error(coordinate_err) end
+
+  if not AUFTRAG or type(AUFTRAG[constructor_name]) ~= "function" then error("AUFTRAG:" .. constructor_name .. " is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local heading_deg = inputs.heading_deg and tonumber(inputs.heading_deg) or nil
+  local leg_nm = inputs.leg_nm and tonumber(inputs.leg_nm) or nil
+  local target_types = self:_NormalizeTargetTypes(inputs.target_types)
+  inputs.target_types = target_types
+
+  local auftrag = AUFTRAG[constructor_name](AUFTRAG, zone, altitude_ft, speed_kts, coordinate, heading_deg, leg_nm, target_types)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult(action, auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateCasEnhancedAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local zone, zone_err = self:_ResolveZonePatrolZone(inputs)
+  if not zone then error(zone_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewCASENHANCED then error("AUFTRAG:NewCASENHANCED is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local range_max_nm = inputs.range_max_nm and tonumber(inputs.range_max_nm) or nil
+  local no_engage_zone_set = self:_BuildNoEngageZoneSet(inputs.no_engage_zones)
+  local target_types = self:_NormalizeTargetTypes(inputs.target_types)
+  inputs.no_engage_zones = self:_NormalizeStringList(inputs.no_engage_zones)
+  inputs.target_types = target_types
+
+  local auftrag = AUFTRAG:NewCASENHANCED(zone, altitude_ft, speed_kts, range_max_nm, no_engage_zone_set, target_types)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_casenhanced", auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
@@ -485,6 +648,35 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
     self:_AddAuftragToTarget(auftrag, inputs)
     return self:_BuildAuftragCommandResult("auftrag.create_arty", auftrag, inputs)
+  end)
+
+  self:RegisterCommand("auftrag.create_orbit", function(cmd)
+    local inputs = self:_CommonAuftragCommandInputs(cmd)
+    local target, target_err = self:_ResolveOrbitTarget(inputs)
+    if not target then error(target_err) end
+
+    if not AUFTRAG or not AUFTRAG.NewORBIT then error("AUFTRAG:NewORBIT is not available") end
+
+    local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+    local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+    local heading_deg = inputs.heading_deg and tonumber(inputs.heading_deg) or nil
+    local leg_nm = inputs.leg_nm and tonumber(inputs.leg_nm) or nil
+    local auftrag = AUFTRAG:NewORBIT(target, altitude_ft, speed_kts, heading_deg, leg_nm)
+
+    self:_AddAuftragToTarget(auftrag, inputs)
+    return self:_BuildAuftragCommandResult("auftrag.create_orbit", auftrag, inputs)
+  end)
+
+  self:RegisterCommand("auftrag.create_cap", function(cmd)
+    return self:_CreateZonePatrolAuftrag(cmd, "auftrag.create_cap", "NewCAP")
+  end)
+
+  self:RegisterCommand("auftrag.create_cas", function(cmd)
+    return self:_CreateZonePatrolAuftrag(cmd, "auftrag.create_cas", "NewCAS")
+  end)
+
+  self:RegisterCommand("auftrag.create_casenhanced", function(cmd)
+    return self:_CreateCasEnhancedAuftrag(cmd)
   end)
 end
 

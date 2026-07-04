@@ -93,3 +93,25 @@ def test_wait_for_event_resolves_from_dcs_event() -> None:
         assert event["payload"]["auftrag_id"] == "AUFTRAG:1"
 
     asyncio.run(scenario())
+
+
+def test_wait_for_event_after_unknown_id_does_not_replay_history() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        await server._handle_line(
+            '{"type":"event","id":"event-queued","event":"auftrag.status","payload":{"auftrag_id":"AUFTRAG:1","fsm_event":"Queued"}}'
+        )
+
+        waiter = asyncio.create_task(
+            server.wait_for_event("auftrag.*", filters={"auftrag_id": "AUFTRAG:1"}, timeout=1.0, after_id="event-missing")
+        )
+        await asyncio.sleep(0)
+        assert not waiter.done()
+
+        await server._handle_line(
+            '{"type":"event","id":"event-started","event":"auftrag.status","payload":{"auftrag_id":"AUFTRAG:1","fsm_event":"Started"}}'
+        )
+        event = await waiter
+        assert event["id"] == "event-started"
+
+    asyncio.run(scenario())
