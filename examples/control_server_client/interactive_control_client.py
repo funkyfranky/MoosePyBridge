@@ -665,6 +665,16 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["range_max_nm"] = float(parts[index])
+        elif key in {"--orbit-distance", "--orbit-distance-nm", "-orbit-distance"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["orbit_distance_nm"] = float(parts[index])
+        elif key in {"--engage-max-distance", "--engage-max-distance-nm", "-engage-max-distance"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["engage_max_distance_nm"] = float(parts[index])
         elif key in {"--no-engage-zones", "--no-engage-zone", "-no-engage-zones"}:
             index += 1
             if index >= len(parts):
@@ -694,6 +704,11 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params[key.lstrip("-")] = float(parts[index])
+        elif key in {"--offset-x", "-offset-x", "--offset-y", "-offset-y", "--offset-z", "-offset-z"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params[key.lstrip("-").replace("-", "_")] = float(parts[index])
         elif key in {"--engage-weapon-type", "-engage-weapon-type"}:
             index += 1
             if index >= len(parts):

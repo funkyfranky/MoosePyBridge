@@ -11,8 +11,10 @@ from moosebridge.auftraege import (
     Auftrag_CAP,
     Auftrag_CAS,
     Auftrag_CASENHANCED,
+    Auftrag_ESCORT,
     Auftrag_FAC,
     Auftrag_FACA,
+    Auftrag_GROUNDESCORT,
     Auftrag_ORBIT,
     Auftrag_SEAD,
     Auftrag_STRIKE,
@@ -303,6 +305,56 @@ def test_sdk_add_bombcarpet_auftrag_to_legion_uses_bombcarpet_params() -> None:
             "target": "GROUP:Convoy",
             "altitude_ft": 25000,
             "carpet_length_m": 500,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_groundescort_auftrag_to_legion_uses_groundescort_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_GROUNDESCORT(target="GROUP:Convoy", orbit_distance_nm=1.5, target_types=("Ground vehicles",))
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_groundescort"
+        assert command.params == {
+            "target": "GROUP:Convoy",
+            "orbit_distance_nm": 1.5,
+            "target_types": ["Ground vehicles"],
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_escort_auftrag_to_legion_uses_escort_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_ESCORT(
+            target="GROUP:Package Lead",
+            offset_x=-100,
+            offset_y=0,
+            offset_z=200,
+            engage_max_distance_nm=32,
+            target_types=("Air",),
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_escort"
+        assert command.params == {
+            "target": "GROUP:Package Lead",
+            "offset_x": -100,
+            "offset_y": 0,
+            "offset_z": 200,
+            "engage_max_distance_nm": 32,
+            "target_types": ["Air"],
             "legion_id": "LEGION:Wing Parchim",
         }
 

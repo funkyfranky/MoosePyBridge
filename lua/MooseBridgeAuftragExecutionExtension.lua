@@ -300,6 +300,11 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     leg_nm=p.leg_nm or p.leg or p.Leg or legacy_params.leg_nm or legacy_params.leg or legacy_params.Leg,
     target_types=p.target_types or p.TargetTypes or legacy_params.target_types or legacy_params.TargetTypes,
     range_max_nm=p.range_max_nm or p.range_max or p.RangeMax or legacy_params.range_max_nm or legacy_params.range_max or legacy_params.RangeMax,
+    orbit_distance_nm=p.orbit_distance_nm or p.orbit_distance or p.OrbitDistance or legacy_params.orbit_distance_nm or legacy_params.orbit_distance or legacy_params.OrbitDistance,
+    engage_max_distance_nm=p.engage_max_distance_nm or p.engage_max_distance or p.EngageMaxDistance or legacy_params.engage_max_distance_nm or legacy_params.engage_max_distance or legacy_params.EngageMaxDistance,
+    offset_x=p.offset_x or legacy_params.offset_x,
+    offset_y=p.offset_y or legacy_params.offset_y,
+    offset_z=p.offset_z or legacy_params.offset_z,
     no_engage_zones=p.no_engage_zones or p.no_engage_zone or p.NoEngageZones or legacy_params.no_engage_zones or legacy_params.no_engage_zone or legacy_params.NoEngageZones,
     frequency_mhz=p.frequency_mhz or p.frequency or p.Frequency or legacy_params.frequency_mhz or legacy_params.frequency or legacy_params.Frequency,
     modulation=p.modulation or p.Modulation or legacy_params.modulation or legacy_params.Modulation,
@@ -417,6 +422,15 @@ function MOOSE_BRIDGE:_NormalizeTargetTypes(value)
   end
   if #result > 0 then return result end
   return nil
+end
+
+function MOOSE_BRIDGE:_BuildOffsetVector(inputs)
+  if inputs.offset_x == nil and inputs.offset_y == nil and inputs.offset_z == nil then return nil end
+  return {
+    x=inputs.offset_x ~= nil and tonumber(inputs.offset_x) or 0,
+    y=inputs.offset_y ~= nil and tonumber(inputs.offset_y) or 0,
+    z=inputs.offset_z ~= nil and tonumber(inputs.offset_z) or 0,
+  }
 end
 
 function MOOSE_BRIDGE:_NormalizeStringList(value)
@@ -603,6 +617,11 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     designation=inputs.designation,
     data_link=inputs.data_link,
     target_types=inputs.target_types,
+    orbit_distance_nm=inputs.orbit_distance_nm,
+    engage_max_distance_nm=inputs.engage_max_distance_nm,
+    offset_x=inputs.offset_x,
+    offset_y=inputs.offset_y,
+    offset_z=inputs.offset_z,
     selected_payload_uid=inputs.selected_payload_uid,
     auftrag_id=self:_AuftragObjectId(auftrag),
     auftragsnummer=self:_AuftragNumber(auftrag),
@@ -748,6 +767,39 @@ function MOOSE_BRIDGE:_CreateBombCarpetAuftrag(cmd)
   return self:_BuildAuftragCommandResult("auftrag.create_bombcarpet", auftrag, inputs)
 end
 
+function MOOSE_BRIDGE:_CreateGroundEscortAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveGroupAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewGROUNDESCORT then error("AUFTRAG:NewGROUNDESCORT is not available") end
+
+  local orbit_distance_nm = inputs.orbit_distance_nm and tonumber(inputs.orbit_distance_nm) or nil
+  local target_types = self:_NormalizeTargetTypes(inputs.target_types)
+  inputs.target_types = target_types
+  local auftrag = AUFTRAG:NewGROUNDESCORT(target, orbit_distance_nm, target_types)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_groundescort", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateEscortAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveGroupAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewESCORT then error("AUFTRAG:NewESCORT is not available") end
+
+  local offset_vector = self:_BuildOffsetVector(inputs)
+  local engage_max_distance_nm = inputs.engage_max_distance_nm and tonumber(inputs.engage_max_distance_nm) or nil
+  local target_types = self:_NormalizeTargetTypes(inputs.target_types)
+  inputs.target_types = target_types
+  local auftrag = AUFTRAG:NewESCORT(target, offset_vector, engage_max_distance_nm, target_types)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_escort", auftrag, inputs)
+end
+
 function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
   self:RegisterCommand("auftrag.create_bai", function(cmd)
     local inputs = self:_CommonAuftragCommandInputs(cmd)
@@ -850,6 +902,14 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.create_bombcarpet", function(cmd)
     return self:_CreateBombCarpetAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_groundescort", function(cmd)
+    return self:_CreateGroundEscortAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_escort", function(cmd)
+    return self:_CreateEscortAuftrag(cmd)
   end)
 end
 

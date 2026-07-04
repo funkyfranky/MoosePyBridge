@@ -439,6 +439,41 @@ CARPET_LENGTH_M_PARAMETER = AuftragParameterSpec(
     description="Optional carpet bombing length in meters. MOOSE defaults to 500 m when omitted.",
 )
 
+ORBIT_DISTANCE_NM_PARAMETER = AuftragParameterSpec(
+    name="orbit_distance_nm",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional orbit distance from the escorted lead unit in nautical miles. MOOSE defaults to 1.5 NM.",
+)
+
+OFFSET_X_PARAMETER = AuftragParameterSpec(
+    name="offset_x",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional escort offset x component in meters. MOOSE defaults to -100 m when omitted.",
+)
+
+OFFSET_Y_PARAMETER = AuftragParameterSpec(
+    name="offset_y",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional escort offset y component in meters. MOOSE defaults to 0 m when omitted.",
+)
+
+OFFSET_Z_PARAMETER = AuftragParameterSpec(
+    name="offset_z",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional escort offset z component in meters. MOOSE defaults to 200 m when omitted.",
+)
+
+ENGAGE_MAX_DISTANCE_NM_PARAMETER = AuftragParameterSpec(
+    name="engage_max_distance_nm",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional max escort engagement distance in nautical miles. MOOSE defaults to auto 32 NM.",
+)
+
 DESIGNATION_PARAMETER = AuftragParameterSpec(
     name="designation",
     optional=True,
@@ -617,6 +652,31 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             DATA_LINK_PARAMETER,
             FREQUENCY_MHZ_PARAMETER,
             MODULATION_PARAMETER,
+        ),
+    ),
+    AuftragType.GROUNDESCORT.name: AuftragTypeSpec(
+        mission_type=AuftragType.GROUNDESCORT.name,
+        constructor="AUFTRAG:NewGROUNDESCORT",
+        performer_categories=("AIR",),
+        description="Ground escort/follow mission for escorting a ground GROUP.",
+        parameters=(
+            GROUP_TARGET_PARAMETER,
+            ORBIT_DISTANCE_NM_PARAMETER,
+            TARGET_TYPES_PARAMETER,
+        ),
+    ),
+    AuftragType.ESCORT.name: AuftragTypeSpec(
+        mission_type=AuftragType.ESCORT.name,
+        constructor="AUFTRAG:NewESCORT",
+        performer_categories=("AIR",),
+        description="Escort/follow mission for escorting another GROUP.",
+        parameters=(
+            GROUP_TARGET_PARAMETER,
+            OFFSET_X_PARAMETER,
+            OFFSET_Y_PARAMETER,
+            OFFSET_Z_PARAMETER,
+            ENGAGE_MAX_DISTANCE_NM_PARAMETER,
+            TARGET_TYPES_PARAMETER,
         ),
     ),
     AuftragType.SEAD.name: AuftragTypeSpec(

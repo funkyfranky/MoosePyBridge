@@ -369,6 +369,54 @@ class AuftragBOMBCARPET(AuftragCommand):
         )
 
 
+@dataclass(slots=True, frozen=True)
+class AuftragGROUNDESCORT(AuftragCommand):
+    """Ground escort/follow AUFTRAG for escorting a ground GROUP."""
+
+    target: str
+    orbit_distance_nm: float | None = None
+    target_types: Sequence[str] | None = None
+    mission_type = "GROUNDESCORT"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this GROUNDESCORT AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "orbit_distance_nm": self.orbit_distance_nm,
+                "target_types": list(self.target_types) if self.target_types is not None else None,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragESCORT(AuftragCommand):
+    """Escort/follow AUFTRAG for escorting another GROUP."""
+
+    target: str
+    offset_x: float | None = None
+    offset_y: float | None = None
+    offset_z: float | None = None
+    engage_max_distance_nm: float | None = None
+    target_types: Sequence[str] | None = None
+    mission_type = "ESCORT"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this ESCORT AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "offset_x": self.offset_x,
+                "offset_y": self.offset_y,
+                "offset_z": self.offset_z,
+                "engage_max_distance_nm": self.engage_max_distance_nm,
+                "target_types": list(self.target_types) if self.target_types is not None else None,
+            }
+        )
+
+
 Auftrag_BAI = AuftragBAI
 Auftrag_BOMBCARPET = AuftragBOMBCARPET
 Auftrag_BOMBING = AuftragBOMBING
@@ -380,6 +428,8 @@ Auftrag_CAS = AuftragCAS
 Auftrag_CASENHANCED = AuftragCASENHANCED
 Auftrag_FAC = AuftragFAC
 Auftrag_FACA = AuftragFACA
+Auftrag_ESCORT = AuftragESCORT
+Auftrag_GROUNDESCORT = AuftragGROUNDESCORT
 Auftrag_SEAD = AuftragSEAD
 Auftrag_STRIKE = AuftragSTRIKE
 
@@ -394,9 +444,11 @@ __all__ = [
     "AuftragCAS",
     "AuftragCASENHANCED",
     "AuftragCommand",
+    "AuftragESCORT",
     "AuftragEvent",
     "AuftragFAC",
     "AuftragFACA",
+    "AuftragGROUNDESCORT",
     "AuftragORBIT",
     "AuftragSEAD",
     "AuftragSTRIKE",
@@ -408,8 +460,10 @@ __all__ = [
     "Auftrag_CAP",
     "Auftrag_CAS",
     "Auftrag_CASENHANCED",
+    "Auftrag_ESCORT",
     "Auftrag_FAC",
     "Auftrag_FACA",
+    "Auftrag_GROUNDESCORT",
     "Auftrag_ORBIT",
     "Auftrag_SEAD",
     "Auftrag_STRIKE",

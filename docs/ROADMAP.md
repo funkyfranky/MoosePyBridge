@@ -316,8 +316,8 @@ Goal: Python can command MOOSE semantically and safely.
 Work items:
 
 - broaden AUFTRAG creation helpers beyond the current BAI, BOMBING, BOMBRUNWAY,
-  BOMBCARPET, ARTY, ORBIT, CAP, CAS, CASENHANCED, FAC, FACA, SEAD, and STRIKE
-  baseline
+  BOMBCARPET, ARTY, ORBIT, CAP, CAS, CASENHANCED, FAC, FACA, SEAD, STRIKE,
+  GROUNDESCORT, and ESCORT baseline
 - add cancellation and reassignment helpers
 - add OPSGROUP and OPSZONE control helpers
 - map recommendations to command payloads (baseline implemented for AUFTRAG

@@ -495,6 +495,42 @@ def test_interactive_mission_argument_parses_bombcarpet_options() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_groundescort_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'GROUNDESCORT --target GROUP:Convoy --orbit-distance 1.5 --target-types "Ground vehicles" -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "GROUNDESCORT"
+    assert params == {
+        "target": "GROUP:Convoy",
+        "orbit_distance_nm": 1.5,
+        "target_types": ["Ground vehicles"],
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_escort_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'ESCORT --target "GROUP:Package Lead" --offset-x -100 --offset-y 0 --offset-z 200 '
+        '--engage-max-distance 32 --target-types Air -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "ESCORT"
+    assert params == {
+        "target": "GROUP:Package Lead",
+        "offset_x": -100.0,
+        "offset_y": 0.0,
+        "offset_z": 200.0,
+        "engage_max_distance_nm": 32.0,
+        "target_types": ["Air"],
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
 def test_interactive_mission_argument_parses_cap_options() -> None:
     mission_type, params, coalition, legion_id, preview = parse_mission_argument(
         'CAP --target "ZONE:Town Fight" --coordinate "ZONE:CAP Station" --altitude 15000 --speed 300 '
