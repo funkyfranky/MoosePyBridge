@@ -285,6 +285,20 @@ AIR_TARGET_PARAMETER = AuftragParameterSpec(
     description="Target object used by object-based AUFTRAG constructors.",
 )
 
+GROUP_TARGET_PARAMETER = AuftragParameterSpec(
+    name="target",
+    optional=False,
+    accepted_objects=(AuftragTargetType.GROUP,),
+    description="Target GROUP object used by group-based AUFTRAG constructors.",
+)
+
+GROUP_OR_UNIT_TARGET_PARAMETER = AuftragParameterSpec(
+    name="target",
+    optional=False,
+    accepted_objects=(AuftragTargetType.GROUP, AuftragTargetType.UNIT),
+    description="Target GROUP or UNIT object.",
+)
+
 OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER = AuftragParameterSpec(
     name="target",
     optional=True,
@@ -388,6 +402,34 @@ NO_ENGAGE_ZONES_PARAMETER = AuftragParameterSpec(
     optional=True,
     accepted_objects=("list", "str"),
     description="Optional ZONE object id or list of ZONE object ids used to build the NoEngageZoneSet.",
+)
+
+FREQUENCY_MHZ_PARAMETER = AuftragParameterSpec(
+    name="frequency_mhz",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional radio frequency in MHz. MOOSE defaults to 133 MHz when omitted.",
+)
+
+MODULATION_PARAMETER = AuftragParameterSpec(
+    name="modulation",
+    optional=True,
+    accepted_objects=("int",),
+    description="Optional radio modulation. MOOSE defaults to AM when omitted; use 1 for FM.",
+)
+
+DESIGNATION_PARAMETER = AuftragParameterSpec(
+    name="designation",
+    optional=True,
+    accepted_objects=("str",),
+    description="Optional AI.Task.Designation value. MOOSE defaults to AUTO when omitted.",
+)
+
+DATA_LINK_PARAMETER = AuftragParameterSpec(
+    name="data_link",
+    optional=True,
+    accepted_objects=("bool",),
+    description="Optional FACA data link flag. MOOSE defaults to true when omitted.",
 )
 
 AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
@@ -504,6 +546,61 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             RANGE_MAX_NM_PARAMETER,
             NO_ENGAGE_ZONES_PARAMETER,
             TARGET_TYPES_PARAMETER,
+        ),
+    ),
+    AuftragType.FAC.name: AuftragTypeSpec(
+        mission_type=AuftragType.FAC.name,
+        constructor="AUFTRAG:NewFAC",
+        performer_categories=("AIR", "GROUND"),
+        description="Forward air controller patrol inside a ZONE.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+            SPEED_KTS_PARAMETER,
+            ALTITUDE_PARAMETER,
+            FREQUENCY_MHZ_PARAMETER,
+            MODULATION_PARAMETER,
+        ),
+    ),
+    AuftragType.FACA.name: AuftragTypeSpec(
+        mission_type=AuftragType.FACA.name,
+        constructor="AUFTRAG:NewFACA",
+        performer_categories=("AIR",),
+        description="Airborne forward air controller mission against a target GROUP.",
+        parameters=(
+            GROUP_TARGET_PARAMETER,
+            DESIGNATION_PARAMETER,
+            DATA_LINK_PARAMETER,
+            FREQUENCY_MHZ_PARAMETER,
+            MODULATION_PARAMETER,
+        ),
+    ),
+    AuftragType.SEAD.name: AuftragTypeSpec(
+        mission_type=AuftragType.SEAD.name,
+        constructor="AUFTRAG:NewSEAD",
+        performer_categories=("AIR",),
+        description="Suppression of enemy air defenses against a GROUP or UNIT target.",
+        parameters=(
+            GROUP_OR_UNIT_TARGET_PARAMETER,
+            ALTITUDE_PARAMETER,
+        ),
+    ),
+    AuftragType.STRIKE.name: AuftragTypeSpec(
+        mission_type=AuftragType.STRIKE.name,
+        constructor="AUFTRAG:NewSTRIKE",
+        performer_categories=("AIR",),
+        description="Strike mission against the closest map object to a coordinate or object position.",
+        parameters=(
+            OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            AuftragParameterSpec(
+                name="engage_weapon_type",
+                optional=True,
+                accepted_objects=("int",),
+                description="Optional numeric ENUMS.WeaponFlag value used as EngageWeaponType.",
+            ),
         ),
     ),
 }

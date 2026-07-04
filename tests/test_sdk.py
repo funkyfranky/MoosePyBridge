@@ -3,7 +3,19 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from moosebridge.auftraege import Auftrag_ARTY, Auftrag_BAI, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ORBIT, AuftragEvent
+from moosebridge.auftraege import (
+    Auftrag_ARTY,
+    Auftrag_BAI,
+    Auftrag_CAP,
+    Auftrag_CAS,
+    Auftrag_CASENHANCED,
+    Auftrag_FAC,
+    Auftrag_FACA,
+    Auftrag_ORBIT,
+    Auftrag_SEAD,
+    Auftrag_STRIKE,
+    AuftragEvent,
+)
 from moosebridge.protocol import BridgeCommand
 from moosebridge.sdk import CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
 from moosebridge.state import MooseBridgeState
@@ -370,6 +382,101 @@ def test_sdk_add_casenhanced_auftrag_to_legion_uses_casenhanced_params() -> None
             "range_max_nm": 25,
             "no_engage_zones": ["ZONE:Friendly Area"],
             "target_types": ["Ground Units", "Light armed ships"],
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_fac_auftrag_to_legion_uses_fac_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_FAC(
+            zone="ZONE:Town Fight",
+            speed_kts=80,
+            altitude_ft=2000,
+            frequency_mhz=133,
+            modulation=0,
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Brigade")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_fac"
+        assert command.params == {
+            "zone": "ZONE:Town Fight",
+            "speed_kts": 80,
+            "altitude_ft": 2000,
+            "frequency_mhz": 133,
+            "modulation": 0,
+            "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_faca_auftrag_to_legion_uses_faca_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_FACA(
+            target="GROUP:Ground-1",
+            designation="LASER",
+            data_link=False,
+            frequency_mhz=133,
+            modulation=0,
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_faca"
+        assert command.params == {
+            "target": "GROUP:Ground-1",
+            "designation": "LASER",
+            "data_link": False,
+            "frequency_mhz": 133,
+            "modulation": 0,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_sead_auftrag_to_legion_uses_sead_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_SEAD(target="UNIT:SA-11-1", altitude_ft=25000)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_sead"
+        assert command.params == {
+            "target": "UNIT:SA-11-1",
+            "altitude_ft": 25000,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_strike_auftrag_to_legion_uses_strike_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_STRIKE(target="ZONE:Factory", altitude_ft=2000, engage_weapon_type=1)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_strike"
+        assert command.params == {
+            "target": "ZONE:Factory",
+            "altitude_ft": 2000,
+            "engage_weapon_type": 1,
             "legion_id": "LEGION:Wing Parchim",
         }
 

@@ -237,6 +237,97 @@ class AuftragCASENHANCED(AuftragCommand):
         )
 
 
+@dataclass(slots=True, frozen=True)
+class AuftragFAC(AuftragCommand):
+    """Forward air controller AUFTRAG inside a FAC zone."""
+
+    zone: str
+    speed_kts: float | None = None
+    altitude_ft: float | None = None
+    frequency_mhz: float | None = None
+    modulation: int | None = None
+    mission_type = "FAC"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this FAC AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "zone": self.zone,
+                "speed_kts": self.speed_kts,
+                "altitude_ft": self.altitude_ft,
+                "frequency_mhz": self.frequency_mhz,
+                "modulation": self.modulation,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragFACA(AuftragCommand):
+    """Airborne forward air controller AUFTRAG against a target GROUP."""
+
+    target: str
+    designation: str | None = None
+    data_link: bool | None = None
+    frequency_mhz: float | None = None
+    modulation: int | None = None
+    mission_type = "FACA"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this FACA AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "designation": self.designation,
+                "data_link": self.data_link,
+                "frequency_mhz": self.frequency_mhz,
+                "modulation": self.modulation,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragSEAD(AuftragCommand):
+    """Suppression of enemy air defenses AUFTRAG against a GROUP or UNIT."""
+
+    target: str
+    altitude_ft: float | None = None
+    mission_type = "SEAD"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this SEAD AUFTRAG."""
+
+        return clean_auftrag_params({"target": self.target, "altitude_ft": self.altitude_ft})
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragSTRIKE(AuftragCommand):
+    """Strike AUFTRAG against a coordinate or object position."""
+
+    target: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    altitude_ft: float | None = None
+    engage_weapon_type: int | None = None
+    mission_type = "STRIKE"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this STRIKE AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "x": self.x,
+                "y": self.y,
+                "z": self.z,
+                "altitude_ft": self.altitude_ft,
+                "engage_weapon_type": self.engage_weapon_type,
+            }
+        )
+
+
 Auftrag_BAI = AuftragBAI
 Auftrag_BOMBING = AuftragBOMBING
 Auftrag_ARTY = AuftragARTY
@@ -244,6 +335,10 @@ Auftrag_ORBIT = AuftragORBIT
 Auftrag_CAP = AuftragCAP
 Auftrag_CAS = AuftragCAS
 Auftrag_CASENHANCED = AuftragCASENHANCED
+Auftrag_FAC = AuftragFAC
+Auftrag_FACA = AuftragFACA
+Auftrag_SEAD = AuftragSEAD
+Auftrag_STRIKE = AuftragSTRIKE
 
 
 __all__ = [
@@ -255,12 +350,20 @@ __all__ = [
     "AuftragCASENHANCED",
     "AuftragCommand",
     "AuftragEvent",
+    "AuftragFAC",
+    "AuftragFACA",
     "AuftragORBIT",
+    "AuftragSEAD",
+    "AuftragSTRIKE",
     "Auftrag_ARTY",
     "Auftrag_BAI",
     "Auftrag_BOMBING",
     "Auftrag_CAP",
     "Auftrag_CAS",
     "Auftrag_CASENHANCED",
+    "Auftrag_FAC",
+    "Auftrag_FACA",
     "Auftrag_ORBIT",
+    "Auftrag_SEAD",
+    "Auftrag_STRIKE",
 ]

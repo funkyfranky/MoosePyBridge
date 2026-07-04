@@ -541,6 +541,42 @@ def test_interactive_mission_argument_parses_casenhanced_options() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_fac_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'FAC --target "ZONE:Town Fight" --speed 80 --altitude 2000 --frequency 133 --modulation 0 -legion "LEGION:Ground Brigade"'
+    )
+
+    assert mission_type == "FAC"
+    assert params == {
+        "zone": "ZONE:Town Fight",
+        "speed_kts": 80.0,
+        "altitude_ft": 2000.0,
+        "frequency_mhz": 133.0,
+        "modulation": 0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Ground Brigade"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_faca_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'FACA --target GROUP:Ground-1 --designation LASER --no-data-link --frequency 133 --modulation 0 -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "FACA"
+    assert params == {
+        "target": "GROUP:Ground-1",
+        "designation": "LASER",
+        "data_link": False,
+        "frequency_mhz": 133.0,
+        "modulation": 0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
 def test_interactive_legion_alias_normalizes_to_legion_object_id() -> None:
     client = MooseBridgeControlClient()
     client.state.apply_message(

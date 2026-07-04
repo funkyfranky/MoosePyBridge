@@ -665,6 +665,25 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["no_engage_zones"] = [item.strip() for item in parts[index].split(",") if item.strip()]
+        elif key in {"--frequency", "--frequency-mhz", "-frequency"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["frequency_mhz"] = float(parts[index])
+        elif key in {"--modulation", "-modulation"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["modulation"] = int(parts[index])
+        elif key in {"--designation", "-designation"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["designation"] = parts[index]
+        elif key in {"--data-link", "--datalink", "-data-link"}:
+            params["data_link"] = True
+        elif key in {"--no-data-link", "--no-datalink", "-no-data-link"}:
+            params["data_link"] = False
         elif key in {"--x", "-x", "--y", "-y", "--z", "-z"}:
             index += 1
             if index >= len(parts):
@@ -681,7 +700,7 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             raise ValueError(f"Unknown mission option: {option}")
         index += 1
 
-    if mission_type.upper() in {"CAP", "CAS", "CASENHANCED"} and "target" in params and "zone" not in params:
+    if mission_type.upper() in {"CAP", "CAS", "CASENHANCED", "FAC"} and "target" in params and "zone" not in params:
         params["zone"] = params.pop("target")
 
     return mission_type, params, coalition, legion_id, preview

@@ -226,7 +226,7 @@ For code that should read closer to the MOOSE AUFTRAG API, use the lightweight
 Python AUFTRAG descriptions and let the SDK convert them to bridge commands:
 
 ```python
-from moosebridge import Auftrag_ARTY, Auftrag_BAI, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ORBIT
+from moosebridge import Auftrag_ARTY, Auftrag_BAI, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_FAC, Auftrag_FACA, Auftrag_ORBIT, Auftrag_SEAD, Auftrag_STRIKE
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
@@ -248,6 +248,18 @@ ack = await bridge.add_auftrag(auftrag=auftrag_cas, legion="LEGION:Wing Parchim"
 
 auftrag_casenhanced = Auftrag_CASENHANCED(zone="ZONE:Town Fight", range_max_nm=25)
 ack = await bridge.add_auftrag(auftrag=auftrag_casenhanced, legion="LEGION:Wing Parchim")
+
+auftrag_fac = Auftrag_FAC(zone="ZONE:Town Fight", frequency_mhz=133, modulation=0)
+ack = await bridge.add_auftrag(auftrag=auftrag_fac, legion="LEGION:Ground Brigade")
+
+auftrag_faca = Auftrag_FACA(target="GROUP:Ground-1", designation="LASER", data_link=False)
+ack = await bridge.add_auftrag(auftrag=auftrag_faca, legion="LEGION:Wing Parchim")
+
+auftrag_sead = Auftrag_SEAD(target="UNIT:SA-11-1", altitude_ft=25000)
+ack = await bridge.add_auftrag(auftrag=auftrag_sead, legion="LEGION:Wing Parchim")
+
+auftrag_strike = Auftrag_STRIKE(target="ZONE:Factory", altitude_ft=2000, engage_weapon_type=1)
+ack = await bridge.add_auftrag(auftrag=auftrag_strike, legion="LEGION:Wing Parchim")
 ```
 
 `get_auftrag_summary` and `wait_for_auftrag_outcome` wait for the Lua bridge's

@@ -300,8 +300,17 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     target_types=p.target_types or p.TargetTypes or legacy_params.target_types or legacy_params.TargetTypes,
     range_max_nm=p.range_max_nm or p.range_max or p.RangeMax or legacy_params.range_max_nm or legacy_params.range_max or legacy_params.RangeMax,
     no_engage_zones=p.no_engage_zones or p.no_engage_zone or p.NoEngageZones or legacy_params.no_engage_zones or legacy_params.no_engage_zone or legacy_params.NoEngageZones,
+    frequency_mhz=p.frequency_mhz or p.frequency or p.Frequency or legacy_params.frequency_mhz or legacy_params.frequency or legacy_params.Frequency,
+    modulation=p.modulation or p.Modulation or legacy_params.modulation or legacy_params.Modulation,
+    designation=bridge_optional_string_param(p.designation) or bridge_optional_string_param(p.Designation) or bridge_optional_string_param(legacy_params.designation) or bridge_optional_string_param(legacy_params.Designation),
+    data_link=p.data_link,
   }
   if inputs.divebomb == nil then inputs.divebomb = legacy_params.divebomb end
+  if inputs.data_link == nil then inputs.data_link = p.datalink end
+  if inputs.data_link == nil then inputs.data_link = p.DataLink end
+  if inputs.data_link == nil then inputs.data_link = legacy_params.data_link end
+  if inputs.data_link == nil then inputs.data_link = legacy_params.datalink end
+  if inputs.data_link == nil then inputs.data_link = legacy_params.DataLink end
 
   if inputs.legion_id and inputs.opsgroup_id then error("Specify only one of legion_id or opsgroup_id; " .. bridge_param_debug(cmd, p)) end
   if not inputs.legion_id and not inputs.opsgroup_id then error("Missing legion_id or opsgroup_id; " .. bridge_param_debug(cmd, p)) end
@@ -326,11 +335,29 @@ function MOOSE_BRIDGE:_ResolveObjectAuftragTarget(inputs)
   return self:_ResolveAuftragTargetById(inputs.target_id)
 end
 
+function MOOSE_BRIDGE:_ResolveGroupAuftragTarget(inputs)
+  if not inputs.target_id then return nil, "Missing target" end
+  local prefix = bridge_split_object_id(inputs.target_id)
+  if prefix ~= "GROUP" then return nil, "FACA target must be GROUP:<name>" end
+  return self:_ResolveAuftragTargetById(inputs.target_id)
+end
+
+function MOOSE_BRIDGE:_ResolveGroupOrUnitAuftragTarget(inputs)
+  if not inputs.target_id then return nil, "Missing target" end
+  local prefix = bridge_split_object_id(inputs.target_id)
+  if prefix ~= "GROUP" and prefix ~= "UNIT" then return nil, "Target must be GROUP:<name> or UNIT:<name>" end
+  return self:_ResolveAuftragTargetById(inputs.target_id)
+end
+
 function MOOSE_BRIDGE:_ResolveBombingTarget(inputs)
   return self:_ResolveCoordinateAuftragTarget(inputs)
 end
 
 function MOOSE_BRIDGE:_ResolveArtyTarget(inputs)
+  return self:_ResolveCoordinateAuftragTarget(inputs)
+end
+
+function MOOSE_BRIDGE:_ResolveStrikeTarget(inputs)
   return self:_ResolveCoordinateAuftragTarget(inputs)
 end
 
@@ -546,6 +573,10 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     leg_nm=inputs.leg_nm,
     range_max_nm=inputs.range_max_nm,
     no_engage_zones=inputs.no_engage_zones,
+    frequency_mhz=inputs.frequency_mhz,
+    modulation=inputs.modulation,
+    designation=inputs.designation,
+    data_link=inputs.data_link,
     target_types=inputs.target_types,
     selected_payload_uid=inputs.selected_payload_uid,
     auftrag_id=self:_AuftragObjectId(auftrag),
@@ -597,6 +628,70 @@ function MOOSE_BRIDGE:_CreateCasEnhancedAuftrag(cmd)
 
   self:_AddAuftragToTarget(auftrag, inputs)
   return self:_BuildAuftragCommandResult("auftrag.create_casenhanced", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateFacAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local zone, zone_err = self:_ResolveZonePatrolZone(inputs)
+  if not zone then error(zone_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewFAC then error("AUFTRAG:NewFAC is not available") end
+
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local frequency_mhz = inputs.frequency_mhz and tonumber(inputs.frequency_mhz) or nil
+  local modulation = inputs.modulation and tonumber(inputs.modulation) or nil
+
+  local auftrag = AUFTRAG:NewFAC(zone, speed_kts, altitude_ft, frequency_mhz, modulation)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_fac", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateFacaAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveGroupAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewFACA then error("AUFTRAG:NewFACA is not available") end
+
+  local data_link = bridge_bool_param(inputs.data_link)
+  local frequency_mhz = inputs.frequency_mhz and tonumber(inputs.frequency_mhz) or nil
+  local modulation = inputs.modulation and tonumber(inputs.modulation) or nil
+
+  local auftrag = AUFTRAG:NewFACA(target, inputs.designation, data_link, frequency_mhz, modulation)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_faca", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateSeadAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveGroupOrUnitAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewSEAD then error("AUFTRAG:NewSEAD is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local auftrag = AUFTRAG:NewSEAD(target, altitude_ft)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_sead", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateStrikeAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveStrikeTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewSTRIKE then error("AUFTRAG:NewSTRIKE is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local engage_weapon_type = inputs.engage_weapon_type and tonumber(inputs.engage_weapon_type) or nil
+  local auftrag = AUFTRAG:NewSTRIKE(target, altitude_ft, engage_weapon_type)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_strike", auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
@@ -677,6 +772,22 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.create_casenhanced", function(cmd)
     return self:_CreateCasEnhancedAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_fac", function(cmd)
+    return self:_CreateFacAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_faca", function(cmd)
+    return self:_CreateFacaAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_sead", function(cmd)
+    return self:_CreateSeadAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_strike", function(cmd)
+    return self:_CreateStrikeAuftrag(cmd)
   end)
 end
 
