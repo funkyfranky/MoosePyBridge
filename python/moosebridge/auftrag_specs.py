@@ -299,11 +299,25 @@ GROUP_OR_UNIT_TARGET_PARAMETER = AuftragParameterSpec(
     description="Target GROUP or UNIT object.",
 )
 
+AIRBASE_TARGET_PARAMETER = AuftragParameterSpec(
+    name="target",
+    optional=False,
+    accepted_objects=(AuftragTargetType.AIRBASE,),
+    description="Target AIRBASE airdrome whose runway should be bombed.",
+)
+
 OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER = AuftragParameterSpec(
     name="target",
     optional=True,
     accepted_objects=COORDINATE_OR_OBJECT_TARGET_TYPES,
     description="Optional object shortcut whose current coordinate is used as the mission target point; direct x/z coordinates are also accepted.",
+)
+
+OPTIONAL_CARPET_COORDINATE_OR_OBJECT_TARGET_PARAMETER = AuftragParameterSpec(
+    name="target",
+    optional=True,
+    accepted_objects=(AuftragTargetType.COORDINATE, AuftragTargetType.GROUP, AuftragTargetType.UNIT, AuftragTargetType.STATIC),
+    description="Optional GROUP, UNIT or STATIC shortcut whose current coordinate is used as the carpet bombing target point; direct x/z coordinates are also accepted.",
 )
 
 CAP_ZONE_PARAMETER = AuftragParameterSpec(
@@ -418,6 +432,13 @@ MODULATION_PARAMETER = AuftragParameterSpec(
     description="Optional radio modulation. MOOSE defaults to AM when omitted; use 1 for FM.",
 )
 
+CARPET_LENGTH_M_PARAMETER = AuftragParameterSpec(
+    name="carpet_length_m",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional carpet bombing length in meters. MOOSE defaults to 500 m when omitted.",
+)
+
 DESIGNATION_PARAMETER = AuftragParameterSpec(
     name="designation",
     optional=True,
@@ -466,6 +487,30 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
                 accepted_objects=("bool",),
                 description="Optional dive-bombing attack approach flag.",
             ),
+        ),
+    ),
+    AuftragType.BOMBRUNWAY.name: AuftragTypeSpec(
+        mission_type=AuftragType.BOMBRUNWAY.name,
+        constructor="AUFTRAG:NewBOMBRUNWAY",
+        performer_categories=("AIR",),
+        description="Bomb runway mission against an AIRBASE airdrome.",
+        parameters=(
+            AIRBASE_TARGET_PARAMETER,
+            ALTITUDE_PARAMETER,
+        ),
+    ),
+    AuftragType.BOMBCARPET.name: AuftragTypeSpec(
+        mission_type=AuftragType.BOMBCARPET.name,
+        constructor="AUFTRAG:NewBOMBCARPET",
+        performer_categories=("AIR",),
+        description="Carpet bombing mission against a coordinate, optionally resolved from GROUP, UNIT or STATIC.",
+        parameters=(
+            OPTIONAL_CARPET_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            CARPET_LENGTH_M_PARAMETER,
         ),
     ),
     AuftragType.ARTY.name: AuftragTypeSpec(

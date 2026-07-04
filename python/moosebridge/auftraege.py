@@ -328,8 +328,51 @@ class AuftragSTRIKE(AuftragCommand):
         )
 
 
+@dataclass(slots=True, frozen=True)
+class AuftragBOMBRUNWAY(AuftragCommand):
+    """Bomb runway AUFTRAG against an AIRBASE airdrome."""
+
+    target: str
+    altitude_ft: float | None = None
+    mission_type = "BOMBRUNWAY"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this BOMBRUNWAY AUFTRAG."""
+
+        return clean_auftrag_params({"target": self.target, "altitude_ft": self.altitude_ft})
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragBOMBCARPET(AuftragCommand):
+    """Carpet bombing AUFTRAG against a coordinate or object position."""
+
+    target: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    altitude_ft: float | None = None
+    carpet_length_m: float | None = None
+    mission_type = "BOMBCARPET"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this BOMBCARPET AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "x": self.x,
+                "y": self.y,
+                "z": self.z,
+                "altitude_ft": self.altitude_ft,
+                "carpet_length_m": self.carpet_length_m,
+            }
+        )
+
+
 Auftrag_BAI = AuftragBAI
+Auftrag_BOMBCARPET = AuftragBOMBCARPET
 Auftrag_BOMBING = AuftragBOMBING
+Auftrag_BOMBRUNWAY = AuftragBOMBRUNWAY
 Auftrag_ARTY = AuftragARTY
 Auftrag_ORBIT = AuftragORBIT
 Auftrag_CAP = AuftragCAP
@@ -344,7 +387,9 @@ Auftrag_STRIKE = AuftragSTRIKE
 __all__ = [
     "AuftragARTY",
     "AuftragBAI",
+    "AuftragBOMBCARPET",
     "AuftragBOMBING",
+    "AuftragBOMBRUNWAY",
     "AuftragCAP",
     "AuftragCAS",
     "AuftragCASENHANCED",
@@ -357,7 +402,9 @@ __all__ = [
     "AuftragSTRIKE",
     "Auftrag_ARTY",
     "Auftrag_BAI",
+    "Auftrag_BOMBCARPET",
     "Auftrag_BOMBING",
+    "Auftrag_BOMBRUNWAY",
     "Auftrag_CAP",
     "Auftrag_CAS",
     "Auftrag_CASENHANCED",

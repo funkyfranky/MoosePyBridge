@@ -479,6 +479,22 @@ def test_interactive_mission_argument_parses_orbit_options() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_bombcarpet_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'BOMBCARPET --target GROUP:Convoy --altitude 25000 --carpet-length 500 -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "BOMBCARPET"
+    assert params == {
+        "target": "GROUP:Convoy",
+        "altitude_ft": 25000.0,
+        "carpet_length_m": 500.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
 def test_interactive_mission_argument_parses_cap_options() -> None:
     mission_type, params, coalition, legion_id, preview = parse_mission_argument(
         'CAP --target "ZONE:Town Fight" --coordinate "ZONE:CAP Station" --altitude 15000 --speed 300 '

@@ -6,6 +6,8 @@ from typing import Any
 from moosebridge.auftraege import (
     Auftrag_ARTY,
     Auftrag_BAI,
+    Auftrag_BOMBCARPET,
+    Auftrag_BOMBRUNWAY,
     Auftrag_CAP,
     Auftrag_CAS,
     Auftrag_CASENHANCED,
@@ -263,6 +265,45 @@ def test_sdk_add_auftrag_to_opsgroup_uses_opsgroup_id() -> None:
             "target": "UNIT:Ground-1-1",
             "nshots": 6,
             "opsgroup_id": "OPSGROUP:Group-1",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_bombrunway_auftrag_to_legion_uses_bombrunway_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_BOMBRUNWAY(target="AIRBASE:Parchim", altitude_ft=25000)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_bombrunway"
+        assert command.params == {
+            "target": "AIRBASE:Parchim",
+            "altitude_ft": 25000,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_bombcarpet_auftrag_to_legion_uses_bombcarpet_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_BOMBCARPET(target="GROUP:Convoy", altitude_ft=25000, carpet_length_m=500)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_bombcarpet"
+        assert command.params == {
+            "target": "GROUP:Convoy",
+            "altitude_ft": 25000,
+            "carpet_length_m": 500,
+            "legion_id": "LEGION:Wing Parchim",
         }
 
     asyncio.run(scenario())

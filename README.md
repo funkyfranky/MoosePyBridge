@@ -220,7 +220,7 @@ nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", aliv
 MOOSE-like AUFTRAG helper objects:
 
 ```python
-from moosebridge import Auftrag_ARTY, Auftrag_BAI, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_FAC, Auftrag_FACA, Auftrag_ORBIT, Auftrag_SEAD, Auftrag_STRIKE
+from moosebridge import Auftrag_ARTY, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_FAC, Auftrag_FACA, Auftrag_ORBIT, Auftrag_SEAD, Auftrag_STRIKE
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
@@ -231,6 +231,12 @@ if summary.success is True:
 
 auftrag_arty = Auftrag_ARTY(target="UNIT:Ground-1-1", nshots=6)
 ack = await bridge.add_auftrag(auftrag=auftrag_arty, opsgroup="OPSGROUP:Group-1")
+
+auftrag_bombrunway = Auftrag_BOMBRUNWAY(target="AIRBASE:Parchim", altitude_ft=25000)
+ack = await bridge.add_auftrag(auftrag=auftrag_bombrunway, legion="LEGION:Wing Parchim")
+
+auftrag_bombcarpet = Auftrag_BOMBCARPET(target="GROUP:Convoy", altitude_ft=25000, carpet_length_m=500)
+ack = await bridge.add_auftrag(auftrag=auftrag_bombcarpet, legion="LEGION:Wing Parchim")
 
 auftrag_orbit = Auftrag_ORBIT(target="ZONE:CAP Station", altitude_ft=15000, speed_kts=300)
 ack = await bridge.add_auftrag(auftrag=auftrag_orbit, legion="LEGION:Wing Parchim")

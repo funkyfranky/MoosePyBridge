@@ -294,6 +294,7 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     divebomb=p.divebomb,
     nshots=p.nshots or p.Nshots or legacy_params.nshots or legacy_params.Nshots,
     radius_m=p.radius_m or p.radius or p.Radius or legacy_params.radius_m or legacy_params.radius or legacy_params.Radius,
+    carpet_length_m=p.carpet_length_m or p.carpet_length or p.CarpetLength or legacy_params.carpet_length_m or legacy_params.carpet_length or legacy_params.CarpetLength,
     speed_kts=p.speed_kts or p.speed or p.Speed or legacy_params.speed_kts or legacy_params.speed or legacy_params.Speed,
     heading_deg=p.heading_deg or p.heading or p.Heading or legacy_params.heading_deg or legacy_params.heading or legacy_params.Heading,
     leg_nm=p.leg_nm or p.leg or p.Leg or legacy_params.leg_nm or legacy_params.leg or legacy_params.Leg,
@@ -349,7 +350,30 @@ function MOOSE_BRIDGE:_ResolveGroupOrUnitAuftragTarget(inputs)
   return self:_ResolveAuftragTargetById(inputs.target_id)
 end
 
+function MOOSE_BRIDGE:_ResolveAirbaseAuftragTarget(inputs)
+  if not inputs.target_id then return nil, "Missing target" end
+  local prefix, name = bridge_split_object_id(inputs.target_id)
+  if prefix ~= "AIRBASE" then return nil, "BOMBRUNWAY target must be AIRBASE:<name>" end
+
+  if AIRBASE and AIRBASE.FindByName then
+    local ok, airbase = pcall(function() return AIRBASE:FindByName(name) end)
+    if ok and airbase then return airbase, nil end
+  end
+
+  return nil, "AIRBASE target not found: " .. bridge_safe_tostring(name)
+end
+
 function MOOSE_BRIDGE:_ResolveBombingTarget(inputs)
+  return self:_ResolveCoordinateAuftragTarget(inputs)
+end
+
+function MOOSE_BRIDGE:_ResolveBombCarpetTarget(inputs)
+  if inputs.target_id then
+    local prefix = bridge_split_object_id(inputs.target_id)
+    if prefix ~= "GROUP" and prefix ~= "UNIT" and prefix ~= "STATIC" then
+      return nil, "BOMBCARPET target must be GROUP:<name>, UNIT:<name>, STATIC:<name> or direct x/z coordinates"
+    end
+  end
   return self:_ResolveCoordinateAuftragTarget(inputs)
 end
 
@@ -568,6 +592,7 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     divebomb=inputs.divebomb,
     nshots=inputs.nshots,
     radius_m=inputs.radius_m,
+    carpet_length_m=inputs.carpet_length_m,
     speed_kts=inputs.speed_kts,
     heading_deg=inputs.heading_deg,
     leg_nm=inputs.leg_nm,
@@ -694,6 +719,35 @@ function MOOSE_BRIDGE:_CreateStrikeAuftrag(cmd)
   return self:_BuildAuftragCommandResult("auftrag.create_strike", auftrag, inputs)
 end
 
+function MOOSE_BRIDGE:_CreateBombRunwayAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveAirbaseAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewBOMBRUNWAY then error("AUFTRAG:NewBOMBRUNWAY is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local auftrag = AUFTRAG:NewBOMBRUNWAY(target, altitude_ft)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_bombrunway", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateBombCarpetAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveBombCarpetTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewBOMBCARPET then error("AUFTRAG:NewBOMBCARPET is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local carpet_length_m = inputs.carpet_length_m and tonumber(inputs.carpet_length_m) or nil
+  local auftrag = AUFTRAG:NewBOMBCARPET(target, altitude_ft, carpet_length_m)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_bombcarpet", auftrag, inputs)
+end
+
 function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
   self:RegisterCommand("auftrag.create_bai", function(cmd)
     local inputs = self:_CommonAuftragCommandInputs(cmd)
@@ -788,6 +842,14 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.create_strike", function(cmd)
     return self:_CreateStrikeAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_bombrunway", function(cmd)
+    return self:_CreateBombRunwayAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_bombcarpet", function(cmd)
+    return self:_CreateBombCarpetAuftrag(cmd)
   end)
 end
 
