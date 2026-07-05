@@ -5,7 +5,10 @@ from typing import Any
 
 from moosebridge.auftraege import (
     Auftrag_ARTY,
+    Auftrag_AIRDEFENSE,
     Auftrag_AMMOSUPPLY,
+    Auftrag_ANTISHIP,
+    Auftrag_AWACS,
     Auftrag_BAI,
     Auftrag_BOMBCARPET,
     Auftrag_BOMBRUNWAY,
@@ -13,17 +16,24 @@ from moosebridge.auftraege import (
     Auftrag_CAS,
     Auftrag_CASENHANCED,
     Auftrag_ESCORT,
+    Auftrag_EWR,
     Auftrag_FAC,
     Auftrag_FACA,
     Auftrag_FUELSUPPLY,
     Auftrag_GROUNDATTACK,
     Auftrag_GROUNDESCORT,
+    Auftrag_INTERCEPT,
     Auftrag_NAVALENGAGEMENT,
+    Auftrag_NOTHING,
+    Auftrag_ONGUARD,
     Auftrag_ORBIT,
+    Auftrag_PATROLZONE,
     Auftrag_RESCUEHELO,
     Auftrag_REARMING,
     Auftrag_SEAD,
+    Auftrag_STRAFING,
     Auftrag_STRIKE,
+    Auftrag_TANKER,
     Auftrag_TROOPTRANSPORT,
     AuftragEvent,
     GeneralSet,
@@ -262,6 +272,30 @@ def test_sdk_add_auftrag_to_legion_uses_moose_like_object() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_add_auftrag_includes_optional_timing_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
+
+        assert auftrag.set_time(start=600, stop="13:00") is auftrag
+        assert auftrag.set_duration(duration=1800) is auftrag
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.params == {
+            "target": "UNIT:Ground-1-1",
+            "altitude_ft": 15000,
+            "clock_start": 600,
+            "clock_stop": "13:00",
+            "duration": 1800,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
 def test_sdk_add_auftrag_to_opsgroup_uses_opsgroup_id() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -358,6 +392,78 @@ def test_sdk_add_ammosupply_auftrag_to_legion_uses_ammosupply_params() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_add_airdefense_auftrag_to_legion_uses_airdefense_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_AIRDEFENSE(zone="ZONE:Forward SAM")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Air Defense")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_airdefense"
+        assert command.params == {
+            "zone": "ZONE:Forward SAM",
+            "legion_id": "LEGION:Air Defense",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_onguard_auftrag_to_legion_uses_onguard_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_ONGUARD(target="ZONE:Guard Point")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Brigade")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_onguard"
+        assert command.params == {
+            "target": "ZONE:Guard Point",
+            "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_nothing_auftrag_to_legion_uses_nothing_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_NOTHING(zone="ZONE:Relax")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Brigade")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_nothing"
+        assert command.params == {
+            "zone": "ZONE:Relax",
+            "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_ewr_auftrag_to_legion_uses_ewr_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_EWR(zone="ZONE:EWR Site")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Radar Net")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_ewr"
+        assert command.params == {
+            "zone": "ZONE:EWR Site",
+            "legion_id": "LEGION:Radar Net",
+        }
+
+    asyncio.run(scenario())
+
+
 def test_sdk_add_fuelsupply_auftrag_to_legion_uses_fuelsupply_params() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -409,6 +515,25 @@ def test_sdk_add_groundattack_auftrag_to_legion_uses_groundattack_params() -> No
             "speed_kts": 25,
             "formation": "Vee",
             "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_antiship_auftrag_to_legion_uses_antiship_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_ANTISHIP(target="GROUP:Enemy Ships", altitude_ft=2000)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_antiship"
+        assert command.params == {
+            "target": "GROUP:Enemy Ships",
+            "altitude_ft": 2000,
+            "legion_id": "LEGION:Wing Parchim",
         }
 
     asyncio.run(scenario())
@@ -593,6 +718,64 @@ def test_sdk_add_orbit_auftrag_to_legion_uses_orbit_params() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_add_awacs_auftrag_to_legion_uses_awacs_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_AWACS(
+            target="ZONE:AWACS Track",
+            altitude_ft=30000,
+            speed_kts=350,
+            heading_deg=270,
+            leg_nm=10,
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_awacs"
+        assert command.params == {
+            "target": "ZONE:AWACS Track",
+            "altitude_ft": 30000,
+            "speed_kts": 350,
+            "heading_deg": 270,
+            "leg_nm": 10,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_tanker_auftrag_to_legion_uses_tanker_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_TANKER(
+            target="ZONE:Tanker Track",
+            altitude_ft=20000,
+            speed_kts=300,
+            heading_deg=270,
+            leg_nm=10,
+            refuel_system=1,
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_tanker"
+        assert command.params == {
+            "target": "ZONE:Tanker Track",
+            "altitude_ft": 20000,
+            "speed_kts": 300,
+            "heading_deg": 270,
+            "leg_nm": 10,
+            "refuel_system": 1,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
 def test_sdk_add_cap_auftrag_to_legion_uses_cap_params() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -713,6 +896,27 @@ def test_sdk_add_fac_auftrag_to_legion_uses_fac_params() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_add_patrolzone_auftrag_to_legion_uses_patrolzone_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_PATROLZONE(zone="ZONE:Patrol Area", speed_kts=20, altitude_ft=2000, formation="Off Road")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Brigade")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_patrolzone"
+        assert command.params == {
+            "zone": "ZONE:Patrol Area",
+            "speed_kts": 20,
+            "altitude_ft": 2000,
+            "formation": "Off Road",
+            "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
 def test_sdk_add_faca_auftrag_to_legion_uses_faca_params() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -760,6 +964,24 @@ def test_sdk_add_sead_auftrag_to_legion_uses_sead_params() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_add_intercept_auftrag_to_legion_uses_intercept_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_INTERCEPT(target="GROUP:Bandit-1")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_intercept"
+        assert command.params == {
+            "target": "GROUP:Bandit-1",
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
 def test_sdk_add_strike_auftrag_to_legion_uses_strike_params() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -774,6 +996,26 @@ def test_sdk_add_strike_auftrag_to_legion_uses_strike_params() -> None:
             "target": "ZONE:Factory",
             "altitude_ft": 2000,
             "engage_weapon_type": 1,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_strafing_auftrag_to_legion_uses_strafing_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_STRAFING(target="GROUP:Convoy", altitude_ft=1000, length_m=300)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_strafing"
+        assert command.params == {
+            "target": "GROUP:Convoy",
+            "altitude_ft": 1000,
+            "length_m": 300,
             "legion_id": "LEGION:Wing Parchim",
         }
 

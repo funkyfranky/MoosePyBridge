@@ -283,6 +283,10 @@ function json.decode(text)
     result.params.mission_type = read_string_field(params_text, "mission_type")
     result.params.constructor = read_string_field(params_text, "constructor")
     result.params.apply = read_boolean_field(params_text, "apply")
+    result.params.clock_start = read_number_field(params_text, "clock_start") or read_string_field(params_text, "clock_start")
+    result.params.clock_stop = read_number_field(params_text, "clock_stop") or read_string_field(params_text, "clock_stop")
+    result.params.ClockStart = read_number_field(params_text, "ClockStart") or read_string_field(params_text, "ClockStart")
+    result.params.ClockStop = read_number_field(params_text, "ClockStop") or read_string_field(params_text, "ClockStop")
 
     -- AUFTRAG:BOMBING fields.
     result.params.engage_weapon_type = read_number_field(params_text, "engage_weapon_type")

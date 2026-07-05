@@ -563,6 +563,7 @@ class MooseBridgeClient:
             raise ValueError("Specify exactly one of legion or opsgroup")
 
         params = auftrag.to_params()
+        params.update(auftrag.timing_params())
         params.update(
             clean_params(
                 {

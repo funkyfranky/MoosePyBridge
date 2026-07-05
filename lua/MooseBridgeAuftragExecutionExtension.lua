@@ -57,6 +57,22 @@ local function bridge_bool_param(value)
   return value and true or false
 end
 
+local function bridge_number_param(value)
+  if value == nil then return nil end
+  if type(value) == "number" then return value end
+  local text = bridge_optional_string_param(value)
+  if not text then return nil end
+  local number = tonumber(text)
+  if number == nil then error("Expected number parameter, got " .. bridge_safe_tostring(value)) end
+  return number
+end
+
+local function bridge_time_param(value)
+  if value == nil then return nil end
+  if type(value) == "number" then return value end
+  return bridge_optional_string_param(value)
+end
+
 local function bridge_auftrag_now()
   if timer and timer.getAbsTime then return timer.getAbsTime() end
   if timer and timer.getTime then return timer.getTime() end
@@ -282,6 +298,9 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     legion_id=bridge_optional_string_param(p.legion_id) or bridge_optional_string_param(legacy_params.legion_id),
     opsgroup_id=bridge_optional_string_param(p.opsgroup_id) or bridge_optional_string_param(legacy_params.opsgroup_id),
     cohort_id=bridge_optional_string_param(p.cohort_id) or bridge_optional_string_param(legacy_params.cohort_id),
+    clock_start=bridge_time_param(p.clock_start) or bridge_time_param(p.ClockStart) or bridge_time_param(legacy_params.clock_start) or bridge_time_param(legacy_params.ClockStart),
+    clock_stop=bridge_time_param(p.clock_stop) or bridge_time_param(p.ClockStop) or bridge_time_param(legacy_params.clock_stop) or bridge_time_param(legacy_params.ClockStop),
+    duration=bridge_number_param(p.duration) or bridge_number_param(p.Duration) or bridge_number_param(legacy_params.duration) or bridge_number_param(legacy_params.Duration),
     target_id=bridge_optional_string_param(p.target) or bridge_optional_string_param(legacy_params.target),
     zone_id=bridge_optional_string_param(p.zone) or bridge_optional_string_param(p.zone_id) or bridge_optional_string_param(legacy_params.zone) or bridge_optional_string_param(legacy_params.zone_id),
     coordinate_id=bridge_optional_string_param(p.coordinate) or bridge_optional_string_param(p.coordinate_id) or bridge_optional_string_param(legacy_params.coordinate) or bridge_optional_string_param(legacy_params.coordinate_id),
@@ -303,11 +322,13 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     nshots=p.nshots or p.Nshots or legacy_params.nshots or legacy_params.Nshots,
     radius_m=p.radius_m or p.radius or p.Radius or legacy_params.radius_m or legacy_params.radius or legacy_params.Radius,
     carpet_length_m=p.carpet_length_m or p.carpet_length or p.CarpetLength or legacy_params.carpet_length_m or legacy_params.carpet_length or legacy_params.CarpetLength,
+    length_m=p.length_m or p.length or p.Length or legacy_params.length_m or legacy_params.length or legacy_params.Length,
     speed_kts=p.speed_kts or p.speed or p.Speed or legacy_params.speed_kts or legacy_params.speed or legacy_params.Speed,
     formation=bridge_optional_string_param(p.formation) or bridge_optional_string_param(p.Formation) or bridge_optional_string_param(legacy_params.formation) or bridge_optional_string_param(legacy_params.Formation),
     depth_m=p.depth_m or p.depth or p.Depth or legacy_params.depth_m or legacy_params.depth or legacy_params.Depth,
     heading_deg=p.heading_deg or p.heading or p.Heading or legacy_params.heading_deg or legacy_params.heading or legacy_params.Heading,
     leg_nm=p.leg_nm or p.leg or p.Leg or legacy_params.leg_nm or legacy_params.leg or legacy_params.Leg,
+    refuel_system=p.refuel_system or p.RefuelSystem or legacy_params.refuel_system or legacy_params.RefuelSystem,
     target_types=p.target_types or p.TargetTypes or legacy_params.target_types or legacy_params.TargetTypes,
     range_max_nm=p.range_max_nm or p.range_max or p.RangeMax or legacy_params.range_max_nm or legacy_params.range_max or legacy_params.RangeMax,
     orbit_distance_nm=p.orbit_distance_nm or p.orbit_distance or p.OrbitDistance or legacy_params.orbit_distance_nm or legacy_params.orbit_distance or legacy_params.OrbitDistance,
@@ -408,6 +429,16 @@ function MOOSE_BRIDGE:_ResolveBombCarpetTarget(inputs)
   return self:_ResolveCoordinateAuftragTarget(inputs)
 end
 
+function MOOSE_BRIDGE:_ResolveStrafingTarget(inputs)
+  if inputs.target_id then
+    local prefix = bridge_split_object_id(inputs.target_id)
+    if prefix ~= "GROUP" and prefix ~= "UNIT" and prefix ~= "STATIC" then
+      return nil, "STRAFING target must be GROUP:<name>, UNIT:<name>, STATIC:<name> or direct x/z coordinates"
+    end
+  end
+  return self:_ResolveCoordinateAuftragTarget(inputs)
+end
+
 function MOOSE_BRIDGE:_ResolveArtyTarget(inputs)
   return self:_ResolveCoordinateAuftragTarget(inputs)
 end
@@ -417,6 +448,10 @@ function MOOSE_BRIDGE:_ResolveStrikeTarget(inputs)
 end
 
 function MOOSE_BRIDGE:_ResolveOrbitTarget(inputs)
+  return self:_ResolveCoordinateAuftragTarget(inputs)
+end
+
+function MOOSE_BRIDGE:_ResolveOnGuardTarget(inputs)
   return self:_ResolveCoordinateAuftragTarget(inputs)
 end
 
@@ -534,6 +569,7 @@ end
 
 function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
   if not auftrag then error("AUFTRAG constructor returned nil") end
+  self:_ApplyAuftragTiming(auftrag, inputs)
   self:_RegisterAuftragEvents(auftrag, inputs)
   self:_SendAuftragStatusEvent(auftrag, inputs, "Planned")
   local add_ok, add_result = pcall(function() return inputs.legion:AddMission(auftrag) end)
@@ -545,11 +581,30 @@ end
 function MOOSE_BRIDGE:_AddAuftragToOpsGroup(auftrag, inputs)
   if not auftrag then error("AUFTRAG constructor returned nil") end
   if type(inputs.opsgroup.AddMission) ~= "function" then error("OPSGROUP:AddMission is not available") end
+  self:_ApplyAuftragTiming(auftrag, inputs)
   self:_RegisterAuftragEvents(auftrag, inputs)
   self:_SendAuftragStatusEvent(auftrag, inputs, "Planned")
   local add_ok, add_result = pcall(function() return inputs.opsgroup:AddMission(auftrag) end)
   if not add_ok then error("OPSGROUP:AddMission failed: " .. bridge_safe_tostring(add_result)) end
   self:_TrackAuftragReference(auftrag)
+  return auftrag
+end
+
+function MOOSE_BRIDGE:_ApplyAuftragTiming(auftrag, inputs)
+  if not auftrag or not inputs then return auftrag end
+
+  if inputs.clock_start ~= nil or inputs.clock_stop ~= nil then
+    if type(auftrag.SetTime) ~= "function" then error("AUFTRAG:SetTime is not available") end
+    local time_ok, time_err = pcall(function() return auftrag:SetTime(inputs.clock_start, inputs.clock_stop) end)
+    if not time_ok then error("AUFTRAG:SetTime failed: " .. bridge_safe_tostring(time_err)) end
+  end
+
+  if inputs.duration ~= nil then
+    if type(auftrag.SetDuration) ~= "function" then error("AUFTRAG:SetDuration is not available") end
+    local duration_ok, duration_err = pcall(function() return auftrag:SetDuration(inputs.duration) end)
+    if not duration_ok then error("AUFTRAG:SetDuration failed: " .. bridge_safe_tostring(duration_err)) end
+  end
+
   return auftrag
 end
 
@@ -657,6 +712,9 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     legion_id=inputs.legion_id,
     opsgroup_id=inputs.opsgroup_id,
     cohort_id=inputs.cohort_id,
+    clock_start=inputs.clock_start,
+    clock_stop=inputs.clock_stop,
+    duration=inputs.duration,
     target=inputs.target_id,
     zone=inputs.zone_id,
     coordinate=inputs.coordinate_id,
@@ -677,11 +735,13 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     nshots=inputs.nshots,
     radius_m=inputs.radius_m,
     carpet_length_m=inputs.carpet_length_m,
+    length_m=inputs.length_m,
     speed_kts=inputs.speed_kts,
     formation=inputs.formation,
     depth_m=inputs.depth_m,
     heading_deg=inputs.heading_deg,
     leg_nm=inputs.leg_nm,
+    refuel_system=inputs.refuel_system,
     range_max_nm=inputs.range_max_nm,
     no_engage_zones=inputs.no_engage_zones,
     frequency_mhz=inputs.frequency_mhz,
@@ -727,6 +787,30 @@ function MOOSE_BRIDGE:_CreateZonePatrolAuftrag(cmd, action, constructor_name)
   return self:_BuildAuftragCommandResult(action, auftrag, inputs)
 end
 
+function MOOSE_BRIDGE:_CreateOrbitRoleAuftrag(cmd, action, constructor_name, include_refuel_system)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveOrbitTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or type(AUFTRAG[constructor_name]) ~= "function" then error("AUFTRAG:" .. constructor_name .. " is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local heading_deg = inputs.heading_deg and tonumber(inputs.heading_deg) or nil
+  local leg_nm = inputs.leg_nm and tonumber(inputs.leg_nm) or nil
+  local refuel_system = include_refuel_system and inputs.refuel_system and tonumber(inputs.refuel_system) or nil
+  local auftrag = nil
+
+  if include_refuel_system then
+    auftrag = AUFTRAG[constructor_name](AUFTRAG, target, altitude_ft, speed_kts, heading_deg, leg_nm, refuel_system)
+  else
+    auftrag = AUFTRAG[constructor_name](AUFTRAG, target, altitude_ft, speed_kts, heading_deg, leg_nm)
+  end
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult(action, auftrag, inputs)
+end
+
 function MOOSE_BRIDGE:_CreateCasEnhancedAuftrag(cmd)
   local inputs = self:_CommonAuftragCommandInputs(cmd)
   local zone, zone_err = self:_ResolveZonePatrolZone(inputs)
@@ -764,6 +848,21 @@ function MOOSE_BRIDGE:_CreateFacAuftrag(cmd)
 
   self:_AddAuftragToTarget(auftrag, inputs)
   return self:_BuildAuftragCommandResult("auftrag.create_fac", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreatePatrolZoneAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local zone, zone_err = self:_ResolveZonePatrolZone(inputs)
+  if not zone then error(zone_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewPATROLZONE then error("AUFTRAG:NewPATROLZONE is not available") end
+
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local auftrag = AUFTRAG:NewPATROLZONE(zone, speed_kts, altitude_ft, inputs.formation)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_patrolzone", auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:_CreateZoneOnlyAuftrag(cmd, action, constructor_name)
@@ -810,6 +909,46 @@ function MOOSE_BRIDGE:_CreateSeadAuftrag(cmd)
   return self:_BuildAuftragCommandResult("auftrag.create_sead", auftrag, inputs)
 end
 
+function MOOSE_BRIDGE:_CreateAntiShipAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveGroupOrUnitAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewANTISHIP then error("AUFTRAG:NewANTISHIP is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local auftrag = AUFTRAG:NewANTISHIP(target, altitude_ft)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_antiship", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateOnGuardAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveOnGuardTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewONGUARD then error("AUFTRAG:NewONGUARD is not available") end
+
+  local auftrag = AUFTRAG:NewONGUARD(target)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_onguard", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateInterceptAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveGroupOrUnitAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewINTERCEPT then error("AUFTRAG:NewINTERCEPT is not available") end
+
+  local auftrag = AUFTRAG:NewINTERCEPT(target)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_intercept", auftrag, inputs)
+end
+
 function MOOSE_BRIDGE:_CreateStrikeAuftrag(cmd)
   local inputs = self:_CommonAuftragCommandInputs(cmd)
   local target, target_err = self:_ResolveStrikeTarget(inputs)
@@ -823,6 +962,21 @@ function MOOSE_BRIDGE:_CreateStrikeAuftrag(cmd)
 
   self:_AddAuftragToTarget(auftrag, inputs)
   return self:_BuildAuftragCommandResult("auftrag.create_strike", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateStrafingAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveStrafingTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewSTRAFING then error("AUFTRAG:NewSTRAFING is not available") end
+
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local length_m = inputs.length_m and tonumber(inputs.length_m) or nil
+  local auftrag = AUFTRAG:NewSTRAFING(target, altitude_ft, length_m)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_strafing", auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:_CreateBombRunwayAuftrag(cmd)
@@ -1017,6 +1171,14 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     return self:_BuildAuftragCommandResult("auftrag.create_orbit", auftrag, inputs)
   end)
 
+  self:RegisterCommand("auftrag.create_awacs", function(cmd)
+    return self:_CreateOrbitRoleAuftrag(cmd, "auftrag.create_awacs", "NewAWACS", false)
+  end)
+
+  self:RegisterCommand("auftrag.create_tanker", function(cmd)
+    return self:_CreateOrbitRoleAuftrag(cmd, "auftrag.create_tanker", "NewTANKER", true)
+  end)
+
   self:RegisterCommand("auftrag.create_cap", function(cmd)
     return self:_CreateZonePatrolAuftrag(cmd, "auftrag.create_cap", "NewCAP")
   end)
@@ -1031,6 +1193,10 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.create_fac", function(cmd)
     return self:_CreateFacAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_patrolzone", function(cmd)
+    return self:_CreatePatrolZoneAuftrag(cmd)
   end)
 
   self:RegisterCommand("auftrag.create_faca", function(cmd)
@@ -1049,12 +1215,40 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     return self:_CreateZoneOnlyAuftrag(cmd, "auftrag.create_rearming", "NewREARMING")
   end)
 
+  self:RegisterCommand("auftrag.create_airdefense", function(cmd)
+    return self:_CreateZoneOnlyAuftrag(cmd, "auftrag.create_airdefense", "NewAIRDEFENSE")
+  end)
+
+  self:RegisterCommand("auftrag.create_ewr", function(cmd)
+    return self:_CreateZoneOnlyAuftrag(cmd, "auftrag.create_ewr", "NewEWR")
+  end)
+
+  self:RegisterCommand("auftrag.create_nothing", function(cmd)
+    return self:_CreateZoneOnlyAuftrag(cmd, "auftrag.create_nothing", "NewNOTHING")
+  end)
+
   self:RegisterCommand("auftrag.create_sead", function(cmd)
     return self:_CreateSeadAuftrag(cmd)
   end)
 
+  self:RegisterCommand("auftrag.create_antiship", function(cmd)
+    return self:_CreateAntiShipAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_onguard", function(cmd)
+    return self:_CreateOnGuardAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_intercept", function(cmd)
+    return self:_CreateInterceptAuftrag(cmd)
+  end)
+
   self:RegisterCommand("auftrag.create_strike", function(cmd)
     return self:_CreateStrikeAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_strafing", function(cmd)
+    return self:_CreateStrafingAuftrag(cmd)
   end)
 
   self:RegisterCommand("auftrag.create_bombrunway", function(cmd)

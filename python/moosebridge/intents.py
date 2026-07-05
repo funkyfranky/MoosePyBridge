@@ -215,7 +215,7 @@ def intent_type_for_mission_type(mission_type: str, params: dict[str, Any]) -> I
     """Infer a broad tactical intent type from an AUFTRAG mission type."""
 
     mission_key = canonical_mission_type(mission_type)
-    if mission_key in {"BAI", "BOMBING", "ARTY", "CAS", "STRIKE", "SEAD", "GROUNDATTACK", "ARMORATTACK"}:
+    if mission_key in {"BAI", "BOMBING", "ARTY", "CAS", "STRIKE", "SEAD", "ANTISHIP", "GROUNDATTACK", "ARMORATTACK", "INTERCEPT", "STRAFING"}:
         return "attack_target"
     if mission_key in {"PATROLZONE", "CAP", "GCICAP"}:
         return "patrol_zone"

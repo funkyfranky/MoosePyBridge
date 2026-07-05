@@ -42,6 +42,9 @@ def test_tactical_recommendation_serializes_executable_command() -> None:
 
 def test_intent_type_for_mission_type_maps_common_auftrag_types() -> None:
     assert intent_type_for_mission_type("BAI", {"target": "GROUP:Enemy"}) == "attack_target"
+    assert intent_type_for_mission_type("ANTISHIP", {"target": "GROUP:Enemy Ships"}) == "attack_target"
+    assert intent_type_for_mission_type("INTERCEPT", {"target": "GROUP:Bandit"}) == "attack_target"
+    assert intent_type_for_mission_type("STRAFING", {"target": "GROUP:Convoy"}) == "attack_target"
     assert intent_type_for_mission_type("CAP", {"target": "ZONE:Alpha"}) == "patrol_zone"
     assert intent_type_for_mission_type("Capture Zone", {"target": "OPSZONE:Alpha"}) == "defend_zone"
     assert intent_type_for_mission_type("Relocate Cohort", {"target": "ZONE:Rear"}) == "move_to_zone"

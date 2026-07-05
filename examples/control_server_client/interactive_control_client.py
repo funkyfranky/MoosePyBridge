@@ -574,6 +574,15 @@ def parse_nearest_argument(argument: str) -> tuple[str, str, StateFilter]:
     return kind, target_id, state_filter
 
 
+def parse_mission_time_value(value: str) -> str | float:
+    """Parse AUFTRAG SetTime input as relative seconds or clock string."""
+
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
 def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | None, str | None, bool]:
     """Parse ``mission <type> [options]`` command arguments."""
 
@@ -635,6 +644,21 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             legion_id = parts[index]
+        elif key in {"--clock-start", "--start", "-clock-start"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["clock_start"] = parse_mission_time_value(parts[index])
+        elif key in {"--clock-stop", "--stop", "-clock-stop"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["clock_stop"] = parse_mission_time_value(parts[index])
+        elif key in {"--duration", "-duration"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["duration"] = float(parts[index])
         elif key in {"--altitude-ft", "--altitude", "-altitude"}:
             index += 1
             if index >= len(parts):
@@ -660,6 +684,11 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["carpet_length_m"] = float(parts[index])
+        elif key in {"--length", "--length-m", "-length"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["length_m"] = float(parts[index])
         elif key in {"--speed", "--speed-kts", "-speed"}:
             index += 1
             if index >= len(parts):
@@ -685,6 +714,11 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["leg_nm"] = float(parts[index])
+        elif key in {"--refuel-system", "--refuelsystem", "-refuel-system"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["refuel_system"] = int(parts[index])
         elif key in {"--target-types", "--target-type", "-target-types"}:
             index += 1
             if index >= len(parts):
@@ -760,7 +794,7 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             raise ValueError(f"Unknown mission option: {option}")
         index += 1
 
-    if mission_type.upper() in {"CAP", "CAS", "CASENHANCED", "FAC", "AMMOSUPPLY", "FUELSUPPLY", "REARMING"} and "target" in params and "zone" not in params:
+    if mission_type.upper() in {"CAP", "CAS", "CASENHANCED", "FAC", "PATROLZONE", "AMMOSUPPLY", "FUELSUPPLY", "REARMING", "AIRDEFENSE", "EWR", "NOTHING"} and "target" in params and "zone" not in params:
         params["zone"] = params.pop("target")
 
     return mission_type, params, coalition, legion_id, preview

@@ -461,6 +461,23 @@ def test_interactive_mission_argument_parses_coalition() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_timing_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'BAI --target GROUP:Ground-1 --clock-start 600 --clock-stop "13:00" --duration 1800 -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "BAI"
+    assert params == {
+        "target": "GROUP:Ground-1",
+        "clock_start": 600.0,
+        "clock_stop": "13:00",
+        "duration": 1800.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
 def test_interactive_mission_argument_parses_orbit_options() -> None:
     mission_type, params, coalition, legion_id, preview = parse_mission_argument(
         'ORBIT --target "ZONE:CAP Station" --altitude 15000 --speed 300 --heading 90 --leg 20 -legion "LEGION:Wing Parchim"'
@@ -479,6 +496,44 @@ def test_interactive_mission_argument_parses_orbit_options() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_awacs_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'AWACS --target "ZONE:AWACS Track" --altitude 30000 --speed 350 --heading 270 --leg 10 -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "AWACS"
+    assert params == {
+        "target": "ZONE:AWACS Track",
+        "altitude_ft": 30000.0,
+        "speed_kts": 350.0,
+        "heading_deg": 270.0,
+        "leg_nm": 10.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_tanker_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'TANKER --target "ZONE:Tanker Track" --altitude 20000 --speed 300 --heading 270 --leg 10 '
+        '--refuel-system 1 -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "TANKER"
+    assert params == {
+        "target": "ZONE:Tanker Track",
+        "altitude_ft": 20000.0,
+        "speed_kts": 300.0,
+        "heading_deg": 270.0,
+        "leg_nm": 10.0,
+        "refuel_system": 1,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
 def test_interactive_mission_argument_parses_bombcarpet_options() -> None:
     mission_type, params, coalition, legion_id, preview = parse_mission_argument(
         'BOMBCARPET --target GROUP:Convoy --altitude 25000 --carpet-length 500 -legion "LEGION:Wing Parchim"'
@@ -489,6 +544,36 @@ def test_interactive_mission_argument_parses_bombcarpet_options() -> None:
         "target": "GROUP:Convoy",
         "altitude_ft": 25000.0,
         "carpet_length_m": 500.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_intercept_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'INTERCEPT --target "GROUP:Bandit-1" -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "INTERCEPT"
+    assert params == {
+        "target": "GROUP:Bandit-1",
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_strafing_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'STRAFING --target GROUP:Convoy --altitude 1000 --length 300 -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "STRAFING"
+    assert params == {
+        "target": "GROUP:Convoy",
+        "altitude_ft": 1000.0,
+        "length_m": 300.0,
     }
     assert coalition is None
     assert legion_id == "LEGION:Wing Parchim"
@@ -524,6 +609,21 @@ def test_interactive_mission_argument_parses_groundattack_options() -> None:
     }
     assert coalition is None
     assert legion_id == "LEGION:Ground Brigade"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_antiship_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'ANTISHIP --target "GROUP:Enemy Ships" --altitude 2000 -legion "LEGION:Wing Parchim"'
+    )
+
+    assert mission_type == "ANTISHIP"
+    assert params == {
+        "target": "GROUP:Enemy Ships",
+        "altitude_ft": 2000.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Wing Parchim"
     assert preview is False
 
 
@@ -661,6 +761,24 @@ def test_interactive_mission_argument_parses_fac_options() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_patrolzone_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'PATROLZONE --target "ZONE:Patrol Area" --speed 20 --altitude 2000 --formation "Off Road" '
+        '-legion "LEGION:Ground Brigade"'
+    )
+
+    assert mission_type == "PATROLZONE"
+    assert params == {
+        "zone": "ZONE:Patrol Area",
+        "speed_kts": 20.0,
+        "altitude_ft": 2000.0,
+        "formation": "Off Road",
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Ground Brigade"
+    assert preview is False
+
+
 def test_interactive_mission_argument_parses_supply_zone_options() -> None:
     mission_type, params, coalition, legion_id, preview = parse_mission_argument(
         'AMMOSUPPLY --target "ZONE:Forward Depot" -legion "LEGION:Ground Logistics"'
@@ -672,6 +790,50 @@ def test_interactive_mission_argument_parses_supply_zone_options() -> None:
     }
     assert coalition is None
     assert legion_id == "LEGION:Ground Logistics"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_airdefense_and_ewr_zone_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'AIRDEFENSE --target "ZONE:Forward SAM" -legion "LEGION:Air Defense"'
+    )
+
+    assert mission_type == "AIRDEFENSE"
+    assert params == {"zone": "ZONE:Forward SAM"}
+    assert coalition is None
+    assert legion_id == "LEGION:Air Defense"
+    assert preview is False
+
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'EWR --target "ZONE:EWR Site" -legion "LEGION:Radar Net"'
+    )
+
+    assert mission_type == "EWR"
+    assert params == {"zone": "ZONE:EWR Site"}
+    assert coalition is None
+    assert legion_id == "LEGION:Radar Net"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_onguard_and_nothing_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'ONGUARD --target "ZONE:Guard Point" -legion "LEGION:Ground Brigade"'
+    )
+
+    assert mission_type == "ONGUARD"
+    assert params == {"target": "ZONE:Guard Point"}
+    assert coalition is None
+    assert legion_id == "LEGION:Ground Brigade"
+    assert preview is False
+
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'NOTHING --target "ZONE:Relax" -legion "LEGION:Ground Brigade"'
+    )
+
+    assert mission_type == "NOTHING"
+    assert params == {"zone": "ZONE:Relax"}
+    assert coalition is None
+    assert legion_id == "LEGION:Ground Brigade"
     assert preview is False
 
 

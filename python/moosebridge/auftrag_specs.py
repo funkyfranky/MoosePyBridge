@@ -432,6 +432,13 @@ LEG_NM_PARAMETER = AuftragParameterSpec(
     description="Optional race-track leg length in nautical miles. Omit for a circular orbit.",
 )
 
+REFUEL_SYSTEM_PARAMETER = AuftragParameterSpec(
+    name="refuel_system",
+    optional=True,
+    accepted_objects=("int",),
+    description="Optional tanker refueling system for AIRWING tanker selection: 0=boom, 1=probe.",
+)
+
 TARGET_TYPES_PARAMETER = AuftragParameterSpec(
     name="target_types",
     optional=True,
@@ -472,6 +479,13 @@ CARPET_LENGTH_M_PARAMETER = AuftragParameterSpec(
     optional=True,
     accepted_objects=("float",),
     description="Optional carpet bombing length in meters. MOOSE defaults to 500 m when omitted.",
+)
+
+STRAFING_LENGTH_M_PARAMETER = AuftragParameterSpec(
+    name="length_m",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional strafing target length in meters.",
 )
 
 ORBIT_DISTANCE_NM_PARAMETER = AuftragParameterSpec(
@@ -641,6 +655,39 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             LEG_NM_PARAMETER,
         ),
     ),
+    AuftragType.AWACS.name: AuftragTypeSpec(
+        mission_type=AuftragType.AWACS.name,
+        constructor="AUFTRAG:NewAWACS",
+        performer_categories=("AIR",),
+        description="AWACS orbit at a coordinate, optionally resolved from an object target.",
+        parameters=(
+            OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            SPEED_KTS_PARAMETER,
+            HEADING_DEG_PARAMETER,
+            LEG_NM_PARAMETER,
+        ),
+    ),
+    AuftragType.TANKER.name: AuftragTypeSpec(
+        mission_type=AuftragType.TANKER.name,
+        constructor="AUFTRAG:NewTANKER",
+        performer_categories=("AIR",),
+        description="Tanker orbit at a coordinate, optionally resolved from an object target.",
+        parameters=(
+            OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            SPEED_KTS_PARAMETER,
+            HEADING_DEG_PARAMETER,
+            LEG_NM_PARAMETER,
+            REFUEL_SYSTEM_PARAMETER,
+        ),
+    ),
     AuftragType.CAP.name: AuftragTypeSpec(
         mission_type=AuftragType.CAP.name,
         constructor="AUFTRAG:NewCAP",
@@ -704,6 +751,18 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             MODULATION_PARAMETER,
         ),
     ),
+    AuftragType.PATROLZONE.name: AuftragTypeSpec(
+        mission_type=AuftragType.PATROLZONE.name,
+        constructor="AUFTRAG:NewPATROLZONE",
+        performer_categories=("AIR", "GROUND", "NAVAL"),
+        description="Patrol mission inside a ZONE with optional air altitude and ground formation.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+            ATTACK_SPEED_KTS_PARAMETER,
+            ALTITUDE_PARAMETER,
+            FORMATION_PARAMETER,
+        ),
+    ),
     AuftragType.AMMOSUPPLY.name: AuftragTypeSpec(
         mission_type=AuftragType.AMMOSUPPLY.name,
         constructor="AUFTRAG:NewAMMOSUPPLY",
@@ -731,6 +790,45 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             CAP_ZONE_PARAMETER,
         ),
     ),
+    AuftragType.AIRDEFENSE.name: AuftragTypeSpec(
+        mission_type=AuftragType.AIRDEFENSE.name,
+        constructor="AUFTRAG:NewAIRDEFENSE",
+        performer_categories=("GROUND", "NAVAL"),
+        description="Air defense mission for ground or naval units stationed in a ZONE.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+        ),
+    ),
+    AuftragType.EWR.name: AuftragTypeSpec(
+        mission_type=AuftragType.EWR.name,
+        constructor="AUFTRAG:NewEWR",
+        performer_categories=("GROUND",),
+        description="Early warning radar mission for ground units stationed in a ZONE.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+        ),
+    ),
+    AuftragType.ONGUARD.name: AuftragTypeSpec(
+        mission_type=AuftragType.ONGUARD.name,
+        constructor="AUFTRAG:NewONGUARD",
+        performer_categories=("GROUND", "NAVAL"),
+        description="On guard mission for ground or naval units guarding a coordinate.",
+        parameters=(
+            OPTIONAL_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+        ),
+    ),
+    AuftragType.NOTHING.name: AuftragTypeSpec(
+        mission_type=AuftragType.NOTHING.name,
+        constructor="AUFTRAG:NewNOTHING",
+        performer_categories=("GROUND", "NAVAL"),
+        description="Do nothing mission for assets relaxing in a ZONE.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+        ),
+    ),
     AuftragType.FACA.name: AuftragTypeSpec(
         mission_type=AuftragType.FACA.name,
         constructor="AUFTRAG:NewFACA",
@@ -742,6 +840,15 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             DATA_LINK_PARAMETER,
             FREQUENCY_MHZ_PARAMETER,
             MODULATION_PARAMETER,
+        ),
+    ),
+    AuftragType.INTERCEPT.name: AuftragTypeSpec(
+        mission_type=AuftragType.INTERCEPT.name,
+        constructor="AUFTRAG:NewINTERCEPT",
+        performer_categories=("AIR",),
+        description="Intercept mission against a GROUP or UNIT target.",
+        parameters=(
+            GROUP_OR_UNIT_TARGET_PARAMETER,
         ),
     ),
     AuftragType.GROUNDESCORT.name: AuftragTypeSpec(
@@ -822,6 +929,16 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             ALTITUDE_PARAMETER,
         ),
     ),
+    AuftragType.ANTISHIP.name: AuftragTypeSpec(
+        mission_type=AuftragType.ANTISHIP.name,
+        constructor="AUFTRAG:NewANTISHIP",
+        performer_categories=("AIR",),
+        description="Anti-ship mission against a GROUP or UNIT target.",
+        parameters=(
+            GROUP_OR_UNIT_TARGET_PARAMETER,
+            ALTITUDE_PARAMETER,
+        ),
+    ),
     AuftragType.STRIKE.name: AuftragTypeSpec(
         mission_type=AuftragType.STRIKE.name,
         constructor="AUFTRAG:NewSTRIKE",
@@ -839,6 +956,20 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
                 accepted_objects=("int",),
                 description="Optional numeric ENUMS.WeaponFlag value used as EngageWeaponType.",
             ),
+        ),
+    ),
+    AuftragType.STRAFING.name: AuftragTypeSpec(
+        mission_type=AuftragType.STRAFING.name,
+        constructor="AUFTRAG:NewSTRAFING",
+        performer_categories=("AIR",),
+        description="Strafing mission against a coordinate, optionally resolved from GROUP, UNIT or STATIC.",
+        parameters=(
+            OPTIONAL_CARPET_COORDINATE_OR_OBJECT_TARGET_PARAMETER,
+            X_COORDINATE_PARAMETER,
+            Y_COORDINATE_PARAMETER,
+            Z_COORDINATE_PARAMETER,
+            ALTITUDE_PARAMETER,
+            STRAFING_LENGTH_M_PARAMETER,
         ),
     ),
 }

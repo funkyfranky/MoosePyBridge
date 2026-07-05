@@ -226,7 +226,7 @@ For code that should read closer to the MOOSE AUFTRAG API, use the lightweight
 Python AUFTRAG descriptions and let the SDK convert them to bridge commands:
 
 ```python
-from moosebridge import Auftrag_AMMOSUPPLY, Auftrag_ARTY, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_NAVALENGAGEMENT, Auftrag_ORBIT, Auftrag_REARMING, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRIKE, Auftrag_TROOPTRANSPORT, GroupSet
+from moosebridge import Auftrag_AIRDEFENSE, Auftrag_AMMOSUPPLY, Auftrag_ANTISHIP, Auftrag_ARTY, Auftrag_AWACS, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_EWR, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_INTERCEPT, Auftrag_NAVALENGAGEMENT, Auftrag_NOTHING, Auftrag_ONGUARD, Auftrag_ORBIT, Auftrag_PATROLZONE, Auftrag_REARMING, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRAFING, Auftrag_STRIKE, Auftrag_TANKER, Auftrag_TROOPTRANSPORT, GroupSet
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
@@ -249,8 +249,14 @@ ack = await bridge.add_auftrag(auftrag=auftrag_groundescort, legion="LEGION:Wing
 auftrag_groundattack = Auftrag_GROUNDATTACK(target="GROUP:Enemy Convoy", speed_kts=25, formation="Vee")
 ack = await bridge.add_auftrag(auftrag=auftrag_groundattack, legion="LEGION:Ground Brigade")
 
+auftrag_antiship = Auftrag_ANTISHIP(target="GROUP:Enemy Ships", altitude_ft=2000)
+ack = await bridge.add_auftrag(auftrag=auftrag_antiship, legion="LEGION:Wing Parchim")
+
 auftrag_navalengagement = Auftrag_NAVALENGAGEMENT(target="UNIT:Target Ship", speed_kts=18, depth_m=20)
 ack = await bridge.add_auftrag(auftrag=auftrag_navalengagement, legion="LEGION:Naval Group")
+
+auftrag_intercept = Auftrag_INTERCEPT(target="GROUP:Bandit-1")
+ack = await bridge.add_auftrag(auftrag=auftrag_intercept, legion="LEGION:Wing Parchim")
 
 auftrag_escort = Auftrag_ESCORT(target="GROUP:Package Lead", offset_x=-100, offset_y=0, offset_z=200)
 ack = await bridge.add_auftrag(auftrag=auftrag_escort, legion="LEGION:Wing Parchim")
@@ -265,6 +271,12 @@ ack = await bridge.add_auftrag(auftrag=auftrag_trooptransport, legion="LEGION:He
 auftrag_orbit = Auftrag_ORBIT(target="ZONE:CAP Station", altitude_ft=15000, speed_kts=300)
 ack = await bridge.add_auftrag(auftrag=auftrag_orbit, legion="LEGION:Wing Parchim")
 
+auftrag_awacs = Auftrag_AWACS(target="ZONE:AWACS Track", altitude_ft=30000, speed_kts=350)
+ack = await bridge.add_auftrag(auftrag=auftrag_awacs, legion="LEGION:Wing Parchim")
+
+auftrag_tanker = Auftrag_TANKER(target="ZONE:Tanker Track", altitude_ft=20000, speed_kts=300, refuel_system=1)
+ack = await bridge.add_auftrag(auftrag=auftrag_tanker, legion="LEGION:Wing Parchim")
+
 auftrag_cap = Auftrag_CAP(zone="ZONE:Town Fight", altitude_ft=15000, speed_kts=300, target_types=["Air"])
 ack = await bridge.add_auftrag(auftrag=auftrag_cap, legion="LEGION:Wing Parchim")
 
@@ -277,6 +289,9 @@ ack = await bridge.add_auftrag(auftrag=auftrag_casenhanced, legion="LEGION:Wing 
 auftrag_fac = Auftrag_FAC(zone="ZONE:Town Fight", frequency_mhz=133, modulation=0)
 ack = await bridge.add_auftrag(auftrag=auftrag_fac, legion="LEGION:Ground Brigade")
 
+auftrag_patrol = Auftrag_PATROLZONE(zone="ZONE:Patrol Area", speed_kts=20, altitude_ft=2000, formation="Off Road")
+ack = await bridge.add_auftrag(auftrag=auftrag_patrol, legion="LEGION:Ground Brigade")
+
 auftrag_ammo = Auftrag_AMMOSUPPLY(zone="ZONE:Forward Depot")
 ack = await bridge.add_auftrag(auftrag=auftrag_ammo, legion="LEGION:Ground Logistics")
 
@@ -286,6 +301,18 @@ ack = await bridge.add_auftrag(auftrag=auftrag_fuel, legion="LEGION:Ground Logis
 auftrag_rearming = Auftrag_REARMING(zone="ZONE:Forward Depot")
 ack = await bridge.add_auftrag(auftrag=auftrag_rearming, legion="LEGION:Ground Logistics")
 
+auftrag_airdefense = Auftrag_AIRDEFENSE(zone="ZONE:Forward SAM")
+ack = await bridge.add_auftrag(auftrag=auftrag_airdefense, legion="LEGION:Air Defense")
+
+auftrag_onguard = Auftrag_ONGUARD(target="ZONE:Guard Point")
+ack = await bridge.add_auftrag(auftrag=auftrag_onguard, legion="LEGION:Ground Brigade")
+
+auftrag_nothing = Auftrag_NOTHING(zone="ZONE:Relax")
+ack = await bridge.add_auftrag(auftrag=auftrag_nothing, legion="LEGION:Ground Brigade")
+
+auftrag_ewr = Auftrag_EWR(zone="ZONE:EWR Site")
+ack = await bridge.add_auftrag(auftrag=auftrag_ewr, legion="LEGION:Radar Net")
+
 auftrag_faca = Auftrag_FACA(target="GROUP:Ground-1", designation="LASER", data_link=False)
 ack = await bridge.add_auftrag(auftrag=auftrag_faca, legion="LEGION:Wing Parchim")
 
@@ -294,6 +321,21 @@ ack = await bridge.add_auftrag(auftrag=auftrag_sead, legion="LEGION:Wing Parchim
 
 auftrag_strike = Auftrag_STRIKE(target="ZONE:Factory", altitude_ft=2000, engage_weapon_type=1)
 ack = await bridge.add_auftrag(auftrag=auftrag_strike, legion="LEGION:Wing Parchim")
+
+auftrag_strafing = Auftrag_STRAFING(target="GROUP:Convoy", altitude_ft=1000, length_m=300)
+ack = await bridge.add_auftrag(auftrag=auftrag_strafing, legion="LEGION:Wing Parchim")
+```
+
+All AUFTRAG helper objects support `set_time(start=..., stop=...)` and
+`set_duration(duration=...)`. For `set_time`, use a string such as `"05:00"` for
+mission clock time or a number such as `600` for seconds relative to the time the
+mission is assigned. `set_duration` sets how many seconds the mission may run
+before MOOSE cancels it.
+
+```python
+auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
+auftrag_bai.set_time(start=600, stop="13:00")
+auftrag_bai.set_duration(duration=1800)
 ```
 
 `get_auftrag_summary` and `wait_for_auftrag_outcome` wait for the Lua bridge's

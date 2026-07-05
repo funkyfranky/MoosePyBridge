@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 
@@ -96,15 +96,43 @@ class AuftragEvent:
         return " ".join(parts)
 
 
+@dataclass(slots=True, frozen=True)
 class AuftragCommand:
     """Python-side AUFTRAG description that can be sent through the bridge."""
 
+    clock_start: str | float | int | None = field(default=None, init=False, repr=False)
+    clock_stop: str | float | int | None = field(default=None, init=False, repr=False)
+    duration: float | int | None = field(default=None, init=False, repr=False)
     mission_type = ""
+
+    def set_time(
+        self,
+        start: str | float | int | None = None,
+        stop: str | float | int | None = None,
+    ) -> AuftragCommand:
+        """Set optional MOOSE AUFTRAG start/stop timing and return this object."""
+
+        object.__setattr__(self, "clock_start", start)
+        object.__setattr__(self, "clock_stop", stop)
+        return self
+
+    def set_duration(self, duration: float | int | None) -> AuftragCommand:
+        """Set optional MOOSE AUFTRAG execution duration in seconds and return this object."""
+
+        object.__setattr__(self, "duration", duration)
+        return self
 
     def to_params(self) -> dict[str, Any]:
         """Return flat Lua command parameters for this AUFTRAG."""
 
         return {}
+
+    def timing_params(self) -> dict[str, Any]:
+        """Return optional AUFTRAG timing parameters."""
+
+        return clean_auftrag_params(
+            {"clock_start": self.clock_start, "clock_stop": self.clock_stop, "duration": self.duration}
+        )
 
 
 @dataclass(slots=True, frozen=True)
@@ -209,6 +237,82 @@ class AuftragORBIT(AuftragCommand):
 
 
 @dataclass(slots=True, frozen=True)
+class AuftragONGUARD(AuftragCommand):
+    """On guard AUFTRAG for ground or naval units guarding a coordinate."""
+
+    target: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    mission_type = "ONGUARD"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this ONGUARD AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "x": self.x,
+                "y": self.y,
+                "z": self.z,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class _AuftragOrbitRole(AuftragCommand):
+    """Base description for air support roles orbiting around a point."""
+
+    target: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    altitude_ft: float | None = None
+    speed_kts: float | None = None
+    heading_deg: float | None = None
+    leg_nm: float | None = None
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this orbit-role AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "x": self.x,
+                "y": self.y,
+                "z": self.z,
+                "altitude_ft": self.altitude_ft,
+                "speed_kts": self.speed_kts,
+                "heading_deg": self.heading_deg,
+                "leg_nm": self.leg_nm,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragAWACS(_AuftragOrbitRole):
+    """AWACS AUFTRAG orbiting around a coordinate or object position."""
+
+    mission_type = "AWACS"
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragTANKER(_AuftragOrbitRole):
+    """Tanker AUFTRAG orbiting around a coordinate or object position."""
+
+    refuel_system: int | None = None
+    mission_type = "TANKER"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this TANKER AUFTRAG."""
+
+        params = _AuftragOrbitRole.to_params(self)
+        if self.refuel_system is not None:
+            params["refuel_system"] = self.refuel_system
+        return params
+
+
+@dataclass(slots=True, frozen=True)
 class _AuftragZonePatrol(AuftragCommand):
     """Base description for zone-based patrol AUFTRAGs."""
 
@@ -309,6 +413,29 @@ class AuftragFAC(AuftragCommand):
 
 
 @dataclass(slots=True, frozen=True)
+class AuftragPATROLZONE(AuftragCommand):
+    """Patrol zone AUFTRAG for air, ground or naval units."""
+
+    zone: str
+    speed_kts: float | None = None
+    altitude_ft: float | None = None
+    formation: str | None = None
+    mission_type = "PATROLZONE"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this PATROLZONE AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "zone": self.zone,
+                "speed_kts": self.speed_kts,
+                "altitude_ft": self.altitude_ft,
+                "formation": self.formation,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class _AuftragZoneOnly(AuftragCommand):
     """Base description for AUFTRAGs that only need a MOOSE ZONE."""
 
@@ -339,6 +466,27 @@ class AuftragREARMING(_AuftragZoneOnly):
     """Rearming AUFTRAG for units going to a zone to find ammo supply."""
 
     mission_type = "REARMING"
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragAIRDEFENSE(_AuftragZoneOnly):
+    """Air defense AUFTRAG for ground or naval units stationed in a zone."""
+
+    mission_type = "AIRDEFENSE"
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragEWR(_AuftragZoneOnly):
+    """Early warning radar AUFTRAG for ground units stationed in a zone."""
+
+    mission_type = "EWR"
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragNOTHING(_AuftragZoneOnly):
+    """Nothing AUFTRAG for assets relaxing in a zone."""
+
+    mission_type = "NOTHING"
 
 
 @dataclass(slots=True, frozen=True)
@@ -381,6 +529,33 @@ class AuftragSEAD(AuftragCommand):
 
 
 @dataclass(slots=True, frozen=True)
+class AuftragANTISHIP(AuftragCommand):
+    """Anti-ship AUFTRAG against a GROUP or UNIT target."""
+
+    target: str
+    altitude_ft: float | None = None
+    mission_type = "ANTISHIP"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this ANTISHIP AUFTRAG."""
+
+        return clean_auftrag_params({"target": self.target, "altitude_ft": self.altitude_ft})
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragINTERCEPT(AuftragCommand):
+    """Intercept AUFTRAG against a GROUP or UNIT target."""
+
+    target: str
+    mission_type = "INTERCEPT"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this INTERCEPT AUFTRAG."""
+
+        return {"target": self.target}
+
+
+@dataclass(slots=True, frozen=True)
 class AuftragSTRIKE(AuftragCommand):
     """Strike AUFTRAG against a coordinate or object position."""
 
@@ -403,6 +578,33 @@ class AuftragSTRIKE(AuftragCommand):
                 "z": self.z,
                 "altitude_ft": self.altitude_ft,
                 "engage_weapon_type": self.engage_weapon_type,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragSTRAFING(AuftragCommand):
+    """Strafing AUFTRAG against a coordinate or object position."""
+
+    target: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    altitude_ft: float | None = None
+    length_m: float | None = None
+    mission_type = "STRAFING"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this STRAFING AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "x": self.x,
+                "y": self.y,
+                "z": self.z,
+                "altitude_ft": self.altitude_ft,
+                "length_m": self.length_m,
             }
         )
 
@@ -586,33 +788,46 @@ class AuftragTROOPTRANSPORT(AuftragCommand):
         )
 
 
-Auftrag_BAI = AuftragBAI
-Auftrag_AMMOSUPPLY = AuftragAMMOSUPPLY
-Auftrag_BOMBCARPET = AuftragBOMBCARPET
-Auftrag_BOMBING = AuftragBOMBING
-Auftrag_BOMBRUNWAY = AuftragBOMBRUNWAY
-Auftrag_ARTY = AuftragARTY
-Auftrag_ORBIT = AuftragORBIT
-Auftrag_CAP = AuftragCAP
-Auftrag_CAS = AuftragCAS
-Auftrag_CASENHANCED = AuftragCASENHANCED
-Auftrag_FAC = AuftragFAC
-Auftrag_FACA = AuftragFACA
-Auftrag_FUELSUPPLY = AuftragFUELSUPPLY
-Auftrag_ESCORT = AuftragESCORT
-Auftrag_GROUNDATTACK = AuftragGROUNDATTACK
-Auftrag_GROUNDESCORT = AuftragGROUNDESCORT
-Auftrag_NAVALENGAGEMENT = AuftragNAVALENGAGEMENT
-Auftrag_RESCUEHELO = AuftragRESCUEHELO
-Auftrag_REARMING = AuftragREARMING
-Auftrag_SEAD = AuftragSEAD
-Auftrag_STRIKE = AuftragSTRIKE
-Auftrag_TROOPTRANSPORT = AuftragTROOPTRANSPORT
+Auftrag_BAI: type[AuftragBAI] = AuftragBAI
+Auftrag_AIRDEFENSE: type[AuftragAIRDEFENSE] = AuftragAIRDEFENSE
+Auftrag_AMMOSUPPLY: type[AuftragAMMOSUPPLY] = AuftragAMMOSUPPLY
+Auftrag_ANTISHIP: type[AuftragANTISHIP] = AuftragANTISHIP
+Auftrag_BOMBCARPET: type[AuftragBOMBCARPET] = AuftragBOMBCARPET
+Auftrag_BOMBING: type[AuftragBOMBING] = AuftragBOMBING
+Auftrag_BOMBRUNWAY: type[AuftragBOMBRUNWAY] = AuftragBOMBRUNWAY
+Auftrag_ARTY: type[AuftragARTY] = AuftragARTY
+Auftrag_AWACS: type[AuftragAWACS] = AuftragAWACS
+Auftrag_ORBIT: type[AuftragORBIT] = AuftragORBIT
+Auftrag_CAP: type[AuftragCAP] = AuftragCAP
+Auftrag_CAS: type[AuftragCAS] = AuftragCAS
+Auftrag_CASENHANCED: type[AuftragCASENHANCED] = AuftragCASENHANCED
+Auftrag_EWR: type[AuftragEWR] = AuftragEWR
+Auftrag_FAC: type[AuftragFAC] = AuftragFAC
+Auftrag_FACA: type[AuftragFACA] = AuftragFACA
+Auftrag_FUELSUPPLY: type[AuftragFUELSUPPLY] = AuftragFUELSUPPLY
+Auftrag_ESCORT: type[AuftragESCORT] = AuftragESCORT
+Auftrag_GROUNDATTACK: type[AuftragGROUNDATTACK] = AuftragGROUNDATTACK
+Auftrag_GROUNDESCORT: type[AuftragGROUNDESCORT] = AuftragGROUNDESCORT
+Auftrag_INTERCEPT: type[AuftragINTERCEPT] = AuftragINTERCEPT
+Auftrag_NAVALENGAGEMENT: type[AuftragNAVALENGAGEMENT] = AuftragNAVALENGAGEMENT
+Auftrag_NOTHING: type[AuftragNOTHING] = AuftragNOTHING
+Auftrag_ONGUARD: type[AuftragONGUARD] = AuftragONGUARD
+Auftrag_PATROLZONE: type[AuftragPATROLZONE] = AuftragPATROLZONE
+Auftrag_RESCUEHELO: type[AuftragRESCUEHELO] = AuftragRESCUEHELO
+Auftrag_REARMING: type[AuftragREARMING] = AuftragREARMING
+Auftrag_SEAD: type[AuftragSEAD] = AuftragSEAD
+Auftrag_STRAFING: type[AuftragSTRAFING] = AuftragSTRAFING
+Auftrag_STRIKE: type[AuftragSTRIKE] = AuftragSTRIKE
+Auftrag_TANKER: type[AuftragTANKER] = AuftragTANKER
+Auftrag_TROOPTRANSPORT: type[AuftragTROOPTRANSPORT] = AuftragTROOPTRANSPORT
 
 
 __all__ = [
     "AuftragARTY",
+    "AuftragAIRDEFENSE",
     "AuftragAMMOSUPPLY",
+    "AuftragANTISHIP",
+    "AuftragAWACS",
     "AuftragBAI",
     "AuftragBOMBCARPET",
     "AuftragBOMBING",
@@ -623,20 +838,30 @@ __all__ = [
     "AuftragCommand",
     "AuftragESCORT",
     "AuftragEvent",
+    "AuftragEWR",
     "AuftragFAC",
     "AuftragFACA",
     "AuftragFUELSUPPLY",
     "AuftragGROUNDATTACK",
     "AuftragGROUNDESCORT",
+    "AuftragINTERCEPT",
     "AuftragNAVALENGAGEMENT",
+    "AuftragNOTHING",
+    "AuftragONGUARD",
     "AuftragORBIT",
+    "AuftragPATROLZONE",
     "AuftragRESCUEHELO",
     "AuftragREARMING",
     "AuftragSEAD",
+    "AuftragSTRAFING",
     "AuftragSTRIKE",
+    "AuftragTANKER",
     "AuftragTROOPTRANSPORT",
     "Auftrag_ARTY",
+    "Auftrag_AIRDEFENSE",
     "Auftrag_AMMOSUPPLY",
+    "Auftrag_ANTISHIP",
+    "Auftrag_AWACS",
     "Auftrag_BAI",
     "Auftrag_BOMBCARPET",
     "Auftrag_BOMBING",
@@ -645,17 +870,24 @@ __all__ = [
     "Auftrag_CAS",
     "Auftrag_CASENHANCED",
     "Auftrag_ESCORT",
+    "Auftrag_EWR",
     "Auftrag_FAC",
     "Auftrag_FACA",
     "Auftrag_FUELSUPPLY",
     "Auftrag_GROUNDATTACK",
     "Auftrag_GROUNDESCORT",
+    "Auftrag_INTERCEPT",
     "Auftrag_NAVALENGAGEMENT",
+    "Auftrag_NOTHING",
+    "Auftrag_ONGUARD",
     "Auftrag_ORBIT",
+    "Auftrag_PATROLZONE",
     "Auftrag_RESCUEHELO",
     "Auftrag_REARMING",
     "Auftrag_SEAD",
+    "Auftrag_STRAFING",
     "Auftrag_STRIKE",
+    "Auftrag_TANKER",
     "Auftrag_TROOPTRANSPORT",
     "GeneralSet",
     "GroupSet",
