@@ -463,7 +463,7 @@ def test_interactive_mission_argument_parses_coalition() -> None:
 
 def test_interactive_mission_argument_parses_timing_options() -> None:
     mission_type, params, coalition, legion_id, preview = parse_mission_argument(
-        'BAI --target GROUP:Ground-1 --clock-start 600 --clock-stop "13:00" --duration 1800 -legion "LEGION:Wing Parchim"'
+        'BAI --target GROUP:Ground-1 --clock-start 600 --clock-stop "13:00" --duration 1800 --assets-min 2 --assets-max 4 -legion "LEGION:Wing Parchim"'
     )
 
     assert mission_type == "BAI"
@@ -472,6 +472,8 @@ def test_interactive_mission_argument_parses_timing_options() -> None:
         "clock_start": 600.0,
         "clock_stop": "13:00",
         "duration": 1800.0,
+        "required_assets_min": 2,
+        "required_assets_max": 4,
     }
     assert coalition is None
     assert legion_id == "LEGION:Wing Parchim"

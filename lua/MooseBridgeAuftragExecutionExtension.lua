@@ -301,6 +301,8 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     clock_start=bridge_time_param(p.clock_start) or bridge_time_param(p.ClockStart) or bridge_time_param(legacy_params.clock_start) or bridge_time_param(legacy_params.ClockStart),
     clock_stop=bridge_time_param(p.clock_stop) or bridge_time_param(p.ClockStop) or bridge_time_param(legacy_params.clock_stop) or bridge_time_param(legacy_params.ClockStop),
     duration=bridge_number_param(p.duration) or bridge_number_param(p.Duration) or bridge_number_param(legacy_params.duration) or bridge_number_param(legacy_params.Duration),
+    required_assets_min=bridge_number_param(p.required_assets_min) or bridge_number_param(p.nassets_min) or bridge_number_param(p.NassetsMin) or bridge_number_param(legacy_params.required_assets_min) or bridge_number_param(legacy_params.nassets_min) or bridge_number_param(legacy_params.NassetsMin),
+    required_assets_max=bridge_number_param(p.required_assets_max) or bridge_number_param(p.nassets_max) or bridge_number_param(p.NassetsMax) or bridge_number_param(legacy_params.required_assets_max) or bridge_number_param(legacy_params.nassets_max) or bridge_number_param(legacy_params.NassetsMax),
     target_id=bridge_optional_string_param(p.target) or bridge_optional_string_param(legacy_params.target),
     zone_id=bridge_optional_string_param(p.zone) or bridge_optional_string_param(p.zone_id) or bridge_optional_string_param(legacy_params.zone) or bridge_optional_string_param(legacy_params.zone_id),
     coordinate_id=bridge_optional_string_param(p.coordinate) or bridge_optional_string_param(p.coordinate_id) or bridge_optional_string_param(legacy_params.coordinate) or bridge_optional_string_param(legacy_params.coordinate_id),
@@ -605,6 +607,14 @@ function MOOSE_BRIDGE:_ApplyAuftragTiming(auftrag, inputs)
     if not duration_ok then error("AUFTRAG:SetDuration failed: " .. bridge_safe_tostring(duration_err)) end
   end
 
+  if inputs.required_assets_min ~= nil or inputs.required_assets_max ~= nil then
+    if type(auftrag.SetRequiredAssets) ~= "function" then error("AUFTRAG:SetRequiredAssets is not available") end
+    local nassets_min = inputs.required_assets_min
+    if nassets_min == nil then nassets_min = 1 end
+    local assets_ok, assets_err = pcall(function() return auftrag:SetRequiredAssets(nassets_min, inputs.required_assets_max) end)
+    if not assets_ok then error("AUFTRAG:SetRequiredAssets failed: " .. bridge_safe_tostring(assets_err)) end
+  end
+
   return auftrag
 end
 
@@ -715,6 +725,8 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     clock_start=inputs.clock_start,
     clock_stop=inputs.clock_stop,
     duration=inputs.duration,
+    required_assets_min=inputs.required_assets_min,
+    required_assets_max=inputs.required_assets_max,
     target=inputs.target_id,
     zone=inputs.zone_id,
     coordinate=inputs.coordinate_id,

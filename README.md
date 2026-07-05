@@ -217,6 +217,18 @@ await bridge.snapshot_kind("units")
 nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True)
 ```
 
+Typed OPS state convenience helpers:
+
+```python
+await bridge.snapshot_kind("legions")
+await bridge.snapshot_kind("cohorts")
+await bridge.snapshot_kind("auftraege")
+
+legion = bridge.legion("LEGION:Wing Parchim")
+cohorts = bridge.cohorts_of_legion("LEGION:Wing Parchim")
+missions = bridge.missions_of_legion("LEGION:Wing Parchim")
+```
+
 MOOSE-like AUFTRAG helper objects:
 
 ```python
@@ -321,16 +333,19 @@ auftrag_strafing = Auftrag_STRAFING(target="GROUP:Convoy", altitude_ft=1000, len
 ack = await bridge.add_auftrag(auftrag=auftrag_strafing, legion="LEGION:Wing Parchim")
 ```
 
-All AUFTRAG helper objects support `set_time(start=..., stop=...)` and
-`set_duration(duration=...)`. For `set_time`, use a string such as `"05:00"` for
-mission clock time or a number such as `600` for seconds relative to the time the
-mission is assigned. `set_duration` sets how many seconds the mission may run
-before MOOSE cancels it.
+All AUFTRAG helper objects support `set_time(start=..., stop=...)`,
+`set_duration(duration=...)`, and
+`set_required_assets(min_count=..., max_count=...)`. For `set_time`, use a
+string such as `"05:00"` for mission clock time or a number such as `600` for
+seconds relative to the time the mission is assigned. `set_duration` sets how
+many seconds the mission may run before MOOSE cancels it. `set_required_assets`
+sets how many asset groups a LEGION-level Auftrag should request.
 
 ```python
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 auftrag_bai.set_time(start=600, stop="13:00")
 auftrag_bai.set_duration(duration=1800)
+auftrag_bai.set_required_assets(min_count=2, max_count=4)
 ```
 
 `get_auftrag_summary` waits for the MOOSE FSM `OnAfterEvaluated` event sent by

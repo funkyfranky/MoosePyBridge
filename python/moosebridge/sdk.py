@@ -11,6 +11,7 @@ from typing import Any
 from .auftraege import AuftragCommand, AuftragEvent
 from .auftrag_specs import auftrag_action_suffix
 from .intents import auftrag_command_params_from_recommendation
+from .legions import Cohort, Legion
 from .models import Auftrag, OpsGroup, OpsZone
 from .outcomes import AuftragOutcome
 from .protocol import BridgeCommand
@@ -388,6 +389,54 @@ class MooseBridgeClient:
         """
 
         return self.state.auftrag(object_id)
+
+    def legion(self, object_id: str) -> Legion | None:
+        """Return a typed LEGION by object id.
+
+        :param object_id: Stable bridge object id such as ``LEGION:Wing Parchim``.
+        :returns: Typed LEGION or ``None``.
+        """
+
+        return self.state.legion(object_id)
+
+    def cohort(self, object_id: str) -> Cohort | None:
+        """Return a typed COHORT by object id.
+
+        :param object_id: Stable bridge object id such as ``COHORT:F-18 Parchim Alpha``.
+        :returns: Typed COHORT or ``None``.
+        """
+
+        return self.state.cohort(object_id)
+
+    def cohorts_of_legion(self, legion_id: str) -> list[Cohort]:
+        """Return typed COHORT objects belonging to a LEGION.
+
+        :param legion_id: Stable LEGION object id.
+        :returns: COHORT objects present in the local state mirror.
+        """
+
+        return self.state.cohorts_for_legion(legion_id)
+
+    def missions_of_legion(self, legion_id: str) -> list[Auftrag]:
+        """Return queued mission objects for a LEGION.
+
+        The returned objects are the typed AUFTRAG models mirrored from DCS, but
+        the SDK exposes them as missions for English-facing code.
+
+        :param legion_id: Stable LEGION object id.
+        :returns: Queued mission objects present in the local state mirror.
+        """
+
+        return self.state.queued_auftraege_for_legion(legion_id)
+
+    def missions_of_group(self, opsgroup_id: str) -> list[Auftrag]:
+        """Return queued mission objects for an OPSGROUP.
+
+        :param opsgroup_id: Stable OPSGROUP object id.
+        :returns: Queued mission objects present in the local state mirror.
+        """
+
+        return self.state.queued_auftraege_for_group(opsgroup_id)
 
     def current_auftrag_for_group(self, opsgroup_id: str) -> Auftrag | None:
         """Return the current AUFTRAG assigned to an OPSGROUP.

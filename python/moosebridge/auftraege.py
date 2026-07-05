@@ -103,6 +103,8 @@ class AuftragCommand:
     clock_start: str | float | int | None = field(default=None, init=False, repr=False)
     clock_stop: str | float | int | None = field(default=None, init=False, repr=False)
     duration: float | int | None = field(default=None, init=False, repr=False)
+    required_assets_min: int | None = field(default=None, init=False, repr=False)
+    required_assets_max: int | None = field(default=None, init=False, repr=False)
     mission_type = ""
 
     def set_time(
@@ -122,6 +124,15 @@ class AuftragCommand:
         object.__setattr__(self, "duration", duration)
         return self
 
+    def set_required_assets(self, min_count: int | None = 1, max_count: int | None = None) -> AuftragCommand:
+        """Set how many asset groups a LEGION-level AUFTRAG should request."""
+
+        if max_count is None:
+            max_count = min_count
+        object.__setattr__(self, "required_assets_min", min_count)
+        object.__setattr__(self, "required_assets_max", max_count)
+        return self
+
     def to_params(self) -> dict[str, Any]:
         """Return flat Lua command parameters for this AUFTRAG."""
 
@@ -131,7 +142,13 @@ class AuftragCommand:
         """Return optional AUFTRAG timing parameters."""
 
         return clean_auftrag_params(
-            {"clock_start": self.clock_start, "clock_stop": self.clock_stop, "duration": self.duration}
+            {
+                "clock_start": self.clock_start,
+                "clock_stop": self.clock_stop,
+                "duration": self.duration,
+                "required_assets_min": self.required_assets_min,
+                "required_assets_max": self.required_assets_max,
+            }
         )
 
 

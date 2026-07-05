@@ -37,6 +37,7 @@ async def main() -> int:
     #auftrag = Auftrag_PATROLZONE(zone="ZONE:Test Alpha")
     auftrag = Auftrag_ONGUARD(target="ZONE:Test Alpha")
     auftrag.set_duration(duration=60)
+    auftrag.set_required_assets(min_count=3, max_count=4)
 
     #ack = await bridge.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Laage")
     ack = await bridge.add_auftrag(auftrag=auftrag, legion="LEGION:Brigade Laage")

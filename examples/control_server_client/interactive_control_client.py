@@ -659,6 +659,16 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["duration"] = float(parts[index])
+        elif key in {"--assets-min", "--required-assets-min", "-assets-min"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["required_assets_min"] = int(parts[index])
+        elif key in {"--assets-max", "--required-assets-max", "-assets-max"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["required_assets_max"] = int(parts[index])
         elif key in {"--altitude-ft", "--altitude", "-altitude"}:
             index += 1
             if index >= len(parts):

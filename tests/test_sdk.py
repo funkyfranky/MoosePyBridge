@@ -239,6 +239,76 @@ def test_sdk_snapshot_kind_uses_short_kind() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_legion_convenience_methods_return_typed_state() -> None:
+    server = FakeSdkServer()
+    client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {
+                "legions": [
+                    {
+                        "object_id": "LEGION:Wing Parchim",
+                        "dcs_name": "Wing Parchim",
+                        "object_type": "LEGION",
+                        "category": "AIRWING",
+                        "state": "Running",
+                        "coalition": "blue",
+                        "auftrag_queue_ids": ["AUFTRAG:1"],
+                    }
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [
+                    {
+                        "object_id": "COHORT:F-4E Parchim Alpha",
+                        "dcs_name": "F-4E Parchim Alpha",
+                        "object_type": "COHORT",
+                        "legion_id": "LEGION:Wing Parchim",
+                        "stock_asset_count": 2,
+                    }
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "auftraege",
+            "payload": {
+                "auftraege": [
+                    {
+                        "object_id": "AUFTRAG:1",
+                        "dcs_name": "AUFTRAG:1",
+                        "object_type": "AUFTRAG",
+                        "type": "BAI",
+                        "status": "Queued",
+                    }
+                ]
+            },
+        }
+    )
+
+    legion = client.legion("LEGION:Wing Parchim")
+    cohorts = client.cohorts_of_legion("LEGION:Wing Parchim")
+    missions = client.missions_of_legion("LEGION:Wing Parchim")
+
+    assert legion is not None
+    assert legion.state == "Running"
+    assert client.cohort("COHORT:F-4E Parchim Alpha") is cohorts[0]
+    assert [cohort.stock_asset_count for cohort in cohorts] == [2]
+    assert [mission.type for mission in missions] == ["BAI"]
+    assert [mission.status for mission in missions] == ["Queued"]
+
+
 def test_sdk_nearest_refreshes_snapshot_and_filters_results() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -280,6 +350,7 @@ def test_sdk_add_auftrag_includes_optional_timing_params() -> None:
 
         assert auftrag.set_time(start=600, stop="13:00") is auftrag
         assert auftrag.set_duration(duration=1800) is auftrag
+        assert auftrag.set_required_assets(min_count=2, max_count=4) is auftrag
 
         await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
 
@@ -290,10 +361,20 @@ def test_sdk_add_auftrag_includes_optional_timing_params() -> None:
             "clock_start": 600,
             "clock_stop": "13:00",
             "duration": 1800,
+            "required_assets_min": 2,
+            "required_assets_max": 4,
             "legion_id": "LEGION:Wing Parchim",
         }
 
     asyncio.run(scenario())
+
+
+def test_sdk_set_required_assets_defaults_max_to_min() -> None:
+    auftrag = Auftrag_BAI(target="UNIT:Ground-1-1")
+
+    auftrag.set_required_assets(min_count=3)
+
+    assert auftrag.timing_params() == {"required_assets_min": 3, "required_assets_max": 3}
 
 
 def test_sdk_add_auftrag_to_opsgroup_uses_opsgroup_id() -> None:

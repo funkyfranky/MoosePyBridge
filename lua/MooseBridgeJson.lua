@@ -287,6 +287,12 @@ function json.decode(text)
     result.params.clock_stop = read_number_field(params_text, "clock_stop") or read_string_field(params_text, "clock_stop")
     result.params.ClockStart = read_number_field(params_text, "ClockStart") or read_string_field(params_text, "ClockStart")
     result.params.ClockStop = read_number_field(params_text, "ClockStop") or read_string_field(params_text, "ClockStop")
+    result.params.required_assets_min = read_number_field(params_text, "required_assets_min")
+    result.params.required_assets_max = read_number_field(params_text, "required_assets_max")
+    result.params.nassets_min = read_number_field(params_text, "nassets_min")
+    result.params.nassets_max = read_number_field(params_text, "nassets_max")
+    result.params.NassetsMin = read_number_field(params_text, "NassetsMin")
+    result.params.NassetsMax = read_number_field(params_text, "NassetsMax")
 
     -- AUFTRAG:BOMBING fields.
     result.params.engage_weapon_type = read_number_field(params_text, "engage_weapon_type")
