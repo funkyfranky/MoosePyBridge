@@ -13,6 +13,52 @@ def clean_auftrag_params(params: dict[str, Any]) -> dict[str, Any]:
 
 
 @dataclass(slots=True, frozen=True)
+class GeneralSet:
+    """Serializable SDK value object for a MOOSE SET_* input."""
+
+    object_ids: tuple[str, ...]
+    object_type = ""
+
+    def __init__(self, *object_ids: str):
+        """Create a set from stable MooseBridge object ids."""
+
+        normalized = tuple(str(object_id).strip() for object_id in object_ids)
+        object.__setattr__(self, "object_ids", normalized)
+        self._validate()
+
+    def _validate(self) -> None:
+        if not self.object_ids:
+            raise ValueError(f"{type(self).__name__} requires at least one object id")
+        if not self.object_type:
+            return
+        prefix = f"{self.object_type}:"
+        invalid = [object_id for object_id in self.object_ids if not object_id.startswith(prefix)]
+        if invalid:
+            raise ValueError(f"{type(self).__name__} requires {prefix}<name> ids, got {invalid[0]!r}")
+
+    def to_params_value(self) -> list[str]:
+        """Return the flat JSON-friendly representation for bridge params."""
+
+        return list(self.object_ids)
+
+
+class GroupSet(GeneralSet):
+    """Serializable SDK value object for a MOOSE SET_GROUP input."""
+
+    object_type = "GROUP"
+
+
+def set_param_value(value: str | Sequence[str] | GeneralSet) -> list[str]:
+    """Return a flat bridge value for a set-like SDK field."""
+
+    if isinstance(value, GeneralSet):
+        return value.to_params_value()
+    if isinstance(value, str):
+        return [value]
+    return list(value)
+
+
+@dataclass(slots=True, frozen=True)
 class AuftragEvent:
     """One AUFTRAG FSM event emitted by the Lua bridge."""
 
@@ -263,6 +309,39 @@ class AuftragFAC(AuftragCommand):
 
 
 @dataclass(slots=True, frozen=True)
+class _AuftragZoneOnly(AuftragCommand):
+    """Base description for AUFTRAGs that only need a MOOSE ZONE."""
+
+    zone: str
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this zone-only AUFTRAG."""
+
+        return {"zone": self.zone}
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragAMMOSUPPLY(_AuftragZoneOnly):
+    """Ammo supply AUFTRAG for ground supply units going to a zone."""
+
+    mission_type = "AMMOSUPPLY"
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragFUELSUPPLY(_AuftragZoneOnly):
+    """Fuel supply AUFTRAG for ground supply units going to a zone."""
+
+    mission_type = "FUELSUPPLY"
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragREARMING(_AuftragZoneOnly):
+    """Rearming AUFTRAG for units going to a zone to find ammo supply."""
+
+    mission_type = "REARMING"
+
+
+@dataclass(slots=True, frozen=True)
 class AuftragFACA(AuftragCommand):
     """Airborne forward air controller AUFTRAG against a target GROUP."""
 
@@ -391,6 +470,48 @@ class AuftragGROUNDESCORT(AuftragCommand):
 
 
 @dataclass(slots=True, frozen=True)
+class AuftragGROUNDATTACK(AuftragCommand):
+    """Ground attack AUFTRAG against a GROUP, UNIT or STATIC target."""
+
+    target: str
+    speed_kts: float | None = None
+    formation: str | None = None
+    mission_type = "GROUNDATTACK"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this GROUNDATTACK AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "speed_kts": self.speed_kts,
+                "formation": self.formation,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragNAVALENGAGEMENT(AuftragCommand):
+    """Naval engagement AUFTRAG against a GROUP, UNIT or STATIC target."""
+
+    target: str
+    speed_kts: float | None = None
+    depth_m: float | None = None
+    mission_type = "NAVALENGAGEMENT"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this NAVALENGAGEMENT AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "target": self.target,
+                "speed_kts": self.speed_kts,
+                "depth_m": self.depth_m,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class AuftragESCORT(AuftragCommand):
     """Escort/follow AUFTRAG for escorting another GROUP."""
 
@@ -417,7 +538,56 @@ class AuftragESCORT(AuftragCommand):
         )
 
 
+@dataclass(slots=True, frozen=True)
+class AuftragRESCUEHELO(AuftragCommand):
+    """Rescue helo AUFTRAG for a carrier UNIT."""
+
+    target: str
+    mission_type = "RESCUEHELO"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this RESCUEHELO AUFTRAG."""
+
+        return clean_auftrag_params({"target": self.target})
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragTROOPTRANSPORT(AuftragCommand):
+    """Troop transport AUFTRAG for transporting GROUPs to a dropoff coordinate."""
+
+    transport_groups: str | Sequence[str] | GroupSet
+    dropoff: str | None = None
+    dropoff_x: float | None = None
+    dropoff_y: float | None = None
+    dropoff_z: float | None = None
+    pickup: str | None = None
+    pickup_x: float | None = None
+    pickup_y: float | None = None
+    pickup_z: float | None = None
+    pickup_radius_m: float | None = None
+    mission_type = "TROOPTRANSPORT"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this TROOPTRANSPORT AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "transport_groups": set_param_value(self.transport_groups),
+                "dropoff": self.dropoff,
+                "dropoff_x": self.dropoff_x,
+                "dropoff_y": self.dropoff_y,
+                "dropoff_z": self.dropoff_z,
+                "pickup": self.pickup,
+                "pickup_x": self.pickup_x,
+                "pickup_y": self.pickup_y,
+                "pickup_z": self.pickup_z,
+                "pickup_radius_m": self.pickup_radius_m,
+            }
+        )
+
+
 Auftrag_BAI = AuftragBAI
+Auftrag_AMMOSUPPLY = AuftragAMMOSUPPLY
 Auftrag_BOMBCARPET = AuftragBOMBCARPET
 Auftrag_BOMBING = AuftragBOMBING
 Auftrag_BOMBRUNWAY = AuftragBOMBRUNWAY
@@ -428,14 +598,21 @@ Auftrag_CAS = AuftragCAS
 Auftrag_CASENHANCED = AuftragCASENHANCED
 Auftrag_FAC = AuftragFAC
 Auftrag_FACA = AuftragFACA
+Auftrag_FUELSUPPLY = AuftragFUELSUPPLY
 Auftrag_ESCORT = AuftragESCORT
+Auftrag_GROUNDATTACK = AuftragGROUNDATTACK
 Auftrag_GROUNDESCORT = AuftragGROUNDESCORT
+Auftrag_NAVALENGAGEMENT = AuftragNAVALENGAGEMENT
+Auftrag_RESCUEHELO = AuftragRESCUEHELO
+Auftrag_REARMING = AuftragREARMING
 Auftrag_SEAD = AuftragSEAD
 Auftrag_STRIKE = AuftragSTRIKE
+Auftrag_TROOPTRANSPORT = AuftragTROOPTRANSPORT
 
 
 __all__ = [
     "AuftragARTY",
+    "AuftragAMMOSUPPLY",
     "AuftragBAI",
     "AuftragBOMBCARPET",
     "AuftragBOMBING",
@@ -448,11 +625,18 @@ __all__ = [
     "AuftragEvent",
     "AuftragFAC",
     "AuftragFACA",
+    "AuftragFUELSUPPLY",
+    "AuftragGROUNDATTACK",
     "AuftragGROUNDESCORT",
+    "AuftragNAVALENGAGEMENT",
     "AuftragORBIT",
+    "AuftragRESCUEHELO",
+    "AuftragREARMING",
     "AuftragSEAD",
     "AuftragSTRIKE",
+    "AuftragTROOPTRANSPORT",
     "Auftrag_ARTY",
+    "Auftrag_AMMOSUPPLY",
     "Auftrag_BAI",
     "Auftrag_BOMBCARPET",
     "Auftrag_BOMBING",
@@ -463,8 +647,16 @@ __all__ = [
     "Auftrag_ESCORT",
     "Auftrag_FAC",
     "Auftrag_FACA",
+    "Auftrag_FUELSUPPLY",
+    "Auftrag_GROUNDATTACK",
     "Auftrag_GROUNDESCORT",
+    "Auftrag_NAVALENGAGEMENT",
     "Auftrag_ORBIT",
+    "Auftrag_RESCUEHELO",
+    "Auftrag_REARMING",
     "Auftrag_SEAD",
     "Auftrag_STRIKE",
+    "Auftrag_TROOPTRANSPORT",
+    "GeneralSet",
+    "GroupSet",
 ]

@@ -454,6 +454,8 @@ def evaluate_auftrag_request(
     target_id = params.get("target") if isinstance(params.get("target"), str) else None
     if target_id is None and isinstance(params.get("zone"), str):
         target_id = params.get("zone")
+    if target_id is None and isinstance(params.get("dropoff"), str):
+        target_id = params.get("dropoff")
     direct_coords = coordinates_from_params(params)
     issues.extend(validate_coordinate_target_inputs(spec, target_id, direct_coords, params))
     if spec.accepts_optional_coordinate:

@@ -299,6 +299,20 @@ GROUP_OR_UNIT_TARGET_PARAMETER = AuftragParameterSpec(
     description="Target GROUP or UNIT object.",
 )
 
+POSITIONABLE_ATTACK_TARGET_PARAMETER = AuftragParameterSpec(
+    name="target",
+    optional=False,
+    accepted_objects=(AuftragTargetType.GROUP, AuftragTargetType.UNIT, AuftragTargetType.STATIC),
+    description="Target GROUP, UNIT or STATIC object.",
+)
+
+UNIT_TARGET_PARAMETER = AuftragParameterSpec(
+    name="target",
+    optional=False,
+    accepted_objects=(AuftragTargetType.UNIT,),
+    description="Target UNIT object.",
+)
+
 AIRBASE_TARGET_PARAMETER = AuftragParameterSpec(
     name="target",
     optional=False,
@@ -381,6 +395,27 @@ SPEED_KTS_PARAMETER = AuftragParameterSpec(
     optional=True,
     accepted_objects=("float",),
     description="Optional orbit indicated airspeed in knots at altitude. MOOSE defaults to 350 KIAS when omitted.",
+)
+
+ATTACK_SPEED_KTS_PARAMETER = AuftragParameterSpec(
+    name="speed_kts",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional attack speed in knots. MOOSE defaults to max speed when omitted.",
+)
+
+FORMATION_PARAMETER = AuftragParameterSpec(
+    name="formation",
+    optional=True,
+    accepted_objects=("str",),
+    description="Optional ground attack formation string such as Wedge or Vee.",
+)
+
+DEPTH_M_PARAMETER = AuftragParameterSpec(
+    name="depth_m",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional naval attack depth in meters. Only relevant for submarines; MOOSE defaults to 0 m.",
 )
 
 HEADING_DEG_PARAMETER = AuftragParameterSpec(
@@ -472,6 +507,34 @@ ENGAGE_MAX_DISTANCE_NM_PARAMETER = AuftragParameterSpec(
     optional=True,
     accepted_objects=("float",),
     description="Optional max escort engagement distance in nautical miles. MOOSE defaults to auto 32 NM.",
+)
+
+TRANSPORT_GROUPS_PARAMETER = AuftragParameterSpec(
+    name="transport_groups",
+    optional=False,
+    accepted_objects=("list", "str"),
+    description="GROUP object id or list of GROUP object ids to transport.",
+)
+
+DROPOFF_PARAMETER = AuftragParameterSpec(
+    name="dropoff",
+    optional=True,
+    accepted_objects=COORDINATE_OR_OBJECT_TARGET_TYPES,
+    description="Optional object shortcut whose current coordinate is used as the troop dropoff point; direct dropoff_x/dropoff_z coordinates are also accepted.",
+)
+
+PICKUP_PARAMETER = AuftragParameterSpec(
+    name="pickup",
+    optional=True,
+    accepted_objects=COORDINATE_OR_OBJECT_TARGET_TYPES,
+    description="Optional object shortcut whose current coordinate is used as the troop pickup point; direct pickup_x/pickup_z coordinates are also accepted.",
+)
+
+PICKUP_RADIUS_M_PARAMETER = AuftragParameterSpec(
+    name="pickup_radius_m",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional pickup radius in meters. MOOSE defaults to 100 m when omitted.",
 )
 
 DESIGNATION_PARAMETER = AuftragParameterSpec(
@@ -641,6 +704,33 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             MODULATION_PARAMETER,
         ),
     ),
+    AuftragType.AMMOSUPPLY.name: AuftragTypeSpec(
+        mission_type=AuftragType.AMMOSUPPLY.name,
+        constructor="AUFTRAG:NewAMMOSUPPLY",
+        performer_categories=("GROUND",),
+        description="Ammo supply mission for ground supply units moving to a ZONE.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+        ),
+    ),
+    AuftragType.FUELSUPPLY.name: AuftragTypeSpec(
+        mission_type=AuftragType.FUELSUPPLY.name,
+        constructor="AUFTRAG:NewFUELSUPPLY",
+        performer_categories=("GROUND",),
+        description="Fuel supply mission for ground supply units moving to a ZONE.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+        ),
+    ),
+    AuftragType.REARMING.name: AuftragTypeSpec(
+        mission_type=AuftragType.REARMING.name,
+        constructor="AUFTRAG:NewREARMING",
+        performer_categories=("GROUND",),
+        description="Rearming mission for units moving to a ZONE to find ammo supply.",
+        parameters=(
+            CAP_ZONE_PARAMETER,
+        ),
+    ),
     AuftragType.FACA.name: AuftragTypeSpec(
         mission_type=AuftragType.FACA.name,
         constructor="AUFTRAG:NewFACA",
@@ -665,6 +755,28 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             TARGET_TYPES_PARAMETER,
         ),
     ),
+    AuftragType.GROUNDATTACK.name: AuftragTypeSpec(
+        mission_type=AuftragType.GROUNDATTACK.name,
+        constructor="AUFTRAG:NewGROUNDATTACK",
+        performer_categories=("GROUND",),
+        description="Ground group attack mission against a GROUP, UNIT or STATIC target.",
+        parameters=(
+            POSITIONABLE_ATTACK_TARGET_PARAMETER,
+            ATTACK_SPEED_KTS_PARAMETER,
+            FORMATION_PARAMETER,
+        ),
+    ),
+    AuftragType.NAVALENGAGEMENT.name: AuftragTypeSpec(
+        mission_type=AuftragType.NAVALENGAGEMENT.name,
+        constructor="AUFTRAG:NewNAVALENGAGEMENT",
+        performer_categories=("NAVAL",),
+        description="Naval group engagement mission against a GROUP, UNIT or STATIC target.",
+        parameters=(
+            POSITIONABLE_ATTACK_TARGET_PARAMETER,
+            ATTACK_SPEED_KTS_PARAMETER,
+            DEPTH_M_PARAMETER,
+        ),
+    ),
     AuftragType.ESCORT.name: AuftragTypeSpec(
         mission_type=AuftragType.ESCORT.name,
         constructor="AUFTRAG:NewESCORT",
@@ -677,6 +789,27 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             OFFSET_Z_PARAMETER,
             ENGAGE_MAX_DISTANCE_NM_PARAMETER,
             TARGET_TYPES_PARAMETER,
+        ),
+    ),
+    AuftragType.RESCUEHELO.name: AuftragTypeSpec(
+        mission_type=AuftragType.RESCUEHELO.name,
+        constructor="AUFTRAG:NewRESCUEHELO",
+        performer_categories=("AIR", "HELICOPTER"),
+        description="Rescue helo mission for a carrier UNIT.",
+        parameters=(
+            UNIT_TARGET_PARAMETER,
+        ),
+    ),
+    AuftragType.TROOPTRANSPORT.name: AuftragTypeSpec(
+        mission_type=AuftragType.TROOPTRANSPORT.name,
+        constructor="AUFTRAG:NewTROOPTRANSPORT",
+        performer_categories=("AIR", "HELICOPTER", "GROUND"),
+        description="Troop transport mission moving GROUPs to a dropoff coordinate with optional pickup coordinate.",
+        parameters=(
+            TRANSPORT_GROUPS_PARAMETER,
+            DROPOFF_PARAMETER,
+            PICKUP_PARAMETER,
+            PICKUP_RADIUS_M_PARAMETER,
         ),
     ),
     AuftragType.SEAD.name: AuftragTypeSpec(

@@ -45,6 +45,7 @@ def test_intent_type_for_mission_type_maps_common_auftrag_types() -> None:
     assert intent_type_for_mission_type("CAP", {"target": "ZONE:Alpha"}) == "patrol_zone"
     assert intent_type_for_mission_type("Capture Zone", {"target": "OPSZONE:Alpha"}) == "defend_zone"
     assert intent_type_for_mission_type("Relocate Cohort", {"target": "ZONE:Rear"}) == "move_to_zone"
+    assert intent_type_for_mission_type("Ammo Supply", {"zone": "ZONE:Depot"}) == "move_to_zone"
 
 
 def test_auftrag_recommendation_converts_to_tactical_recommendation() -> None:

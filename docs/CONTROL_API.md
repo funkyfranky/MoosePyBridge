@@ -226,7 +226,7 @@ For code that should read closer to the MOOSE AUFTRAG API, use the lightweight
 Python AUFTRAG descriptions and let the SDK convert them to bridge commands:
 
 ```python
-from moosebridge import Auftrag_ARTY, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_FAC, Auftrag_FACA, Auftrag_GROUNDESCORT, Auftrag_ORBIT, Auftrag_SEAD, Auftrag_STRIKE
+from moosebridge import Auftrag_AMMOSUPPLY, Auftrag_ARTY, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_NAVALENGAGEMENT, Auftrag_ORBIT, Auftrag_REARMING, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRIKE, Auftrag_TROOPTRANSPORT, GroupSet
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
@@ -246,8 +246,21 @@ ack = await bridge.add_auftrag(auftrag=auftrag_bombcarpet, legion="LEGION:Wing P
 auftrag_groundescort = Auftrag_GROUNDESCORT(target="GROUP:Convoy", orbit_distance_nm=1.5)
 ack = await bridge.add_auftrag(auftrag=auftrag_groundescort, legion="LEGION:Wing Parchim")
 
+auftrag_groundattack = Auftrag_GROUNDATTACK(target="GROUP:Enemy Convoy", speed_kts=25, formation="Vee")
+ack = await bridge.add_auftrag(auftrag=auftrag_groundattack, legion="LEGION:Ground Brigade")
+
+auftrag_navalengagement = Auftrag_NAVALENGAGEMENT(target="UNIT:Target Ship", speed_kts=18, depth_m=20)
+ack = await bridge.add_auftrag(auftrag=auftrag_navalengagement, legion="LEGION:Naval Group")
+
 auftrag_escort = Auftrag_ESCORT(target="GROUP:Package Lead", offset_x=-100, offset_y=0, offset_z=200)
 ack = await bridge.add_auftrag(auftrag=auftrag_escort, legion="LEGION:Wing Parchim")
+
+auftrag_rescuehelo = Auftrag_RESCUEHELO(target="UNIT:Carrier-1")
+ack = await bridge.add_auftrag(auftrag=auftrag_rescuehelo, legion="LEGION:Rescue Detachment")
+
+troops = GroupSet("GROUP:Infantry-1")
+auftrag_trooptransport = Auftrag_TROOPTRANSPORT(transport_groups=troops, dropoff="ZONE:LZ Bravo")
+ack = await bridge.add_auftrag(auftrag=auftrag_trooptransport, legion="LEGION:Helo Lift")
 
 auftrag_orbit = Auftrag_ORBIT(target="ZONE:CAP Station", altitude_ft=15000, speed_kts=300)
 ack = await bridge.add_auftrag(auftrag=auftrag_orbit, legion="LEGION:Wing Parchim")
@@ -263,6 +276,15 @@ ack = await bridge.add_auftrag(auftrag=auftrag_casenhanced, legion="LEGION:Wing 
 
 auftrag_fac = Auftrag_FAC(zone="ZONE:Town Fight", frequency_mhz=133, modulation=0)
 ack = await bridge.add_auftrag(auftrag=auftrag_fac, legion="LEGION:Ground Brigade")
+
+auftrag_ammo = Auftrag_AMMOSUPPLY(zone="ZONE:Forward Depot")
+ack = await bridge.add_auftrag(auftrag=auftrag_ammo, legion="LEGION:Ground Logistics")
+
+auftrag_fuel = Auftrag_FUELSUPPLY(zone="ZONE:Forward Depot")
+ack = await bridge.add_auftrag(auftrag=auftrag_fuel, legion="LEGION:Ground Logistics")
+
+auftrag_rearming = Auftrag_REARMING(zone="ZONE:Forward Depot")
+ack = await bridge.add_auftrag(auftrag=auftrag_rearming, legion="LEGION:Ground Logistics")
 
 auftrag_faca = Auftrag_FACA(target="GROUP:Ground-1", designation="LASER", data_link=False)
 ack = await bridge.add_auftrag(auftrag=auftrag_faca, legion="LEGION:Wing Parchim")

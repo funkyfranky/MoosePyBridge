@@ -221,7 +221,7 @@ def intent_type_for_mission_type(mission_type: str, params: dict[str, Any]) -> I
         return "patrol_zone"
     if mission_key in {"CAPTUREZONE", "ONGUARD", "ARMOREDGUARD", "AIRDEFENSE"}:
         return "defend_zone"
-    if mission_key in {"RELOCATECOHORT", "TROOPTRANSPORT", "OPSTRANSPORT", "CARGOTRANSPORT"}:
+    if mission_key in {"RELOCATECOHORT", "TROOPTRANSPORT", "OPSTRANSPORT", "CARGOTRANSPORT", "AMMOSUPPLY", "FUELSUPPLY", "REARMING"}:
         return "move_to_zone"
     if params.get("target"):
         return "attack_target"

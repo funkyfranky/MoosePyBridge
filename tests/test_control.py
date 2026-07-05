@@ -511,6 +511,38 @@ def test_interactive_mission_argument_parses_groundescort_options() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_groundattack_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'GROUNDATTACK --target "GROUP:Enemy Convoy" --speed 25 --formation Vee -legion "LEGION:Ground Brigade"'
+    )
+
+    assert mission_type == "GROUNDATTACK"
+    assert params == {
+        "target": "GROUP:Enemy Convoy",
+        "speed_kts": 25.0,
+        "formation": "Vee",
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Ground Brigade"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_navalengagement_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'NAVALENGAGEMENT --target "UNIT:Target Ship" --speed 18 --depth 20 -legion "LEGION:Naval Group"'
+    )
+
+    assert mission_type == "NAVALENGAGEMENT"
+    assert params == {
+        "target": "UNIT:Target Ship",
+        "speed_kts": 18.0,
+        "depth_m": 20.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Naval Group"
+    assert preview is False
+
+
 def test_interactive_mission_argument_parses_escort_options() -> None:
     mission_type, params, coalition, legion_id, preview = parse_mission_argument(
         'ESCORT --target "GROUP:Package Lead" --offset-x -100 --offset-y 0 --offset-z 200 '
@@ -528,6 +560,24 @@ def test_interactive_mission_argument_parses_escort_options() -> None:
     }
     assert coalition is None
     assert legion_id == "LEGION:Wing Parchim"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_trooptransport_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'TROOPTRANSPORT --groups "GROUP:Infantry-1,GROUP:Infantry-2" --dropoff "ZONE:LZ Bravo" '
+        '--pickup "ZONE:LZ Alpha" --pickup-radius 100 -legion "LEGION:Helo Lift"'
+    )
+
+    assert mission_type == "TROOPTRANSPORT"
+    assert params == {
+        "transport_groups": ["GROUP:Infantry-1", "GROUP:Infantry-2"],
+        "dropoff": "ZONE:LZ Bravo",
+        "pickup": "ZONE:LZ Alpha",
+        "pickup_radius_m": 100.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Helo Lift"
     assert preview is False
 
 
@@ -608,6 +658,20 @@ def test_interactive_mission_argument_parses_fac_options() -> None:
     }
     assert coalition is None
     assert legion_id == "LEGION:Ground Brigade"
+    assert preview is False
+
+
+def test_interactive_mission_argument_parses_supply_zone_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'AMMOSUPPLY --target "ZONE:Forward Depot" -legion "LEGION:Ground Logistics"'
+    )
+
+    assert mission_type == "AMMOSUPPLY"
+    assert params == {
+        "zone": "ZONE:Forward Depot",
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Ground Logistics"
     assert preview is False
 
 

@@ -5,6 +5,7 @@ from typing import Any
 
 from moosebridge.auftraege import (
     Auftrag_ARTY,
+    Auftrag_AMMOSUPPLY,
     Auftrag_BAI,
     Auftrag_BOMBCARPET,
     Auftrag_BOMBRUNWAY,
@@ -14,11 +15,19 @@ from moosebridge.auftraege import (
     Auftrag_ESCORT,
     Auftrag_FAC,
     Auftrag_FACA,
+    Auftrag_FUELSUPPLY,
+    Auftrag_GROUNDATTACK,
     Auftrag_GROUNDESCORT,
+    Auftrag_NAVALENGAGEMENT,
     Auftrag_ORBIT,
+    Auftrag_RESCUEHELO,
+    Auftrag_REARMING,
     Auftrag_SEAD,
     Auftrag_STRIKE,
+    Auftrag_TROOPTRANSPORT,
     AuftragEvent,
+    GeneralSet,
+    GroupSet,
 )
 from moosebridge.protocol import BridgeCommand
 from moosebridge.sdk import CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
@@ -331,6 +340,100 @@ def test_sdk_add_groundescort_auftrag_to_legion_uses_groundescort_params() -> No
     asyncio.run(scenario())
 
 
+def test_sdk_add_ammosupply_auftrag_to_legion_uses_ammosupply_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_AMMOSUPPLY(zone="ZONE:Forward Depot")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Logistics")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_ammosupply"
+        assert command.params == {
+            "zone": "ZONE:Forward Depot",
+            "legion_id": "LEGION:Ground Logistics",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_fuelsupply_auftrag_to_legion_uses_fuelsupply_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_FUELSUPPLY(zone="ZONE:Forward Depot")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Logistics")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_fuelsupply"
+        assert command.params == {
+            "zone": "ZONE:Forward Depot",
+            "legion_id": "LEGION:Ground Logistics",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_rearming_auftrag_to_legion_uses_rearming_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_REARMING(zone="ZONE:Forward Depot")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Logistics")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_rearming"
+        assert command.params == {
+            "zone": "ZONE:Forward Depot",
+            "legion_id": "LEGION:Ground Logistics",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_groundattack_auftrag_to_legion_uses_groundattack_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_GROUNDATTACK(target="GROUP:Enemy Convoy", speed_kts=25, formation="Vee")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Brigade")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_groundattack"
+        assert command.params == {
+            "target": "GROUP:Enemy Convoy",
+            "speed_kts": 25,
+            "formation": "Vee",
+            "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_navalengagement_auftrag_to_legion_uses_navalengagement_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_NAVALENGAGEMENT(target="UNIT:Target Ship", speed_kts=18, depth_m=20)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Naval Group")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_navalengagement"
+        assert command.params == {
+            "target": "UNIT:Target Ship",
+            "speed_kts": 18,
+            "depth_m": 20,
+            "legion_id": "LEGION:Naval Group",
+        }
+
+    asyncio.run(scenario())
+
+
 def test_sdk_add_escort_auftrag_to_legion_uses_escort_params() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -357,6 +460,107 @@ def test_sdk_add_escort_auftrag_to_legion_uses_escort_params() -> None:
             "target_types": ["Air"],
             "legion_id": "LEGION:Wing Parchim",
         }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_rescuehelo_auftrag_to_legion_uses_rescuehelo_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_RESCUEHELO(target="UNIT:Carrier-1")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Rescue Detachment")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_rescuehelo"
+        assert command.params == {
+            "target": "UNIT:Carrier-1",
+            "legion_id": "LEGION:Rescue Detachment",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_trooptransport_auftrag_to_legion_uses_trooptransport_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_TROOPTRANSPORT(
+            transport_groups=("GROUP:Infantry-1", "GROUP:Infantry-2"),
+            dropoff="ZONE:LZ Bravo",
+            pickup="ZONE:LZ Alpha",
+            pickup_radius_m=100,
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Helo Lift")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_trooptransport"
+        assert command.params == {
+            "transport_groups": ["GROUP:Infantry-1", "GROUP:Infantry-2"],
+            "dropoff": "ZONE:LZ Bravo",
+            "pickup": "ZONE:LZ Alpha",
+            "pickup_radius_m": 100,
+            "legion_id": "LEGION:Helo Lift",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_group_set_serializes_to_flat_params_value() -> None:
+    group_set = GroupSet("GROUP:Infantry-1", "GROUP:Infantry-2")
+
+    assert group_set.object_ids == ("GROUP:Infantry-1", "GROUP:Infantry-2")
+    assert group_set.to_params_value() == ["GROUP:Infantry-1", "GROUP:Infantry-2"]
+    assert isinstance(group_set, GeneralSet)
+
+
+def test_group_set_rejects_non_group_object_ids() -> None:
+    try:
+        GroupSet("UNIT:Infantry-1")
+    except ValueError as exc:
+        assert "GROUP:<name>" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
+def test_sdk_add_trooptransport_accepts_group_set() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        troops = GroupSet("GROUP:Infantry-1", "GROUP:Infantry-2")
+        auftrag = Auftrag_TROOPTRANSPORT(
+            transport_groups=troops,
+            dropoff="ZONE:LZ Bravo",
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Helo Lift")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_trooptransport"
+        assert command.params == {
+            "transport_groups": ["GROUP:Infantry-1", "GROUP:Infantry-2"],
+            "dropoff": "ZONE:LZ Bravo",
+            "legion_id": "LEGION:Helo Lift",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_trooptransport_accepts_single_group_string() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_TROOPTRANSPORT(
+            transport_groups="GROUP:Infantry-1",
+            dropoff="ZONE:LZ Bravo",
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Helo Lift")
+
+        command = server.commands[0][0]
+        assert command.params["transport_groups"] == ["GROUP:Infantry-1"]
 
     asyncio.run(scenario())
 

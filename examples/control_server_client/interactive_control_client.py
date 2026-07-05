@@ -600,6 +600,11 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["target"] = parts[index]
+        elif key in {"--groups", "--transport-groups", "-groups"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["transport_groups"] = [item.strip() for item in parts[index].split(",") if item.strip()]
         elif key in {"--zone", "-zone"}:
             index += 1
             if index >= len(parts):
@@ -610,6 +615,16 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["coordinate"] = parts[index]
+        elif key in {"--dropoff", "-dropoff"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["dropoff"] = parts[index]
+        elif key in {"--pickup", "-pickup"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["pickup"] = parts[index]
         elif key in {"--coalition", "-coalition"}:
             index += 1
             if index >= len(parts):
@@ -635,6 +650,11 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["radius_m"] = float(parts[index])
+        elif key in {"--pickup-radius", "--pickup-radius-m", "-pickup-radius"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["pickup_radius_m"] = float(parts[index])
         elif key in {"--carpet-length", "--carpet-length-m", "-carpet-length"}:
             index += 1
             if index >= len(parts):
@@ -645,6 +665,16 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["speed_kts"] = float(parts[index])
+        elif key in {"--formation", "-formation"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["formation"] = parts[index]
+        elif key in {"--depth", "--depth-m", "-depth"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["depth_m"] = float(parts[index])
         elif key in {"--heading", "--heading-deg", "-heading"}:
             index += 1
             if index >= len(parts):
@@ -709,6 +739,16 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params[key.lstrip("-").replace("-", "_")] = float(parts[index])
+        elif key in {"--dropoff-x", "-dropoff-x", "--dropoff-y", "-dropoff-y", "--dropoff-z", "-dropoff-z"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params[key.lstrip("-").replace("-", "_")] = float(parts[index])
+        elif key in {"--pickup-x", "-pickup-x", "--pickup-y", "-pickup-y", "--pickup-z", "-pickup-z"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params[key.lstrip("-").replace("-", "_")] = float(parts[index])
         elif key in {"--engage-weapon-type", "-engage-weapon-type"}:
             index += 1
             if index >= len(parts):
@@ -720,7 +760,7 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             raise ValueError(f"Unknown mission option: {option}")
         index += 1
 
-    if mission_type.upper() in {"CAP", "CAS", "CASENHANCED", "FAC"} and "target" in params and "zone" not in params:
+    if mission_type.upper() in {"CAP", "CAS", "CASENHANCED", "FAC", "AMMOSUPPLY", "FUELSUPPLY", "REARMING"} and "target" in params and "zone" not in params:
         params["zone"] = params.pop("target")
 
     return mission_type, params, coalition, legion_id, preview

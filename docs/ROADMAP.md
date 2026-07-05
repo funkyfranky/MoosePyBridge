@@ -317,7 +317,8 @@ Work items:
 
 - broaden AUFTRAG creation helpers beyond the current BAI, BOMBING, BOMBRUNWAY,
   BOMBCARPET, ARTY, ORBIT, CAP, CAS, CASENHANCED, FAC, FACA, SEAD, STRIKE,
-  GROUNDESCORT, and ESCORT baseline
+  GROUNDESCORT, GROUNDATTACK, NAVALENGAGEMENT, AMMOSUPPLY, FUELSUPPLY,
+  REARMING, ESCORT, RESCUEHELO, and TROOPTRANSPORT baseline
 - add cancellation and reassignment helpers
 - add OPSGROUP and OPSZONE control helpers
 - map recommendations to command payloads (baseline implemented for AUFTRAG

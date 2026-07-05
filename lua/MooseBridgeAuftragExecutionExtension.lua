@@ -285,9 +285,17 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     target_id=bridge_optional_string_param(p.target) or bridge_optional_string_param(legacy_params.target),
     zone_id=bridge_optional_string_param(p.zone) or bridge_optional_string_param(p.zone_id) or bridge_optional_string_param(legacy_params.zone) or bridge_optional_string_param(legacy_params.zone_id),
     coordinate_id=bridge_optional_string_param(p.coordinate) or bridge_optional_string_param(p.coordinate_id) or bridge_optional_string_param(legacy_params.coordinate) or bridge_optional_string_param(legacy_params.coordinate_id),
+    dropoff_id=bridge_optional_string_param(p.dropoff) or bridge_optional_string_param(p.dropoff_id) or bridge_optional_string_param(legacy_params.dropoff) or bridge_optional_string_param(legacy_params.dropoff_id),
+    pickup_id=bridge_optional_string_param(p.pickup) or bridge_optional_string_param(p.pickup_id) or bridge_optional_string_param(legacy_params.pickup) or bridge_optional_string_param(legacy_params.pickup_id),
     x=p.x or legacy_params.x,
     y=p.y or legacy_params.y,
     z=p.z or legacy_params.z,
+    dropoff_x=p.dropoff_x or legacy_params.dropoff_x,
+    dropoff_y=p.dropoff_y or legacy_params.dropoff_y,
+    dropoff_z=p.dropoff_z or legacy_params.dropoff_z,
+    pickup_x=p.pickup_x or legacy_params.pickup_x,
+    pickup_y=p.pickup_y or legacy_params.pickup_y,
+    pickup_z=p.pickup_z or legacy_params.pickup_z,
     altitude_ft=p.altitude_ft or legacy_params.altitude_ft,
     selected_payload_uid=p.selected_payload_uid or legacy_params.selected_payload_uid,
     engage_weapon_type=p.engage_weapon_type or p.EngageWeaponType or legacy_params.engage_weapon_type or legacy_params.EngageWeaponType,
@@ -296,6 +304,8 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     radius_m=p.radius_m or p.radius or p.Radius or legacy_params.radius_m or legacy_params.radius or legacy_params.Radius,
     carpet_length_m=p.carpet_length_m or p.carpet_length or p.CarpetLength or legacy_params.carpet_length_m or legacy_params.carpet_length or legacy_params.CarpetLength,
     speed_kts=p.speed_kts or p.speed or p.Speed or legacy_params.speed_kts or legacy_params.speed or legacy_params.Speed,
+    formation=bridge_optional_string_param(p.formation) or bridge_optional_string_param(p.Formation) or bridge_optional_string_param(legacy_params.formation) or bridge_optional_string_param(legacy_params.Formation),
+    depth_m=p.depth_m or p.depth or p.Depth or legacy_params.depth_m or legacy_params.depth or legacy_params.Depth,
     heading_deg=p.heading_deg or p.heading or p.Heading or legacy_params.heading_deg or legacy_params.heading or legacy_params.Heading,
     leg_nm=p.leg_nm or p.leg or p.Leg or legacy_params.leg_nm or legacy_params.leg or legacy_params.Leg,
     target_types=p.target_types or p.TargetTypes or legacy_params.target_types or legacy_params.TargetTypes,
@@ -305,6 +315,8 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     offset_x=p.offset_x or legacy_params.offset_x,
     offset_y=p.offset_y or legacy_params.offset_y,
     offset_z=p.offset_z or legacy_params.offset_z,
+    transport_groups=p.transport_groups or p.transport_group or p.TransportGroups or legacy_params.transport_groups or legacy_params.transport_group or legacy_params.TransportGroups,
+    pickup_radius_m=p.pickup_radius_m or p.pickup_radius or p.PickupRadius or legacy_params.pickup_radius_m or legacy_params.pickup_radius or legacy_params.PickupRadius,
     no_engage_zones=p.no_engage_zones or p.no_engage_zone or p.NoEngageZones or legacy_params.no_engage_zones or legacy_params.no_engage_zone or legacy_params.NoEngageZones,
     frequency_mhz=p.frequency_mhz or p.frequency or p.Frequency or legacy_params.frequency_mhz or legacy_params.frequency or legacy_params.Frequency,
     modulation=p.modulation or p.Modulation or legacy_params.modulation or legacy_params.Modulation,
@@ -344,7 +356,7 @@ end
 function MOOSE_BRIDGE:_ResolveGroupAuftragTarget(inputs)
   if not inputs.target_id then return nil, "Missing target" end
   local prefix = bridge_split_object_id(inputs.target_id)
-  if prefix ~= "GROUP" then return nil, "FACA target must be GROUP:<name>" end
+  if prefix ~= "GROUP" then return nil, "Target must be GROUP:<name>" end
   return self:_ResolveAuftragTargetById(inputs.target_id)
 end
 
@@ -352,6 +364,20 @@ function MOOSE_BRIDGE:_ResolveGroupOrUnitAuftragTarget(inputs)
   if not inputs.target_id then return nil, "Missing target" end
   local prefix = bridge_split_object_id(inputs.target_id)
   if prefix ~= "GROUP" and prefix ~= "UNIT" then return nil, "Target must be GROUP:<name> or UNIT:<name>" end
+  return self:_ResolveAuftragTargetById(inputs.target_id)
+end
+
+function MOOSE_BRIDGE:_ResolvePositionableAttackAuftragTarget(inputs)
+  if not inputs.target_id then return nil, "Missing target" end
+  local prefix = bridge_split_object_id(inputs.target_id)
+  if prefix ~= "GROUP" and prefix ~= "UNIT" and prefix ~= "STATIC" then return nil, "Target must be GROUP:<name>, UNIT:<name> or STATIC:<name>" end
+  return self:_ResolveAuftragTargetById(inputs.target_id)
+end
+
+function MOOSE_BRIDGE:_ResolveUnitAuftragTarget(inputs)
+  if not inputs.target_id then return nil, "Missing target" end
+  local prefix = bridge_split_object_id(inputs.target_id)
+  if prefix ~= "UNIT" then return nil, "Target must be UNIT:<name>" end
   return self:_ResolveAuftragTargetById(inputs.target_id)
 end
 
@@ -433,6 +459,17 @@ function MOOSE_BRIDGE:_BuildOffsetVector(inputs)
   }
 end
 
+function MOOSE_BRIDGE:_ResolveCoordinateFromNamedFields(object_id, x_value, y_value, z_value, label, required)
+  if object_id then
+    return self:_CoordinateTargetFromObjectId(object_id)
+  end
+  if x_value ~= nil or z_value ~= nil then
+    return self:_ResolveCoordinateFromInputs({x=x_value, y=y_value, z=z_value})
+  end
+  if required then return nil, label .. " coordinate requires object id or numeric x and z" end
+  return nil, nil
+end
+
 function MOOSE_BRIDGE:_NormalizeStringList(value)
   if type(value) == "table" then return value end
   if type(value) ~= "string" or value == "" then return nil end
@@ -444,6 +481,31 @@ function MOOSE_BRIDGE:_NormalizeStringList(value)
   end
   if #result > 0 then return result end
   return nil
+end
+
+function MOOSE_BRIDGE:_BuildGroupSet(value)
+  local group_ids = self:_NormalizeStringList(value)
+  if not group_ids or #group_ids == 0 then error("TransportGroupSet requires at least one GROUP") end
+  if not SET_GROUP or not SET_GROUP.New then error("SET_GROUP:New is not available") end
+
+  local set_group = SET_GROUP:New()
+  for _, group_id in ipairs(group_ids) do
+    local inputs = {target_id=group_id}
+    local group, group_err = self:_ResolveGroupAuftragTarget(inputs)
+    if not group then error(group_err) end
+
+    if type(set_group.AddGroup) == "function" then
+      set_group:AddGroup(group)
+    elseif type(set_group.Add) == "function" then
+      set_group:Add(group)
+    elseif type(set_group.AddObject) == "function" then
+      set_group:AddObject(group)
+    else
+      error("SET_GROUP add method is not available")
+    end
+  end
+
+  return set_group, group_ids
 end
 
 function MOOSE_BRIDGE:_BuildNoEngageZoneSet(value)
@@ -598,9 +660,17 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     target=inputs.target_id,
     zone=inputs.zone_id,
     coordinate=inputs.coordinate_id,
+    dropoff=inputs.dropoff_id,
+    pickup=inputs.pickup_id,
     x=inputs.x,
     y=inputs.y,
     z=inputs.z,
+    dropoff_x=inputs.dropoff_x,
+    dropoff_y=inputs.dropoff_y,
+    dropoff_z=inputs.dropoff_z,
+    pickup_x=inputs.pickup_x,
+    pickup_y=inputs.pickup_y,
+    pickup_z=inputs.pickup_z,
     altitude_ft=inputs.altitude_ft,
     engage_weapon_type=inputs.engage_weapon_type,
     divebomb=inputs.divebomb,
@@ -608,6 +678,8 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     radius_m=inputs.radius_m,
     carpet_length_m=inputs.carpet_length_m,
     speed_kts=inputs.speed_kts,
+    formation=inputs.formation,
+    depth_m=inputs.depth_m,
     heading_deg=inputs.heading_deg,
     leg_nm=inputs.leg_nm,
     range_max_nm=inputs.range_max_nm,
@@ -622,6 +694,8 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     offset_x=inputs.offset_x,
     offset_y=inputs.offset_y,
     offset_z=inputs.offset_z,
+    transport_groups=inputs.transport_groups,
+    pickup_radius_m=inputs.pickup_radius_m,
     selected_payload_uid=inputs.selected_payload_uid,
     auftrag_id=self:_AuftragObjectId(auftrag),
     auftragsnummer=self:_AuftragNumber(auftrag),
@@ -690,6 +764,19 @@ function MOOSE_BRIDGE:_CreateFacAuftrag(cmd)
 
   self:_AddAuftragToTarget(auftrag, inputs)
   return self:_BuildAuftragCommandResult("auftrag.create_fac", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateZoneOnlyAuftrag(cmd, action, constructor_name)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local zone, zone_err = self:_ResolveZonePatrolZone(inputs)
+  if not zone then error(zone_err) end
+
+  if not AUFTRAG or type(AUFTRAG[constructor_name]) ~= "function" then error("AUFTRAG:" .. constructor_name .. " is not available") end
+
+  local auftrag = AUFTRAG[constructor_name](AUFTRAG, zone)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult(action, auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:_CreateFacaAuftrag(cmd)
@@ -783,6 +870,35 @@ function MOOSE_BRIDGE:_CreateGroundEscortAuftrag(cmd)
   return self:_BuildAuftragCommandResult("auftrag.create_groundescort", auftrag, inputs)
 end
 
+function MOOSE_BRIDGE:_CreateGroundAttackAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolvePositionableAttackAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewGROUNDATTACK then error("AUFTRAG:NewGROUNDATTACK is not available") end
+
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local auftrag = AUFTRAG:NewGROUNDATTACK(target, speed_kts, inputs.formation)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_groundattack", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateNavalEngagementAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolvePositionableAttackAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewNAVALENGAGEMENT then error("AUFTRAG:NewNAVALENGAGEMENT is not available") end
+
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local depth_m = inputs.depth_m and tonumber(inputs.depth_m) or nil
+  local auftrag = AUFTRAG:NewNAVALENGAGEMENT(target, speed_kts, depth_m)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_navalengagement", auftrag, inputs)
+end
+
 function MOOSE_BRIDGE:_CreateEscortAuftrag(cmd)
   local inputs = self:_CommonAuftragCommandInputs(cmd)
   local target, target_err = self:_ResolveGroupAuftragTarget(inputs)
@@ -798,6 +914,39 @@ function MOOSE_BRIDGE:_CreateEscortAuftrag(cmd)
 
   self:_AddAuftragToTarget(auftrag, inputs)
   return self:_BuildAuftragCommandResult("auftrag.create_escort", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateRescueHeloAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local target, target_err = self:_ResolveUnitAuftragTarget(inputs)
+  if not target then error(target_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewRESCUEHELO then error("AUFTRAG:NewRESCUEHELO is not available") end
+
+  local auftrag = AUFTRAG:NewRESCUEHELO(target)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_rescuehelo", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateTroopTransportAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local transport_group_set, group_ids = self:_BuildGroupSet(inputs.transport_groups)
+  inputs.transport_groups = group_ids
+
+  local dropoff_coordinate, dropoff_err = self:_ResolveCoordinateFromNamedFields(inputs.dropoff_id, inputs.dropoff_x, inputs.dropoff_y, inputs.dropoff_z, "Dropoff", true)
+  if not dropoff_coordinate then error(dropoff_err) end
+
+  local pickup_coordinate, pickup_err = self:_ResolveCoordinateFromNamedFields(inputs.pickup_id, inputs.pickup_x, inputs.pickup_y, inputs.pickup_z, "Pickup", false)
+  if pickup_err then error(pickup_err) end
+
+  if not AUFTRAG or not AUFTRAG.NewTROOPTRANSPORT then error("AUFTRAG:NewTROOPTRANSPORT is not available") end
+
+  local pickup_radius_m = inputs.pickup_radius_m and tonumber(inputs.pickup_radius_m) or nil
+  local auftrag = AUFTRAG:NewTROOPTRANSPORT(transport_group_set, dropoff_coordinate, pickup_coordinate, pickup_radius_m)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_trooptransport", auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
@@ -888,6 +1037,18 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     return self:_CreateFacaAuftrag(cmd)
   end)
 
+  self:RegisterCommand("auftrag.create_ammosupply", function(cmd)
+    return self:_CreateZoneOnlyAuftrag(cmd, "auftrag.create_ammosupply", "NewAMMOSUPPLY")
+  end)
+
+  self:RegisterCommand("auftrag.create_fuelsupply", function(cmd)
+    return self:_CreateZoneOnlyAuftrag(cmd, "auftrag.create_fuelsupply", "NewFUELSUPPLY")
+  end)
+
+  self:RegisterCommand("auftrag.create_rearming", function(cmd)
+    return self:_CreateZoneOnlyAuftrag(cmd, "auftrag.create_rearming", "NewREARMING")
+  end)
+
   self:RegisterCommand("auftrag.create_sead", function(cmd)
     return self:_CreateSeadAuftrag(cmd)
   end)
@@ -908,8 +1069,24 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
     return self:_CreateGroundEscortAuftrag(cmd)
   end)
 
+  self:RegisterCommand("auftrag.create_groundattack", function(cmd)
+    return self:_CreateGroundAttackAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_navalengagement", function(cmd)
+    return self:_CreateNavalEngagementAuftrag(cmd)
+  end)
+
   self:RegisterCommand("auftrag.create_escort", function(cmd)
     return self:_CreateEscortAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_rescuehelo", function(cmd)
+    return self:_CreateRescueHeloAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_trooptransport", function(cmd)
+    return self:_CreateTroopTransportAuftrag(cmd)
   end)
 end
 
