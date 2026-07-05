@@ -197,6 +197,18 @@ class AuftragPATROLZONE(AuftragCommand):
     ) -> None: ...
 
 
+class AuftragCAPTUREZONE(AuftragCommand):
+    def __init__(
+        self,
+        opszone: str,
+        capture_coalition: str | int,
+        speed_kts: float | None = None,
+        altitude_ft: float | None = None,
+        formation: str | None = None,
+        stay_in_zone_time_s: float | None = None,
+    ) -> None: ...
+
+
 class AuftragAMMOSUPPLY(AuftragCommand):
     def __init__(self, zone: str) -> None: ...
 
@@ -343,6 +355,7 @@ Auftrag_BOMBCARPET: type[AuftragBOMBCARPET]
 Auftrag_BOMBING: type[AuftragBOMBING]
 Auftrag_BOMBRUNWAY: type[AuftragBOMBRUNWAY]
 Auftrag_CAP: type[AuftragCAP]
+Auftrag_CAPTUREZONE: type[AuftragCAPTUREZONE]
 Auftrag_CAS: type[AuftragCAS]
 Auftrag_CASENHANCED: type[AuftragCASENHANCED]
 Auftrag_ESCORT: type[AuftragESCORT]

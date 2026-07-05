@@ -341,6 +341,20 @@ CAP_ZONE_PARAMETER = AuftragParameterSpec(
     description="ZONE_RADIUS object used as the circular CAP zone.",
 )
 
+OPSZONE_PARAMETER = AuftragParameterSpec(
+    name="opszone",
+    optional=False,
+    accepted_objects=(AuftragTargetType.OPSZONE,),
+    description="OPSZONE object that should be captured.",
+)
+
+CAPTURE_COALITION_PARAMETER = AuftragParameterSpec(
+    name="capture_coalition",
+    optional=False,
+    accepted_objects=("int", "str"),
+    description="Coalition that should capture the OPSZONE: red/blue/neutral or DCS coalition number.",
+)
+
 OPTIONAL_COORDINATE_OBJECT_PARAMETER = AuftragParameterSpec(
     name="coordinate",
     optional=True,
@@ -402,6 +416,13 @@ ATTACK_SPEED_KTS_PARAMETER = AuftragParameterSpec(
     optional=True,
     accepted_objects=("float",),
     description="Optional attack speed in knots. MOOSE defaults to max speed when omitted.",
+)
+
+CAPTURE_SPEED_KTS_PARAMETER = AuftragParameterSpec(
+    name="speed_kts",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional capture-zone patrol speed in knots.",
 )
 
 FORMATION_PARAMETER = AuftragParameterSpec(
@@ -549,6 +570,13 @@ PICKUP_RADIUS_M_PARAMETER = AuftragParameterSpec(
     optional=True,
     accepted_objects=("float",),
     description="Optional pickup radius in meters. MOOSE defaults to 100 m when omitted.",
+)
+
+STAY_IN_ZONE_TIME_S_PARAMETER = AuftragParameterSpec(
+    name="stay_in_zone_time_s",
+    optional=True,
+    accepted_objects=("float",),
+    description="Optional time in seconds to remain in the captured OPSZONE before returning.",
 )
 
 DESIGNATION_PARAMETER = AuftragParameterSpec(
@@ -761,6 +789,20 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             ATTACK_SPEED_KTS_PARAMETER,
             ALTITUDE_PARAMETER,
             FORMATION_PARAMETER,
+        ),
+    ),
+    AuftragType.CAPTUREZONE.name: AuftragTypeSpec(
+        mission_type=AuftragType.CAPTUREZONE.name,
+        constructor="AUFTRAG:NewCAPTUREZONE",
+        performer_categories=("AIR", "GROUND", "NAVAL"),
+        description="Capture an OPSZONE for a requested coalition, then optionally stay in the zone.",
+        parameters=(
+            OPSZONE_PARAMETER,
+            CAPTURE_COALITION_PARAMETER,
+            CAPTURE_SPEED_KTS_PARAMETER,
+            ALTITUDE_PARAMETER,
+            FORMATION_PARAMETER,
+            STAY_IN_ZONE_TIME_S_PARAMETER,
         ),
     ),
     AuftragType.AMMOSUPPLY.name: AuftragTypeSpec(

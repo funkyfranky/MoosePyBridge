@@ -781,6 +781,26 @@ def test_interactive_mission_argument_parses_patrolzone_options() -> None:
     assert preview is False
 
 
+def test_interactive_mission_argument_parses_capturezone_options() -> None:
+    mission_type, params, coalition, legion_id, preview = parse_mission_argument(
+        'CAPTUREZONE --target "OPSZONE:Town Fight" --capture-coalition blue --speed 20 '
+        '--altitude 2000 --formation "Off Road" --stay 300 -legion "LEGION:Ground Brigade"'
+    )
+
+    assert mission_type == "CAPTUREZONE"
+    assert params == {
+        "opszone": "OPSZONE:Town Fight",
+        "capture_coalition": "blue",
+        "speed_kts": 20.0,
+        "altitude_ft": 2000.0,
+        "formation": "Off Road",
+        "stay_in_zone_time_s": 300.0,
+    }
+    assert coalition is None
+    assert legion_id == "LEGION:Ground Brigade"
+    assert preview is False
+
+
 def test_interactive_mission_argument_parses_supply_zone_options() -> None:
     mission_type, params, coalition, legion_id, preview = parse_mission_argument(
         'AMMOSUPPLY --target "ZONE:Forward Depot" -legion "LEGION:Ground Logistics"'

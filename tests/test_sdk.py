@@ -13,6 +13,7 @@ from moosebridge.auftraege import (
     Auftrag_BOMBCARPET,
     Auftrag_BOMBRUNWAY,
     Auftrag_CAP,
+    Auftrag_CAPTUREZONE,
     Auftrag_CAS,
     Auftrag_CASENHANCED,
     Auftrag_ESCORT,
@@ -992,6 +993,55 @@ def test_sdk_add_patrolzone_auftrag_to_legion_uses_patrolzone_params() -> None:
             "speed_kts": 20,
             "altitude_ft": 2000,
             "formation": "Off Road",
+            "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_capturezone_auftrag_to_legion_uses_capturezone_params() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_CAPTUREZONE(
+            opszone="OPSZONE:Town Fight",
+            capture_coalition="blue",
+            speed_kts=20,
+            altitude_ft=2000,
+            formation="Off Road",
+            stay_in_zone_time_s=300,
+        )
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Brigade")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_capturezone"
+        assert command.params == {
+            "opszone": "OPSZONE:Town Fight",
+            "capture_coalition": "blue",
+            "speed_kts": 20,
+            "altitude_ft": 2000,
+            "formation": "Off Road",
+            "stay_in_zone_time_s": 300,
+            "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_capturezone_auftrag_allows_omitted_speed() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_CAPTUREZONE(opszone="OPSZONE:Town Fight", capture_coalition="blue")
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Ground Brigade")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_capturezone"
+        assert command.params == {
+            "opszone": "OPSZONE:Town Fight",
+            "capture_coalition": "blue",
             "legion_id": "LEGION:Ground Brigade",
         }
 

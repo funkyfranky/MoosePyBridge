@@ -7,7 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "python"))
 
-from moosebridge import Auftrag_BAI, Auftrag_ORBIT, Auftrag_CAP, Auftrag_NOTHING, Auftrag_PATROLZONE, Auftrag_ONGUARD
+from moosebridge import Auftrag_BAI, Auftrag_ORBIT, Auftrag_CAP, Auftrag_NOTHING, Auftrag_PATROLZONE, Auftrag_ONGUARD, AuftragCAPTUREZONE
 
 from moosebridge.control import MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
@@ -31,13 +31,14 @@ async def main() -> int:
     #auftrag = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
     #auftrag = Auftrag_ORBIT(target="ZONE:Town Fight",altitude_ft=15000, speed_kts=300, heading_deg=90, leg_nm=20)
     #auftrag = Auftrag_CAP(zone="ZONE:Town Fight", altitude_ft=15000, speed_kts=300, heading_deg=0, leg_nm=20, target_types=["Air"])
-
-    
     #auftrag= Auftrag_NOTHING(zone="ZONE:Test Alpha")
     #auftrag = Auftrag_PATROLZONE(zone="ZONE:Test Alpha")
-    auftrag = Auftrag_ONGUARD(target="ZONE:Test Alpha")
-    auftrag.set_duration(duration=60)
-    auftrag.set_required_assets(min_count=3, max_count=4)
+    #auftrag = Auftrag_ONGUARD(target="ZONE:Test Alpha")
+    #auftrag.set_duration(duration=60)
+    #auftrag.set_required_assets(min_count=3, max_count=4)
+
+    auftrag = AuftragCAPTUREZONE(opszone="OPSZONE:Capture Alpha", capture_coalition="blue")
+    auftrag.set_required_assets(min_count=2, max_count=5)
 
     #ack = await bridge.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Laage")
     ack = await bridge.add_auftrag(auftrag=auftrag, legion="LEGION:Brigade Laage")

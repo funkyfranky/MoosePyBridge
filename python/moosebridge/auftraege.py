@@ -453,6 +453,33 @@ class AuftragPATROLZONE(AuftragCommand):
 
 
 @dataclass(slots=True, frozen=True)
+class AuftragCAPTUREZONE(AuftragCommand):
+    """Capture zone AUFTRAG for air, ground or naval units."""
+
+    opszone: str
+    capture_coalition: str | int
+    speed_kts: float | None = None
+    altitude_ft: float | None = None
+    formation: str | None = None
+    stay_in_zone_time_s: float | None = None
+    mission_type = "CAPTUREZONE"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this CAPTUREZONE AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "opszone": self.opszone,
+                "capture_coalition": self.capture_coalition,
+                "speed_kts": self.speed_kts,
+                "altitude_ft": self.altitude_ft,
+                "formation": self.formation,
+                "stay_in_zone_time_s": self.stay_in_zone_time_s,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class _AuftragZoneOnly(AuftragCommand):
     """Base description for AUFTRAGs that only need a MOOSE ZONE."""
 
@@ -816,6 +843,7 @@ Auftrag_ARTY: type[AuftragARTY] = AuftragARTY
 Auftrag_AWACS: type[AuftragAWACS] = AuftragAWACS
 Auftrag_ORBIT: type[AuftragORBIT] = AuftragORBIT
 Auftrag_CAP: type[AuftragCAP] = AuftragCAP
+Auftrag_CAPTUREZONE: type[AuftragCAPTUREZONE] = AuftragCAPTUREZONE
 Auftrag_CAS: type[AuftragCAS] = AuftragCAS
 Auftrag_CASENHANCED: type[AuftragCASENHANCED] = AuftragCASENHANCED
 Auftrag_EWR: type[AuftragEWR] = AuftragEWR
@@ -850,6 +878,7 @@ __all__ = [
     "AuftragBOMBING",
     "AuftragBOMBRUNWAY",
     "AuftragCAP",
+    "AuftragCAPTUREZONE",
     "AuftragCAS",
     "AuftragCASENHANCED",
     "AuftragCommand",
@@ -884,6 +913,7 @@ __all__ = [
     "Auftrag_BOMBING",
     "Auftrag_BOMBRUNWAY",
     "Auftrag_CAP",
+    "Auftrag_CAPTUREZONE",
     "Auftrag_CAS",
     "Auftrag_CASENHANCED",
     "Auftrag_ESCORT",

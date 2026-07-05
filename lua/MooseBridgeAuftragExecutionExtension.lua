@@ -67,6 +67,20 @@ local function bridge_number_param(value)
   return number
 end
 
+local function bridge_coalition_param(value)
+  if value == nil then return nil end
+  if type(value) == "number" then return value end
+  local text = bridge_optional_string_param(value)
+  if not text then return nil end
+  local number = tonumber(text)
+  if number ~= nil then return number end
+  local normalized = string.lower(text)
+  if normalized == "red" then return coalition and coalition.side and coalition.side.RED or 1 end
+  if normalized == "blue" then return coalition and coalition.side and coalition.side.BLUE or 2 end
+  if normalized == "neutral" then return coalition and coalition.side and coalition.side.NEUTRAL or 0 end
+  error("Unknown coalition parameter: " .. bridge_safe_tostring(value))
+end
+
 local function bridge_time_param(value)
   if value == nil then return nil end
   if type(value) == "number" then return value end
@@ -304,6 +318,9 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     required_assets_min=bridge_number_param(p.required_assets_min) or bridge_number_param(p.nassets_min) or bridge_number_param(p.NassetsMin) or bridge_number_param(legacy_params.required_assets_min) or bridge_number_param(legacy_params.nassets_min) or bridge_number_param(legacy_params.NassetsMin),
     required_assets_max=bridge_number_param(p.required_assets_max) or bridge_number_param(p.nassets_max) or bridge_number_param(p.NassetsMax) or bridge_number_param(legacy_params.required_assets_max) or bridge_number_param(legacy_params.nassets_max) or bridge_number_param(legacy_params.NassetsMax),
     target_id=bridge_optional_string_param(p.target) or bridge_optional_string_param(legacy_params.target),
+    opszone_id=bridge_optional_string_param(p.opszone) or bridge_optional_string_param(p.opszone_id) or bridge_optional_string_param(legacy_params.opszone) or bridge_optional_string_param(legacy_params.opszone_id),
+    capture_coalition=bridge_coalition_param(p.capture_coalition) or bridge_coalition_param(p.capture_coalition_id) or bridge_coalition_param(p.CaptureCoalition) or bridge_coalition_param(legacy_params.capture_coalition) or bridge_coalition_param(legacy_params.capture_coalition_id) or bridge_coalition_param(legacy_params.CaptureCoalition),
+    stay_in_zone_time_s=bridge_number_param(p.stay_in_zone_time_s) or bridge_number_param(p.stay_in_zone_time) or bridge_number_param(p.StayInZoneTime) or bridge_number_param(legacy_params.stay_in_zone_time_s) or bridge_number_param(legacy_params.stay_in_zone_time) or bridge_number_param(legacy_params.StayInZoneTime),
     zone_id=bridge_optional_string_param(p.zone) or bridge_optional_string_param(p.zone_id) or bridge_optional_string_param(legacy_params.zone) or bridge_optional_string_param(legacy_params.zone_id),
     coordinate_id=bridge_optional_string_param(p.coordinate) or bridge_optional_string_param(p.coordinate_id) or bridge_optional_string_param(legacy_params.coordinate) or bridge_optional_string_param(legacy_params.coordinate_id),
     dropoff_id=bridge_optional_string_param(p.dropoff) or bridge_optional_string_param(p.dropoff_id) or bridge_optional_string_param(legacy_params.dropoff) or bridge_optional_string_param(legacy_params.dropoff_id),
@@ -462,6 +479,19 @@ function MOOSE_BRIDGE:_ResolveZonePatrolZone(inputs)
   local ok, zone = pcall(function() return self:_ZoneForDrawObjectId(inputs.zone_id) end)
   if ok and zone then return zone, nil end
   return nil, bridge_safe_tostring(zone)
+end
+
+function MOOSE_BRIDGE:_ResolveCaptureOpsZone(inputs)
+  local opszone_id = inputs.opszone_id or inputs.zone_id or inputs.target_id
+  if not opszone_id then return nil, "Missing opszone" end
+  local prefix, name = bridge_split_object_id(opszone_id)
+  if prefix ~= "OPSZONE" then return nil, "CAPTUREZONE requires OPSZONE:<name>, got " .. bridge_safe_tostring(opszone_id) end
+
+  local opszone = self.RegisteredOpsZones and self.RegisteredOpsZones[name]
+  if not opszone and _DATABASE and type(_DATABASE.OPSZONES) == "table" then opszone = _DATABASE.OPSZONES[name] end
+  if not opszone then return nil, "OPSZONE not found: " .. bridge_safe_tostring(opszone_id) end
+  inputs.opszone_id = opszone_id
+  return opszone, nil
 end
 
 function MOOSE_BRIDGE:_ResolveZonePatrolCoordinate(inputs)
@@ -728,6 +758,9 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     required_assets_min=inputs.required_assets_min,
     required_assets_max=inputs.required_assets_max,
     target=inputs.target_id,
+    opszone=inputs.opszone_id,
+    capture_coalition=inputs.capture_coalition,
+    stay_in_zone_time_s=inputs.stay_in_zone_time_s,
     zone=inputs.zone_id,
     coordinate=inputs.coordinate_id,
     dropoff=inputs.dropoff_id,
@@ -875,6 +908,23 @@ function MOOSE_BRIDGE:_CreatePatrolZoneAuftrag(cmd)
 
   self:_AddAuftragToTarget(auftrag, inputs)
   return self:_BuildAuftragCommandResult("auftrag.create_patrolzone", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateCaptureZoneAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local opszone, opszone_err = self:_ResolveCaptureOpsZone(inputs)
+  if not opszone then error(opszone_err) end
+  if inputs.capture_coalition == nil then error("CAPTUREZONE requires capture_coalition") end
+
+  if not AUFTRAG or not AUFTRAG.NewCAPTUREZONE then error("AUFTRAG:NewCAPTUREZONE is not available") end
+
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local stay_in_zone_time_s = inputs.stay_in_zone_time_s and tonumber(inputs.stay_in_zone_time_s) or nil
+  local auftrag = AUFTRAG:NewCAPTUREZONE(opszone, inputs.capture_coalition, speed_kts, altitude_ft, inputs.formation, stay_in_zone_time_s)
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_capturezone", auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:_CreateZoneOnlyAuftrag(cmd, action, constructor_name)
@@ -1209,6 +1259,10 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.create_patrolzone", function(cmd)
     return self:_CreatePatrolZoneAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_capturezone", function(cmd)
+    return self:_CreateCaptureZoneAuftrag(cmd)
   end)
 
   self:RegisterCommand("auftrag.create_faca", function(cmd)

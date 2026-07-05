@@ -26,18 +26,15 @@ def text(value: object, default: str = "-") -> str:
 
 
 def print_legion_status(bridge: MooseBridgeClient, legion_id: str | None = None) -> None:
-    state = bridge.state
-    legions = list(state.legion_objects.values())
-
-    if legion_id:
-        legions = [legion for legion in legions if legion.object_id == legion_id]
+    legions = [bridge.legion(legion_id)] if legion_id else list(bridge.state.legion_objects.values())
+    legions = [legion for legion in legions if legion is not None]
 
     print(f"\n[{datetime.now().strftime('%H:%M:%S')}] LEGION status")
     print("-" * 90)
 
     for legion in legions:
-        queued = state.queued_auftraege_for_legion(legion.object_id)
-        cohorts = state.cohorts_for_legion(legion.object_id)
+        missions = bridge.missions_of_legion(legion.object_id)
+        cohorts = bridge.cohorts_of_legion(legion.object_id)
 
         stock_total = sum(cohort.stock_asset_count or 0 for cohort in cohorts)
         spawned_total = sum(cohort.spawned_asset_count or 0 for cohort in cohorts)
@@ -54,16 +51,16 @@ def print_legion_status(bridge: MooseBridgeClient, legion_id: str | None = None)
             f"assets={asset_total} "
             f"stock={stock_total} "
             f"spawned={spawned_total} "
-            f"queue={len(queued)}"
+            f"missions={len(missions)}"
         )
 
-        if queued:
-            print("  queued AUFTRAG:")
-            for auftrag in queued:
+        if missions:
+            print("  missions:")
+            for mission in missions:
                 print(
-                    f"    {auftrag.object_id} "
-                    f"type={text(auftrag.type)} "
-                    f"status={text(auftrag.status)}"
+                    f"    {mission.object_id} "
+                    f"type={text(mission.type)} "
+                    f"status={text(mission.status)}"
                 )
 
         if cohorts:

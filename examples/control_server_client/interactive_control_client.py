@@ -619,6 +619,11 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["zone"] = parts[index]
+        elif key in {"--opszone", "--ops-zone", "-opszone"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["opszone"] = parts[index]
         elif key in {"--coordinate", "--orbit", "-coordinate", "-orbit"}:
             index += 1
             if index >= len(parts):
@@ -639,6 +644,11 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             coalition = parts[index].lower()
+        elif key in {"--capture-coalition", "--capture-for", "-capture-coalition"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["capture_coalition"] = parts[index].lower()
         elif key in {"--legion", "-legion"}:
             index += 1
             if index >= len(parts):
@@ -704,6 +714,11 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
             if index >= len(parts):
                 raise ValueError(f"{option} requires a value")
             params["speed_kts"] = float(parts[index])
+        elif key in {"--stay", "--stay-in-zone", "--stay-in-zone-time", "-stay"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            params["stay_in_zone_time_s"] = float(parts[index])
         elif key in {"--formation", "-formation"}:
             index += 1
             if index >= len(parts):
@@ -806,6 +821,8 @@ def parse_mission_argument(argument: str) -> tuple[str, dict[str, Any], str | No
 
     if mission_type.upper() in {"CAP", "CAS", "CASENHANCED", "FAC", "PATROLZONE", "AMMOSUPPLY", "FUELSUPPLY", "REARMING", "AIRDEFENSE", "EWR", "NOTHING"} and "target" in params and "zone" not in params:
         params["zone"] = params.pop("target")
+    if mission_type.upper() == "CAPTUREZONE" and "target" in params and "opszone" not in params:
+        params["opszone"] = params.pop("target")
 
     return mission_type, params, coalition, legion_id, preview
 
