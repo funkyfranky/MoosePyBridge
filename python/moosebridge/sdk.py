@@ -438,6 +438,43 @@ class MooseBridgeClient:
 
         return self.state.queued_auftraege_for_group(opsgroup_id)
 
+    def ready_cohorts_of_legion(
+        self,
+        legion_id: str,
+        mission_type: str | None = None,
+        require_stock: bool = True,
+    ) -> list[Cohort]:
+        """Return COHORTs of a LEGION that are ready for optional mission work.
+
+        :param legion_id: Stable LEGION object id.
+        :param mission_type: Optional AUFTRAG mission type filter such as ``BAI``.
+        :param require_stock: If ``True``, require at least one stock asset.
+        :returns: Matching COHORTs from the local state mirror.
+        """
+
+        cohorts = self.cohorts_of_legion(legion_id)
+        if mission_type:
+            mission_key = mission_type.strip().upper()
+            cohorts = [cohort for cohort in cohorts if mission_key in {key.upper() for key in cohort.mission_type_keys}]
+        if require_stock:
+            cohorts = [cohort for cohort in cohorts if (cohort.stock_asset_count or 0) > 0]
+        return cohorts
+
+    def available_missions_of_cohort(self, cohort_id: str, require_payload: bool = False) -> list[str]:
+        """Return mission type keys a COHORT can currently advertise.
+
+        :param cohort_id: Stable COHORT object id.
+        :param require_payload: If ``True``, keep only mission types with known positive payload availability.
+        :returns: Mission type keys such as ``BAI`` or ``CAPTUREZONE``.
+        """
+
+        cohort = self.cohort(cohort_id)
+        if not cohort:
+            return []
+        if not require_payload:
+            return list(cohort.mission_type_keys)
+        return [mission_type for mission_type in cohort.mission_type_keys if cohort.has_payload_for(mission_type) is True]
+
     def current_auftrag_for_group(self, opsgroup_id: str) -> Auftrag | None:
         """Return the current AUFTRAG assigned to an OPSGROUP.
 
@@ -466,6 +503,30 @@ class MooseBridgeClient:
         for action in actions:
             require_ok(await self.server.send_command(BridgeCommand(action=action, params={})))
             await asyncio.sleep(0.05)
+
+    async def refresh_legion_state(self) -> MooseBridgeState:
+        """Refresh LEGION, COHORT and mission snapshots.
+
+        :returns: Updated local state mirror.
+        """
+
+        await self.snapshot_legions()
+        await self.snapshot_cohorts()
+        await self.snapshot_auftraege()
+        return self.state
+
+    async def refresh_ops_state(self) -> MooseBridgeState:
+        """Refresh the commonly used OPS state snapshots.
+
+        :returns: Updated local state mirror.
+        """
+
+        await self.snapshot_opszones()
+        await self.snapshot_opsgroups()
+        await self.snapshot_auftraege()
+        await self.snapshot_legions()
+        await self.snapshot_cohorts()
+        return self.state
 
     async def snapshot_groups(self) -> dict[str, Any]:
         """Request a GROUP snapshot through the SDK."""

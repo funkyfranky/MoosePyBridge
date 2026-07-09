@@ -220,13 +220,16 @@ nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", aliv
 Typed OPS state convenience helpers:
 
 ```python
-await bridge.snapshot_kind("legions")
-await bridge.snapshot_kind("cohorts")
-await bridge.snapshot_kind("auftraege")
+from moosebridge import format_legion_status
+
+await bridge.refresh_legion_state()
 
 legion = bridge.legion("LEGION:Wing Parchim")
 cohorts = bridge.cohorts_of_legion("LEGION:Wing Parchim")
 missions = bridge.missions_of_legion("LEGION:Wing Parchim")
+ready = bridge.ready_cohorts_of_legion("LEGION:Wing Parchim", mission_type="BAI")
+
+print(format_legion_status(bridge, "LEGION:Wing Parchim"))
 ```
 
 MOOSE-like AUFTRAG helper objects:

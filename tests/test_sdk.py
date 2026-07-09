@@ -41,6 +41,7 @@ from moosebridge.auftraege import (
     GroupSet,
 )
 from moosebridge.protocol import BridgeCommand
+from moosebridge.diagnostics import format_cohort_assets, format_legion_status, format_mission_summary
 from moosebridge.sdk import CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
 from moosebridge.state import MooseBridgeState
 
@@ -275,6 +276,8 @@ def test_sdk_legion_convenience_methods_return_typed_state() -> None:
                         "object_type": "COHORT",
                         "legion_id": "LEGION:Wing Parchim",
                         "stock_asset_count": 2,
+                        "mission_types": ["BAI", "CAP"],
+                        "payloads_by_mission": {"BAI": {"available_count": 1, "total_available": 1}},
                     }
                 ]
             },
@@ -308,6 +311,108 @@ def test_sdk_legion_convenience_methods_return_typed_state() -> None:
     assert [cohort.stock_asset_count for cohort in cohorts] == [2]
     assert [mission.type for mission in missions] == ["BAI"]
     assert [mission.status for mission in missions] == ["Queued"]
+    assert [cohort.object_id for cohort in client.ready_cohorts_of_legion("LEGION:Wing Parchim", "BAI")] == [
+        "COHORT:F-4E Parchim Alpha"
+    ]
+    assert client.available_missions_of_cohort("COHORT:F-4E Parchim Alpha") == ["BAI", "CAP"]
+    assert client.available_missions_of_cohort("COHORT:F-4E Parchim Alpha", require_payload=True) == ["BAI"]
+
+
+def test_sdk_refresh_helpers_request_expected_snapshots() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        assert await client.refresh_legion_state() is server.state
+        assert [command.action for command, _ in server.commands] == [
+            "snapshot.legions",
+            "snapshot.cohorts",
+            "snapshot.auftraege",
+        ]
+
+        server.commands.clear()
+
+        assert await client.refresh_ops_state() is server.state
+        assert [command.action for command, _ in server.commands] == [
+            "snapshot.opszones",
+            "snapshot.opsgroups",
+            "snapshot.auftraege",
+            "snapshot.legions",
+            "snapshot.cohorts",
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_diagnostics_format_legion_status_uses_sdk_state() -> None:
+    server = FakeSdkServer()
+    client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {
+                "legions": [
+                    {
+                        "object_id": "LEGION:Wing Parchim",
+                        "dcs_name": "Wing Parchim",
+                        "object_type": "LEGION",
+                        "state": "Running",
+                        "coalition": "blue",
+                        "auftrag_queue_ids": ["AUFTRAG:1"],
+                    }
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [
+                    {
+                        "object_id": "COHORT:F-4E Parchim Alpha",
+                        "dcs_name": "F-4E Parchim Alpha",
+                        "object_type": "COHORT",
+                        "legion_id": "LEGION:Wing Parchim",
+                        "stock_asset_count": 2,
+                        "spawned_asset_count": 1,
+                        "mission_types": ["BAI"],
+                    }
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "auftraege",
+            "payload": {
+                "auftraege": [
+                    {
+                        "object_id": "AUFTRAG:1",
+                        "dcs_name": "AUFTRAG:1",
+                        "object_type": "AUFTRAG",
+                        "type": "BAI",
+                        "status": "Queued",
+                    }
+                ]
+            },
+        }
+    )
+
+    cohort = client.cohort("COHORT:F-4E Parchim Alpha")
+    mission = client.missions_of_legion("LEGION:Wing Parchim")[0]
+
+    assert cohort is not None
+    assert "stock=2" in format_cohort_assets(cohort)
+    assert "type=BAI" in format_mission_summary(mission)
+    report = format_legion_status(client, "LEGION:Wing Parchim", timestamp=False)
+    assert "LEGION:Wing Parchim" in report
+    assert "missions=1" in report
+    assert "COHORT:F-4E Parchim Alpha" in report
 
 
 def test_sdk_nearest_refreshes_snapshot_and_filters_results() -> None:

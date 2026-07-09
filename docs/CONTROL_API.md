@@ -222,19 +222,25 @@ The SDK currently exposes helpers for:
 - AUFTRAG: `add_auftrag`, `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
   `get_auftrag_summary`, `wait_for_auftrag_outcome`
 - typed OPS state: `legion`, `cohort`, `cohorts_of_legion`,
-  `missions_of_legion`, `missions_of_group`
+  `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,
+  `available_missions_of_cohort`, `refresh_legion_state`, `refresh_ops_state`
+- diagnostics: `format_legion_status`, `format_cohort_assets`,
+  `format_mission_summary`
 
 Typed OPS state can be read from the SDK state mirror after requesting the
 relevant snapshots:
 
 ```python
-await bridge.snapshot_kind("legions")
-await bridge.snapshot_kind("cohorts")
-await bridge.snapshot_kind("auftraege")
+from moosebridge import format_legion_status
+
+await bridge.refresh_legion_state()
 
 legion = bridge.legion("LEGION:Wing Parchim")
 cohorts = bridge.cohorts_of_legion("LEGION:Wing Parchim")
 missions = bridge.missions_of_legion("LEGION:Wing Parchim")
+ready = bridge.ready_cohorts_of_legion("LEGION:Wing Parchim", mission_type="BAI")
+
+print(format_legion_status(bridge, "LEGION:Wing Parchim"))
 ```
 
 For code that should read closer to the MOOSE AUFTRAG API, use the lightweight

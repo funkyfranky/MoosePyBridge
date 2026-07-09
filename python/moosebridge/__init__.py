@@ -112,6 +112,7 @@ from .sdk import (
     NearestResult,
 )
 from .control_sdk import ControlSdkAdapter, sdk_from_control_client
+from .diagnostics import format_cohort_assets, format_legion_status, format_legion_summary, format_mission_summary
 from .state import MooseBridgeState, MooseObjectIdentity
 
 __all__ = [
@@ -229,6 +230,10 @@ __all__ = [
     "evaluate_auftrag_request",
     "executable_candidates",
     "expand_platform_categories",
+    "format_cohort_assets",
+    "format_legion_status",
+    "format_legion_summary",
+    "format_mission_summary",
     "get_auftrag_type_spec",
     "platform_categories_match",
     "recommend_auftrag",
