@@ -12,7 +12,7 @@ from .auftraege import AuftragCommand, AuftragEvent
 from .auftrag_specs import auftrag_action_suffix
 from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Legion
-from .models import Auftrag, OpsGroup, OpsZone
+from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
 from .outcomes import AuftragOutcome
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
@@ -49,6 +49,9 @@ SNAPSHOT_KINDS = {
     "auftraege",
     "legions",
     "cohorts",
+    "intels",
+    "intel_contacts",
+    "intel_clusters",
 }
 
 
@@ -308,6 +311,12 @@ def auftrag_id_from_ack(ack: dict[str, Any]) -> str | None:
     return str(value)
 
 
+def mission_id_from_snapshot(mission: Auftrag) -> str:
+    """Return the stable id from a mirrored mission object."""
+
+    return mission.object_id
+
+
 def auftrag_outcome_from_event(event: dict[str, Any]) -> AuftragOutcome:
     """Build an AUFTRAG outcome from an ``auftrag.evaluated`` event."""
 
@@ -407,6 +416,25 @@ class MooseBridgeClient:
         """
 
         return self.state.cohort(object_id)
+
+    def intel(self, object_id: str) -> Intel | None:
+        """Return a typed INTEL object by object id.
+
+        :param object_id: Stable INTEL object id such as ``INTEL:BlueIntel``.
+        :returns: Typed INTEL object or ``None``.
+        """
+
+        return self.state.intel(object_id)
+
+    def contacts_of_intel(self, intel_id: str) -> list[IntelContact]:
+        """Return typed contacts belonging to an INTEL object."""
+
+        return self.state.contacts_for_intel(intel_id)
+
+    def clusters_of_intel(self, intel_id: str) -> list[IntelCluster]:
+        """Return typed clusters belonging to an INTEL object."""
+
+        return self.state.clusters_for_intel(intel_id)
 
     def cohorts_of_legion(self, legion_id: str) -> list[Cohort]:
         """Return typed COHORT objects belonging to a LEGION.
@@ -528,6 +556,14 @@ class MooseBridgeClient:
         await self.snapshot_cohorts()
         return self.state
 
+    async def refresh_intel_state(self) -> MooseBridgeState:
+        """Refresh registered INTEL objects, contacts and clusters."""
+
+        await self.snapshot_intels()
+        await self.snapshot_intel_contacts()
+        await self.snapshot_intel_clusters()
+        return self.state
+
     async def snapshot_groups(self) -> dict[str, Any]:
         """Request a GROUP snapshot through the SDK."""
 
@@ -597,6 +633,21 @@ class MooseBridgeClient:
         """
 
         return require_ok(await self.server.snapshot_legions())
+
+    async def snapshot_intels(self) -> dict[str, Any]:
+        """Request an INTEL snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_intels())
+
+    async def snapshot_intel_contacts(self) -> dict[str, Any]:
+        """Request an INTEL contact snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_intel_contacts())
+
+    async def snapshot_intel_clusters(self) -> dict[str, Any]:
+        """Request an INTEL cluster snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_intel_clusters())
 
     async def snapshot_objects(self) -> dict[str, Any]:
         """Request a combined object snapshot through the SDK."""
@@ -690,6 +741,82 @@ class MooseBridgeClient:
             self._auftrag_ids_by_object[id(auftrag)] = auftrag_id
         return ack
 
+    def mission_id(self, mission: AuftragCommand | Auftrag | str) -> str:
+        """Return the stable ``AUFTRAG:id`` for an SDK mission reference.
+
+        :param mission: Python AUFTRAG description, mirrored mission object or direct id.
+        :raises ValueError: If a Python AUFTRAG object has not been added through this client.
+        """
+
+        if isinstance(mission, str):
+            return mission
+        if isinstance(mission, Auftrag):
+            return mission_id_from_snapshot(mission)
+        mission_id = self._auftrag_ids_by_object.get(id(mission))
+        if not mission_id:
+            raise ValueError("No AUFTRAG id is known for this object. Call add_auftrag first or pass an AUFTRAG:id string.")
+        return mission_id
+
+    async def cancel_mission(self, mission: AuftragCommand | Auftrag | str, timeout: float = 10.0) -> dict[str, Any]:
+        """Cancel an existing MOOSE AUFTRAG mission."""
+
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="auftrag.cancel", params={"object_id": self.mission_id(mission)}),
+                timeout=timeout,
+            )
+        )
+
+    async def pause_mission(self, mission: AuftragCommand | Auftrag | str, timeout: float = 10.0) -> dict[str, Any]:
+        """Pause an existing MOOSE AUFTRAG mission."""
+
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="auftrag.pause", params={"object_id": self.mission_id(mission)}),
+                timeout=timeout,
+            )
+        )
+
+    async def resume_mission(self, mission: AuftragCommand | Auftrag | str, timeout: float = 10.0) -> dict[str, Any]:
+        """Resume an existing MOOSE AUFTRAG mission."""
+
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="auftrag.resume", params={"object_id": self.mission_id(mission)}),
+                timeout=timeout,
+            )
+        )
+
+    async def assign_mission(
+        self,
+        mission: AuftragCommand | Auftrag | str,
+        *,
+        legion: str | None = None,
+        opsgroup: str | None = None,
+        cohort: str | None = None,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Assign an existing tracked MOOSE AUFTRAG mission to a LEGION or OPSGROUP."""
+
+        if (legion is None) == (opsgroup is None):
+            raise ValueError("Specify exactly one of legion or opsgroup")
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="auftrag.assign",
+                    params=clean_params(
+                        {
+                            "object_id": self.mission_id(mission),
+                            "legion_id": legion,
+                            "opsgroup_id": opsgroup,
+                            "cohort_id": cohort,
+                        }
+                    ),
+                ),
+                timeout=timeout,
+            )
+        )
+
     async def get_auftrag_summary(
         self,
         auftrag: AuftragCommand | str,
@@ -711,9 +838,7 @@ class MooseBridgeClient:
         :raises ValueError: If the Python object was not created through this client.
         """
 
-        auftrag_id = auftrag if isinstance(auftrag, str) else self._auftrag_ids_by_object.get(id(auftrag))
-        if not auftrag_id:
-            raise ValueError("No AUFTRAG id is known for this object. Call add_auftrag first or pass an AUFTRAG:id string.")
+        auftrag_id = self.mission_id(auftrag)
         return await self.wait_for_auftrag_outcome(auftrag_id, timeout_s=timeout_s, interval_s=interval_s, on_status=on_status)
 
     async def apply_recommended_auftrag(self, recommendation: Any, timeout: float = 10.0) -> dict[str, Any]:

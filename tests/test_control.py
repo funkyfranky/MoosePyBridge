@@ -15,6 +15,7 @@ from examples.control_server_client.interactive_control_client import (
     parse_coords_argument,
     parse_drawzone_argument,
     parse_drawzone_options,
+    parse_mission_assign_argument,
     parse_mission_argument,
     parse_message_argument,
     parse_nearest_argument,
@@ -478,6 +479,14 @@ def test_interactive_mission_argument_parses_timing_options() -> None:
     assert coalition is None
     assert legion_id == "LEGION:Wing Parchim"
     assert preview is False
+
+
+def test_interactive_mission_assign_argument_parses_target() -> None:
+    mission_id, legion_id, opsgroup_id = parse_mission_assign_argument('AUFTRAG:1 --legion "LEGION:Wing Parchim"')
+
+    assert mission_id == "AUFTRAG:1"
+    assert legion_id == "LEGION:Wing Parchim"
+    assert opsgroup_id is None
 
 
 def test_interactive_mission_argument_parses_orbit_options() -> None:

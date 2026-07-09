@@ -136,6 +136,52 @@ function MOOSE_BRIDGE:_TrackAuftragReference(auftrag)
   return self
 end
 
+function MOOSE_BRIDGE:_FindAuftragInQueueById(queue, auftrag_id)
+  if type(queue) ~= "table" then return nil end
+  for _, auftrag in pairs(queue) do
+    if self:_AuftragObjectId(auftrag) == auftrag_id then return auftrag end
+  end
+  return nil
+end
+
+function MOOSE_BRIDGE:_ResolveTrackedAuftragById(auftrag_id)
+  local id = bridge_optional_string_param(auftrag_id)
+  if not id then return nil, "Missing AUFTRAG id" end
+
+  if type(self.TrackedAuftraege) == "table" and type(self.TrackedAuftraege[id]) == "table" then
+    return self.TrackedAuftraege[id], nil
+  end
+
+  if _DATABASE and type(_DATABASE.LEGIONS) == "table" then
+    for _, legion in pairs(_DATABASE.LEGIONS) do
+      local queues = {legion.missionqueue, legion.missions, legion.auftraege, legion.missionQueue}
+      for _, queue in ipairs(queues) do
+        local found = self:_FindAuftragInQueueById(queue, id)
+        if found then self:_TrackAuftragReference(found); return found, nil end
+      end
+    end
+  end
+
+  if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
+    for _, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do
+      local found = self:_FindAuftragInQueueById(opsgroup.missionqueue, id)
+      if found then self:_TrackAuftragReference(found); return found, nil end
+    end
+  end
+
+  for _, opsgroup in pairs(self.RegisteredOpsGroups or {}) do
+    local found = self:_FindAuftragInQueueById(opsgroup.missionqueue, id)
+    if found then self:_TrackAuftragReference(found); return found, nil end
+  end
+
+  return nil, "AUFTRAG not found: " .. id
+end
+
+function MOOSE_BRIDGE:_CommandAuftragId(cmd)
+  local p = self:_CommandParams(cmd)
+  return bridge_optional_string_param(p.object_id) or bridge_optional_string_param(p.auftrag_id)
+end
+
 function MOOSE_BRIDGE:_ResolveLegionById(legion_id)
   local prefix, name = bridge_split_object_id(legion_id)
   if prefix ~= "LEGION" or not name then return nil, "Invalid LEGION id " .. bridge_safe_tostring(legion_id) end
@@ -573,6 +619,35 @@ function MOOSE_BRIDGE:_BuildGroupSet(value)
   end
 
   return set_group, group_ids
+end
+
+function MOOSE_BRIDGE:_CallAuftragLifecycleMethod(cmd, action, method_name)
+  local auftrag_id = self:_CommandAuftragId(cmd)
+  local auftrag, auftrag_err = self:_ResolveTrackedAuftragById(auftrag_id)
+  if not auftrag then error(auftrag_err) end
+  if type(auftrag[method_name]) ~= "function" then error("AUFTRAG:" .. method_name .. " is not available for " .. bridge_safe_tostring(auftrag_id)) end
+
+  local ok, result = pcall(function() return auftrag[method_name](auftrag) end)
+  if not ok then error("AUFTRAG:" .. method_name .. " failed: " .. bridge_safe_tostring(result)) end
+  self:_TrackAuftragReference(auftrag)
+
+  return {
+    action=action,
+    auftrag_id=auftrag_id,
+    auftragsnummer=self:_AuftragNumber(auftrag),
+    auftrag_type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
+    status=self:_SafeCall(auftrag, "GetState") or self:_SafeCall(auftrag, "GetStatus"),
+  }
+end
+
+function MOOSE_BRIDGE:_AssignTrackedAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local auftrag_id = self:_CommandAuftragId(cmd)
+  local auftrag, auftrag_err = self:_ResolveTrackedAuftragById(auftrag_id)
+  if not auftrag then error(auftrag_err) end
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.assign", auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:_BuildNoEngageZoneSet(value)
@@ -1347,6 +1422,22 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.create_trooptransport", function(cmd)
     return self:_CreateTroopTransportAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.cancel", function(cmd)
+    return self:_CallAuftragLifecycleMethod(cmd, "auftrag.cancel", "Cancel")
+  end)
+
+  self:RegisterCommand("auftrag.pause", function(cmd)
+    return self:_CallAuftragLifecycleMethod(cmd, "auftrag.pause", "Pause")
+  end)
+
+  self:RegisterCommand("auftrag.resume", function(cmd)
+    return self:_CallAuftragLifecycleMethod(cmd, "auftrag.resume", "Resume")
+  end)
+
+  self:RegisterCommand("auftrag.assign", function(cmd)
+    return self:_AssignTrackedAuftrag(cmd)
   end)
 end
 

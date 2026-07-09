@@ -7,7 +7,7 @@ from typing import Any, Callable, TypeVar
 
 from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
 from .legions import Cohort, Legion
-from .models import Auftrag, OpsGroup, OpsZone
+from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
 from .outcomes import AuftragOutcome
 
 
@@ -60,11 +60,17 @@ class MooseBridgeState:
     auftraege: dict[str, dict[str, Any]] = field(default_factory=dict)
     cohorts: dict[str, dict[str, Any]] = field(default_factory=dict)
     legions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    intels: dict[str, dict[str, Any]] = field(default_factory=dict)
+    intel_contacts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    intel_clusters: dict[str, dict[str, Any]] = field(default_factory=dict)
     opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
     opsgroup_objects: dict[str, OpsGroup] = field(default_factory=dict)
     auftrag_objects: dict[str, Auftrag] = field(default_factory=dict)
     cohort_objects: dict[str, Cohort] = field(default_factory=dict)
     legion_objects: dict[str, Legion] = field(default_factory=dict)
+    intel_objects: dict[str, Intel] = field(default_factory=dict)
+    intel_contact_objects: dict[str, IntelContact] = field(default_factory=dict)
+    intel_cluster_objects: dict[str, IntelCluster] = field(default_factory=dict)
     auftrag_outcomes: dict[str, AuftragOutcome] = field(default_factory=dict)
     auftrag_outcome_history: dict[str, list[AuftragOutcome]] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -100,6 +106,25 @@ class MooseBridgeState:
         """
 
         return self.opszone_objects.get(object_id)
+
+    def intel(self, object_id: str) -> Intel | None:
+        """Return a typed INTEL object by object id.
+
+        :param object_id: Stable bridge object id such as ``INTEL:BlueIntel``.
+        :returns: Typed INTEL object or ``None``.
+        """
+
+        return self.intel_objects.get(object_id)
+
+    def intel_contact(self, object_id: str) -> IntelContact | None:
+        """Return a typed INTEL contact by object id."""
+
+        return self.intel_contact_objects.get(object_id)
+
+    def intel_cluster(self, object_id: str) -> IntelCluster | None:
+        """Return a typed INTEL cluster by object id."""
+
+        return self.intel_cluster_objects.get(object_id)
 
     def opsgroup(self, object_id: str) -> OpsGroup | None:
         """Return a typed OPSGROUP by object id.
@@ -200,6 +225,16 @@ class MooseBridgeState:
 
         return [cohort for cohort in self.cohort_objects.values() if cohort.legion_id == legion_id]
 
+    def contacts_for_intel(self, intel_id: str) -> list[IntelContact]:
+        """Return typed contacts belonging to an INTEL object."""
+
+        return [contact for contact in self.intel_contact_objects.values() if contact.intel_id == intel_id]
+
+    def clusters_for_intel(self, intel_id: str) -> list[IntelCluster]:
+        """Return typed clusters belonging to an INTEL object."""
+
+        return [cluster for cluster in self.intel_cluster_objects.values() if cluster.intel_id == intel_id]
+
     def cohorts_matching_performer_categories(self, performer_categories: tuple[str, ...] | list[str]) -> list[Cohort]:
         """Return COHORTs matching required performer platform categories.
 
@@ -287,12 +322,27 @@ class MooseBridgeState:
             items = payload.get("legions", [])
             self.legions = self._index_objects(items)
             self.legion_objects = self._index_typed_objects(items, Legion.from_payload)
+        elif kind == "intels":
+            items = payload.get("intels", [])
+            self.intels = self._index_objects(items)
+            self.intel_objects = self._index_typed_objects(items, Intel.from_payload)
+        elif kind == "intel_contacts":
+            items = payload.get("intel_contacts", [])
+            self.intel_contacts = self._index_objects(items)
+            self.intel_contact_objects = self._index_typed_objects(items, IntelContact.from_payload)
+        elif kind == "intel_clusters":
+            items = payload.get("intel_clusters", [])
+            self.intel_clusters = self._index_objects(items)
+            self.intel_cluster_objects = self._index_typed_objects(items, IntelCluster.from_payload)
 
     def _apply_event(self, message: dict[str, Any]) -> None:
         """Apply an incoming event to derived state indexes."""
 
         payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
         event_name = str(message.get("event") or payload.get("event") or "")
+        if event_name.startswith("intel."):
+            self._apply_intel_event(event_name, payload)
+            return
         if event_name != "auftrag.evaluated":
             return
 
@@ -303,6 +353,30 @@ class MooseBridgeState:
         snapshot.setdefault("status", payload.get("status"))
         snapshot.setdefault("summary", payload.get("summary"))
         self._record_auftrag_outcome(snapshot)
+
+    def _apply_intel_event(self, event_name: str, payload: dict[str, Any]) -> None:
+        """Apply INTEL contact and cluster events to the local typed indexes."""
+
+        contact_payload = payload.get("contact") if isinstance(payload.get("contact"), dict) else None
+        cluster_payload = payload.get("cluster") if isinstance(payload.get("cluster"), dict) else None
+        if contact_payload:
+            object_id = str(contact_payload.get("object_id") or "")
+            if object_id:
+                if event_name == "intel.lost_contact":
+                    self.intel_contacts.pop(object_id, None)
+                    self.intel_contact_objects.pop(object_id, None)
+                else:
+                    self.intel_contacts[object_id] = contact_payload
+                    self.intel_contact_objects[object_id] = IntelContact.from_payload(contact_payload)
+        if cluster_payload:
+            object_id = str(cluster_payload.get("object_id") or "")
+            if object_id:
+                if event_name == "intel.lost_cluster":
+                    self.intel_clusters.pop(object_id, None)
+                    self.intel_cluster_objects.pop(object_id, None)
+                else:
+                    self.intel_clusters[object_id] = cluster_payload
+                    self.intel_cluster_objects[object_id] = IntelCluster.from_payload(cluster_payload)
 
     def _record_auftrag_outcome(self, snapshot: dict[str, Any]) -> None:
         """Record an evaluated AUFTRAG outcome if a summary is present.

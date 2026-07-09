@@ -97,7 +97,7 @@ from .intents import (
     tactical_recommendation_from_auftrag,
 )
 from .legions import Cohort, CohortSummary, Legion
-from .models import Auftrag, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
+from .models import Auftrag, Intel, IntelCluster, IntelContact, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
 from .outcomes import AuftragOutcome
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
@@ -112,7 +112,16 @@ from .sdk import (
     NearestResult,
 )
 from .control_sdk import ControlSdkAdapter, sdk_from_control_client
-from .diagnostics import format_cohort_assets, format_legion_status, format_legion_summary, format_mission_summary
+from .diagnostics import (
+    format_cohort_assets,
+    format_intel_cluster,
+    format_intel_contact,
+    format_intel_status,
+    format_intel_summary,
+    format_legion_status,
+    format_legion_summary,
+    format_mission_summary,
+)
 from .state import MooseBridgeState, MooseObjectIdentity
 
 __all__ = [
@@ -205,6 +214,9 @@ __all__ = [
     "DistanceResult",
     "GeneralSet",
     "GroupSet",
+    "Intel",
+    "IntelCluster",
+    "IntelContact",
     "Legion",
     "MooseBridgeAuftragNotFoundError",
     "MooseBridgeAuftragTimeoutError",
@@ -231,6 +243,10 @@ __all__ = [
     "executable_candidates",
     "expand_platform_categories",
     "format_cohort_assets",
+    "format_intel_cluster",
+    "format_intel_contact",
+    "format_intel_status",
+    "format_intel_summary",
     "format_legion_status",
     "format_legion_summary",
     "format_mission_summary",

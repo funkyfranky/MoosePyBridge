@@ -41,7 +41,7 @@ from moosebridge.auftraege import (
     GroupSet,
 )
 from moosebridge.protocol import BridgeCommand
-from moosebridge.diagnostics import format_cohort_assets, format_legion_status, format_mission_summary
+from moosebridge.diagnostics import format_cohort_assets, format_intel_status, format_legion_status, format_mission_summary
 from moosebridge.sdk import CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
 from moosebridge.state import MooseBridgeState
 
@@ -180,6 +180,15 @@ class FakeSdkServer:
 
     async def snapshot_legions(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.legions", params={}))
+
+    async def snapshot_intels(self) -> dict[str, Any]:
+        return await self.send_command(BridgeCommand(action="snapshot.intels", params={}))
+
+    async def snapshot_intel_contacts(self) -> dict[str, Any]:
+        return await self.send_command(BridgeCommand(action="snapshot.intel_contacts", params={}))
+
+    async def snapshot_intel_clusters(self) -> dict[str, Any]:
+        return await self.send_command(BridgeCommand(action="snapshot.intel_clusters", params={}))
 
 
 def test_sdk_coords_returns_typed_result() -> None:
@@ -341,7 +350,65 @@ def test_sdk_refresh_helpers_request_expected_snapshots() -> None:
             "snapshot.cohorts",
         ]
 
+        server.commands.clear()
+
+        assert await client.refresh_intel_state() is server.state
+        assert [command.action for command, _ in server.commands] == [
+            "snapshot.intels",
+            "snapshot.intel_contacts",
+            "snapshot.intel_clusters",
+        ]
+
     asyncio.run(scenario())
+
+
+def test_diagnostics_format_intel_status_uses_sdk_state() -> None:
+    server = FakeSdkServer()
+    client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "intels",
+            "payload": {
+                "intels": [
+                    {
+                        "object_id": "INTEL:BlueIntel",
+                        "dcs_name": "BlueIntel",
+                        "object_type": "INTEL",
+                        "state": "Running",
+                        "coalition": "blue",
+                        "is_running": True,
+                    }
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "intel_contacts",
+            "payload": {
+                "intel_contacts": [
+                    {
+                        "object_id": "INTELCONTACT:BlueIntel:Ground-1",
+                        "dcs_name": "Ground-1",
+                        "object_type": "INTELCONTACT",
+                        "intel_id": "INTEL:BlueIntel",
+                        "target_object_id": "GROUP:Ground-1",
+                        "contact_type": "Ground",
+                        "threat_level": 5,
+                    }
+                ]
+            },
+        }
+    )
+
+    text = format_intel_status(client, "INTEL:BlueIntel", timestamp=False)
+
+    assert "INTEL:BlueIntel" in text
+    assert "contacts=1" in text
+    assert "GROUP:Ground-1" in text
 
 
 def test_diagnostics_format_legion_status_uses_sdk_state() -> None:
@@ -444,6 +511,85 @@ def test_sdk_add_auftrag_to_legion_uses_moose_like_object() -> None:
             "altitude_ft": 15000,
             "legion_id": "LEGION:Wing Parchim",
         }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_mission_lifecycle_commands_use_known_mission_ids() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+        await client.cancel_mission(auftrag)
+        await client.pause_mission("AUFTRAG:1")
+        await client.resume_mission("AUFTRAG:1")
+
+        assert [command.action for command, _ in server.commands] == [
+            "auftrag.create_bai",
+            "auftrag.cancel",
+            "auftrag.pause",
+            "auftrag.resume",
+        ]
+        assert [command.params for command, _ in server.commands[1:]] == [
+            {"object_id": "AUFTRAG:1"},
+            {"object_id": "AUFTRAG:1"},
+            {"object_id": "AUFTRAG:1"},
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_sdk_assign_mission_targets_existing_mission() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        server.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "auftraege",
+                "payload": {
+                    "auftraege": [
+                        {
+                            "object_id": "AUFTRAG:7",
+                            "dcs_name": "AUFTRAG:7",
+                            "object_type": "AUFTRAG",
+                            "type": "BAI",
+                            "status": "Queued",
+                        }
+                    ]
+                },
+            }
+        )
+        mission = client.auftrag("AUFTRAG:7")
+        assert mission is not None
+
+        await client.assign_mission(mission, legion="LEGION:Wing Parchim", cohort="COHORT:F-4E Parchim Alpha")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.assign"
+        assert command.params == {
+            "object_id": "AUFTRAG:7",
+            "legion_id": "LEGION:Wing Parchim",
+            "cohort_id": "COHORT:F-4E Parchim Alpha",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_assign_mission_requires_one_assignment_target() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        try:
+            await client.assign_mission("AUFTRAG:1")
+        except ValueError as exc:
+            assert "exactly one" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError")
 
     asyncio.run(scenario())
 

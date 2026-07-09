@@ -321,7 +321,8 @@ Work items:
   GROUNDESCORT, GROUNDATTACK, NAVALENGAGEMENT, AMMOSUPPLY, FUELSUPPLY,
   REARMING, AIRDEFENSE, EWR, ONGUARD, NOTHING, ESCORT, RESCUEHELO, and
   TROOPTRANSPORT baseline
-- add cancellation and reassignment helpers
+- add cancellation and reassignment helpers (baseline implemented via mission
+  lifecycle SDK methods)
 - add OPSGROUP and OPSZONE control helpers
 - map recommendations to command payloads (baseline implemented for AUFTRAG
   recommendations)

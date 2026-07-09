@@ -1,6 +1,6 @@
 """Tests for typed MOOSE Bridge snapshot models."""
 
-from moosebridge.models import Auftrag, OpsGroup, OpsZone, TargetSnapshot
+from moosebridge.models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, TargetSnapshot
 from moosebridge.state import MooseBridgeState
 
 
@@ -149,6 +149,54 @@ def test_auftrag_model_from_payload() -> None:
     assert auftrag.target.objects[0].object_id == "OPSZONE:Town Fight"
 
 
+def test_intel_models_from_payload() -> None:
+    intel = Intel.from_payload(
+        {
+            "object_id": "INTEL:BlueIntel",
+            "dcs_name": "BlueIntel",
+            "object_type": "INTEL",
+            "alias": "BlueIntel",
+            "coalition": "blue",
+            "state": "Running",
+            "is_running": True,
+            "contact_count": 1,
+            "cluster_count": 1,
+        }
+    )
+    contact = IntelContact.from_payload(
+        {
+            "object_id": "INTELCONTACT:BlueIntel:Ground-1",
+            "dcs_name": "Ground-1",
+            "object_type": "INTELCONTACT",
+            "intel_id": "INTEL:BlueIntel",
+            "target_object_id": "GROUP:Ground-1",
+            "contact_type": "Ground",
+            "threat_level": 7,
+            "recce": "EWR-1",
+            "x": 10,
+            "z": 20,
+        }
+    )
+    cluster = IntelCluster.from_payload(
+        {
+            "object_id": "INTELCLUSTER:BlueIntel:1",
+            "dcs_name": "Cluster 1",
+            "object_type": "INTELCLUSTER",
+            "intel_id": "INTEL:BlueIntel",
+            "index": 1,
+            "size": 1,
+            "contact_ids": ["INTELCONTACT:BlueIntel:Ground-1"],
+            "threat_level_sum": 7,
+        }
+    )
+
+    assert intel.object_id == "INTEL:BlueIntel"
+    assert intel.is_running is True
+    assert contact.target_object_id == "GROUP:Ground-1"
+    assert contact.threat_level == 7
+    assert cluster.contact_ids == ["INTELCONTACT:BlueIntel:Ground-1"]
+
+
 def test_state_indexes_typed_ops_models() -> None:
     state = MooseBridgeState()
 
@@ -171,6 +219,54 @@ def test_state_indexes_typed_ops_models() -> None:
 
     assert state.auftraege["AUFTRAG:1"]["type"] == "Patrol Zone"
     assert state.auftrag_objects["AUFTRAG:1"].type == "Patrol Zone"
+
+
+def test_state_indexes_intel_snapshots_and_events() -> None:
+    state = MooseBridgeState()
+
+    state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "intels",
+            "payload": {"intels": [{"object_id": "INTEL:BlueIntel", "dcs_name": "BlueIntel", "object_type": "INTEL"}]},
+        }
+    )
+    state.apply_message(
+        {
+            "type": "event",
+            "event": "intel.new_contact",
+            "payload": {
+                "contact": {
+                    "object_id": "INTELCONTACT:BlueIntel:Ground-1",
+                    "dcs_name": "Ground-1",
+                    "object_type": "INTELCONTACT",
+                    "intel_id": "INTEL:BlueIntel",
+                    "target_object_id": "GROUP:Ground-1",
+                }
+            },
+        }
+    )
+
+    assert state.intel("INTEL:BlueIntel") is not None
+    assert state.intel_contact("INTELCONTACT:BlueIntel:Ground-1") is not None
+    assert [contact.object_id for contact in state.contacts_for_intel("INTEL:BlueIntel")] == ["INTELCONTACT:BlueIntel:Ground-1"]
+
+    state.apply_message(
+        {
+            "type": "event",
+            "event": "intel.lost_contact",
+            "payload": {
+                "contact": {
+                    "object_id": "INTELCONTACT:BlueIntel:Ground-1",
+                    "dcs_name": "Ground-1",
+                    "object_type": "INTELCONTACT",
+                    "intel_id": "INTEL:BlueIntel",
+                }
+            },
+        }
+    )
+
+    assert state.intel_contact("INTELCONTACT:BlueIntel:Ground-1") is None
 
 
 def test_state_indexes_objects_snapshot() -> None:

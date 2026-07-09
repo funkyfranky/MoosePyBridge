@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .legions import Cohort, Legion
-from .models import Auftrag
+from .models import Auftrag, Intel, IntelCluster, IntelContact
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -100,8 +100,112 @@ def format_legion_status(bridge: MooseBridgeClient, legion_id: str | None = None
     return "\n".join(lines)
 
 
+def format_intel_contact(contact: IntelContact) -> str:
+    """Return a compact one-line INTEL contact summary."""
+
+    position = "-"
+    if contact.x is not None and contact.z is not None:
+        position = f"x={contact.x:.0f} z={contact.z:.0f}"
+    return (
+        f"{contact.object_id} "
+        f"target={_text(contact.target_object_id)} "
+        f"type={_text(contact.contact_type)} "
+        f"threat={_text(contact.threat_level)} "
+        f"recce={_text(contact.recce)} "
+        f"speed={_text(contact.speed_mps)} "
+        f"{position}"
+    )
+
+
+def format_intel_cluster(cluster: IntelCluster) -> str:
+    """Return a compact one-line INTEL cluster summary."""
+
+    position = "-"
+    if cluster.x is not None and cluster.z is not None:
+        position = f"x={cluster.x:.0f} z={cluster.z:.0f}"
+    return (
+        f"{cluster.object_id} "
+        f"type={_text(cluster.contact_type or cluster.category)} "
+        f"size={_text(cluster.size)} "
+        f"threat_max={_text(cluster.threat_level_max)} "
+        f"threat_sum={_text(cluster.threat_level_sum)} "
+        f"{position}"
+    )
+
+
+def format_intel_summary(intel: Intel, contacts: list[IntelContact], clusters: list[IntelCluster]) -> str:
+    """Return a two-line INTEL summary."""
+
+    header = (
+        f"{intel.object_id} "
+        f"state={_text(intel.state)} "
+        f"running={intel.is_running} "
+        f"coalition={_text(intel.coalition)} "
+        f"alias={_text(intel.alias)}"
+    )
+    details = (
+        f"  contacts={len(contacts)} "
+        f"clusters={len(clusters)} "
+        f"cluster_analysis={intel.cluster_analysis} "
+        f"radius_m={_text(intel.cluster_radius_m)}"
+    )
+    return f"{header}\n{details}"
+
+
+def format_intel_status(
+    bridge: MooseBridgeClient,
+    intel_id: str | None = None,
+    *,
+    contact_limit: int = 12,
+    cluster_limit: int = 8,
+    timestamp: bool = True,
+) -> str:
+    """Return a readable INTEL status report from the SDK state mirror."""
+
+    intels = [bridge.intel(intel_id)] if intel_id else list(bridge.state.intel_objects.values())
+    resolved_intels = [intel for intel in intels if intel is not None]
+
+    lines: list[str] = []
+    title = "INTEL status"
+    if timestamp:
+        title = f"[{datetime.now().strftime('%H:%M:%S')}] {title}"
+    lines.append(title)
+    lines.append("-" * 90)
+
+    if not resolved_intels:
+        lines.append("No matching INTEL objects in the current state mirror.")
+        return "\n".join(lines)
+
+    for intel in resolved_intels:
+        contacts = bridge.contacts_of_intel(intel.object_id)
+        clusters = bridge.clusters_of_intel(intel.object_id)
+        contacts = sorted(contacts, key=lambda item: item.threat_level or 0, reverse=True)
+        clusters = sorted(clusters, key=lambda item: item.threat_level_sum or 0, reverse=True)
+        lines.append(format_intel_summary(intel, contacts, clusters))
+
+        if contacts:
+            lines.append("  contacts:")
+            for contact in contacts[:contact_limit]:
+                lines.append(f"    {format_intel_contact(contact)}")
+            if len(contacts) > contact_limit:
+                lines.append(f"    ... {len(contacts) - contact_limit} more")
+
+        if clusters:
+            lines.append("  clusters:")
+            for cluster in clusters[:cluster_limit]:
+                lines.append(f"    {format_intel_cluster(cluster)}")
+            if len(clusters) > cluster_limit:
+                lines.append(f"    ... {len(clusters) - cluster_limit} more")
+
+    return "\n".join(lines)
+
+
 __all__ = [
     "format_cohort_assets",
+    "format_intel_cluster",
+    "format_intel_contact",
+    "format_intel_status",
+    "format_intel_summary",
     "format_legion_status",
     "format_legion_summary",
     "format_mission_summary",

@@ -198,6 +198,166 @@ class TargetSnapshot:
 
 
 @dataclass(slots=True, frozen=True)
+class Intel(MooseSnapshotObject):
+    """Typed INTEL snapshot."""
+
+    alias: str | None = None
+    coalition: str | None = None
+    state: str | None = None
+    is_running: bool = False
+    cluster_analysis: bool = False
+    cluster_markers: bool = False
+    cluster_arrows: bool = False
+    cluster_radius_m: float | None = None
+    detect_statics: bool = False
+    detect_accoustic: bool = False
+    detect_accoustic_radius_m: float | None = None
+    doppler_radar: bool = False
+    contact_count: int | None = None
+    cluster_count: int | None = None
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "Intel":
+        """Create an INTEL model from a raw payload."""
+
+        return cls(
+            object_id=str(payload.get("object_id", "")),
+            dcs_name=str(payload.get("dcs_name", "")),
+            object_type=str(payload.get("object_type", "INTEL")),
+            category=_optional_str(payload.get("category")),
+            source=_optional_str(payload.get("source")),
+            raw=payload,
+            alias=_optional_str(payload.get("alias")),
+            coalition=_optional_str(payload.get("coalition")),
+            state=_optional_str(payload.get("state")),
+            is_running=_bool_or_false(payload.get("is_running")),
+            cluster_analysis=_bool_or_false(payload.get("cluster_analysis")),
+            cluster_markers=_bool_or_false(payload.get("cluster_markers")),
+            cluster_arrows=_bool_or_false(payload.get("cluster_arrows")),
+            cluster_radius_m=_optional_float(payload.get("cluster_radius_m")),
+            detect_statics=_bool_or_false(payload.get("detect_statics")),
+            detect_accoustic=_bool_or_false(payload.get("detect_accoustic")),
+            detect_accoustic_radius_m=_optional_float(payload.get("detect_accoustic_radius_m")),
+            doppler_radar=_bool_or_false(payload.get("doppler_radar")),
+            contact_count=_optional_int(payload.get("contact_count")),
+            cluster_count=_optional_int(payload.get("cluster_count")),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class IntelContact(MooseSnapshotObject):
+    """Typed INTEL contact snapshot."""
+
+    intel_id: str | None = None
+    target_object_id: str | None = None
+    typename: str | None = None
+    attribute: str | None = None
+    category_id: int | None = None
+    category_name: str | None = None
+    threat_level: float | None = None
+    detected_time: float | None = None
+    recce: str | None = None
+    contact_type: str | None = None
+    speed_mps: float | None = None
+    velocity: dict[str, Any] | None = None
+    is_ground: bool = False
+    is_ship: bool = False
+    is_static: bool = False
+    platform: str | None = None
+    heading: float | None = None
+    maneuvering: bool = False
+    altitude_m: float | None = None
+    rcs: float | None = None
+    mission_id: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "IntelContact":
+        """Create an INTEL contact model from a raw payload."""
+
+        velocity = payload.get("velocity") if isinstance(payload.get("velocity"), dict) else None
+        return cls(
+            object_id=str(payload.get("object_id", "")),
+            dcs_name=str(payload.get("dcs_name", "")),
+            object_type=str(payload.get("object_type", "INTELCONTACT")),
+            category=_optional_str(payload.get("category")),
+            source=_optional_str(payload.get("source")),
+            raw=payload,
+            intel_id=_optional_str(payload.get("intel_id")),
+            target_object_id=_optional_str(payload.get("target_object_id")),
+            typename=_optional_str(payload.get("typename")),
+            attribute=_optional_str(payload.get("attribute")),
+            category_id=_optional_int(payload.get("category_id")),
+            category_name=_optional_str(payload.get("category_name")),
+            threat_level=_optional_float(payload.get("threat_level")),
+            detected_time=_optional_float(payload.get("detected_time")),
+            recce=_optional_str(payload.get("recce")),
+            contact_type=_optional_str(payload.get("contact_type")),
+            speed_mps=_optional_float(payload.get("speed_mps")),
+            velocity=velocity,
+            is_ground=_bool_or_false(payload.get("is_ground")),
+            is_ship=_bool_or_false(payload.get("is_ship")),
+            is_static=_bool_or_false(payload.get("is_static")),
+            platform=_optional_str(payload.get("platform")),
+            heading=_optional_float(payload.get("heading")),
+            maneuvering=_bool_or_false(payload.get("maneuvering")),
+            altitude_m=_optional_float(payload.get("altitude_m")),
+            rcs=_optional_float(payload.get("rcs")),
+            mission_id=_optional_str(payload.get("mission_id")),
+            x=_optional_float(payload.get("x")),
+            y=_optional_float(payload.get("y")),
+            z=_optional_float(payload.get("z")),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class IntelCluster(MooseSnapshotObject):
+    """Typed INTEL cluster snapshot."""
+
+    intel_id: str | None = None
+    index: int | None = None
+    size: int | None = None
+    contact_ids: list[str] = field(default_factory=list)
+    threat_level_max: float | None = None
+    threat_level_sum: float | None = None
+    threat_level_avg: float | None = None
+    contact_type: str | None = None
+    altitude_m: float | None = None
+    mission_id: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "IntelCluster":
+        """Create an INTEL cluster model from a raw payload."""
+
+        return cls(
+            object_id=str(payload.get("object_id", "")),
+            dcs_name=str(payload.get("dcs_name", "")),
+            object_type=str(payload.get("object_type", "INTELCLUSTER")),
+            category=_optional_str(payload.get("category")),
+            source=_optional_str(payload.get("source")),
+            raw=payload,
+            intel_id=_optional_str(payload.get("intel_id")),
+            index=_optional_int(payload.get("index")),
+            size=_optional_int(payload.get("size")),
+            contact_ids=_string_list(payload.get("contact_ids")),
+            threat_level_max=_optional_float(payload.get("threat_level_max")),
+            threat_level_sum=_optional_float(payload.get("threat_level_sum")),
+            threat_level_avg=_optional_float(payload.get("threat_level_avg")),
+            contact_type=_optional_str(payload.get("contact_type")),
+            altitude_m=_optional_float(payload.get("altitude_m")),
+            mission_id=_optional_str(payload.get("mission_id")),
+            x=_optional_float(payload.get("x")),
+            y=_optional_float(payload.get("y")),
+            z=_optional_float(payload.get("z")),
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class OpsZone(MooseSnapshotObject):
     """Typed OPSZONE snapshot."""
 

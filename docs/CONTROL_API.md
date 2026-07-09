@@ -220,7 +220,8 @@ The SDK currently exposes helpers for:
 - object utilities: `coords`, `distance`, `nearest`
 - messages: `message_all`, `message_coalition`
 - AUFTRAG: `add_auftrag`, `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
-  `get_auftrag_summary`, `wait_for_auftrag_outcome`
+  `get_auftrag_summary`, `wait_for_auftrag_outcome`, `pause_mission`,
+  `resume_mission`, `cancel_mission`, `assign_mission`
 - typed OPS state: `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,
   `available_missions_of_cohort`, `refresh_legion_state`, `refresh_ops_state`
@@ -255,8 +256,13 @@ summary = await bridge.get_auftrag_summary(auftrag_bai, on_status=print)
 if summary.success is True:
     print("BAI succeeded")
 
+await bridge.pause_mission(auftrag_bai)
+await bridge.resume_mission(auftrag_bai)
+await bridge.cancel_mission(auftrag_bai)
+
 auftrag_arty = Auftrag_ARTY(target="UNIT:Ground-1-1", nshots=6)
 ack = await bridge.add_auftrag(auftrag=auftrag_arty, opsgroup="OPSGROUP:Group-1")
+await bridge.assign_mission("AUFTRAG:1", legion="LEGION:Wing Parchim")
 
 auftrag_bombrunway = Auftrag_BOMBRUNWAY(target="AIRBASE:Parchim", altitude_ft=25000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bombrunway, legion="LEGION:Wing Parchim")

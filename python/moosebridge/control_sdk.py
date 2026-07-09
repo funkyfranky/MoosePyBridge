@@ -97,6 +97,21 @@ class ControlSdkAdapter:
 
         return await self._snapshot("legions")
 
+    async def snapshot_intels(self) -> dict[str, Any]:
+        """Request an INTEL snapshot through the control API."""
+
+        return await self._snapshot("intels")
+
+    async def snapshot_intel_contacts(self) -> dict[str, Any]:
+        """Request an INTEL contact snapshot through the control API."""
+
+        return await self._snapshot("intel_contacts")
+
+    async def snapshot_intel_clusters(self) -> dict[str, Any]:
+        """Request an INTEL cluster snapshot through the control API."""
+
+        return await self._snapshot("intel_clusters")
+
 
 def sdk_from_control_client(client: MooseBridgeControlClient, timeout: float = 10.0) -> "MooseBridgeClient":
     """Return a high-level SDK client backed by a control client."""

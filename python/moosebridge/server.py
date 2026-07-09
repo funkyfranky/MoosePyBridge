@@ -442,6 +442,21 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.legions", params={}))
 
+    async def snapshot_intels(self) -> dict[str, Any]:
+        """Request an INTEL snapshot from DCS/MOOSE."""
+
+        return await self.send_command(BridgeCommand(action="snapshot.intels", params={}))
+
+    async def snapshot_intel_contacts(self) -> dict[str, Any]:
+        """Request an INTEL contact snapshot from DCS/MOOSE."""
+
+        return await self.send_command(BridgeCommand(action="snapshot.intel_contacts", params={}))
+
+    async def snapshot_intel_clusters(self) -> dict[str, Any]:
+        """Request an INTEL cluster snapshot from DCS/MOOSE."""
+
+        return await self.send_command(BridgeCommand(action="snapshot.intel_clusters", params={}))
+
     def _write_raw(self, direction: str, line: str) -> None:
         """Write one raw protocol line to the JSONL log.
 

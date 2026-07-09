@@ -46,6 +46,11 @@ Commands:
                                   Request DCS snapshots, e.g. groups units or snapshot.groups snapshot.units.
   send <action> [json-params]     Send a semantic DCS command through the daemon.
   mission <type> [options]        Validate, select assets, and create an AUFTRAG.
+  mission-cancel <AUFTRAG:id>     Cancel an existing AUFTRAG.
+  mission-pause <AUFTRAG:id>      Pause an existing AUFTRAG.
+  mission-resume <AUFTRAG:id>     Resume an existing AUFTRAG.
+  mission-assign <AUFTRAG:id> --legion|--opsgroup <id>
+                                  Assign an existing AUFTRAG to a LEGION or OPSGROUP.
   trace [--raw|--verbose] <AUFTRAG:id>
                                   Trace an AUFTRAG assignment/execution path.
   coords <object_id> [--format xyz|ll|mgrs|all]
@@ -82,6 +87,8 @@ Examples:
   message blue Push now
   mission BAI --target GROUP:Ground-1 --coalition blue
   mission ARTY --target UNIT:Ground-1-1 --nshots 5 --radius 100 --legion BRIGADE:Laage
+  mission-cancel AUFTRAG:1
+  mission-assign AUFTRAG:1 --legion "LEGION:Wing Parchim"
   trace AUFTRAG:1
   trace --raw AUFTRAG:1
 """.strip()
@@ -364,6 +371,37 @@ def parse_trace_argument(argument: str) -> tuple[str, str]:
             raise ValueError("trace --verbose requires an AUFTRAG:id")
         return "verbose", parts[1]
     return "summary", parts[0]
+
+
+def parse_mission_assign_argument(argument: str) -> tuple[str, str | None, str | None]:
+    """Parse ``mission-assign <AUFTRAG:id> --legion|--opsgroup <id>`` arguments."""
+
+    parts = shlex.split(argument)
+    if not parts:
+        raise ValueError("mission-assign requires an AUFTRAG:id")
+    mission_id = parts[0]
+    legion_id: str | None = None
+    opsgroup_id: str | None = None
+    index = 1
+    while index < len(parts):
+        option = parts[index]
+        key = option.lower()
+        if key in {"--legion", "-legion"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            legion_id = parts[index]
+        elif key in {"--opsgroup", "--group", "-opsgroup"}:
+            index += 1
+            if index >= len(parts):
+                raise ValueError(f"{option} requires a value")
+            opsgroup_id = parts[index]
+        else:
+            raise ValueError(f"Unknown mission-assign option: {option}")
+        index += 1
+    if (legion_id is None) == (opsgroup_id is None):
+        raise ValueError("specify exactly one of --legion or --opsgroup")
+    return mission_id, legion_id, opsgroup_id
 
 
 def parse_json_params(text: str) -> dict[str, Any]:
@@ -1049,6 +1087,10 @@ def searchable_text(item: dict[str, Any]) -> str:
         "dcs_type",
         "type",
         "category",
+        "target_object_id",
+        "contact_type",
+        "recce",
+        "intel_id",
     )
     return " ".join(str(item.get(field) or "") for field in fields).lower()
 
@@ -1119,6 +1161,22 @@ def compact_item(kind: str, item: dict[str, Any]) -> str:
             f"{label} category={item.get('category')} coalition={item.get('coalition')} "
             f"state={item.get('state')} airbase={item.get('airbase_name')} "
             f"cohorts={len(item.get('cohort_ids') or [])} queue={len(item.get('auftrag_queue_ids') or [])}"
+        )
+    if kind == "intels":
+        return (
+            f"{label} coalition={item.get('coalition')} state={item.get('state')} "
+            f"running={item.get('is_running')} contacts={item.get('contact_count')} clusters={item.get('cluster_count')}"
+        )
+    if kind == "intel_contacts":
+        return (
+            f"{label} intel={item.get('intel_id')} target={item.get('target_object_id')} "
+            f"type={item.get('contact_type')} threat={item.get('threat_level')} recce={item.get('recce')} "
+            f"x={item.get('x')} z={item.get('z')}"
+        )
+    if kind == "intel_clusters":
+        return (
+            f"{label} intel={item.get('intel_id')} type={item.get('contact_type')} "
+            f"size={item.get('size')} threat={item.get('threat_level_sum')} x={item.get('x')} z={item.get('z')}"
         )
     if kind == "airbases":
         return f"{label} coalition={item.get('coalition')} category={item.get('category')} x={item.get('x')} z={item.get('z')}"
@@ -1267,6 +1325,32 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
         command_params = auftrag_command_params_from_recommendation(recommendation)
         ack = await client.send_dcs_command(action, command_params, timeout=timeout)
         print_mission_feedback(recommendation, ack=ack, preview=False, debug=debug)
+        return True
+    if command in {"mission-cancel", "mission-pause", "mission-resume"}:
+        mission_id = argument.strip()
+        if not mission_id:
+            print(f"Usage: {command} <AUFTRAG:id>")
+            return True
+        if command == "mission-cancel":
+            ack = await sdk.cancel_mission(mission_id, timeout=timeout)
+            print_command_feedback(ack, "auftrag.cancel", debug)
+        elif command == "mission-pause":
+            ack = await sdk.pause_mission(mission_id, timeout=timeout)
+            print_command_feedback(ack, "auftrag.pause", debug)
+        else:
+            ack = await sdk.resume_mission(mission_id, timeout=timeout)
+            print_command_feedback(ack, "auftrag.resume", debug)
+        return True
+    if command == "mission-assign":
+        try:
+            mission_id, legion_id, opsgroup_id = parse_mission_assign_argument(argument)
+        except ValueError as exc:
+            print(f"Usage: mission-assign <AUFTRAG:id> --legion|--opsgroup <id> ({exc})")
+            return True
+        if legion_id:
+            legion_id = normalize_legion_id(client, legion_id)
+        ack = await sdk.assign_mission(mission_id, legion=legion_id, opsgroup=opsgroup_id, timeout=timeout)
+        print_command_feedback(ack, "auftrag.assign", debug)
         return True
     if command == "trace":
         try:
