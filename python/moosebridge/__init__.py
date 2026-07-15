@@ -99,6 +99,7 @@ from .intents import (
 from .legions import Cohort, CohortSummary, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
 from .outcomes import AuftragOutcome
+from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
 from .server import MooseBridgeServer
@@ -213,6 +214,7 @@ __all__ = [
     "CoordinateResult",
     "DistanceResult",
     "GeneralSet",
+    "GlobalPicture",
     "GroupSet",
     "Intel",
     "IntelCluster",
@@ -232,6 +234,7 @@ __all__ = [
     "TargetObjectSnapshot",
     "TargetSnapshot",
     "TacticalIntent",
+    "TacticalPicture",
     "TacticalRecommendation",
     "auftrag_action_suffix",
     "auftrag_command_params_from_recommendation",

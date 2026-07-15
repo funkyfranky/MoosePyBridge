@@ -53,6 +53,14 @@ local function bridge_intel_velocity(value)
   }
 end
 
+local function bridge_intel_append_unique(list, seen, value)
+  if value == nil then return end
+  local key = tostring(value)
+  if seen[key] then return end
+  list[#list + 1] = key
+  seen[key] = true
+end
+
 function MOOSE_BRIDGE:_EnsureIntelRegistry()
   self.RegisteredIntels = self.RegisteredIntels or {}
   return self.RegisteredIntels
@@ -96,6 +104,47 @@ function MOOSE_BRIDGE:_IntelContactTargetObjectId(contact)
   if not name then return nil end
   if contact.isStatic then return "STATIC:" .. tostring(name) end
   return "GROUP:" .. tostring(name)
+end
+
+function MOOSE_BRIDGE:_CollectIntelAgentIds(intel)
+  local result = {}
+  local seen = {}
+  if not intel then return result end
+
+  local candidate_sets = {
+    self:_SafeCall(intel, "GetDetectionSet"),
+    self:_SafeCall(intel, "GetDetectionSetGroup"),
+    intel.DetectionSet,
+    intel.detectionset,
+    intel.DetectionSET,
+    intel.DetectionSetGroup,
+    intel.DetectionSetGroups,
+    intel.SetGroup,
+  }
+
+  for _, set_group in pairs(candidate_sets) do
+    if type(set_group) == "table" then
+      local for_each = set_group.ForEachGroup or set_group.ForEach
+      if for_each then
+        pcall(function()
+          for_each(set_group, function(group)
+            local name = bridge_intel_object_name(group)
+            if name then bridge_intel_append_unique(result, seen, "GROUP:" .. tostring(name)) end
+          end)
+        end)
+      end
+
+      if type(set_group.Set) == "table" then
+        for key, group in pairs(set_group.Set) do
+          local name = bridge_intel_object_name(group)
+          if not name and type(key) == "string" then name = key end
+          if name then bridge_intel_append_unique(result, seen, "GROUP:" .. tostring(name)) end
+        end
+      end
+    end
+  end
+
+  return result
 end
 
 function MOOSE_BRIDGE:_BuildIntelContactSnapshotItem(intel_name, contact, source)
@@ -167,6 +216,7 @@ end
 function MOOSE_BRIDGE:_BuildIntelSnapshotItem(intel_name, intel, source)
   local contacts = self:_SafeCall(intel, "GetContactTable") or intel.Contacts or {}
   local clusters = self:_SafeCall(intel, "GetClusterTable") or intel.Clusters or {}
+  local agent_ids = self:_CollectIntelAgentIds(intel)
   return {
     object_id=self:_IntelObjectId(intel_name),
     dcs_name=tostring(intel_name),
@@ -187,6 +237,8 @@ function MOOSE_BRIDGE:_BuildIntelSnapshotItem(intel_name, intel, source)
     doppler_radar=intel.DopplerRadar and true or false,
     contact_count=type(contacts) == "table" and #contacts or 0,
     cluster_count=type(clusters) == "table" and #clusters or 0,
+    agent_count=#agent_ids,
+    agent_ids=agent_ids,
   }
 end
 

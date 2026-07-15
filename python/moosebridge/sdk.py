@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 import math
 from typing import Any
@@ -14,6 +14,7 @@ from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
 from .outcomes import AuftragOutcome
+from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
 from .state import MooseBridgeState
@@ -330,6 +331,25 @@ def auftrag_outcome_from_event(event: dict[str, Any]) -> AuftragOutcome:
     return AuftragOutcome.from_snapshot(snapshot)
 
 
+def _same_coalition(value: str | None, coalition: str) -> bool:
+    """Return whether a snapshot coalition value matches a requested coalition."""
+
+    return str(value or "").lower() == coalition.lower()
+
+
+def _unique_missions(missions: Iterable[Auftrag]) -> list[Auftrag]:
+    """Return missions once, preserving insertion order."""
+
+    result: list[Auftrag] = []
+    seen: set[str] = set()
+    for mission in missions:
+        if mission.object_id in seen:
+            continue
+        seen.add(mission.object_id)
+        result.append(mission)
+    return result
+
+
 async def maybe_call_auftrag_status_callback(
     callback: Callable[[AuftragEvent], Any | Awaitable[Any]] | None,
     event: AuftragEvent,
@@ -521,6 +541,81 @@ class MooseBridgeClient:
 
         return self.state.queued_auftraege_for_group(opsgroup_id)
 
+    def build_tactical_picture(self, coalition: str, intel: str) -> TacticalPicture:
+        """Build a coalition/INTEL based situation picture from local state.
+
+        Enemy knowledge comes from INTEL contacts and clusters. Friendly assets
+        come from the coalition's LEGION/COHORT/OPSGROUP snapshots.
+
+        :param coalition: Friendly coalition, e.g. ``blue`` or ``red``.
+        :param intel: INTEL object id such as ``INTEL:BlueIntel``.
+        :returns: Tactical picture with GeoJSON export support.
+        """
+
+        legions = [
+            legion
+            for legion in self.state.legion_objects.values()
+            if _same_coalition(legion.coalition or legion.coalition_name, coalition)
+        ]
+        legion_ids = {legion.object_id for legion in legions}
+        opsgroups = [group for group in self.state.opsgroup_objects.values() if _same_coalition(group.coalition, coalition)]
+        opsgroup_ids = {group.object_id for group in opsgroups}
+        cohorts = [cohort for cohort in self.state.cohort_objects.values() if cohort.legion_id in legion_ids]
+        contacts = self.contacts_of_intel(intel)
+        clusters = self.clusters_of_intel(intel)
+
+        mission_ids: set[str] = set()
+        for legion in legions:
+            mission_ids.update(legion.auftrag_queue_ids)
+        for group in opsgroups:
+            if group.auftrag_current_id:
+                mission_ids.add(group.auftrag_current_id)
+            mission_ids.update(group.auftrag_queue_ids)
+        for contact in contacts:
+            if contact.mission_id:
+                mission_ids.add(contact.mission_id)
+        for cluster in clusters:
+            if cluster.mission_id:
+                mission_ids.add(cluster.mission_id)
+
+        missions = _unique_missions(
+            mission
+            for mission in self.state.auftrag_objects.values()
+            if mission.object_id in mission_ids or any(group_id in opsgroup_ids for group_id in mission.assigned_group_ids)
+        )
+
+        return TacticalPicture(
+            coalition=coalition,
+            intel_id=intel,
+            intel=self.intel(intel),
+            contacts=contacts,
+            clusters=clusters,
+            opszones=list(self.state.opszone_objects.values()),
+            opsgroups=opsgroups,
+            legions=legions,
+            cohorts=cohorts,
+            missions=missions,
+        )
+
+    def build_global_picture(self) -> GlobalPicture:
+        """Build a global/admin situation picture from local truth snapshots."""
+
+        return GlobalPicture(
+            groups=list(self.state.groups.values()),
+            units=list(self.state.units.values()),
+            statics=list(self.state.statics.values()),
+            airbases=list(self.state.airbases.values()),
+            zones=list(self.state.zones.values()),
+            opszones=list(self.state.opszone_objects.values()),
+            opsgroups=list(self.state.opsgroup_objects.values()),
+            missions=list(self.state.auftrag_objects.values()),
+            legions=list(self.state.legion_objects.values()),
+            cohorts=list(self.state.cohort_objects.values()),
+            intels=list(self.state.intel_objects.values()),
+            intel_contacts=list(self.state.intel_contact_objects.values()),
+            intel_clusters=list(self.state.intel_cluster_objects.values()),
+        )
+
     async def request_snapshots(self, actions: tuple[str, ...]) -> None:
         """Request a sequence of bridge snapshots.
 
@@ -563,6 +658,25 @@ class MooseBridgeClient:
         await self.snapshot_intel_contacts()
         await self.snapshot_intel_clusters()
         return self.state
+
+    async def refresh_tactical_picture(self, coalition: str, intel: str) -> TacticalPicture:
+        """Refresh the snapshots needed for a tactical picture and build it."""
+
+        await self.snapshot_intels()
+        await self.snapshot_intel_contacts()
+        await self.snapshot_intel_clusters()
+        await self.snapshot_opszones()
+        await self.snapshot_opsgroups()
+        await self.snapshot_auftraege()
+        await self.snapshot_legions()
+        await self.snapshot_cohorts()
+        return self.build_tactical_picture(coalition, intel)
+
+    async def refresh_global_picture(self) -> GlobalPicture:
+        """Refresh all supported snapshots and build a global/admin picture."""
+
+        await self.snapshot_all()
+        return self.build_global_picture()
 
     async def snapshot_groups(self) -> dict[str, Any]:
         """Request a GROUP snapshot through the SDK."""

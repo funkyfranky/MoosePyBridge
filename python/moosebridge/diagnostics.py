@@ -146,6 +146,7 @@ def format_intel_summary(intel: Intel, contacts: list[IntelContact], clusters: l
     details = (
         f"  contacts={len(contacts)} "
         f"clusters={len(clusters)} "
+        f"agents={_text(intel.agent_count if intel.agent_count is not None else len(intel.agent_ids))} "
         f"cluster_analysis={intel.cluster_analysis} "
         f"radius_m={_text(intel.cluster_radius_m)}"
     )

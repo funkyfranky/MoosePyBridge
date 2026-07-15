@@ -215,6 +215,8 @@ class Intel(MooseSnapshotObject):
     doppler_radar: bool = False
     contact_count: int | None = None
     cluster_count: int | None = None
+    agent_count: int | None = None
+    agent_ids: list[str] = field(default_factory=list)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "Intel":
@@ -241,6 +243,8 @@ class Intel(MooseSnapshotObject):
             doppler_radar=_bool_or_false(payload.get("doppler_radar")),
             contact_count=_optional_int(payload.get("contact_count")),
             cluster_count=_optional_int(payload.get("cluster_count")),
+            agent_count=_optional_int(payload.get("agent_count")),
+            agent_ids=_string_list(payload.get("agent_ids")),
         )
 
 

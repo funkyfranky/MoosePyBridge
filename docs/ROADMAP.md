@@ -373,11 +373,12 @@ Later behavior:
 The next concrete milestone is to deepen the current daemon, SDK, and advisory
 baseline:
 
-1. Add AIRWING/BRIGADE/FLEET snapshots and typed models.
-2. Expand AUFTRAG lifecycle support with cancellation, reassignment, and richer
-   outcome/trace details.
-3. Add OPSGROUP and OPSZONE command helpers.
-4. Add structured audit records for recommendations, approvals, commands, ACKs,
+1. Build the browser-readable situation picture on top of the SDK GeoJSON
+   models, starting with tactical INTEL views and global/admin truth views.
+2. Add OPSGROUP and OPSZONE command helpers for common control operations.
+3. Add structured audit records for recommendations, approvals, commands, ACKs,
    and outcomes.
-5. Start policy checks for approval-required and autonomous modes on top of the
+4. Start policy checks for approval-required and autonomous modes on top of the
    existing SDK/control command path.
+5. Define map update semantics for live movement, trails, stale contacts, and
+   event-driven refreshes.

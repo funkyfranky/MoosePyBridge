@@ -42,7 +42,7 @@ from moosebridge.auftraege import (
 )
 from moosebridge.protocol import BridgeCommand
 from moosebridge.diagnostics import format_cohort_assets, format_intel_status, format_legion_status, format_mission_summary
-from moosebridge.sdk import CoordinateResult, DistanceResult, MooseBridgeClient, NearestResult
+from moosebridge.sdk import CoordinateResult, DistanceResult, GlobalPicture, MooseBridgeClient, NearestResult, TacticalPicture
 from moosebridge.state import MooseBridgeState
 
 
@@ -362,6 +362,222 @@ def test_sdk_refresh_helpers_request_expected_snapshots() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
+    server = FakeSdkServer()
+    client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "intels",
+            "payload": {
+                "intels": [
+                    {
+                        "object_id": "INTEL:BlueIntel",
+                        "dcs_name": "BlueIntel",
+                        "object_type": "INTEL",
+                        "coalition": "blue",
+                    }
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "intel_contacts",
+            "payload": {
+                "intel_contacts": [
+                    {
+                        "object_id": "INTELCONTACT:BlueIntel:Bandit",
+                        "dcs_name": "Bandit",
+                        "object_type": "INTELCONTACT",
+                        "intel_id": "INTEL:BlueIntel",
+                        "target_object_id": "GROUP:Bandit",
+                        "contact_type": "Air",
+                        "threat_level": 8,
+                        "x": 1000,
+                        "z": 2000,
+                    },
+                    {
+                        "object_id": "INTELCONTACT:RedIntel:Friendly",
+                        "dcs_name": "Friendly",
+                        "object_type": "INTELCONTACT",
+                        "intel_id": "INTEL:RedIntel",
+                        "target_object_id": "GROUP:Friendly",
+                        "x": 50,
+                        "z": 60,
+                    },
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {
+                "legions": [
+                    {
+                        "object_id": "LEGION:Wing Parchim",
+                        "dcs_name": "Wing Parchim",
+                        "object_type": "LEGION",
+                        "coalition": "blue",
+                        "auftrag_queue_ids": ["AUFTRAG:1"],
+                        "x": 10,
+                        "z": 20,
+                    },
+                    {
+                        "object_id": "LEGION:Red Wing",
+                        "dcs_name": "Red Wing",
+                        "object_type": "LEGION",
+                        "coalition": "red",
+                        "x": 30,
+                        "z": 40,
+                    },
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "opsgroups",
+            "payload": {
+                "opsgroups": [
+                    {
+                        "object_id": "OPSGROUP:Blue CAP",
+                        "dcs_name": "Blue CAP",
+                        "object_type": "OPSGROUP",
+                        "coalition": "blue",
+                        "auftrag_current_id": "AUFTRAG:1",
+                        "x": 100,
+                        "z": 200,
+                    },
+                    {
+                        "object_id": "OPSGROUP:Red CAP",
+                        "dcs_name": "Red CAP",
+                        "object_type": "OPSGROUP",
+                        "coalition": "red",
+                        "x": 300,
+                        "z": 400,
+                    },
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "auftraege",
+            "payload": {
+                "auftraege": [
+                    {
+                        "object_id": "AUFTRAG:1",
+                        "dcs_name": "AUFTRAG:1",
+                        "object_type": "AUFTRAG",
+                        "type": "CAP",
+                        "status": "Executing",
+                        "target": {"object_id": "ZONE:CAP", "name": "CAP", "x": 500, "z": 600},
+                    }
+                ]
+            },
+        }
+    )
+
+    picture = client.build_tactical_picture("blue", "INTEL:BlueIntel")
+    geojson = picture.to_geojson()
+    layers = [feature["properties"]["layer"] for feature in geojson["features"]]
+
+    assert isinstance(picture, TacticalPicture)
+    assert [contact.object_id for contact in picture.contacts] == ["INTELCONTACT:BlueIntel:Bandit"]
+    assert [legion.object_id for legion in picture.legions] == ["LEGION:Wing Parchim"]
+    assert [group.object_id for group in picture.opsgroups] == ["OPSGROUP:Blue CAP"]
+    assert [mission.object_id for mission in picture.missions] == ["AUFTRAG:1"]
+    assert geojson["type"] == "FeatureCollection"
+    assert geojson["properties"]["scope"] == "tactical"
+    assert "known_enemy_contacts" in layers
+    assert "friendly_opsgroups" in layers
+    assert "friendly_legions" in layers
+    assert "missions" in layers
+
+
+def test_sdk_build_global_picture_exports_truth_snapshots_to_geojson() -> None:
+    server = FakeSdkServer()
+    client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "groups",
+            "payload": {
+                "groups": [
+                    {
+                        "object_id": "GROUP:Ground-1",
+                        "dcs_name": "Ground-1",
+                        "object_type": "GROUP",
+                        "coalition": "red",
+                        "x": 100,
+                        "z": 200,
+                    }
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "zones",
+            "payload": {
+                "zones": [
+                    {
+                        "object_id": "ZONE:Town Fight",
+                        "dcs_name": "Town Fight",
+                        "object_type": "ZONE",
+                        "radius": 1000,
+                        "x": 300,
+                        "z": 400,
+                    }
+                ]
+            },
+        }
+    )
+
+    picture = client.build_global_picture()
+    geojson = picture.to_geojson()
+
+    assert isinstance(picture, GlobalPicture)
+    assert geojson["properties"]["scope"] == "global"
+    assert [feature["properties"]["layer"] for feature in geojson["features"]] == ["groups", "zones"]
+    assert geojson["features"][0]["geometry"]["coordinates"] == [100.0, 200.0]
+    assert geojson["features"][1]["properties"]["radius_m"] == 1000
+
+
+def test_sdk_refresh_picture_helpers_request_expected_snapshots() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        assert isinstance(await client.refresh_tactical_picture("blue", "INTEL:BlueIntel"), TacticalPicture)
+        assert [command.action for command, _ in server.commands] == [
+            "snapshot.intels",
+            "snapshot.intel_contacts",
+            "snapshot.intel_clusters",
+            "snapshot.opszones",
+            "snapshot.opsgroups",
+            "snapshot.auftraege",
+            "snapshot.legions",
+            "snapshot.cohorts",
+        ]
+
+        server.commands.clear()
+
+        assert isinstance(await client.refresh_global_picture(), GlobalPicture)
+        assert [command.action for command, _ in server.commands] == ["snapshot.all"]
+
+    asyncio.run(scenario())
+
+
 def test_diagnostics_format_intel_status_uses_sdk_state() -> None:
     server = FakeSdkServer()
     client = MooseBridgeClient(server)  # type: ignore[arg-type]
@@ -379,6 +595,8 @@ def test_diagnostics_format_intel_status_uses_sdk_state() -> None:
                         "state": "Running",
                         "coalition": "blue",
                         "is_running": True,
+                        "agent_count": 2,
+                        "agent_ids": ["GROUP:EWR-1", "GROUP:AWACS-1"],
                     }
                 ]
             },
@@ -408,6 +626,7 @@ def test_diagnostics_format_intel_status_uses_sdk_state() -> None:
 
     assert "INTEL:BlueIntel" in text
     assert "contacts=1" in text
+    assert "agents=2" in text
     assert "GROUP:Ground-1" in text
 
 

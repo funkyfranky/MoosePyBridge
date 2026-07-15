@@ -860,6 +860,14 @@ function MOOSE_BRIDGE:_AuftragObjectId(auftrag)
   return "AUFTRAG:" .. safe_tostring(number)
 end
 
+function MOOSE_BRIDGE:_AuftragObjectIdFromValue(value)
+  if value == nil then return nil end
+  if type(value) == "table" then return self:_AuftragObjectId(value) end
+  local text = safe_tostring(value)
+  if string.find(text, "^AUFTRAG:") then return text end
+  return "AUFTRAG:" .. text
+end
+
 function MOOSE_BRIDGE:_BuildOpsGroupSnapshotItem(group_name, opsgroup, source)
   local name = self:_OpsName(opsgroup, group_name)
   if not name then return nil end
@@ -868,8 +876,8 @@ function MOOSE_BRIDGE:_BuildOpsGroupSnapshotItem(group_name, opsgroup, source)
   local state = self:_OpsState(opsgroup)
   local alive = self:_SafeCall(opsgroup, "IsAlive")
   local active = self:_SafeCall(opsgroup, "IsActive")
-  local current_id = nil
-  if opsgroup and opsgroup.currentmission then current_id = "AUFTRAG:" .. safe_tostring(opsgroup.currentmission) end
+  local current = opsgroup and (opsgroup.currentmission or opsgroup.missioncurrent or opsgroup.currentMission) or nil
+  local current_id = self:_AuftragObjectIdFromValue(current)
   local item = {
     object_id="OPSGROUP:"..safe_tostring(name),
     dcs_name=safe_tostring(name),

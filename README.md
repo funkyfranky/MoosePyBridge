@@ -49,6 +49,9 @@ Implemented baseline:
   - `AUFTRAG`
   - `COHORT`
   - `LEGION`
+  - `INTEL`
+  - `INTELCONTACT`
+  - `INTELCLUSTER`
 - command families including:
   - `message.*`
   - `mark.*`
@@ -63,6 +66,8 @@ Implemented baseline:
 - SDK helpers for coordinate lookup, distance measurement, zone drawing,
   nearest-object queries, AUFTRAG tracing, snapshot refresh, and control-client
   adaptation
+- SDK picture models for tactical INTEL-based and global truth-based GeoJSON
+  exports
 
 ## Architecture
 
@@ -231,6 +236,20 @@ ready = bridge.ready_cohorts_of_legion("LEGION:Wing Parchim", mission_type="BAI"
 
 print(format_legion_status(bridge, "LEGION:Wing Parchim"))
 ```
+
+Situation pictures and GeoJSON export:
+
+```python
+tactical = await bridge.refresh_tactical_picture("blue", "INTEL:BlueIntel")
+tactical_geojson = tactical.to_geojson()
+
+global_picture = await bridge.refresh_global_picture()
+global_geojson = global_picture.to_geojson()
+```
+
+`TacticalPicture` uses INTEL contacts and clusters for enemy knowledge.
+`GlobalPicture` uses global truth snapshots and is intended for admin/debug
+views or neutral analysis tools.
 
 MOOSE-like AUFTRAG helper objects:
 

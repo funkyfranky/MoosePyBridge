@@ -161,6 +161,8 @@ def test_intel_models_from_payload() -> None:
             "is_running": True,
             "contact_count": 1,
             "cluster_count": 1,
+            "agent_count": 2,
+            "agent_ids": ["GROUP:EWR-1", "GROUP:AWACS-1"],
         }
     )
     contact = IntelContact.from_payload(
@@ -192,6 +194,8 @@ def test_intel_models_from_payload() -> None:
 
     assert intel.object_id == "INTEL:BlueIntel"
     assert intel.is_running is True
+    assert intel.agent_count == 2
+    assert intel.agent_ids == ["GROUP:EWR-1", "GROUP:AWACS-1"]
     assert contact.target_object_id == "GROUP:Ground-1"
     assert contact.threat_level == 7
     assert cluster.contact_ids == ["INTELCONTACT:BlueIntel:Ground-1"]

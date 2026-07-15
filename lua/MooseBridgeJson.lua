@@ -69,264 +69,190 @@ function json.encode(value)
   return encode_value(value)
 end
 
-local function unescape(value)
-  value = value or ""
-  value = value:gsub('\\n', '\n')
-  value = value:gsub('\\r', '\r')
-  value = value:gsub('\\t', '\t')
-  value = value:gsub('\\"', '"')
-  value = value:gsub('\\\\', '\\')
-  return value
+local function decode_error(text, index, message)
+  error("JSON decode error at byte " .. tostring(index) .. ": " .. message .. " near " .. string.format("%q", text:sub(index, index + 20)))
 end
 
-local function read_string_field(text, name)
-  local pattern = '"' .. name .. '"%s*:%s*"(.-)"'
-  local value = text:match(pattern)
-  if value == nil then return nil end
-  return unescape(value)
-end
-
-local function read_number_field(text, name)
-  local pattern = '"' .. name .. '"%s*:%s*([%-%d%.]+)'
-  local value = text:match(pattern)
-  if value then
-    return tonumber(value)
+local function skip_ws(text, index)
+  while index <= #text do
+    local char = text:sub(index, index)
+    if char ~= " " and char ~= "\n" and char ~= "\r" and char ~= "\t" then break end
+    index = index + 1
   end
-  return nil
+  return index
 end
 
-local function read_boolean_field(text, name)
-  local true_pattern = '"' .. name .. '"%s*:%s*true'
-  local false_pattern = '"' .. name .. '"%s*:%s*false'
-  if text:match(true_pattern) then return true end
-  if text:match(false_pattern) then return false end
-  return nil
+local function utf8_char(codepoint)
+  if codepoint <= 0x7F then
+    return string.char(codepoint)
+  elseif codepoint <= 0x7FF then
+    return string.char(
+      0xC0 + math.floor(codepoint / 0x40),
+      0x80 + (codepoint % 0x40)
+    )
+  elseif codepoint <= 0xFFFF then
+    return string.char(
+      0xE0 + math.floor(codepoint / 0x1000),
+      0x80 + (math.floor(codepoint / 0x40) % 0x40),
+      0x80 + (codepoint % 0x40)
+    )
+  elseif codepoint <= 0x10FFFF then
+    return string.char(
+      0xF0 + math.floor(codepoint / 0x40000),
+      0x80 + (math.floor(codepoint / 0x1000) % 0x40),
+      0x80 + (math.floor(codepoint / 0x40) % 0x40),
+      0x80 + (codepoint % 0x40)
+    )
+  end
+  return "?"
 end
 
-local function extract_object_text(text, name)
-  local pattern = '"' .. name .. '"%s*:%s*{'
-  local start_pos, end_pos = text:find(pattern)
-  if not end_pos then return nil end
+local parse_value
 
-  local depth = 1
-  local in_string = false
-  local escaped = false
-  local index = end_pos + 1
+local function parse_string(text, index)
+  if text:sub(index, index) ~= '"' then decode_error(text, index, "expected string") end
+  index = index + 1
+  local parts = {}
+  local start = index
 
   while index <= #text do
     local char = text:sub(index, index)
-    if in_string then
-      if escaped then
-        escaped = false
-      elseif char == "\\" then
-        escaped = true
-      elseif char == '"' then
-        in_string = false
-      end
-    else
-      if char == '"' then
-        in_string = true
-      elseif char == "{" then
-        depth = depth + 1
-      elseif char == "}" then
-        depth = depth - 1
-        if depth == 0 then
-          return text:sub(end_pos + 1, index - 1)
+    if char == '"' then
+      parts[#parts + 1] = text:sub(start, index - 1)
+      return table.concat(parts), index + 1
+    elseif char == "\\" then
+      parts[#parts + 1] = text:sub(start, index - 1)
+      local escape_char = text:sub(index + 1, index + 1)
+      if escape_char == '"' or escape_char == "\\" or escape_char == "/" then
+        parts[#parts + 1] = escape_char
+        index = index + 2
+      elseif escape_char == "b" then
+        parts[#parts + 1] = "\b"
+        index = index + 2
+      elseif escape_char == "f" then
+        parts[#parts + 1] = "\f"
+        index = index + 2
+      elseif escape_char == "n" then
+        parts[#parts + 1] = "\n"
+        index = index + 2
+      elseif escape_char == "r" then
+        parts[#parts + 1] = "\r"
+        index = index + 2
+      elseif escape_char == "t" then
+        parts[#parts + 1] = "\t"
+        index = index + 2
+      elseif escape_char == "u" then
+        local hex = text:sub(index + 2, index + 5)
+        local codepoint = tonumber(hex, 16)
+        if not codepoint then decode_error(text, index, "invalid unicode escape") end
+        index = index + 6
+
+        if codepoint >= 0xD800 and codepoint <= 0xDBFF and text:sub(index, index + 1) == "\\u" then
+          local low = tonumber(text:sub(index + 2, index + 5), 16)
+          if low and low >= 0xDC00 and low <= 0xDFFF then
+            codepoint = 0x10000 + ((codepoint - 0xD800) * 0x400) + (low - 0xDC00)
+            index = index + 6
+          end
         end
-      end
-    end
-    index = index + 1
-  end
 
-  return nil
-end
-
-local function decode_scalar_value(value)
-  value = value:gsub("^%s+", ""):gsub("%s+$", "")
-  if value == "true" then return true end
-  if value == "false" then return false end
-  if value == "null" then return nil end
-
-  if value:sub(1, 1) == "[" and value:sub(-1) == "]" then
-    local result = {}
-    local inner = value:sub(2, -2)
-    local index = 1
-    local element_start = 1
-    local in_string = false
-    local escaped = false
-
-    while index <= #inner + 1 do
-      local char = inner:sub(index, index)
-      local at_end = index > #inner
-      if in_string then
-        if escaped then
-          escaped = false
-        elseif char == "\\" then
-          escaped = true
-        elseif char == '"' then
-          in_string = false
-        end
+        parts[#parts + 1] = utf8_char(codepoint)
       else
-        if char == '"' then
-          in_string = true
-        elseif char == "," or at_end then
-          local raw_element = inner:sub(element_start, index - 1)
-          result[#result + 1] = decode_scalar_value(raw_element)
-          element_start = index + 1
-        end
+        decode_error(text, index, "invalid escape sequence")
       end
+      start = index
+    else
       index = index + 1
     end
-
-    return result
   end
 
-  local string_value = value:match('^"(.*)"$')
-  if string_value ~= nil then return unescape(string_value) end
-
-  local number_value = tonumber(value)
-  if number_value ~= nil then return number_value end
-  return nil
+  decode_error(text, index, "unterminated string")
 end
 
-local function read_flat_object_fields(text)
+local function parse_number(text, index)
+  local start = index
+  if text:sub(index, index) == "-" then index = index + 1 end
+  while text:sub(index, index):match("%d") do index = index + 1 end
+  if text:sub(index, index) == "." then
+    index = index + 1
+    while text:sub(index, index):match("%d") do index = index + 1 end
+  end
+  local exponent = text:sub(index, index)
+  if exponent == "e" or exponent == "E" then
+    index = index + 1
+    local sign = text:sub(index, index)
+    if sign == "+" or sign == "-" then index = index + 1 end
+    while text:sub(index, index):match("%d") do index = index + 1 end
+  end
+  local raw = text:sub(start, index - 1)
+  local value = tonumber(raw)
+  if value == nil then decode_error(text, start, "invalid number") end
+  return value, index
+end
+
+local function parse_array(text, index)
+  index = skip_ws(text, index + 1)
   local result = {}
-  local index = 1
+  if text:sub(index, index) == "]" then return result, index + 1 end
 
   while index <= #text do
-    local key_start, key_end, key = text:find('"%s*([^"]-)%s*"%s*:', index)
-    if not key_start then break end
-
-    local value_start = key_end + 1
-    while value_start <= #text and text:sub(value_start, value_start):match("%s") do
-      value_start = value_start + 1
-    end
-
-    local value_end = value_start
-    local in_string = false
-    local escaped = false
-    local object_depth = 0
-    local array_depth = 0
-    while value_end <= #text do
-      local char = text:sub(value_end, value_end)
-      if in_string then
-        if escaped then
-          escaped = false
-        elseif char == "\\" then
-          escaped = true
-        elseif char == '"' then
-          in_string = false
-        end
-      else
-        if char == '"' then
-          in_string = true
-        elseif char == "{" then
-          object_depth = object_depth + 1
-        elseif char == "}" then
-          object_depth = object_depth - 1
-        elseif char == "[" then
-          array_depth = array_depth + 1
-        elseif char == "]" then
-          array_depth = array_depth - 1
-        elseif char == "," and object_depth == 0 and array_depth == 0 then
-          break
-        end
-      end
-      value_end = value_end + 1
-    end
-
-    local raw_value = text:sub(value_start, value_end - 1)
-    result[unescape(key)] = decode_scalar_value(raw_value)
-    index = value_end + 1
+    local value
+    value, index = parse_value(text, index)
+    result[#result + 1] = value
+    index = skip_ws(text, index)
+    local char = text:sub(index, index)
+    if char == "]" then return result, index + 1 end
+    if char ~= "," then decode_error(text, index, "expected ',' or ']'") end
+    index = skip_ws(text, index + 1)
   end
 
-  return result
+  decode_error(text, index, "unterminated array")
+end
+
+local function parse_object(text, index)
+  index = skip_ws(text, index + 1)
+  local result = {}
+  if text:sub(index, index) == "}" then return result, index + 1 end
+
+  while index <= #text do
+    local key
+    key, index = parse_string(text, index)
+    index = skip_ws(text, index)
+    if text:sub(index, index) ~= ":" then decode_error(text, index, "expected ':'") end
+    index = skip_ws(text, index + 1)
+    local value
+    value, index = parse_value(text, index)
+    result[key] = value
+    index = skip_ws(text, index)
+    local char = text:sub(index, index)
+    if char == "}" then return result, index + 1 end
+    if char ~= "," then decode_error(text, index, "expected ',' or '}'") end
+    index = skip_ws(text, index + 1)
+  end
+
+  decode_error(text, index, "unterminated object")
+end
+
+parse_value = function(text, index)
+  index = skip_ws(text, index)
+  local char = text:sub(index, index)
+  if char == '"' then return parse_string(text, index) end
+  if char == "{" then return parse_object(text, index) end
+  if char == "[" then return parse_array(text, index) end
+  if char == "-" or char:match("%d") then return parse_number(text, index) end
+  if text:sub(index, index + 3) == "true" then return true, index + 4 end
+  if text:sub(index, index + 4) == "false" then return false, index + 5 end
+  if text:sub(index, index + 3) == "null" then return nil, index + 4 end
+  decode_error(text, index, "unexpected value")
 end
 
 function json.decode(text)
-  local result = {}
-  result.version = read_number_field(text, "version")
-  result.type = read_string_field(text, "type")
-  result.id = read_string_field(text, "id")
-  result.source = read_string_field(text, "source")
-  result.mode = read_string_field(text, "mode")
-  result.action = read_string_field(text, "action")
-  result.params = {}
-
-  local params_text = extract_object_text(text, "params")
-  if params_text then
-    result.params = read_flat_object_fields(params_text)
-
-    result.params.coalition = read_string_field(params_text, "coalition")
-    result.params.text = read_string_field(params_text, "text")
-    result.params.duration = read_number_field(params_text, "duration")
-    result.params.object_id = read_string_field(params_text, "object_id")
-    result.params.object_id_a = read_string_field(params_text, "object_id_a")
-    result.params.object_id_b = read_string_field(params_text, "object_id_b")
-    result.params.zone_id = read_string_field(params_text, "zone_id")
-    result.params.format = read_string_field(params_text, "format")
-    result.params.color = read_string_field(params_text, "color")
-    result.params.alpha = read_number_field(params_text, "alpha")
-    result.params.fill_color = read_string_field(params_text, "fill_color")
-    result.params.fill_alpha = read_number_field(params_text, "fill_alpha")
-    result.params.line_type = read_number_field(params_text, "line_type") or read_string_field(params_text, "line_type")
-    result.params.x = read_number_field(params_text, "x")
-    result.params.y = read_number_field(params_text, "y")
-    result.params.z = read_number_field(params_text, "z")
-
-    -- AUFTRAG advisory/application command fields.
-    result.params.legion_id = read_string_field(params_text, "legion_id")
-    result.params.cohort_id = read_string_field(params_text, "cohort_id")
-    result.params.target = read_string_field(params_text, "target")
-    result.params.altitude_ft = read_number_field(params_text, "altitude_ft")
-    result.params.selected_payload_uid = read_number_field(params_text, "selected_payload_uid") or read_string_field(params_text, "selected_payload_uid")
-    result.params.mission_type = read_string_field(params_text, "mission_type")
-    result.params.constructor = read_string_field(params_text, "constructor")
-    result.params.apply = read_boolean_field(params_text, "apply")
-    result.params.clock_start = read_number_field(params_text, "clock_start") or read_string_field(params_text, "clock_start")
-    result.params.clock_stop = read_number_field(params_text, "clock_stop") or read_string_field(params_text, "clock_stop")
-    result.params.ClockStart = read_number_field(params_text, "ClockStart") or read_string_field(params_text, "ClockStart")
-    result.params.ClockStop = read_number_field(params_text, "ClockStop") or read_string_field(params_text, "ClockStop")
-    result.params.required_assets_min = read_number_field(params_text, "required_assets_min")
-    result.params.required_assets_max = read_number_field(params_text, "required_assets_max")
-    result.params.nassets_min = read_number_field(params_text, "nassets_min")
-    result.params.nassets_max = read_number_field(params_text, "nassets_max")
-    result.params.NassetsMin = read_number_field(params_text, "NassetsMin")
-    result.params.NassetsMax = read_number_field(params_text, "NassetsMax")
-    result.params.opszone = read_string_field(params_text, "opszone")
-    result.params.opszone_id = read_string_field(params_text, "opszone_id")
-    result.params.capture_coalition = read_number_field(params_text, "capture_coalition") or read_string_field(params_text, "capture_coalition")
-    result.params.capture_coalition_id = read_number_field(params_text, "capture_coalition_id") or read_string_field(params_text, "capture_coalition_id")
-    result.params.CaptureCoalition = read_number_field(params_text, "CaptureCoalition") or read_string_field(params_text, "CaptureCoalition")
-    result.params.stay_in_zone_time_s = read_number_field(params_text, "stay_in_zone_time_s")
-    result.params.stay_in_zone_time = read_number_field(params_text, "stay_in_zone_time")
-    result.params.StayInZoneTime = read_number_field(params_text, "StayInZoneTime")
-
-    -- AUFTRAG:BOMBING fields.
-    result.params.engage_weapon_type = read_number_field(params_text, "engage_weapon_type")
-    result.params.EngageWeaponType = read_number_field(params_text, "EngageWeaponType")
-    result.params.divebomb = read_boolean_field(params_text, "divebomb")
-
-    -- AUFTRAG:ARTY fields.
-    result.params.nshots = read_number_field(params_text, "nshots")
-    result.params.Nshots = read_number_field(params_text, "Nshots")
-    result.params.radius_m = read_number_field(params_text, "radius_m")
-    result.params.radius = read_number_field(params_text, "radius")
-    result.params.Radius = read_number_field(params_text, "Radius")
-
-    -- AUFTRAG:ORBIT fields.
-    result.params.speed_kts = read_number_field(params_text, "speed_kts")
-    result.params.speed = read_number_field(params_text, "speed")
-    result.params.Speed = read_number_field(params_text, "Speed")
-    result.params.heading_deg = read_number_field(params_text, "heading_deg")
-    result.params.heading = read_number_field(params_text, "heading")
-    result.params.Heading = read_number_field(params_text, "Heading")
-    result.params.leg_nm = read_number_field(params_text, "leg_nm")
-    result.params.leg = read_number_field(params_text, "leg")
-    result.params.Leg = read_number_field(params_text, "Leg")
-  end
-
-  return result
+  if type(text) ~= "string" then error("JSON decode expects a string") end
+  local value, index = parse_value(text, 1)
+  index = skip_ws(text, index)
+  if index <= #text then decode_error(text, index, "trailing characters") end
+  if type(value) ~= "table" then error("JSON command must decode to an object") end
+  if type(value.params) ~= "table" then value.params = {} end
+  return value
 end
 
 return json
