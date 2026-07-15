@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MooseBridge Global Picture</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/assets/map.css">
+</head>
+<body>
+  <main class="app-shell">
+    <div id="map" aria-label="Globales DCS-Lagebild"></div>
+
+    <header class="topbar">
+      <div class="brand">MooseBridge</div>
+      <div class="status-line">
+        <span id="connection-dot" class="status-dot is-offline" aria-hidden="true"></span>
+        <span id="connection-text">Verbindung wird hergestellt</span>
+        <span class="separator" aria-hidden="true"></span>
+        <span id="dcs-clock">DCS --</span>
+        <span id="mission-clock">Mission --</span>
+      </div>
+      <button id="layers-toggle" class="icon-button" type="button" title="Layer ein- oder ausblenden" aria-controls="layer-panel" aria-expanded="true">
+        <i data-lucide="layers-3"></i>
+      </button>
+    </header>
+
+    <aside id="layer-panel" class="layer-panel" aria-label="Kartenlayer">
+      <div class="panel-heading">
+        <span>Layer</span>
+        <span id="feature-count" class="muted">0 Objekte</span>
+      </div>
+      <div id="layer-controls" class="layer-controls"></div>
+    </aside>
+
+    <aside id="detail-panel" class="detail-panel" aria-label="Objektdetails" hidden>
+      <div class="panel-heading">
+        <div>
+          <div id="detail-type" class="eyebrow"></div>
+          <div id="detail-title" class="detail-title"></div>
+        </div>
+        <button id="detail-close" class="icon-button" type="button" title="Details schließen">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <dl id="detail-properties" class="property-list"></dl>
+    </aside>
+
+    <div id="error-banner" class="error-banner" role="status" hidden></div>
+  </main>
+
+  <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script src="/assets/map.js?v=4"></script>
+</body>
+</html>

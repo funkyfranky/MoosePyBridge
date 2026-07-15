@@ -263,6 +263,22 @@ available as feature properties, while geometry coordinates use
 INTEL diagnostics show agents as `alive/total`; both values come directly from
 the MOOSE `INTEL.detectionset` (`SET_GROUP`).
 
+### Global map viewer
+
+Install the optional browser-map dependencies and start the viewer while the
+MooseBridge daemon is running:
+
+```powershell
+python -m pip install -e ".[map]"
+.\run_map.ps1
+```
+
+Open `http://127.0.0.1:8000`. The viewer connects to the daemon control API on
+`127.0.0.1:51001`, refreshes the global picture every five seconds, and pushes
+updates to the browser through a WebSocket. Alternatively, run
+`python -m moosebridge.map_server`; append `--help` to change hosts, ports,
+update interval, or command timeout.
+
 To monitor and validate the global truth picture without command-line
 parameters, edit the constants in and run:
 

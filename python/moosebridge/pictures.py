@@ -495,7 +495,14 @@ class GlobalPicture:
         features.extend(_raw_point_feature(item, "statics") for item in self.statics)
         features.extend(_raw_point_feature(item, "airbases") for item in self.airbases)
         features.extend(_raw_point_feature(item, "zones", {"radius_m": item.get("radius")}) for item in self.zones)
-        features.extend(_point_feature(item, "opszones", {"state": item.state, "owner": item.owner_current_name}) for item in self.opszones)
+        features.extend(
+            _point_feature(
+                item,
+                "opszones",
+                {"state": item.state, "owner": item.owner_current_name, "radius_m": item.zone_radius},
+            )
+            for item in self.opszones
+        )
         features.extend(_point_feature(item, "opsgroups", {"coalition": item.coalition, "state": item.state}) for item in self.opsgroups)
         features.extend(_point_feature(item, "legions", {"coalition": item.coalition or item.coalition_name, "state": item.state}) for item in self.legions)  # type: ignore[arg-type]
         features.extend(_point_feature(item, "intel_contacts", {"intel_id": item.intel_id, "threat_level": item.threat_level}) for item in self.intel_contacts)

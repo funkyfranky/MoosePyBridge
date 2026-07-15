@@ -1,0 +1,119 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0;
+  --surface: #f7f8f6;
+  --text: #18201d;
+  --muted: #5d6863;
+  --border: #cbd2ce;
+  --shadow: 0 4px 16px rgba(23, 31, 28, 0.15);
+  --green: #25865f;
+  --red: #c44343;
+  --blue: #2776b9;
+}
+
+* { box-sizing: border-box; }
+html, body, .app-shell, #map { width: 100%; height: 100%; margin: 0; }
+body { overflow: hidden; color: var(--text); background: #d8dedb; }
+button, input { font: inherit; letter-spacing: 0; }
+.app-shell { position: relative; }
+#map { position: absolute; inset: 0; }
+
+.topbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 10px 8px 14px;
+  background: rgba(247, 248, 246, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  z-index: 5;
+}
+
+.brand { font-weight: 600; }
+.status-line { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); }
+.status-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: var(--green); }
+.status-dot.is-offline { background: var(--red); }
+.separator { width: 1px; height: 18px; background: var(--border); }
+.topbar .icon-button { margin-left: auto; }
+
+.icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.icon-button:hover { background: #e8ece9; border-color: var(--border); }
+.icon-button svg { width: 18px; height: 18px; }
+
+.layer-panel,
+.detail-panel {
+  position: absolute;
+  top: 72px;
+  z-index: 4;
+  background: rgba(247, 248, 246, 0.96);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.layer-panel { left: 12px; width: 236px; padding: 12px; }
+.detail-panel { right: 12px; width: min(370px, calc(100% - 24px)); max-height: calc(100% - 96px); overflow: auto; padding: 14px; }
+.panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-weight: 600; }
+.muted { color: var(--muted); font-weight: 400; }
+.layer-controls { display: grid; gap: 4px; }
+.layer-control { min-height: 30px; display: flex; align-items: center; gap: 9px; padding: 3px 4px; cursor: pointer; }
+.layer-control input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
+.layer-symbol { width: 16px; height: 16px; flex: 0 0 auto; color: var(--swatch); stroke-width: 2.2; }
+.layer-name { flex: 1; }
+.layer-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.eyebrow { color: var(--muted); font-size: 12px; font-weight: 500; text-transform: uppercase; }
+.detail-title { margin-top: 2px; overflow-wrap: anywhere; }
+.property-list { display: grid; grid-template-columns: minmax(100px, 0.7fr) minmax(0, 1.3fr); gap: 0; margin: 0; border-top: 1px solid var(--border); }
+.property-list dt,
+.property-list dd { margin: 0; padding: 7px 4px; border-bottom: 1px solid #dde2df; overflow-wrap: anywhere; }
+.property-list dt { color: var(--muted); }
+.property-list dd { font-variant-numeric: tabular-nums; }
+
+.error-banner {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: min(680px, calc(100% - 24px));
+  padding: 9px 12px;
+  color: #6d1f1f;
+  background: #fff0f0;
+  border: 1px solid #d98c8c;
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+}
+
+.maplibregl-ctrl-group { border-radius: 4px; }
+.maplibregl-ctrl-bottom-right { bottom: 4px; }
+
+@media (max-width: 720px) {
+  .topbar { gap: 10px; flex-wrap: wrap; }
+  .brand { width: calc(100% - 46px); }
+  .topbar .icon-button { position: absolute; top: 7px; right: 8px; }
+  .status-line { width: 100%; overflow: hidden; white-space: nowrap; }
+  #mission-clock, .separator { display: none; }
+  .layer-panel, .detail-panel { top: 92px; }
+  .layer-panel { width: min(236px, calc(100% - 24px)); }
+}
