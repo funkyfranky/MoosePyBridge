@@ -216,6 +216,7 @@ class Intel(MooseSnapshotObject):
     contact_count: int | None = None
     cluster_count: int | None = None
     agent_count: int | None = None
+    alive_agent_count: int | None = None
     agent_ids: list[str] = field(default_factory=list)
 
     @classmethod
@@ -244,6 +245,7 @@ class Intel(MooseSnapshotObject):
             contact_count=_optional_int(payload.get("contact_count")),
             cluster_count=_optional_int(payload.get("cluster_count")),
             agent_count=_optional_int(payload.get("agent_count")),
+            alive_agent_count=_optional_int(payload.get("alive_agent_count")),
             agent_ids=_string_list(payload.get("agent_ids")),
         )
 

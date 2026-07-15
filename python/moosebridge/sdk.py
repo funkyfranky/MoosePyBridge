@@ -763,6 +763,30 @@ class MooseBridgeClient:
 
         return require_ok(await self.server.snapshot_intel_clusters())
 
+    async def add_intel_agent(self, intel: Intel | str, agent: OpsGroup | str, timeout: float = 10.0) -> dict[str, Any]:
+        """Add a GROUP or OPSGROUP to a registered MOOSE INTEL detection set.
+
+        :param intel: Mirrored INTEL object or stable ``INTEL:<name>`` id.
+        :param agent: Mirrored OPSGROUP object or ``GROUP:<name>``/``OPSGROUP:<name>`` id.
+        :param timeout: Maximum ACK wait time in seconds.
+        :returns: Successful ACK payload including current agent counts.
+        :raises ValueError: If an object id has an unsupported type.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        intel_id = intel.object_id if isinstance(intel, Intel) else intel
+        agent_id = agent.object_id if isinstance(agent, OpsGroup) else agent
+        if not intel_id.startswith("INTEL:"):
+            raise ValueError("intel must be an INTEL:<name> object id")
+        if not agent_id.startswith(("GROUP:", "OPSGROUP:")):
+            raise ValueError("agent must be a GROUP:<name> or OPSGROUP:<name> object id")
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="intel.add_agent", params={"intel_id": intel_id, "agent_id": agent_id}),
+                timeout=timeout,
+            )
+        )
+
     async def snapshot_objects(self) -> dict[str, Any]:
         """Request a combined object snapshot through the SDK."""
 

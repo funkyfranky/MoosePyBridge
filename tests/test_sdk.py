@@ -250,6 +250,22 @@ def test_sdk_snapshot_kind_uses_short_kind() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_add_intel_agent_sends_semantic_command() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        ack = await client.add_intel_agent("INTEL:BlueIntel", "GROUP:Blue EWR", timeout=4.0)
+
+        assert ack["result"]["action"] == "intel.add_agent"
+        command, timeout = server.commands[0]
+        assert command.action == "intel.add_agent"
+        assert command.params == {"intel_id": "INTEL:BlueIntel", "agent_id": "GROUP:Blue EWR"}
+        assert timeout == 4.0
+
+    asyncio.run(scenario())
+
+
 def test_sdk_legion_convenience_methods_return_typed_state() -> None:
     server = FakeSdkServer()
     client = MooseBridgeClient(server)  # type: ignore[arg-type]
@@ -595,8 +611,9 @@ def test_diagnostics_format_intel_status_uses_sdk_state() -> None:
                         "state": "Running",
                         "coalition": "blue",
                         "is_running": True,
-                        "agent_count": 2,
-                        "agent_ids": ["GROUP:EWR-1", "GROUP:AWACS-1"],
+                        "agent_count": 3,
+                        "alive_agent_count": 2,
+                        "agent_ids": ["GROUP:EWR-1", "GROUP:AWACS-1", "GROUP:Dead-1"],
                     }
                 ]
             },
@@ -626,7 +643,7 @@ def test_diagnostics_format_intel_status_uses_sdk_state() -> None:
 
     assert "INTEL:BlueIntel" in text
     assert "contacts=1" in text
-    assert "agents=2" in text
+    assert "agents=2/3" in text
     assert "GROUP:Ground-1" in text
 
 

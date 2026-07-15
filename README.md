@@ -105,6 +105,7 @@ Load the files in this order:
    - `lua/MooseBridgePayloadExtension.lua`
    - `lua/MooseBridgeAuftragExecutionExtension.lua`
    - `lua/MooseBridgeAuftragTraceExtension.lua`
+   - `lua/MooseBridgeIntelExtension.lua` (load after the execution extension for OPSGROUP agents)
 5. mission-specific setup such as `lua/MooseBridgeMissionExample.lua`
 
 The minimal example contains:
@@ -243,6 +244,8 @@ Situation pictures and GeoJSON export:
 tactical = await bridge.refresh_tactical_picture("blue", "INTEL:BlueIntel")
 tactical_geojson = tactical.to_geojson()
 
+await bridge.add_intel_agent("INTEL:BlueIntel", "GROUP:Blue EWR")
+
 global_picture = await bridge.refresh_global_picture()
 global_geojson = global_picture.to_geojson()
 ```
@@ -250,6 +253,8 @@ global_geojson = global_picture.to_geojson()
 `TacticalPicture` uses INTEL contacts and clusters for enemy knowledge.
 `GlobalPicture` uses global truth snapshots and is intended for admin/debug
 views or neutral analysis tools.
+INTEL diagnostics show agents as `alive/total`; both values come directly from
+the MOOSE `INTEL.detectionset` (`SET_GROUP`).
 
 MOOSE-like AUFTRAG helper objects:
 

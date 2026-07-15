@@ -53,14 +53,6 @@ local function bridge_intel_velocity(value)
   }
 end
 
-local function bridge_intel_append_unique(list, seen, value)
-  if value == nil then return end
-  local key = tostring(value)
-  if seen[key] then return end
-  list[#list + 1] = key
-  seen[key] = true
-end
-
 function MOOSE_BRIDGE:_EnsureIntelRegistry()
   self.RegisteredIntels = self.RegisteredIntels or {}
   return self.RegisteredIntels
@@ -106,45 +98,52 @@ function MOOSE_BRIDGE:_IntelContactTargetObjectId(contact)
   return "GROUP:" .. tostring(name)
 end
 
-function MOOSE_BRIDGE:_CollectIntelAgentIds(intel)
+function MOOSE_BRIDGE:_IntelAgentCounts(intel)
+  local detectionset = intel and intel.detectionset or nil
+  if not detectionset then return 0, 0 end
+  return detectionset:Count(), detectionset:CountAlive()
+end
+
+function MOOSE_BRIDGE:_IntelAgentSnapshot(intel)
   local result = {}
-  local seen = {}
-  if not intel then return result end
+  local detectionset = intel and intel.detectionset or nil
+  if not detectionset then return result, 0, 0 end
 
-  local candidate_sets = {
-    self:_SafeCall(intel, "GetDetectionSet"),
-    self:_SafeCall(intel, "GetDetectionSetGroup"),
-    intel.DetectionSet,
-    intel.detectionset,
-    intel.DetectionSET,
-    intel.DetectionSetGroup,
-    intel.DetectionSetGroups,
-    intel.SetGroup,
-  }
-
-  for _, set_group in pairs(candidate_sets) do
-    if type(set_group) == "table" then
-      local for_each = set_group.ForEachGroup or set_group.ForEach
-      if for_each then
-        pcall(function()
-          for_each(set_group, function(group)
-            local name = bridge_intel_object_name(group)
-            if name then bridge_intel_append_unique(result, seen, "GROUP:" .. tostring(name)) end
-          end)
-        end)
-      end
-
-      if type(set_group.Set) == "table" then
-        for key, group in pairs(set_group.Set) do
-          local name = bridge_intel_object_name(group)
-          if not name and type(key) == "string" then name = key end
-          if name then bridge_intel_append_unique(result, seen, "GROUP:" .. tostring(name)) end
-        end
-      end
-    end
+  for name, _ in pairs(detectionset.Set or {}) do
+    result[#result + 1] = "GROUP:" .. tostring(name)
   end
 
-  return result
+  local agent_count, alive_agent_count = self:_IntelAgentCounts(intel)
+  return result, agent_count, alive_agent_count
+end
+
+function MOOSE_BRIDGE:_ResolveRegisteredIntel(intel_id)
+  local name = type(intel_id) == "string" and string.match(intel_id, "^INTEL:(.+)$") or nil
+  if not name then return nil, nil, "Invalid INTEL object id: " .. tostring(intel_id) end
+  local intel = self:_EnsureIntelRegistry()[name]
+  if not intel then return nil, nil, "INTEL not registered: " .. name end
+  return intel, name, nil
+end
+
+function MOOSE_BRIDGE:_ResolveIntelAgent(agent_id)
+  local prefix, name
+  if type(agent_id) == "string" then prefix, name = string.match(agent_id, "^([^:]+):(.+)$") end
+  if not prefix or not name then return nil, "Invalid agent object id: " .. tostring(agent_id) end
+
+  if prefix == "GROUP" then
+    local group = GROUP and GROUP.FindByName and GROUP:FindByName(name) or nil
+    if not group then return nil, "GROUP not found: " .. name end
+    return group, nil
+  end
+
+  if prefix == "OPSGROUP" then
+    if not self._ResolveOpsGroupById then
+      return nil, "OPSGROUP agents require MooseBridgeAuftragExecutionExtension.lua"
+    end
+    return self:_ResolveOpsGroupById(agent_id)
+  end
+
+  return nil, "Agent must be GROUP:<name> or OPSGROUP:<name>"
 end
 
 function MOOSE_BRIDGE:_BuildIntelContactSnapshotItem(intel_name, contact, source)
@@ -216,7 +215,7 @@ end
 function MOOSE_BRIDGE:_BuildIntelSnapshotItem(intel_name, intel, source)
   local contacts = self:_SafeCall(intel, "GetContactTable") or intel.Contacts or {}
   local clusters = self:_SafeCall(intel, "GetClusterTable") or intel.Clusters or {}
-  local agent_ids = self:_CollectIntelAgentIds(intel)
+  local agent_ids, agent_count, alive_agent_count = self:_IntelAgentSnapshot(intel)
   return {
     object_id=self:_IntelObjectId(intel_name),
     dcs_name=tostring(intel_name),
@@ -237,7 +236,8 @@ function MOOSE_BRIDGE:_BuildIntelSnapshotItem(intel_name, intel, source)
     doppler_radar=intel.DopplerRadar and true or false,
     contact_count=type(contacts) == "table" and #contacts or 0,
     cluster_count=type(clusters) == "table" and #clusters or 0,
-    agent_count=#agent_ids,
+    agent_count=agent_count,
+    alive_agent_count=alive_agent_count,
     agent_ids=agent_ids,
   }
 end
@@ -346,6 +346,24 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     local intels = self:BuildIntelSnapshot()
     self:SendSnapshot("intels", {intels=intels})
     return {kind="intels", count=#intels}
+  end)
+
+  self:RegisterCommand("intel.add_agent", function(cmd)
+    local params = self:_CommandParams(cmd)
+    local intel, intel_name, intel_err = self:_ResolveRegisteredIntel(params.intel_id)
+    if not intel then error(intel_err) end
+    local agent, agent_err = self:_ResolveIntelAgent(params.agent_id)
+    if not agent then error(agent_err) end
+
+    intel:AddAgent(agent)
+    local agent_count, alive_agent_count = self:_IntelAgentCounts(intel)
+    return {
+      action="intel.add_agent",
+      intel_id=self:_IntelObjectId(intel_name),
+      agent_id=params.agent_id,
+      agent_count=agent_count,
+      alive_agent_count=alive_agent_count,
+    }
   end)
 
   self:RegisterCommand("snapshot.intel_contacts", function(cmd)

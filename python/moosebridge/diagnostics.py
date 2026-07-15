@@ -143,10 +143,12 @@ def format_intel_summary(intel: Intel, contacts: list[IntelContact], clusters: l
         f"coalition={_text(intel.coalition)} "
         f"alias={_text(intel.alias)}"
     )
+    agent_count = intel.agent_count if intel.agent_count is not None else len(intel.agent_ids)
+    agents = f"{intel.alive_agent_count}/{agent_count}" if intel.alive_agent_count is not None else str(agent_count)
     details = (
         f"  contacts={len(contacts)} "
         f"clusters={len(clusters)} "
-        f"agents={_text(intel.agent_count if intel.agent_count is not None else len(intel.agent_ids))} "
+        f"agents={agents} "
         f"cluster_analysis={intel.cluster_analysis} "
         f"radius_m={_text(intel.cluster_radius_m)}"
     )
