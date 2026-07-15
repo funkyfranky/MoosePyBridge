@@ -47,6 +47,37 @@ def test_new_snapshot_helpers_use_registered_lua_actions() -> None:
     assert [command.action for command in sent] == ["snapshot.cohorts", "snapshot.legions"]
 
 
+def test_dcs_connection_reset_during_close_is_handled() -> None:
+    class EmptyReader:
+        async def readline(self) -> bytes:
+            return b""
+
+    class ResettingWriter:
+        closed = False
+
+        def get_extra_info(self, name: str) -> object:
+            return ("127.0.0.1", 51000) if name == "peername" else None
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            raise ConnectionResetError(64, "The specified network name is no longer available")
+
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        reader = EmptyReader()
+        writer = ResettingWriter()
+
+        await server._handle_dcs_client(reader, writer)  # type: ignore[arg-type]
+
+        assert writer.closed is True
+        assert server._writer is None
+        assert server.state.connected is False
+
+    asyncio.run(scenario())
+
+
 def test_pending_command_fails_when_dcs_disconnects() -> None:
     async def scenario() -> None:
         server = MooseBridgeServer(host="127.0.0.1", port=0)

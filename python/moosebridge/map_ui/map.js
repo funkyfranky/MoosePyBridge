@@ -6,7 +6,14 @@
     { key: "groups", label: "Groups", color: "#245f96", icon: "boxes", size: 1.05, default: true },
     { key: "units", label: "Units", color: "#37a078", icon: "truck", size: 0.82, default: true },
     { key: "statics", label: "Static objects", color: "#6d746f", icon: "warehouse", size: 0.82, default: true },
-    { key: "airbases", label: "Airbases", color: "#137f87", icon: "plane-takeoff", size: 0.8, default: true },
+    {
+      key: "airbases", label: "Airbases", color: "#137f87", icon: "plane-takeoff", size: 0.8, default: true,
+      children: [
+        { key: "airdrome", label: "Airdromes", icon: "plane-takeoff", default: true },
+        { key: "heliport", label: "Heliports", icon: "fan", default: true },
+        { key: "ship", label: "Ships", icon: "ship", default: true },
+      ],
+    },
     { key: "zones", label: "Zones", color: "#c19424", icon: "map-pin", default: false },
     { key: "opszones", label: "OPS zones", color: "#8b5ea7", icon: "shield", default: true },
     { key: "opsgroups", label: "OPS groups", color: "#1e8171", icon: "badge", size: 1.1, default: true },
@@ -16,6 +23,25 @@
     { key: "missions", label: "Missions", color: "#ad3c76", icon: "target", size: 1.05, default: true },
   ];
   const coalitionColors = { blue: "#2776b9", red: "#c44343", neutral: "#858d88", unknown: "#59635e" };
+  const filterSpecs = [
+    {
+      key: "coalition", label: "Coalition",
+      options: [
+        { key: "blue", label: "Blue", icon: "flag", color: "#2776b9" },
+        { key: "red", label: "Red", icon: "flag", color: "#c44343" },
+        { key: "neutral", label: "Neutral", icon: "flag", color: "#858d88" },
+        { key: "unassigned", label: "Unassigned", icon: "circle-help", color: "#65716b" },
+      ],
+    },
+    {
+      key: "status", label: "Status",
+      options: [
+        { key: "alive", label: "Alive", icon: "activity", color: "#25865f" },
+        { key: "dead", label: "Dead", icon: "circle-off", color: "#a65353" },
+        { key: "unknown", label: "No status", icon: "circle-help", color: "#65716b" },
+      ],
+    },
+  ];
   const symbolDefinitions = {
     "unit-airplane": { icon: "Plane", frame: "circle" },
     "unit-helicopter": { icon: "Fan", frame: "circle" },
@@ -37,6 +63,7 @@
     "mission": { icon: "Target", frame: "diamond" },
   };
   const mapLayerIds = new Map();
+  const mapLayerBaseFilters = new Map();
   let latestPicture = EMPTY;
   let fitted = false;
   let reconnectTimer = null;
@@ -72,6 +99,9 @@
     featureCount: document.getElementById("feature-count"),
     layerPanel: document.getElementById("layer-panel"),
     layerControls: document.getElementById("layer-controls"),
+    filterControls: document.getElementById("filter-controls"),
+    layersTab: document.getElementById("layers-tab"),
+    filtersTab: document.getElementById("filters-tab"),
     layersToggle: document.getElementById("layers-toggle"),
     detailPanel: document.getElementById("detail-panel"),
     detailType: document.getElementById("detail-type"),
@@ -93,15 +123,34 @@
     return "ground";
   }
 
+  function airbaseCategory(properties) {
+    const category = String(properties.category || "").toLowerCase();
+    if (category === "helipad" || category === "heliport") return "heliport";
+    if (category === "ship") return "ship";
+    return "airdrome";
+  }
+
+  function coalitionFilterCategory(properties) {
+    const coalition = String(properties.coalition || "").toLowerCase();
+    return ["blue", "red", "neutral"].includes(coalition) ? coalition : "unassigned";
+  }
+
+  function statusFilterCategory(properties) {
+    if (properties.alive === true) return "alive";
+    if (properties.alive === false) return "dead";
+    return "unknown";
+  }
+
   function mapSymbol(properties) {
     const layer = properties.layer;
     let definition = "static";
     if (layer === "groups" || layer === "opsgroups") definition = `group-${semanticCategory(properties)}`;
     else if (layer === "units") definition = `unit-${semanticCategory(properties)}`;
     else if (layer === "airbases") {
-      definition = properties.category === "HELIPAD"
+      const category = airbaseCategory(properties);
+      definition = category === "heliport"
         ? "airbase-helipad"
-        : properties.category === "SHIP"
+        : category === "ship"
           ? "airbase-ship"
           : "airbase-airdrome";
     }
@@ -119,7 +168,13 @@
       ...picture,
       features: picture.features.map((feature) => ({
         ...feature,
-        properties: { ...feature.properties, map_symbol: mapSymbol(feature.properties || {}) },
+        properties: {
+          ...feature.properties,
+          map_symbol: mapSymbol(feature.properties || {}),
+          map_category: feature.properties?.layer === "airbases" ? airbaseCategory(feature.properties || {}) : undefined,
+          map_coalition: coalitionFilterCategory(feature.properties || {}),
+          map_status: statusFilterCategory(feature.properties || {}),
+        },
       })),
     };
   }
@@ -196,6 +251,7 @@
     const existing = mapLayerIds.get(spec.key) || [];
     const id = `${spec.key}-${definition.type}-${existing.length}`;
     map.addLayer({ id, source: definition.source || "picture", ...definition });
+    mapLayerBaseFilters.set(id, definition.filter);
     existing.push(id);
     mapLayerIds.set(spec.key, existing);
   }
@@ -244,11 +300,14 @@
       filter: ["==", ["get", "layer"], "mission_links"],
       paint: { "line-color": "#ad3c76", "line-width": 2, "line-opacity": 0.7 },
     });
+    mapLayerBaseFilters.set("mission-links-line", ["==", ["get", "layer"], "mission_links"]);
     mapLayerIds.get("missions").push("mission-links-line");
     applyLayerVisibility();
   }
 
-  function circlePolygon(feature) {
+  function zoneAreaFeature(feature) {
+    if (feature.geometry?.type === "Polygon") return feature;
+    if (feature.geometry?.type !== "Point") return null;
     const [lon, lat] = feature.geometry.coordinates;
     const radius = Number(feature.properties.radius_m || 0);
     if (!(radius > 0)) return null;
@@ -273,7 +332,7 @@
       type: "FeatureCollection",
       features: picture.features
         .filter((feature) => ["zones", "opszones"].includes(feature.properties?.layer))
-        .map(circlePolygon)
+        .map(zoneAreaFeature)
         .filter(Boolean),
     };
   }
@@ -333,32 +392,156 @@
     latestPicture.features.forEach((feature) => {
       const key = feature.properties?.layer;
       counts.set(key, (counts.get(key) || 0) + 1);
+      if (feature.properties?.map_category) {
+        const categoryKey = `${key}:${feature.properties.map_category}`;
+        counts.set(categoryKey, (counts.get(categoryKey) || 0) + 1);
+      }
+      counts.set(`coalition:${feature.properties?.map_coalition}`, (counts.get(`coalition:${feature.properties?.map_coalition}`) || 0) + 1);
+      counts.set(`status:${feature.properties?.map_status}`, (counts.get(`status:${feature.properties?.map_status}`) || 0) + 1);
     });
     elements.featureCount.textContent = `${latestPicture.features.length} objects`;
     document.querySelectorAll("[data-layer-count]").forEach((node) => {
       node.textContent = String(counts.get(node.dataset.layerCount) || 0);
     });
+    document.querySelectorAll("[data-layer-category-count]").forEach((node) => {
+      node.textContent = String(counts.get(`${node.dataset.layerCategoryCount}:${node.dataset.category}`) || 0);
+    });
+    document.querySelectorAll("[data-filter-count]").forEach((node) => {
+      node.textContent = String(counts.get(`${node.dataset.filterCount}:${node.dataset.filterValue}`) || 0);
+    });
+  }
+
+  function layerControlMarkup(spec, attributes = "") {
+    return `
+      <input type="checkbox" ${attributes} ${spec.default ? "checked" : ""}>
+      <i data-lucide="${spec.icon}" class="layer-symbol" style="--swatch:${spec.color || "#65716b"}"></i>
+      <span class="layer-name">${spec.label}</span>`;
   }
 
   function buildLayerControls() {
     for (const spec of layerSpecs) {
+      if (spec.children) {
+        const group = document.createElement("div");
+        group.className = "layer-group";
+        const header = document.createElement("div");
+        header.className = "layer-group-header";
+        const expand = document.createElement("button");
+        expand.className = "layer-expand icon-button";
+        expand.type = "button";
+        expand.title = `Collapse ${spec.label}`;
+        expand.setAttribute("aria-label", `Collapse ${spec.label}`);
+        expand.setAttribute("aria-expanded", "true");
+        expand.innerHTML = '<i data-lucide="chevron-down"></i>';
+        const parent = document.createElement("label");
+        parent.className = "layer-control layer-control-parent";
+        parent.innerHTML = `${layerControlMarkup(spec, `data-layer="${spec.key}"`)}<span class="layer-count" data-layer-count="${spec.key}">0</span>`;
+        header.append(expand, parent);
+
+        const children = document.createElement("div");
+        children.className = "layer-children";
+        for (const child of spec.children) {
+          const label = document.createElement("label");
+          label.className = "layer-control layer-control-child";
+          label.innerHTML = `${layerControlMarkup(child, `data-parent-layer="${spec.key}" data-category="${child.key}"`)}<span class="layer-count" data-layer-category-count="${spec.key}" data-category="${child.key}">0</span>`;
+          children.appendChild(label);
+        }
+        group.append(header, children);
+        elements.layerControls.appendChild(group);
+        continue;
+      }
       const label = document.createElement("label");
       label.className = "layer-control";
-      label.innerHTML = `
-        <input type="checkbox" data-layer="${spec.key}" ${spec.default ? "checked" : ""}>
-        <i data-lucide="${spec.icon}" class="layer-symbol" style="--swatch:${spec.color}"></i>
-        <span class="layer-name">${spec.label}</span>
-        <span class="layer-count" data-layer-count="${spec.key}">0</span>`;
+      label.innerHTML = `${layerControlMarkup(spec, `data-layer="${spec.key}"`)}<span class="layer-count" data-layer-count="${spec.key}">0</span>`;
       elements.layerControls.appendChild(label);
     }
-    elements.layerControls.addEventListener("change", applyLayerVisibility);
+    elements.layerControls.addEventListener("change", (event) => {
+      const target = event.target;
+      if (target.matches("[data-layer]")) {
+        const spec = layerSpecs.find((candidate) => candidate.key === target.dataset.layer);
+        if (spec?.children) {
+          document.querySelectorAll(`[data-parent-layer="${spec.key}"]`).forEach((child) => { child.checked = target.checked; });
+        }
+      } else if (target.matches("[data-parent-layer]")) {
+        updateParentLayerControl(target.dataset.parentLayer);
+      }
+      applyLayerVisibility();
+    });
+    elements.layerControls.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-layer-expand], .layer-expand");
+      if (!button) return;
+      const children = button.closest(".layer-group").querySelector(".layer-children");
+      children.hidden = !children.hidden;
+      button.setAttribute("aria-expanded", String(!children.hidden));
+      const label = button.closest(".layer-group").querySelector("[data-layer]").dataset.layer;
+      button.title = `${children.hidden ? "Expand" : "Collapse"} ${layerSpecs.find((spec) => spec.key === label).label}`;
+      button.setAttribute("aria-label", button.title);
+    });
+  }
+
+  function updateParentLayerControl(layerKey) {
+    const parent = document.querySelector(`[data-layer="${layerKey}"]`);
+    const children = [...document.querySelectorAll(`[data-parent-layer="${layerKey}"]`)];
+    if (!parent || !children.length) return;
+    const selected = children.filter((child) => child.checked).length;
+    parent.checked = selected > 0;
+    parent.indeterminate = selected > 0 && selected < children.length;
+  }
+
+  function buildFilterControls() {
+    for (const spec of filterSpecs) {
+      const section = document.createElement("section");
+      section.className = "filter-section";
+      const heading = document.createElement("div");
+      heading.className = "filter-heading";
+      heading.textContent = spec.label;
+      if (spec.key === "coalition") {
+        const reset = document.createElement("button");
+        reset.className = "filter-reset icon-button";
+        reset.type = "button";
+        reset.title = "Reset filters";
+        reset.setAttribute("aria-label", "Reset filters");
+        reset.innerHTML = '<i data-lucide="rotate-ccw"></i>';
+        heading.appendChild(reset);
+      }
+      section.appendChild(heading);
+      for (const option of spec.options) {
+        const label = document.createElement("label");
+        label.className = "layer-control filter-control";
+        label.innerHTML = `
+          <input type="checkbox" data-filter="${spec.key}" data-filter-value="${option.key}" checked>
+          <i data-lucide="${option.icon}" class="layer-symbol" style="--swatch:${option.color}"></i>
+          <span class="layer-name">${option.label}</span>
+          <span class="layer-count" data-filter-count="${spec.key}" data-filter-value="${option.key}">0</span>`;
+        section.appendChild(label);
+      }
+      elements.filterControls.appendChild(section);
+    }
+    elements.filterControls.addEventListener("change", applyLayerVisibility);
+    elements.filterControls.addEventListener("click", (event) => {
+      if (!event.target.closest(".filter-reset")) return;
+      elements.filterControls.querySelectorAll("[data-filter]").forEach((checkbox) => { checkbox.checked = true; });
+      applyLayerVisibility();
+    });
+  }
+
+  function selectedFilterValues(key) {
+    return [...document.querySelectorAll(`[data-filter="${key}"]:checked`)].map((checkbox) => checkbox.dataset.filterValue);
   }
 
   function applyLayerVisibility() {
+    const coalitionFilter = ["in", ["get", "map_coalition"], ["literal", selectedFilterValues("coalition")]];
+    const statusFilter = ["in", ["get", "map_status"], ["literal", selectedFilterValues("status")]];
     document.querySelectorAll("[data-layer]").forEach((checkbox) => {
       const visibility = checkbox.checked ? "visible" : "none";
       for (const id of mapLayerIds.get(checkbox.dataset.layer) || []) {
-        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visibility);
+        if (!map.getLayer(id)) continue;
+        map.setLayoutProperty(id, "visibility", visibility);
+        const filters = [mapLayerBaseFilters.get(id), coalitionFilter, statusFilter].filter(Boolean);
+        if (checkbox.dataset.layer === "airbases") {
+          const categories = [...document.querySelectorAll('[data-parent-layer="airbases"]:checked')].map((child) => child.dataset.category);
+          filters.push(["in", ["get", "map_category"], ["literal", categories]]);
+        }
+        map.setFilter(id, ["all", ...filters]);
       }
     });
   }
@@ -376,7 +559,7 @@
     unit_count: "Units", alive_unit_count: "Units alive", mission_type: "Mission type", status: "Status", target: "Target",
     target_id: "Target", legion_id: "Legion", opsgroup_id: "OPS group", intel_id: "INTEL source", threat_level: "Threat level",
     threat_level_max: "Max threat", threat_level_sum: "Total threat", threat_level_avg: "Average threat", radius_m: "Radius",
-    object_id: "Object ID", airbase_id: "Airbase ID", dcs_type: "DCS type", dcs_category_name: "DCS category", display_name: "Display name",
+    object_id: "Object ID", name: "Name", type: "Type", airbase_id: "Airbase ID", dcs_type: "DCS type", dcs_category_name: "DCS category", display_name: "Display name",
     group_name: "Group", source: "Source", recce_name: "Detected by", speed: "Speed", size: "Contacts",
   };
 
@@ -453,7 +636,18 @@
     }
     addDetailSection("Operational", "activity", operational);
 
-    addDetailSection("Identity and relationships", "fingerprint", detailRows(properties, ["object_id", "airbase_id", "display_name", "dcs_type", "dcs_category_name", "group_name", "legion_id", "opsgroup_id", "intel_id", "recce_name", "source"], consumed));
+    if (properties.layer === "airbases") {
+      consumed.add("airbase_id");
+      consumed.add("source");
+      addDetailSection("Airbase", "plane-takeoff", [
+        [fieldLabels.object_id, readableValue(properties.object_id)],
+        [fieldLabels.name, readableValue(properties.name)],
+        [fieldLabels.category, readableValue(properties.category)],
+        [fieldLabels.type, readableValue(properties.type)],
+      ]);
+    } else {
+      addDetailSection("Identity and relationships", "fingerprint", detailRows(properties, ["object_id", "display_name", "dcs_type", "dcs_category_name", "group_name", "legion_id", "opsgroup_id", "intel_id", "recce_name", "source"], consumed));
+    }
 
     const position = [];
     if (Number.isFinite(Number(properties.latitude)) && Number.isFinite(Number(properties.longitude))) {
@@ -525,6 +719,18 @@
   }
 
   buildLayerControls();
+  buildFilterControls();
+  function showSettingsTab(tab) {
+    const showLayers = tab === "layers";
+    elements.layerControls.hidden = !showLayers;
+    elements.filterControls.hidden = showLayers;
+    elements.layersTab.classList.toggle("is-active", showLayers);
+    elements.filtersTab.classList.toggle("is-active", !showLayers);
+    elements.layersTab.setAttribute("aria-selected", String(showLayers));
+    elements.filtersTab.setAttribute("aria-selected", String(!showLayers));
+  }
+  elements.layersTab.addEventListener("click", () => showSettingsTab("layers"));
+  elements.filtersTab.addEventListener("click", () => showSettingsTab("filters"));
   elements.layersToggle.addEventListener("click", () => {
     const hidden = !elements.layerPanel.hidden;
     if (!hidden && window.innerWidth <= 720) elements.detailPanel.hidden = true;

@@ -19,6 +19,7 @@ from .clock import DcsTime
 from .protocol import BridgeCommand
 from .server import DcsBridgeConnectionError, MooseBridgeServer
 from .state import MooseBridgeState
+from .streams import close_stream_writer
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_CONTROL_PORT = 51001
@@ -182,9 +183,10 @@ class MooseBridgeControlServer:
                 response = await self._handle_line(line.decode("utf-8").strip())
                 writer.write((json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
                 await writer.drain()
+        except (ConnectionError, OSError):
+            LOGGER.debug("Control client connection was reset", exc_info=True)
         finally:
-            writer.close()
-            await writer.wait_closed()
+            await close_stream_writer(writer, logger=LOGGER, context="control client connection")
 
     async def _handle_line(self, line: str) -> dict[str, Any]:
         """Handle one control JSONL request.
@@ -320,8 +322,7 @@ class MooseBridgeControlClient:
                 apply_state_payload(self.state, result)
             return result
         finally:
-            writer.close()
-            await writer.wait_closed()
+            await close_stream_writer(writer, logger=LOGGER, context="control server connection")
 
     async def status(self, timeout: float = 5.0) -> dict[str, Any]:
         """Return daemon status.

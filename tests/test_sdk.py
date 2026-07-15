@@ -658,6 +658,35 @@ def test_sdk_build_global_picture_exports_truth_snapshots_to_geojson() -> None:
     assert "validation: errors=0 warnings=0" in format_global_picture_status(picture)
 
 
+def test_global_picture_exports_polygon_zone_geometry() -> None:
+    picture = GlobalPicture(
+        zones=[
+            {
+                "object_id": "ZONE:Polygon",
+                "dcs_name": "Polygon",
+                "object_type": "ZONE",
+                "category": "ZONE",
+                "shape": "polygon",
+                "vertices": [
+                    {"x": 100, "z": 200, "latitude": 54.0, "longitude": 12.0},
+                    {"x": 200, "z": 200, "latitude": 54.0, "longitude": 12.1},
+                    {"x": 150, "z": 300, "latitude": 54.1, "longitude": 12.05},
+                ],
+            }
+        ]
+    )
+
+    feature = picture.to_geojson()["features"][0]
+
+    assert feature["geometry"] == {
+        "type": "Polygon",
+        "coordinates": [[[12.0, 54.0], [12.1, 54.0], [12.05, 54.1], [12.0, 54.0]]],
+    }
+    assert feature["properties"]["shape"] == "polygon"
+    assert "radius_m" not in feature["properties"]
+    assert "vertices" not in feature["properties"]
+
+
 def test_global_picture_validator_reports_broken_truth_references() -> None:
     picture = GlobalPicture(
         groups=[

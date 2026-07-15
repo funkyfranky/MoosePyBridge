@@ -62,6 +62,25 @@ def _line_geometry(points: Iterable[tuple[float | None, float | None]]) -> dict[
     return {"type": "LineString", "coordinates": coordinates}
 
 
+def _polygon_geometry(vertices: Any) -> dict[str, Any] | None:
+    """Return a closed WGS84 GeoJSON polygon from snapshot vertices."""
+
+    if not isinstance(vertices, list):
+        return None
+    ring = [
+        [longitude, latitude]
+        for vertex in vertices
+        if isinstance(vertex, dict)
+        and (longitude := _as_float(vertex.get("longitude"))) is not None
+        and (latitude := _as_float(vertex.get("latitude"))) is not None
+    ]
+    if len(ring) < 3:
+        return None
+    if ring[0] != ring[-1]:
+        ring.append(ring[0])
+    return {"type": "Polygon", "coordinates": [ring]}
+
+
 def _feature(
     *,
     geometry: dict[str, Any] | None,
@@ -118,6 +137,28 @@ def _raw_point_feature(item: dict[str, Any], layer: str, properties: dict[str, A
     return _feature(
         geometry=_point_geometry(_as_float(item.get("longitude")), _as_float(item.get("latitude"))),
         layer=layer,
+        object_id=str(item.get("object_id") or ""),
+        name=str(item.get("dcs_name") or item.get("name") or "") or None,
+        object_type=str(item.get("object_type") or "") or None,
+        category=str(item.get("category") or "") or None,
+        properties=feature_properties,
+    )
+
+
+def _raw_zone_feature(item: dict[str, Any]) -> GeoJsonFeature | None:
+    """Build a circle center or native polygon feature from a zone snapshot."""
+
+    feature_properties = dict(item)
+    vertices = feature_properties.pop("vertices", None)
+    geometry = _polygon_geometry(vertices)
+    if geometry is None:
+        geometry = _point_geometry(_as_float(item.get("longitude")), _as_float(item.get("latitude")))
+        feature_properties["radius_m"] = item.get("radius")
+    else:
+        feature_properties.pop("radius", None)
+    return _feature(
+        geometry=geometry,
+        layer="zones",
         object_id=str(item.get("object_id") or ""),
         name=str(item.get("dcs_name") or item.get("name") or "") or None,
         object_type=str(item.get("object_type") or "") or None,
@@ -494,7 +535,7 @@ class GlobalPicture:
         features.extend(_raw_point_feature(item, "units") for item in self.units)
         features.extend(_raw_point_feature(item, "statics") for item in self.statics)
         features.extend(_raw_point_feature(item, "airbases") for item in self.airbases)
-        features.extend(_raw_point_feature(item, "zones", {"radius_m": item.get("radius")}) for item in self.zones)
+        features.extend(_raw_zone_feature(item) for item in self.zones)
         features.extend(
             _point_feature(
                 item,

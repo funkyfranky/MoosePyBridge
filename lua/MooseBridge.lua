@@ -266,28 +266,14 @@ end
 function MOOSE_BRIDGE:_AirbaseCategoryToName(value)
   if value == nil then return nil end
   if Airbase and Airbase.Category then
-    if value == Airbase.Category.AIRDROME then return "AIRDROME" end
-    if value == Airbase.Category.HELIPAD then return "HELIPAD" end
-    if value == Airbase.Category.SHIP then return "SHIP" end
+    if value == Airbase.Category.AIRDROME then return "Airdrome" end
+    if value == Airbase.Category.HELIPAD then return "Heliport" end
+    if value == Airbase.Category.SHIP then return "Ship" end
   end
-  if value == 0 then return "AIRDROME" end
-  if value == 1 then return "HELIPAD" end
-  if value == 2 then return "SHIP" end
-  return "UNKNOWN_" .. tostring(value)
-end
-
-function MOOSE_BRIDGE:_ObjectCategoryToName(value)
-  if value == nil then return nil end
-  if Object and Object.Category then
-    if value == Object.Category.UNIT then return "UNIT" end
-    if value == Object.Category.WEAPON then return "WEAPON" end
-    if value == Object.Category.STATIC then return "STATIC" end
-    if value == Object.Category.BASE then return "BASE" end
-    if value == Object.Category.SCENERY then return "SCENERY" end
-    if value == Object.Category.CARGO then return "CARGO" end
-  end
-  if value == 4 then return "BASE" end
-  return tostring(value)
+  if value == 0 then return "Airdrome" end
+  if value == 1 then return "Heliport" end
+  if value == 2 then return "Ship" end
+  return "Unknown " .. tostring(value)
 end
 
 function MOOSE_BRIDGE:_BoolOrFalse(value)
@@ -747,13 +733,10 @@ end
 function MOOSE_BRIDGE:_BuildAirbaseSnapshotItem(airbase_name, airbase)
   local name = self:_SafeCall(airbase, "GetName") or airbase.AirbaseName or airbase_name
   local coalition_value = self:_SafeCall(airbase, "GetCoalition")
-  local object_category = self:_SafeCall(airbase, "GetCategory")
   local airbase_category = airbase.category
-  local descriptors = airbase.descriptors
-  local dcs_type = self:_SafeCall(airbase, "GetTypeName") or (type(descriptors) == "table" and descriptors.typeName or nil)
-  local display_name = type(descriptors) == "table" and descriptors.displayName or nil
+  local object_category_name = airbase.objectcategoryName
   local point = self:_PointFromMooseObject(airbase)
-  local item = {object_id="AIRBASE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="AIRBASE",category=self:_AirbaseCategoryToName(airbase_category) or "AIRBASE",source="database.AIRBASES",airbase_id=self:_NumberOrNil(airbase.AirbaseID),dcs_category=object_category,dcs_category_name=self:_ObjectCategoryToName(object_category),coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,display_name=display_name and safe_tostring(display_name) or nil}
+  local item = {object_id="AIRBASE:"..safe_tostring(name),dcs_name=safe_tostring(name),name=safe_tostring(name),object_type="AIRBASE",category=self:_AirbaseCategoryToName(airbase_category) or "Airbase",type=object_category_name and safe_tostring(object_category_name) or nil,source="database.AIRBASES",airbase_id=self:_NumberOrNil(airbase.AirbaseID),coalition=self:_CoalitionToName(coalition_value)}
   if point then self:_AddPointFields(item, point) end
   return item
 end
@@ -784,6 +767,22 @@ function MOOSE_BRIDGE:_ZoneName(zone_name, zone)
   return name or zone_name
 end
 
+function MOOSE_BRIDGE:_ZonePolygonVertices(zone)
+  local vec2_vertices = self:_SafeCall(zone, "GetVerticiesVec2")
+  if type(vec2_vertices) ~= "table" or #vec2_vertices < 3 then return nil end
+  local vertices = {}
+  for _, vec2 in ipairs(vec2_vertices) do
+    local x = self:_NumberOrNil(vec2 and vec2.x)
+    local z = self:_NumberOrNil(vec2 and vec2.y)
+    if x ~= nil and z ~= nil then
+      local coordinates = self:_CoordinatesForPoint({x=x, y=0, z=z}, "ll")
+      vertices[#vertices + 1] = {x=x, z=z, latitude=coordinates.latitude, longitude=coordinates.longitude}
+    end
+  end
+  if #vertices < 3 then return nil end
+  return vertices
+end
+
 function MOOSE_BRIDGE:_BuildZoneSnapshotItem(zone_name, zone, source)
   local name = self:_ZoneName(zone_name, zone)
   if not name then return nil end
@@ -793,8 +792,10 @@ function MOOSE_BRIDGE:_BuildZoneSnapshotItem(zone_name, zone, source)
       if trigger_zone.name == name then point = {x=trigger_zone.x, y=0, z=trigger_zone.y}; break end
     end
   end
-  local radius = self:_SafeCall(zone, "GetRadius") or zone.radius
-  local item = {object_id="ZONE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="ZONE",category="ZONE",source=source,radius=radius}
+  local vertices = self:_ZonePolygonVertices(zone)
+  local radius = nil
+  if not vertices then radius = self:_SafeCall(zone, "GetRadius") or zone.radius end
+  local item = {object_id="ZONE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="ZONE",category="ZONE",class_name=zone.ClassName,shape=vertices and "polygon" or "circle",source=source,radius=radius,vertices=vertices}
   if point then self:_AddPointFields(item, point) end
   return item
 end
@@ -820,7 +821,7 @@ function MOOSE_BRIDGE:BuildZoneSnapshot()
     for _, zone in pairs(env.mission.triggers.zones) do
       local object_id = "ZONE:" .. safe_tostring(zone.name)
       if not seen[object_id] then
-        local item = {object_id=object_id,dcs_name=safe_tostring(zone.name),object_type="ZONE",category="ZONE",source="mission.triggers.zones",x=zone.x,y=0,z=zone.y,radius=zone.radius}
+        local item = {object_id=object_id,dcs_name=safe_tostring(zone.name),object_type="ZONE",category="ZONE",shape="circle",source="mission.triggers.zones",x=zone.x,y=0,z=zone.y,radius=zone.radius}
         result[#result + 1] = item
         seen[object_id] = true
       end

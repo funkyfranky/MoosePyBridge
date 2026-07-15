@@ -75,12 +75,29 @@ button, input { font: inherit; letter-spacing: 0; }
 .detail-panel { right: 12px; width: min(410px, calc(100% - 24px)); max-height: calc(100% - 96px); overflow: auto; padding: 14px; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-weight: 600; }
 .muted { color: var(--muted); font-weight: 400; }
+.panel-tabs { display: grid; grid-template-columns: 1fr 1fr; margin: 0 0 8px; border-bottom: 1px solid var(--border); }
+.panel-tab { min-height: 32px; padding: 5px 8px; color: var(--muted); background: transparent; border: 0; border-bottom: 2px solid transparent; cursor: pointer; }
+.panel-tab:hover { color: var(--text); background: #ecefed; }
+.panel-tab.is-active { color: var(--text); border-bottom-color: var(--blue); font-weight: 600; }
+.layer-controls[hidden], .filter-controls[hidden] { display: none; }
 .layer-controls { display: grid; gap: 4px; }
 .layer-control { min-height: 30px; display: flex; align-items: center; gap: 9px; padding: 3px 4px; cursor: pointer; }
 .layer-control input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
 .layer-symbol { width: 16px; height: 16px; flex: 0 0 auto; color: var(--swatch); stroke-width: 2.2; }
 .layer-name { flex: 1; }
 .layer-count { color: var(--muted); font-variant-numeric: tabular-nums; }
+.layer-group-header { display: flex; align-items: center; }
+.layer-control-parent { flex: 1; min-width: 0; }
+.layer-expand { width: 24px; height: 30px; flex: 0 0 auto; padding: 5px; }
+.layer-expand svg { width: 14px; height: 14px; transition: transform 120ms ease; }
+.layer-expand[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.layer-children { margin-left: 24px; padding-left: 8px; border-left: 1px solid var(--border); }
+.layer-control-child { min-height: 28px; }
+.layer-control-child .layer-symbol { width: 14px; height: 14px; }
+.filter-controls { display: grid; gap: 12px; }
+.filter-section + .filter-section { padding-top: 10px; border-top: 1px solid var(--border); }
+.filter-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 4px 4px; color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.filter-reset { width: 26px; height: 26px; padding: 5px; }
 
 .eyebrow { color: var(--muted); font-size: 12px; font-weight: 500; text-transform: uppercase; }
 .detail-heading-text { min-width: 0; }

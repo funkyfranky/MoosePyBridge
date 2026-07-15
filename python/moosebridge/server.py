@@ -11,6 +11,7 @@ from typing import Any
 
 from .protocol import BridgeCommand, PendingCommand
 from .state import MooseBridgeState
+from .streams import close_stream_writer
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_PORT = 51000
@@ -123,10 +124,11 @@ class MooseBridgeServer:
 
         self._fail_pending(RuntimeError("MOOSE Bridge server stopped"))
 
-        if self._writer is not None:
-            self._writer.close()
-            await self._writer.wait_closed()
-            self._writer = None
+        writer = self._writer
+        self._writer = None
+        self.state.connected = False
+        if writer is not None:
+            await close_stream_writer(writer, logger=LOGGER, context="DCS connection")
 
         if self._server is not None:
             self._server.close()
@@ -161,6 +163,8 @@ class MooseBridgeServer:
                 if not line:
                     break
                 await self._handle_line(line.decode("utf-8").strip())
+        except (ConnectionError, OSError):
+            LOGGER.debug("DCS connection from %s was reset", peer, exc_info=True)
         finally:
             if self._writer is writer:
                 LOGGER.warning("DCS disconnected from %s", peer)
@@ -169,8 +173,7 @@ class MooseBridgeServer:
                 self.state.connected = False
             else:
                 LOGGER.info("Superseded DCS connection closed from %s", peer)
-            writer.close()
-            await writer.wait_closed()
+            await close_stream_writer(writer, logger=LOGGER, context=f"DCS connection from {peer}")
 
     async def _handle_line(self, line: str) -> None:
         """Parse and process a single JSONL message from DCS.
