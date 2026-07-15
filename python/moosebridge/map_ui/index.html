@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,41 +9,45 @@
 </head>
 <body>
   <main class="app-shell">
-    <div id="map" aria-label="Globales DCS-Lagebild"></div>
+    <div id="map" aria-label="Global DCS situation picture"></div>
 
     <header class="topbar">
       <div class="brand">MooseBridge</div>
       <div class="status-line">
         <span id="connection-dot" class="status-dot is-offline" aria-hidden="true"></span>
-        <span id="connection-text">Verbindung wird hergestellt</span>
+        <span id="connection-text">Connecting</span>
         <span class="separator" aria-hidden="true"></span>
         <span id="dcs-clock">DCS --</span>
         <span id="mission-clock">Mission --</span>
       </div>
-      <button id="layers-toggle" class="icon-button" type="button" title="Layer ein- oder ausblenden" aria-controls="layer-panel" aria-expanded="true">
+      <button id="layers-toggle" class="icon-button" type="button" title="Toggle map layers" aria-controls="layer-panel" aria-expanded="true">
         <i data-lucide="layers-3"></i>
       </button>
     </header>
 
-    <aside id="layer-panel" class="layer-panel" aria-label="Kartenlayer">
+    <aside id="layer-panel" class="layer-panel" aria-label="Map layers">
       <div class="panel-heading">
         <span>Layer</span>
-        <span id="feature-count" class="muted">0 Objekte</span>
+        <span id="feature-count" class="muted">0 objects</span>
       </div>
       <div id="layer-controls" class="layer-controls"></div>
     </aside>
 
-    <aside id="detail-panel" class="detail-panel" aria-label="Objektdetails" hidden>
+    <aside id="detail-panel" class="detail-panel" aria-label="Object details" hidden>
       <div class="panel-heading">
-        <div>
+        <div class="detail-heading-text">
           <div id="detail-type" class="eyebrow"></div>
           <div id="detail-title" class="detail-title"></div>
+          <div id="detail-subtitle" class="detail-subtitle"></div>
         </div>
-        <button id="detail-close" class="icon-button" type="button" title="Details schließen">
-          <i data-lucide="x"></i>
-        </button>
+        <div class="detail-actions">
+          <button id="detail-focus" class="icon-button" type="button" title="Focus on map"><i data-lucide="locate-fixed"></i></button>
+          <button id="detail-copy" class="icon-button" type="button" title="Copy object ID"><i data-lucide="copy"></i></button>
+          <button id="detail-close" class="icon-button" type="button" title="Close details"><i data-lucide="x"></i></button>
+        </div>
       </div>
-      <dl id="detail-properties" class="property-list"></dl>
+      <div id="detail-badges" class="detail-badges"></div>
+      <div id="detail-sections" class="detail-sections"></div>
     </aside>
 
     <div id="error-banner" class="error-banner" role="status" hidden></div>
@@ -51,6 +55,6 @@
 
   <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script src="/assets/map.js?v=4"></script>
+  <script src="/assets/map.js?v=6"></script>
 </body>
 </html>

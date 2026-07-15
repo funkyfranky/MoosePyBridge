@@ -72,7 +72,7 @@ button, input { font: inherit; letter-spacing: 0; }
 }
 
 .layer-panel { left: 12px; width: 236px; padding: 12px; }
-.detail-panel { right: 12px; width: min(370px, calc(100% - 24px)); max-height: calc(100% - 96px); overflow: auto; padding: 14px; }
+.detail-panel { right: 12px; width: min(410px, calc(100% - 24px)); max-height: calc(100% - 96px); overflow: auto; padding: 14px; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-weight: 600; }
 .muted { color: var(--muted); font-weight: 400; }
 .layer-controls { display: grid; gap: 4px; }
@@ -83,10 +83,25 @@ button, input { font: inherit; letter-spacing: 0; }
 .layer-count { color: var(--muted); font-variant-numeric: tabular-nums; }
 
 .eyebrow { color: var(--muted); font-size: 12px; font-weight: 500; text-transform: uppercase; }
-.detail-title { margin-top: 2px; overflow-wrap: anywhere; }
-.property-list { display: grid; grid-template-columns: minmax(100px, 0.7fr) minmax(0, 1.3fr); gap: 0; margin: 0; border-top: 1px solid var(--border); }
+.detail-heading-text { min-width: 0; }
+.detail-title { margin-top: 2px; font-size: 17px; line-height: 1.25; overflow-wrap: anywhere; }
+.detail-subtitle { margin-top: 4px; color: var(--muted); font-family: Consolas, "SFMono-Regular", monospace; font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+.detail-actions { display: flex; flex: 0 0 auto; gap: 1px; }
+.detail-actions .icon-button { width: 30px; height: 30px; padding: 6px; }
+.detail-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.detail-badge { padding: 3px 7px; color: #3e4843; background: #e5e9e6; border: 1px solid #cbd2ce; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
+.detail-badge.is-blue { color: #174f7d; background: #e6f1fa; border-color: #9dc3e1; }
+.detail-badge.is-red { color: #842e2e; background: #faeaea; border-color: #dfa2a2; }
+.detail-badge.is-alive, .detail-badge.is-active { color: #176241; background: #e5f4ec; border-color: #9acbb3; }
+.detail-badge.is-dead, .detail-badge.is-inactive { color: #6d3636; background: #f5eaea; border-color: #d5aaaa; }
+.detail-sections { border-top: 1px solid var(--border); }
+.detail-section { padding: 12px 0 4px; border-bottom: 1px solid var(--border); }
+.detail-section:last-child { border-bottom: 0; }
+.detail-section-title { display: flex; align-items: center; gap: 7px; margin: 0 4px 5px; color: #35413c; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.detail-section-title svg { width: 15px; height: 15px; color: var(--muted); }
+.property-list { display: grid; grid-template-columns: minmax(116px, 0.75fr) minmax(0, 1.25fr); gap: 0; margin: 0; }
 .property-list dt,
-.property-list dd { margin: 0; padding: 7px 4px; border-bottom: 1px solid #dde2df; overflow-wrap: anywhere; }
+.property-list dd { margin: 0; padding: 6px 4px; overflow-wrap: anywhere; }
 .property-list dt { color: var(--muted); }
 .property-list dd { font-variant-numeric: tabular-nums; }
 

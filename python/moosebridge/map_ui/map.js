@@ -3,31 +3,32 @@
 
   const EMPTY = { type: "FeatureCollection", features: [] };
   const layerSpecs = [
-    { key: "groups", label: "Gruppen", color: "#245f96", icon: "boxes", size: 1.05, default: true },
-    { key: "units", label: "Einheiten", color: "#37a078", icon: "truck", size: 0.82, default: true },
-    { key: "statics", label: "Statische Objekte", color: "#6d746f", icon: "warehouse", size: 0.82, default: true },
-    { key: "airbases", label: "Flugplätze", color: "#137f87", icon: "plane-takeoff", size: 0.8, default: true },
-    { key: "zones", label: "Zonen", color: "#c19424", icon: "map-pin", default: false },
-    { key: "opszones", label: "OPS-Zonen", color: "#8b5ea7", icon: "shield", default: true },
-    { key: "opsgroups", label: "OPS-Gruppen", color: "#1e8171", icon: "badge", size: 1.1, default: true },
-    { key: "legions", label: "Legionen", color: "#283a4f", icon: "shield", size: 1.18, default: true },
-    { key: "intel_contacts", label: "INTEL-Kontakte", color: "#c44343", icon: "crosshair", size: 0.95, default: true },
-    { key: "intel_clusters", label: "INTEL-Cluster", color: "#d06f27", icon: "radar", size: 1.05, default: true },
-    { key: "missions", label: "Missionen", color: "#ad3c76", icon: "target", size: 1.05, default: true },
+    { key: "groups", label: "Groups", color: "#245f96", icon: "boxes", size: 1.05, default: true },
+    { key: "units", label: "Units", color: "#37a078", icon: "truck", size: 0.82, default: true },
+    { key: "statics", label: "Static objects", color: "#6d746f", icon: "warehouse", size: 0.82, default: true },
+    { key: "airbases", label: "Airbases", color: "#137f87", icon: "plane-takeoff", size: 0.8, default: true },
+    { key: "zones", label: "Zones", color: "#c19424", icon: "map-pin", default: false },
+    { key: "opszones", label: "OPS zones", color: "#8b5ea7", icon: "shield", default: true },
+    { key: "opsgroups", label: "OPS groups", color: "#1e8171", icon: "badge", size: 1.1, default: true },
+    { key: "legions", label: "Legions", color: "#283a4f", icon: "shield", size: 1.18, default: true },
+    { key: "intel_contacts", label: "INTEL contacts", color: "#c44343", icon: "crosshair", size: 0.95, default: true },
+    { key: "intel_clusters", label: "INTEL clusters", color: "#d06f27", icon: "radar", size: 1.05, default: true },
+    { key: "missions", label: "Missions", color: "#ad3c76", icon: "target", size: 1.05, default: true },
   ];
   const coalitionColors = { blue: "#2776b9", red: "#c44343", neutral: "#858d88", unknown: "#59635e" };
   const symbolDefinitions = {
     "unit-airplane": { icon: "Plane", frame: "circle" },
-    "unit-helicopter": { icon: "Helicopter", frame: "circle" },
+    "unit-helicopter": { icon: "Fan", frame: "circle" },
     "unit-ground": { icon: "Truck", frame: "circle" },
     "unit-ship": { icon: "Ship", frame: "circle" },
     "group-airplane": { icon: "Plane", frame: "square" },
-    "group-helicopter": { icon: "Helicopter", frame: "square" },
+    "group-helicopter": { icon: "Fan", frame: "square" },
     "group-ground": { icon: "Truck", frame: "square" },
     "group-ship": { icon: "Ship", frame: "square" },
     "static": { icon: "Warehouse", frame: "square" },
     "airbase-airdrome": { icon: "PlaneTakeoff", frame: "circle" },
-    "airbase-helipad": { icon: "Helicopter", frame: "circle" },
+    "airbase-helipad": { icon: "Fan", frame: "circle" },
+    "airbase-ship": { icon: "Ship", frame: "circle" },
     "legion-airwing": { icon: "Plane", frame: "diamond" },
     "legion-brigade": { icon: "Shield", frame: "diamond" },
     "legion-other": { icon: "Shield", frame: "diamond" },
@@ -39,6 +40,8 @@
   let latestPicture = EMPTY;
   let fitted = false;
   let reconnectTimer = null;
+  let selectedFeature = null;
+  let selectedObjectId = null;
 
   const map = new maplibregl.Map({
     container: "map",
@@ -73,7 +76,11 @@
     detailPanel: document.getElementById("detail-panel"),
     detailType: document.getElementById("detail-type"),
     detailTitle: document.getElementById("detail-title"),
-    detailProperties: document.getElementById("detail-properties"),
+    detailSubtitle: document.getElementById("detail-subtitle"),
+    detailBadges: document.getElementById("detail-badges"),
+    detailSections: document.getElementById("detail-sections"),
+    detailFocus: document.getElementById("detail-focus"),
+    detailCopy: document.getElementById("detail-copy"),
     detailClose: document.getElementById("detail-close"),
     errorBanner: document.getElementById("error-banner"),
   };
@@ -91,7 +98,13 @@
     let definition = "static";
     if (layer === "groups" || layer === "opsgroups") definition = `group-${semanticCategory(properties)}`;
     else if (layer === "units") definition = `unit-${semanticCategory(properties)}`;
-    else if (layer === "airbases") definition = properties.category === "HELIPAD" ? "airbase-helipad" : "airbase-airdrome";
+    else if (layer === "airbases") {
+      definition = properties.category === "HELIPAD"
+        ? "airbase-helipad"
+        : properties.category === "SHIP"
+          ? "airbase-ship"
+          : "airbase-airdrome";
+    }
     else if (layer === "legions") {
       definition = properties.category === "AIRWING" ? "legion-airwing" : properties.category === "BRIGADE" ? "legion-brigade" : "legion-other";
     } else if (layer === "intel_contacts") definition = "intel-contact";
@@ -275,6 +288,11 @@
     zones.setData(zoneCollection(latestPicture));
     updateCounts();
     updateClocks(picture.properties || {});
+    if (selectedObjectId) {
+      const refreshed = latestPicture.features.find((feature) => feature.properties?.object_id === selectedObjectId);
+      if (refreshed) showDetails(refreshed);
+      else closeDetails();
+    }
     if (!fitted) fitOperationalArea(latestPicture);
   }
 
@@ -305,9 +323,9 @@
   function updateStatus(status) {
     const connected = Boolean(status?.connected);
     elements.connectionDot.classList.toggle("is-offline", !connected);
-    elements.connectionText.textContent = connected ? "DCS verbunden" : "DCS getrennt";
+    elements.connectionText.textContent = connected ? "DCS connected" : "DCS disconnected";
     elements.errorBanner.hidden = !status?.error;
-    elements.errorBanner.textContent = status?.error || "";
+    elements.errorBanner.textContent = status?.error ? "DCS bridge unavailable. Waiting for reconnection." : "";
   }
 
   function updateCounts() {
@@ -316,7 +334,7 @@
       const key = feature.properties?.layer;
       counts.set(key, (counts.get(key) || 0) + 1);
     });
-    elements.featureCount.textContent = `${latestPicture.features.length} Objekte`;
+    elements.featureCount.textContent = `${latestPicture.features.length} objects`;
     document.querySelectorAll("[data-layer-count]").forEach((node) => {
       node.textContent = String(counts.get(node.dataset.layerCount) || 0);
     });
@@ -347,38 +365,135 @@
 
   function readableValue(value) {
     if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
-    if (typeof value === "boolean") return value ? "Ja" : "Nein";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
     if (Array.isArray(value)) return value.join(", ");
     if (value && typeof value === "object") return JSON.stringify(value);
     return String(value ?? "-");
   }
 
-  function showDetails(feature) {
-    const properties = feature.properties || {};
-    elements.detailType.textContent = properties.layer || properties.object_type || "Objekt";
-    elements.detailTitle.textContent = properties.name || properties.object_id || "Unbenannt";
-    elements.detailProperties.replaceChildren();
-    const priority = ["object_id", "coalition", "category", "state", "alive", "active", "dcs_type", "radius_m", "x", "y", "z"];
-    const ignored = new Set(["name", "layer", "coordinate_system"]);
-    const keys = Object.keys(properties).filter((key) => !ignored.has(key));
-    keys.sort((a, b) => {
-      const ai = priority.indexOf(a);
-      const bi = priority.indexOf(b);
-      if (ai >= 0 || bi >= 0) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
-      return a.localeCompare(b);
-    });
-    for (const key of keys) {
+  const fieldLabels = {
+    category: "Category", coalition: "Coalition", owner: "Owner", state: "State", alive: "Alive", active: "Active",
+    unit_count: "Units", alive_unit_count: "Units alive", mission_type: "Mission type", status: "Status", target: "Target",
+    target_id: "Target", legion_id: "Legion", opsgroup_id: "OPS group", intel_id: "INTEL source", threat_level: "Threat level",
+    threat_level_max: "Max threat", threat_level_sum: "Total threat", threat_level_avg: "Average threat", radius_m: "Radius",
+    object_id: "Object ID", airbase_id: "Airbase ID", dcs_type: "DCS type", dcs_category_name: "DCS category", display_name: "Display name",
+    group_name: "Group", source: "Source", recce_name: "Detected by", speed: "Speed", size: "Contacts",
+  };
+
+  function humanizeKey(key) {
+    return fieldLabels[key] || key.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  }
+
+  function formattedField(key, value) {
+    if (key === "radius_m") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m`;
+    if (key === "speed" || key === "speed_kts") return `${Number(value).toFixed(1)} kt`;
+    return readableValue(value);
+  }
+
+  function addBadge(text, className = "") {
+    const badge = document.createElement("span");
+    badge.className = `detail-badge ${className}`.trim();
+    badge.textContent = text;
+    elements.detailBadges.appendChild(badge);
+  }
+
+  function addDetailSection(title, icon, rows) {
+    if (!rows.length) return;
+    const section = document.createElement("section");
+    section.className = "detail-section";
+    const heading = document.createElement("h3");
+    heading.className = "detail-section-title";
+    heading.innerHTML = `<i data-lucide="${icon}"></i><span>${title}</span>`;
+    const list = document.createElement("dl");
+    list.className = "property-list";
+    for (const [label, value] of rows) {
       const term = document.createElement("dt");
       const description = document.createElement("dd");
-      term.textContent = key;
-      description.textContent = readableValue(properties[key]);
-      elements.detailProperties.append(term, description);
+      term.textContent = label;
+      description.textContent = value;
+      list.append(term, description);
     }
+    section.append(heading, list);
+    elements.detailSections.appendChild(section);
+  }
+
+  function detailRows(properties, keys, consumed) {
+    const rows = [];
+    for (const key of keys) {
+      if (properties[key] === undefined || properties[key] === null || properties[key] === "") continue;
+      rows.push([humanizeKey(key), formattedField(key, properties[key])]);
+      consumed.add(key);
+    }
+    return rows;
+  }
+
+  function showDetails(feature) {
+    selectedFeature = feature;
+    const properties = feature.properties || {};
+    selectedObjectId = properties.object_id || null;
+    const layerLabel = layerSpecs.find((spec) => spec.key === properties.layer)?.label || properties.object_type || "Object";
+    elements.detailType.textContent = [layerLabel, properties.category].filter(Boolean).join(" · ");
+    elements.detailTitle.textContent = properties.name || properties.display_name || properties.object_id || "Unnamed object";
+    elements.detailSubtitle.textContent = properties.object_id || "";
+    elements.detailCopy.hidden = !properties.object_id;
+    elements.detailBadges.replaceChildren();
+    elements.detailSections.replaceChildren();
+
+    const side = String(properties.coalition || properties.owner || "").toLowerCase();
+    if (side) addBadge(side, coalitionColors[side] ? `is-${side}` : "");
+    if (typeof properties.alive === "boolean") addBadge(properties.alive ? "Alive" : "Dead", properties.alive ? "is-alive" : "is-dead");
+    if (typeof properties.active === "boolean") addBadge(properties.active ? "Active" : "Inactive", properties.active ? "is-active" : "is-inactive");
+    if (properties.state) addBadge(String(properties.state));
+
+    const consumed = new Set(["name", "layer", "map_symbol", "coordinate_system", "dcs_name", "latitude", "longitude", "x", "y", "z", "category", "coalition", "owner", "state", "alive", "active", "object_type", "dcs_category"]);
+    const operational = detailRows(properties, ["mission_type", "status", "target", "target_id", "threat_level", "threat_level_max", "threat_level_sum", "threat_level_avg", "unit_count", "alive_unit_count", "size", "speed", "radius_m"], consumed);
+    if (properties.unit_count !== undefined && properties.alive_unit_count !== undefined) {
+      const start = operational.findIndex(([label]) => label === fieldLabels.unit_count);
+      operational.splice(Math.max(0, start), 2, ["Strength", `${properties.alive_unit_count} / ${properties.unit_count} alive`]);
+    }
+    addDetailSection("Operational", "activity", operational);
+
+    addDetailSection("Identity and relationships", "fingerprint", detailRows(properties, ["object_id", "airbase_id", "display_name", "dcs_type", "dcs_category_name", "group_name", "legion_id", "opsgroup_id", "intel_id", "recce_name", "source"], consumed));
+
+    const position = [];
+    if (Number.isFinite(Number(properties.latitude)) && Number.isFinite(Number(properties.longitude))) {
+      const lat = Number(properties.latitude); const lon = Number(properties.longitude);
+      position.push(["WGS84", `${Math.abs(lat).toFixed(5)}° ${lat >= 0 ? "N" : "S"}, ${Math.abs(lon).toFixed(5)}° ${lon >= 0 ? "E" : "W"}`]);
+    }
+    if ([properties.x, properties.y, properties.z].some((value) => value !== undefined)) {
+      const local = ["x", "y", "z"].map((key) => properties[key] === undefined ? "-" : Number(properties[key]).toFixed(3));
+      position.push(["DCS x / y / z", local.join(" / ")]);
+    }
+    addDetailSection("Position", "map-pin", position);
+
+    const additional = Object.keys(properties)
+      .filter((key) => !consumed.has(key) && properties[key] !== null && properties[key] !== "")
+      .sort((a, b) => a.localeCompare(b))
+      .map((key) => [humanizeKey(key), formattedField(key, properties[key])]);
+    addDetailSection("Additional data", "list", additional);
+    if (window.lucide) window.lucide.createIcons({ attrs: { "aria-hidden": "true" } });
     if (window.innerWidth <= 720) {
       elements.layerPanel.hidden = true;
       elements.layersToggle.setAttribute("aria-expanded", "false");
     }
     elements.detailPanel.hidden = false;
+  }
+
+  function closeDetails() {
+    selectedFeature = null;
+    selectedObjectId = null;
+    elements.detailPanel.hidden = true;
+  }
+
+  function focusSelectedFeature() {
+    if (!selectedFeature?.geometry) return;
+    if (selectedFeature.geometry.type === "Point") {
+      map.easeTo({ center: selectedFeature.geometry.coordinates, zoom: Math.max(map.getZoom(), 11), duration: 500 });
+    } else if (selectedFeature.geometry.type === "Polygon") {
+      const bounds = new maplibregl.LngLatBounds();
+      selectedFeature.geometry.coordinates.flat().forEach((coordinate) => bounds.extend(coordinate));
+      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 100, maxZoom: 12, duration: 500 });
+    }
   }
 
   function connect() {
@@ -391,7 +506,7 @@
       updateStatus(message.status);
     });
     socket.addEventListener("close", () => {
-      updateStatus({ connected: false, error: "Verbindung zum Kartenserver unterbrochen" });
+      updateStatus({ connected: false, error: "Connection to the map server was lost" });
       reconnectTimer = setTimeout(connect, 2000);
     });
   }
@@ -416,8 +531,20 @@
     elements.layerPanel.hidden = hidden;
     elements.layersToggle.setAttribute("aria-expanded", String(!hidden));
   });
-  elements.detailClose.addEventListener("click", () => { elements.detailPanel.hidden = true; });
-  document.addEventListener("keydown", (event) => { if (event.key === "Escape") elements.detailPanel.hidden = true; });
+  elements.detailClose.addEventListener("click", closeDetails);
+  elements.detailFocus.addEventListener("click", focusSelectedFeature);
+  elements.detailCopy.addEventListener("click", async () => {
+    if (!selectedObjectId) return;
+    try {
+      await navigator.clipboard.writeText(selectedObjectId);
+      elements.detailCopy.title = "Object ID copied";
+      setTimeout(() => { elements.detailCopy.title = "Copy object ID"; }, 1200);
+    } catch (_) {
+      elements.errorBanner.hidden = false;
+      elements.errorBanner.textContent = "Object ID could not be copied.";
+    }
+  });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeDetails(); });
 
   map.on("load", async () => {
     await initializeSourcesAndLayers();

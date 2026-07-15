@@ -381,13 +381,8 @@ function MOOSE_BRIDGE:_PointForStaticName(name)
 end
 
 function MOOSE_BRIDGE:_PointForAirbaseName(name)
-  if not world or not world.getAirbases then return nil end
-  local ok, airbases = pcall(function() return world.getAirbases() end)
-  if not ok or type(airbases) ~= "table" then return nil end
-  for _, airbase in pairs(airbases) do
-    if self:_DcsCall(airbase, "getName") == name then return self:_DcsPoint(airbase) end
-  end
-  return nil
+  local airbase = _DATABASE and _DATABASE.AIRBASES and _DATABASE.AIRBASES[name]
+  return self:_PointFromMooseObject(airbase)
 end
 
 function MOOSE_BRIDGE:_PointForOpsZoneName(name)
@@ -749,40 +744,35 @@ function MOOSE_BRIDGE:BuildStaticSnapshot()
   return result
 end
 
-function MOOSE_BRIDGE:_BuildAirbaseSnapshotItem(airbase)
-  local name = self:_DcsCall(airbase, "getName")
-  local coalition_value = self:_DcsCall(airbase, "getCoalition")
-  local object_category = self:_DcsCall(airbase, "getCategory")
-  local airbase_category = nil
-  if Airbase and Airbase.getCategoryEx then local ok, value = pcall(function() return airbase:getCategoryEx() end); if ok then airbase_category = value end end
-  local dcs_type = self:_DcsTypeName(airbase)
-  local display_name = nil
-  if airbase.getDesc then local ok, desc = pcall(function() return airbase:getDesc() end); if ok and type(desc) == "table" then display_name = desc.displayName end end
-  local point = self:_DcsCall(airbase, "getPoint")
-  local item = {object_id="AIRBASE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="AIRBASE",category=self:_AirbaseCategoryToName(airbase_category) or "AIRBASE",dcs_category=object_category,dcs_category_name=self:_ObjectCategoryToName(object_category),coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,display_name=display_name and safe_tostring(display_name) or nil}
+function MOOSE_BRIDGE:_BuildAirbaseSnapshotItem(airbase_name, airbase)
+  local name = self:_SafeCall(airbase, "GetName") or airbase.AirbaseName or airbase_name
+  local coalition_value = self:_SafeCall(airbase, "GetCoalition")
+  local object_category = self:_SafeCall(airbase, "GetCategory")
+  local airbase_category = airbase.category
+  local descriptors = airbase.descriptors
+  local dcs_type = self:_SafeCall(airbase, "GetTypeName") or (type(descriptors) == "table" and descriptors.typeName or nil)
+  local display_name = type(descriptors) == "table" and descriptors.displayName or nil
+  local point = self:_PointFromMooseObject(airbase)
+  local item = {object_id="AIRBASE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="AIRBASE",category=self:_AirbaseCategoryToName(airbase_category) or "AIRBASE",source="database.AIRBASES",airbase_id=self:_NumberOrNil(airbase.AirbaseID),dcs_category=object_category,dcs_category_name=self:_ObjectCategoryToName(object_category),coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,display_name=display_name and safe_tostring(display_name) or nil}
   if point then self:_AddPointFields(item, point) end
   return item
 end
 
 function MOOSE_BRIDGE:BuildAirbaseSnapshot()
   local result = {}
-  if not world or not world.getAirbases then return result end
-  local ok, airbases = pcall(function() return world.getAirbases() end)
-  if not ok or type(airbases) ~= "table" then return result end
-  for _, airbase in pairs(airbases) do
-    local ok_item, item = pcall(function() return self:_BuildAirbaseSnapshotItem(airbase) end)
-    if ok_item and item and item.dcs_name then result[#result + 1] = item else self:_Log("Failed to snapshot airbase: " .. safe_tostring(item)) end
+  if not _DATABASE or type(_DATABASE.AIRBASES) ~= "table" then return result end
+  for airbase_name, airbase in pairs(_DATABASE.AIRBASES) do
+    local ok_item, item = pcall(function() return self:_BuildAirbaseSnapshotItem(airbase_name, airbase) end)
+    if ok_item and item and item.dcs_name then result[#result + 1] = item else self:_Log("Failed to snapshot airbase " .. safe_tostring(airbase_name) .. ": " .. safe_tostring(item)) end
   end
   return result
 end
 
 function MOOSE_BRIDGE:_BuildAirbaseNameSet()
   local names = {}
-  if not world or not world.getAirbases then return names end
-  local ok, airbases = pcall(function() return world.getAirbases() end)
-  if not ok or type(airbases) ~= "table" then return names end
-  for _, airbase in pairs(airbases) do
-    local name = self:_DcsCall(airbase, "getName")
+  if not _DATABASE or type(_DATABASE.AIRBASES) ~= "table" then return names end
+  for airbase_name, airbase in pairs(_DATABASE.AIRBASES) do
+    local name = self:_SafeCall(airbase, "GetName") or airbase.AirbaseName or airbase_name
     if name then names[safe_tostring(name)] = true end
   end
   return names
