@@ -17,6 +17,10 @@ DEFAULT_PORT = 51000
 DEFAULT_READER_LIMIT = 16 * 1024 * 1024
 
 
+class DcsBridgeConnectionError(ConnectionError):
+    """A command could not complete because the DCS bridge disconnected."""
+
+
 def event_name(message: dict[str, Any]) -> str:
     """Return the semantic event name from an event message."""
 
@@ -145,7 +149,7 @@ class MooseBridgeServer:
 
         if self._writer is not None:
             LOGGER.warning("Replacing previous DCS connection")
-            self._fail_pending(RuntimeError("DCS bridge connection was replaced"))
+            self._fail_pending(DcsBridgeConnectionError("DCS bridge connection was replaced"))
             self._writer.close()
 
         self._writer = writer
@@ -158,11 +162,13 @@ class MooseBridgeServer:
                     break
                 await self._handle_line(line.decode("utf-8").strip())
         finally:
-            LOGGER.warning("DCS disconnected from %s", peer)
             if self._writer is writer:
+                LOGGER.warning("DCS disconnected from %s", peer)
                 self._writer = None
-                self._fail_pending(RuntimeError("DCS bridge connection disconnected"))
-            self.state.connected = False
+                self._fail_pending(DcsBridgeConnectionError("DCS bridge connection disconnected"))
+                self.state.connected = False
+            else:
+                LOGGER.info("Superseded DCS connection closed from %s", peer)
             writer.close()
             await writer.wait_closed()
 
@@ -266,8 +272,9 @@ class MooseBridgeServer:
         :raises TimeoutError: If DCS does not ACK the command in time.
         """
 
-        if self._writer is None:
-            raise RuntimeError("No DCS bridge connection is active")
+        writer = self._writer
+        if writer is None:
+            raise DcsBridgeConnectionError("No DCS bridge connection is active")
 
         self._sequence += 1
         data = command.to_dict(sequence=self._sequence)
@@ -280,11 +287,11 @@ class MooseBridgeServer:
         LOGGER.debug("Python -> DCS: %s", data)
         self._write_raw("python", line)
         try:
-            self._writer.write((line + "\n").encode("utf-8"))
-            await self._writer.drain()
-        except Exception:
+            writer.write((line + "\n").encode("utf-8"))
+            await writer.drain()
+        except (ConnectionError, OSError) as exc:
             self._pending.pop(command.id, None)
-            raise
+            raise DcsBridgeConnectionError("DCS bridge connection lost while sending command") from exc
 
         try:
             return await asyncio.wait_for(future, timeout=timeout)

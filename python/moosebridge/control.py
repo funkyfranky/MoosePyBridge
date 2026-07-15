@@ -17,7 +17,7 @@ from typing import Any, Iterable
 
 from .clock import DcsTime
 from .protocol import BridgeCommand
-from .server import MooseBridgeServer
+from .server import DcsBridgeConnectionError, MooseBridgeServer
 from .state import MooseBridgeState
 
 LOGGER = logging.getLogger(__name__)
@@ -193,6 +193,7 @@ class MooseBridgeControlServer:
         :returns: JSON-serializable response object.
         """
 
+        data: Any = None
         try:
             data = json.loads(line)
             if not isinstance(data, dict):
@@ -200,6 +201,10 @@ class MooseBridgeControlServer:
             request = ControlRequest.from_dict(data)
             result = await self._dispatch(request)
             return {"id": request.id, "ok": True, "result": result}
+        except DcsBridgeConnectionError as exc:
+            request_id = data.get("id") if isinstance(data, dict) else None
+            LOGGER.info("Control request interrupted by DCS reconnect: %s", exc)
+            return {"id": request_id, "ok": False, "error": str(exc)}
         except Exception as exc:
             request_id = None
             try:

@@ -776,8 +776,26 @@ function MOOSE_BRIDGE:BuildAirbaseSnapshot()
   return result
 end
 
+function MOOSE_BRIDGE:_BuildAirbaseNameSet()
+  local names = {}
+  if not world or not world.getAirbases then return names end
+  local ok, airbases = pcall(function() return world.getAirbases() end)
+  if not ok or type(airbases) ~= "table" then return names end
+  for _, airbase in pairs(airbases) do
+    local name = self:_DcsCall(airbase, "getName")
+    if name then names[safe_tostring(name)] = true end
+  end
+  return names
+end
+
+function MOOSE_BRIDGE:_ZoneName(zone_name, zone)
+  local name = self:_SafeCall(zone, "GetName")
+  if not name and zone then name = zone.ZoneName end
+  return name or zone_name
+end
+
 function MOOSE_BRIDGE:_BuildZoneSnapshotItem(zone_name, zone, source)
-  local name = self:_SafeCall(zone, "GetName") or zone.ZoneName or zone_name
+  local name = self:_ZoneName(zone_name, zone)
   if not name then return nil end
   local point = self:_PointFromMooseObject(zone)
   if not point and env and env.mission and env.mission.triggers and type(env.mission.triggers.zones) == "table" then
@@ -794,14 +812,18 @@ end
 function MOOSE_BRIDGE:BuildZoneSnapshot()
   local result = {}
   local seen = {}
+  local airbase_names = self:_BuildAirbaseNameSet()
   for name, zone in pairs(self.RegisteredZones or {}) do
     local ok, item = pcall(function() return self:_BuildZoneSnapshotItem(name, zone, "registered") end)
     if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
   end
   if _DATABASE and _DATABASE.ZONES then
     for name, zone in pairs(_DATABASE.ZONES) do
-      local ok, item = pcall(function() return self:_BuildZoneSnapshotItem(name, zone, "database.ZONES") end)
-      if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
+      local zone_name = self:_ZoneName(name, zone)
+      if zone_name and not airbase_names[safe_tostring(zone_name)] then
+        local ok, item = pcall(function() return self:_BuildZoneSnapshotItem(zone_name, zone, "database.ZONES") end)
+        if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
+      end
     end
   end
   if env and env.mission and env.mission.triggers and type(env.mission.triggers.zones) == "table" then

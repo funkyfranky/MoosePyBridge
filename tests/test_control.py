@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 from contextlib import redirect_stdout
 from typing import Any
 
@@ -34,7 +35,7 @@ from moosebridge.recommendations import AuftragRecommendation
 from moosebridge.protocol import BridgeCommand
 from moosebridge.sdk import NearestResult
 from moosebridge.state import MooseBridgeState
-from moosebridge.server import MooseBridgeServer
+from moosebridge.server import DcsBridgeConnectionError, MooseBridgeServer
 
 
 class FakeBridgeServer:
@@ -1023,6 +1024,29 @@ def test_control_status_and_state_roundtrip() -> None:
             await server.stop()
 
     asyncio.run(scenario())
+
+
+def test_control_dcs_disconnect_is_not_logged_as_server_error(caplog: Any) -> None:
+    class DisconnectingBridge(FakeBridgeServer):
+        async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
+            raise DcsBridgeConnectionError("DCS bridge connection disconnected")
+
+    async def scenario() -> dict[str, Any]:
+        control = MooseBridgeControlServer(DisconnectingBridge())  # type: ignore[arg-type]
+        return await control._handle_line(
+            json.dumps({"id": "ctrl-reconnect", "action": "control.command", "params": {"action": "snapshot.all"}})
+        )
+
+    with caplog.at_level(logging.INFO, logger="moosebridge.control"):
+        response = asyncio.run(scenario())
+
+    assert response == {
+        "id": "ctrl-reconnect",
+        "ok": False,
+        "error": "DCS bridge connection disconnected",
+    }
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert "interrupted by DCS reconnect" in caplog.text
 
 
 def test_control_snapshots_forwards_actions_and_updates_client_state() -> None:

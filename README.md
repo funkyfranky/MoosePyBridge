@@ -260,6 +260,9 @@ views or neutral analysis tools.
 Both picture types export standard WGS84 GeoJSON. DCS `x/y/z` coordinates stay
 available as feature properties, while geometry coordinates use
 `[longitude, latitude]` values produced by DCS `coord.LOtoLL`.
+The zone snapshot omits MOOSE's automatically generated `_DATABASE.ZONES`
+entries whose names match DCS airbases. Airbases remain available as
+`AIRBASE` objects, while registered zones and mission trigger zones are kept.
 INTEL diagnostics show agents as `alive/total`; both values come directly from
 the MOOSE `INTEL.detectionset` (`SET_GROUP`).
 

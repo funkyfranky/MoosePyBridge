@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from moosebridge.protocol import BridgeCommand
-from moosebridge.server import MooseBridgeServer
+from moosebridge.server import DcsBridgeConnectionError, MooseBridgeServer
 
 
 def _bridge_port(server: MooseBridgeServer) -> int:
@@ -66,13 +66,45 @@ def test_pending_command_fails_when_dcs_disconnects() -> None:
 
                 try:
                     await task
-                except RuntimeError as exc:
+                except DcsBridgeConnectionError as exc:
                     assert "disconnected" in str(exc)
                 else:
                     raise AssertionError("pending command did not fail after DCS disconnect")
             finally:
                 writer.close()
         finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_replaced_connection_cannot_mark_new_connection_disconnected() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer(host="127.0.0.1", port=0)
+        await server.start()
+        first_writer = None
+        second_writer = None
+        try:
+            _, first_writer = await asyncio.open_connection("127.0.0.1", _bridge_port(server))
+            first_port = first_writer.get_extra_info("sockname")[1]
+            while server._writer is None or server._writer.get_extra_info("peername")[1] != first_port:
+                await asyncio.sleep(0.01)
+
+            _, second_writer = await asyncio.open_connection("127.0.0.1", _bridge_port(server))
+            second_port = second_writer.get_extra_info("sockname")[1]
+            while server._writer is None or server._writer.get_extra_info("peername")[1] != second_port:
+                await asyncio.sleep(0.01)
+
+            await asyncio.sleep(0.05)
+            assert server.state.connected is True
+            assert server._writer is not None
+            assert server._writer.get_extra_info("peername")[1] == second_port
+        finally:
+            if first_writer is not None:
+                first_writer.close()
+            if second_writer is not None:
+                second_writer.close()
+                await second_writer.wait_closed()
             await server.stop()
 
     asyncio.run(scenario())

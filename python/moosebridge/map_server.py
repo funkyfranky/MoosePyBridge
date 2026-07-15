@@ -90,15 +90,21 @@ class GlobalMapRuntime:
                     raise ConnectionError("DCS is not connected to the MooseBridge daemon")
                 picture = await bridge.refresh_global_picture()
                 self.picture = picture.to_geojson()
+                if not self.connected:
+                    LOGGER.info("Global map connected to DCS")
                 self.connected = True
                 self.error = None
                 await self._broadcast({"type": "picture", "data": self.picture, "status": self.status_payload()})
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                error = str(exc)
+                if error != self.error:
+                    LOGGER.warning("Global map refresh failed: %s", error)
+                else:
+                    LOGGER.debug("Global map refresh still unavailable: %s", error)
                 self.connected = False
-                self.error = str(exc)
-                LOGGER.warning("Global map refresh failed: %s", exc)
+                self.error = error
                 await self._broadcast({"type": "status", "status": self.status_payload()})
             await asyncio.sleep(self.interval)
 
