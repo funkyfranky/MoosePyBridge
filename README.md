@@ -247,17 +247,28 @@ tactical_geojson = tactical.to_geojson()
 await bridge.add_intel_agent("INTEL:BlueIntel", "GROUP:Blue EWR")
 
 clock = await bridge.get_time()
-print(clock.mission_time, clock.time_of_day, clock.day_offset, clock.wall_time)
+print(clock.mission_time, clock.dcs_date, clock.time_of_day, clock.wall_time)
 
 global_picture = await bridge.refresh_global_picture()
 global_geojson = global_picture.to_geojson()
+print(format_global_picture_status(global_picture))
 ```
 
 `TacticalPicture` uses INTEL contacts and clusters for enemy knowledge.
 `GlobalPicture` uses global truth snapshots and is intended for admin/debug
 views or neutral analysis tools.
+Both picture types export standard WGS84 GeoJSON. DCS `x/y/z` coordinates stay
+available as feature properties, while geometry coordinates use
+`[longitude, latitude]` values produced by DCS `coord.LOtoLL`.
 INTEL diagnostics show agents as `alive/total`; both values come directly from
 the MOOSE `INTEL.detectionset` (`SET_GROUP`).
+
+To monitor and validate the global truth picture without command-line
+parameters, edit the constants in and run:
+
+```bash
+python examples/sdk/monitor_global_picture.py
+```
 
 MOOSE-like AUFTRAG helper objects:
 
@@ -413,12 +424,14 @@ Python command:
 DCS ACK:
 
 ```json
-{"version":1,"type":"ack","id":"ack-...","source":"dcs","correlation_id":"cmd-...","mission_time":3138.265,"dcs_time":46338.265,"wall_time":"2026-07-15T10:00:00Z","ok":true,"result":{"message":"Message sent to coalition","coalition":"blue"}}
+{"version":1,"type":"ack","id":"ack-...","source":"dcs","correlation_id":"cmd-...","mission_time":3138.265,"dcs_time":46338.265,"mission_date":"2026/07/15","wall_time":"2026-07-15T10:00:00Z","ok":true,"result":{"message":"Message sent to coalition","coalition":"blue"}}
 ```
 
 Every DCS message reports three clocks: `mission_time` from `timer.getTime()`,
 `dcs_time` from `timer.getAbsTime()`, and UTC `wall_time`. Values of
-`dcs_time` above 86400 retain their day offset. The SDK exposes them as
+`dcs_time` above 86400 retain their day offset. `mission_date` is read once
+from `UTILS.GetDCSMissionDate()`, and the SDK derives the current DCS date from
+it and the day offset. The SDK exposes these values as
 `DcsTime` through `await bridge.get_time()` and stores the latest value in
 `bridge.state.clock`.
 

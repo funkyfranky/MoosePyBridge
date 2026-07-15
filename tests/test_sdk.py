@@ -41,7 +41,13 @@ from moosebridge.auftraege import (
     GroupSet,
 )
 from moosebridge.protocol import BridgeCommand
-from moosebridge.diagnostics import format_cohort_assets, format_intel_status, format_legion_status, format_mission_summary
+from moosebridge.diagnostics import (
+    format_cohort_assets,
+    format_global_picture_status,
+    format_intel_status,
+    format_legion_status,
+    format_mission_summary,
+)
 from moosebridge.sdk import CoordinateResult, DistanceResult, GlobalPicture, MooseBridgeClient, NearestResult, TacticalPicture
 from moosebridge.state import MooseBridgeState
 
@@ -87,6 +93,7 @@ class FakeSdkServer:
                 "sequence": 7,
                 "mission_time": 3_661.25,
                 "dcs_time": 90_061.25,
+                "mission_date": "2026/07/15",
                 "wall_time": "2026-07-15T10:00:00Z",
                 "result": {"action": "time.get"},
             }
@@ -245,8 +252,10 @@ def test_sdk_get_time_returns_typed_dcs_clock() -> None:
         assert clock.mission_time == 3_661.25
         assert clock.dcs_time == 90_061.25
         assert clock.day_offset == 1
-        assert clock.time_of_day == "01:01:01.250"
-        assert clock.mission_elapsed == "01:01:01.250"
+        assert clock.mission_date == "2026/07/15"
+        assert clock.dcs_date == "2026/07/16"
+        assert clock.time_of_day == "01:01:01"
+        assert clock.mission_elapsed == "01:01:01"
         assert clock.wall_time == "2026-07-15T10:00:00Z"
         assert server.commands[0][0].action == "time.get"
         assert server.commands[0][1] == 4.0
@@ -419,6 +428,7 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
             "sequence": 5,
             "mission_time": 120.0,
             "dcs_time": 43_320.0,
+            "mission_date": "2026/07/15",
             "wall_time": "2026-07-15T10:00:00Z",
         }
     )
@@ -455,6 +465,8 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
                         "threat_level": 8,
                         "x": 1000,
                         "z": 2000,
+                        "latitude": 54.1,
+                        "longitude": 12.1,
                     },
                     {
                         "object_id": "INTELCONTACT:RedIntel:Friendly",
@@ -464,6 +476,8 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
                         "target_object_id": "GROUP:Friendly",
                         "x": 50,
                         "z": 60,
+                        "latitude": 54.2,
+                        "longitude": 12.2,
                     },
                 ]
             },
@@ -483,6 +497,8 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
                         "auftrag_queue_ids": ["AUFTRAG:1"],
                         "x": 10,
                         "z": 20,
+                        "latitude": 53.4,
+                        "longitude": 11.8,
                     },
                     {
                         "object_id": "LEGION:Red Wing",
@@ -491,6 +507,8 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
                         "coalition": "red",
                         "x": 30,
                         "z": 40,
+                        "latitude": 53.5,
+                        "longitude": 11.9,
                     },
                 ]
             },
@@ -510,6 +528,8 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
                         "auftrag_current_id": "AUFTRAG:1",
                         "x": 100,
                         "z": 200,
+                        "latitude": 54.3,
+                        "longitude": 12.3,
                     },
                     {
                         "object_id": "OPSGROUP:Red CAP",
@@ -518,6 +538,8 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
                         "coalition": "red",
                         "x": 300,
                         "z": 400,
+                        "latitude": 54.4,
+                        "longitude": 12.4,
                     },
                 ]
             },
@@ -535,7 +557,14 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
                         "object_type": "AUFTRAG",
                         "type": "CAP",
                         "status": "Executing",
-                        "target": {"object_id": "ZONE:CAP", "name": "CAP", "x": 500, "z": 600},
+                        "target": {
+                            "object_id": "ZONE:CAP",
+                            "name": "CAP",
+                            "x": 500,
+                            "z": 600,
+                            "latitude": 54.5,
+                            "longitude": 12.5,
+                        },
                     }
                 ]
             },
@@ -553,13 +582,20 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
     assert [mission.object_id for mission in picture.missions] == ["AUFTRAG:1"]
     assert geojson["type"] == "FeatureCollection"
     assert geojson["properties"]["scope"] == "tactical"
+    assert geojson["properties"]["coordinate_system"] == "WGS84"
     assert geojson["properties"]["mission_time"] == 120.0
-    assert geojson["properties"]["mission_elapsed"] == "00:02:00.000"
-    assert geojson["properties"]["dcs_time_of_day"] == "12:02:00.000"
+    assert geojson["properties"]["mission_elapsed"] == "00:02:00"
+    assert geojson["properties"]["dcs_time_of_day"] == "12:02:00"
+    assert geojson["properties"]["mission_date"] == "2026/07/15"
+    assert geojson["properties"]["dcs_date"] == "2026/07/15"
     assert "known_enemy_contacts" in layers
     assert "friendly_opsgroups" in layers
     assert "friendly_legions" in layers
     assert "missions" in layers
+    contact_feature = next(feature for feature in geojson["features"] if feature["properties"]["layer"] == "known_enemy_contacts")
+    assert contact_feature["geometry"]["coordinates"] == [12.1, 54.1]
+    assert contact_feature["properties"]["x"] == 1000.0
+    assert contact_feature["properties"]["z"] == 2000.0
 
 
 def test_sdk_build_global_picture_exports_truth_snapshots_to_geojson() -> None:
@@ -579,6 +615,8 @@ def test_sdk_build_global_picture_exports_truth_snapshots_to_geojson() -> None:
                         "coalition": "red",
                         "x": 100,
                         "z": 200,
+                        "latitude": 54.2,
+                        "longitude": 12.3,
                     }
                 ]
             },
@@ -597,6 +635,8 @@ def test_sdk_build_global_picture_exports_truth_snapshots_to_geojson() -> None:
                         "radius": 1000,
                         "x": 300,
                         "z": 400,
+                        "latitude": 54.4,
+                        "longitude": 12.5,
                     }
                 ]
             },
@@ -608,9 +648,33 @@ def test_sdk_build_global_picture_exports_truth_snapshots_to_geojson() -> None:
 
     assert isinstance(picture, GlobalPicture)
     assert geojson["properties"]["scope"] == "global"
+    assert geojson["properties"]["coordinate_system"] == "WGS84"
     assert [feature["properties"]["layer"] for feature in geojson["features"]] == ["groups", "zones"]
-    assert geojson["features"][0]["geometry"]["coordinates"] == [100.0, 200.0]
+    assert geojson["features"][0]["geometry"]["coordinates"] == [12.3, 54.2]
+    assert geojson["features"][0]["properties"]["x"] == 100
+    assert geojson["features"][0]["properties"]["z"] == 200
     assert geojson["features"][1]["properties"]["radius_m"] == 1000
+    assert picture.validate() == []
+    assert "validation: errors=0 warnings=0" in format_global_picture_status(picture)
+
+
+def test_global_picture_validator_reports_broken_truth_references() -> None:
+    picture = GlobalPicture(
+        groups=[
+            {"object_id": "GROUP:Known", "alive": True},
+            {"object_id": "GROUP:Known", "x": 1, "z": 2},
+        ],
+        units=[{"object_id": "UNIT:Orphan", "group_name": "Missing", "alive": True, "x": 1, "z": 2}],
+        zones=[{"object_id": "ZONE:Broken", "radius": 0, "x": 1, "z": 2}],
+    )
+
+    issues = picture.validate()
+    codes = {issue.code for issue in issues}
+
+    assert "duplicate_object_id" in codes
+    assert "alive_without_position" in codes
+    assert "unit_group_missing" in codes
+    assert "invalid_zone_radius" in codes
 
 
 def test_sdk_refresh_picture_helpers_request_expected_snapshots() -> None:

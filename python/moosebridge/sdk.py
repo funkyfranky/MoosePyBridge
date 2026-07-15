@@ -676,7 +676,7 @@ class MooseBridgeClient:
         return self.build_tactical_picture(coalition, intel)
 
     async def refresh_global_picture(self) -> GlobalPicture:
-        """Refresh all supported snapshots and build a global/admin picture."""
+        """Refresh and build a global/admin picture."""
 
         await self.snapshot_all()
         return self.build_global_picture()

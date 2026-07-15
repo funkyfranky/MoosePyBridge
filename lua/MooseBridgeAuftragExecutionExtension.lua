@@ -303,7 +303,7 @@ function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
     threat_neutral=opszone and opszone.Tnut or 0,
     airbase_name=opszone and opszone.airbaseName and tostring(opszone.airbaseName) or nil,
   }
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 

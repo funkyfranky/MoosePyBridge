@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 import math
 from typing import Any
 
@@ -21,6 +22,7 @@ class DcsTime:
 
     mission_time: float | None = None
     dcs_time: float | None = None
+    mission_date: str | None = None
     wall_time: str | None = None
     sequence: int | None = None
 
@@ -32,6 +34,7 @@ class DcsTime:
         return cls(
             mission_time=_optional_float(message.get("mission_time", result.get("mission_time"))),
             dcs_time=_optional_float(message.get("dcs_time", result.get("dcs_time"))),
+            mission_date=_optional_str(message.get("mission_date", result.get("mission_date"))),
             wall_time=_optional_str(message.get("wall_time", result.get("wall_time"))),
             sequence=_optional_int(message.get("sequence")),
         )
@@ -54,28 +57,39 @@ class DcsTime:
 
     @property
     def time_of_day(self) -> str | None:
-        """Return the DCS time of day as ``HH:MM:SS.mmm``."""
+        """Return the DCS time of day as ``HH:MM:SS``."""
 
         seconds = self.seconds_of_day
         if seconds is None:
             return None
-        milliseconds_of_day = int(seconds * 1000)
-        whole_seconds, milliseconds = divmod(milliseconds_of_day, 1000)
+        whole_seconds = int(seconds)
         hours, remainder = divmod(whole_seconds, 3600)
         minutes, secs = divmod(remainder, 60)
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
     @property
     def mission_elapsed(self) -> str | None:
-        """Return mission elapsed time as ``HH:MM:SS.mmm``."""
+        """Return mission elapsed time as ``HH:MM:SS``."""
 
         if self.mission_time is None:
             return None
-        milliseconds_total = max(0, int(self.mission_time * 1000))
-        whole_seconds, milliseconds = divmod(milliseconds_total, 1000)
+        whole_seconds = max(0, int(self.mission_time))
         hours, remainder = divmod(whole_seconds, 3600)
         minutes, secs = divmod(remainder, 60)
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{milliseconds:03d}"
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    @property
+    def dcs_date(self) -> str | None:
+        """Return the current simulated DCS date as ``YYYY/MM/DD``."""
+
+        if self.mission_date is None:
+            return None
+        try:
+            start_date = datetime.strptime(self.mission_date, "%Y/%m/%d").date()
+        except ValueError:
+            return None
+        current_date = start_date + timedelta(days=self.day_offset or 0)
+        return current_date.strftime("%Y/%m/%d")
 
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-friendly clock metadata."""
@@ -86,6 +100,8 @@ class DcsTime:
                 "mission_time": self.mission_time,
                 "mission_elapsed": self.mission_elapsed,
                 "dcs_time": self.dcs_time,
+                "mission_date": self.mission_date,
+                "dcs_date": self.dcs_date,
                 "dcs_day_offset": self.day_offset,
                 "dcs_time_of_day": self.time_of_day,
                 "wall_time": self.wall_time,

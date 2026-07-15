@@ -112,6 +112,8 @@ class TargetObjectSnapshot:
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
@@ -136,6 +138,8 @@ class TargetObjectSnapshot:
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),
             z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
             raw=payload,
         )
 
@@ -162,6 +166,8 @@ class TargetSnapshot:
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
@@ -193,6 +199,8 @@ class TargetSnapshot:
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),
             z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
             raw=payload,
         )
 
@@ -278,6 +286,8 @@ class IntelContact(MooseSnapshotObject):
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "IntelContact":
@@ -315,6 +325,8 @@ class IntelContact(MooseSnapshotObject):
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),
             z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
         )
 
 
@@ -335,6 +347,8 @@ class IntelCluster(MooseSnapshotObject):
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "IntelCluster":
@@ -360,6 +374,8 @@ class IntelCluster(MooseSnapshotObject):
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),
             z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
         )
 
 
@@ -385,6 +401,8 @@ class OpsZone(MooseSnapshotObject):
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "OpsZone":
@@ -419,6 +437,8 @@ class OpsZone(MooseSnapshotObject):
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),
             z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
         )
 
 
@@ -453,6 +473,8 @@ class OpsGroup(MooseSnapshotObject):
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "OpsGroup":
@@ -496,6 +518,8 @@ class OpsGroup(MooseSnapshotObject):
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),
             z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
         )
 
 

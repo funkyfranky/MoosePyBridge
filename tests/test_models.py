@@ -17,6 +17,8 @@ def test_opszone_model_from_payload() -> None:
         "owner_current_name": "neutral",
         "x": -33711.171875,
         "z": -510211,
+        "latitude": 54.10851,
+        "longitude": 12.64489,
     }
 
     zone = OpsZone.from_payload(payload)
@@ -26,6 +28,8 @@ def test_opszone_model_from_payload() -> None:
     assert zone.zone_type == "Circular"
     assert zone.zone_radius == 3000
     assert zone.owner_current_name == "neutral"
+    assert zone.latitude == 54.10851
+    assert zone.longitude == 12.64489
 
 
 def test_opsgroup_model_from_payload() -> None:
@@ -178,6 +182,8 @@ def test_intel_models_from_payload() -> None:
             "recce": "EWR-1",
             "x": 10,
             "z": 20,
+            "latitude": 54.1,
+            "longitude": 12.2,
         }
     )
     cluster = IntelCluster.from_payload(
@@ -200,6 +206,8 @@ def test_intel_models_from_payload() -> None:
     assert intel.agent_ids == ["GROUP:EWR-1", "GROUP:AWACS-1", "GROUP:Dead-1"]
     assert contact.target_object_id == "GROUP:Ground-1"
     assert contact.threat_level == 7
+    assert contact.latitude == 54.1
+    assert contact.longitude == 12.2
     assert cluster.contact_ids == ["INTELCONTACT:BlueIntel:Ground-1"]
 
 
@@ -285,6 +293,7 @@ def test_state_tracks_dcs_clock_for_each_snapshot_kind() -> None:
             "sequence": 42,
             "mission_time": 10.25,
             "dcs_time": 86_410.5,
+            "mission_date": "2026/07/15",
             "wall_time": "2026-07-15T10:00:00Z",
             "kind": "intels",
             "payload": {"intels": []},
@@ -294,8 +303,10 @@ def test_state_tracks_dcs_clock_for_each_snapshot_kind() -> None:
     assert state.clock is not None
     assert state.clock.mission_time == 10.25
     assert state.clock.day_offset == 1
-    assert state.clock.time_of_day == "00:00:10.500"
-    assert state.clock.mission_elapsed == "00:00:10.250"
+    assert state.clock.time_of_day == "00:00:10"
+    assert state.clock.mission_date == "2026/07/15"
+    assert state.clock.dcs_date == "2026/07/16"
+    assert state.clock.mission_elapsed == "00:00:10"
     assert state.snapshot_clocks["intels"] is state.clock
 
 

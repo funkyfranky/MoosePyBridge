@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact
+from .pictures import GlobalPicture, PictureValidationIssue
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -14,6 +15,71 @@ if TYPE_CHECKING:
 
 def _text(value: object, default: str = "-") -> str:
     return str(value) if value not in (None, "") else default
+
+
+def _clock_title(picture: GlobalPicture) -> str:
+    clock = picture.clock
+    if not clock:
+        return datetime.now().strftime("%H:%M:%S")
+    values = [f"wall={clock.wall_time or '-'}"]
+    if clock.time_of_day is not None:
+        dcs_date = clock.dcs_date or f"D+{clock.day_offset or 0}"
+        values.append(f"dcs={dcs_date} {clock.time_of_day}")
+    if clock.mission_elapsed is not None:
+        values.append(f"mission={clock.mission_elapsed}")
+    return " | ".join(values)
+
+
+def format_picture_issue(issue: PictureValidationIssue) -> str:
+    """Return one human-readable picture validation issue."""
+
+    object_label = f" {issue.object_id}" if issue.object_id else ""
+    return f"{issue.severity.upper()} {issue.code}{object_label}: {issue.message}"
+
+
+def format_global_picture_status(picture: GlobalPicture, *, issue_limit: int = 20) -> str:
+    """Return counts and consistency diagnostics for a global picture."""
+
+    counts = picture.counts()
+    alive_groups = sum(item.get("alive") is True for item in picture.groups)
+    alive_units = sum(item.get("alive") is True for item in picture.units)
+    alive_statics = sum(item.get("alive") is True for item in picture.statics)
+    coalitions = {
+        coalition: sum(item.get("coalition") == coalition for item in picture.groups)
+        for coalition in ("blue", "red", "neutral")
+    }
+    issues = picture.validate()
+    errors = sum(issue.severity == "error" for issue in issues)
+    warnings = sum(issue.severity == "warning" for issue in issues)
+
+    lines = [
+        f"[{_clock_title(picture)}] Global picture",
+        "-" * 90,
+        (
+            f"truth: groups={counts['groups']} (alive={alive_groups}) "
+            f"units={counts['units']} (alive={alive_units}) "
+            f"statics={counts['statics']} (alive={alive_statics}) "
+            f"airbases={counts['airbases']} zones={counts['zones']}"
+        ),
+        (
+            f"coalitions/groups: blue={coalitions['blue']} red={coalitions['red']} "
+            f"neutral={coalitions['neutral']} unknown={counts['groups'] - sum(coalitions.values())}"
+        ),
+        (
+            f"ops: opszones={counts['opszones']} opsgroups={counts['opsgroups']} "
+            f"missions={counts['missions']} legions={counts['legions']} cohorts={counts['cohorts']}"
+        ),
+        (
+            f"intel: objects={counts['intels']} contacts={counts['intel_contacts']} "
+            f"clusters={counts['intel_clusters']}"
+        ),
+        f"validation: errors={errors} warnings={warnings}",
+    ]
+    for issue in issues[:issue_limit]:
+        lines.append(f"  {format_picture_issue(issue)}")
+    if len(issues) > issue_limit:
+        lines.append(f"  ... {len(issues) - issue_limit} more")
+    return "\n".join(lines)
 
 
 def format_mission_summary(mission: Auftrag) -> str:
@@ -175,7 +241,8 @@ def format_intel_status(
         if clock:
             values = [f"wall={clock.wall_time or '-'}"]
             if clock.time_of_day is not None:
-                values.append(f"dcs=D+{clock.day_offset or 0} {clock.time_of_day}")
+                dcs_date = clock.dcs_date or f"D+{clock.day_offset or 0}"
+                values.append(f"dcs={dcs_date} {clock.time_of_day}")
             if clock.mission_elapsed is not None:
                 values.append(f"mission={clock.mission_elapsed}")
             title = f"[{' | '.join(values)}] {title}"
@@ -214,6 +281,7 @@ def format_intel_status(
 
 __all__ = [
     "format_cohort_assets",
+    "format_global_picture_status",
     "format_intel_cluster",
     "format_intel_contact",
     "format_intel_status",
@@ -221,4 +289,5 @@ __all__ = [
     "format_legion_status",
     "format_legion_summary",
     "format_mission_summary",
+    "format_picture_issue",
 ]

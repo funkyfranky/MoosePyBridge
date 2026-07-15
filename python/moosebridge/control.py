@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from .clock import DcsTime
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
 from .state import MooseBridgeState
@@ -88,6 +89,8 @@ def state_payload(state: MooseBridgeState, kinds: Iterable[str] | None = None) -
     payload: dict[str, Any] = {
         "connected": state.connected,
         "last_heartbeat": state.last_heartbeat,
+        "clock": state.clock.to_dict() if state.clock else None,
+        "snapshot_clocks": {kind: clock.to_dict() for kind, clock in state.snapshot_clocks.items()},
         "counts": {kind: len(getattr(state, kind, {})) for kind in STATE_KINDS},
     }
     for kind in selected:
@@ -106,10 +109,19 @@ def apply_state_payload(state: MooseBridgeState, payload: dict[str, Any]) -> Moo
 
     state.connected = bool(payload.get("connected", False))
     state.last_heartbeat = payload.get("last_heartbeat") if isinstance(payload.get("last_heartbeat"), dict) else None
+    clock_payload = payload.get("clock") if isinstance(payload.get("clock"), dict) else None
+    snapshot_clock_payloads = payload.get("snapshot_clocks") if isinstance(payload.get("snapshot_clocks"), dict) else {}
     for kind in STATE_KINDS:
         items = payload.get(kind)
         if isinstance(items, list):
             state.apply_message({"type": "snapshot", "kind": kind, "payload": {kind: items}})
+    if clock_payload is not None:
+        state.clock = DcsTime.from_message(clock_payload)
+    state.snapshot_clocks = {
+        str(kind): DcsTime.from_message(value)
+        for kind, value in snapshot_clock_payloads.items()
+        if isinstance(value, dict)
+    }
     return state
 
 

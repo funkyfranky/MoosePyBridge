@@ -95,6 +95,12 @@ def test_state_payload_roundtrip_applies_requested_kinds() -> None:
     source.apply_message(
         {
             "type": "snapshot",
+            "source": "dcs",
+            "sequence": 12,
+            "mission_time": 125.5,
+            "dcs_time": 43_325.5,
+            "mission_date": "2026/07/15",
+            "wall_time": "2026-07-15T12:00:00Z",
             "kind": "objects",
             "payload": {
                 "objects": [
@@ -115,6 +121,12 @@ def test_state_payload_roundtrip_applies_requested_kinds() -> None:
     assert payload["counts"]["objects"] == 1
     assert target.connected is True
     assert target.objects["UNIT:Scout-1"]["object_type"] == "UNIT"
+    assert payload["clock"]["dcs_time"] == 43_325.5
+    assert target.clock is not None
+    assert target.clock.mission_time == 125.5
+    assert target.clock.time_of_day == "12:02:05"
+    assert target.clock.dcs_date == "2026/07/15"
+    assert target.snapshot_clocks["objects"].sequence == 12
 
 
 def test_interactive_snapshot_aliases_normalize_to_bridge_actions() -> None:

@@ -177,7 +177,7 @@ function MOOSE_BRIDGE:_BuildIntelContactSnapshotItem(intel_name, contact, source
     rcs=contact.rcs,
     mission_id=bridge_intel_auftrag_id(self, contact.mission),
   }
-  if point then item.x=point.x; item.y=point.y; item.z=point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -208,7 +208,7 @@ function MOOSE_BRIDGE:_BuildIntelClusterSnapshotItem(intel_name, cluster, source
     altitude_m=cluster.altitude,
     mission_id=bridge_intel_auftrag_id(self, cluster.mission),
   }
-  if point then item.x=point.x; item.y=point.y; item.z=point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 

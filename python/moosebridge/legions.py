@@ -234,6 +234,8 @@ class Cohort:
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     def mission_performance_for(self, mission_type: str) -> float | None:
@@ -329,6 +331,8 @@ class Cohort:
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),
             z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
             raw=payload,
         )
 
@@ -356,6 +360,8 @@ class Legion:
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
     @classmethod
@@ -388,5 +394,7 @@ class Legion:
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),
             z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
             raw=payload,
         )

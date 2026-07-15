@@ -100,7 +100,7 @@ from .intents import (
 from .legions import Cohort, CohortSummary, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
 from .outcomes import AuftragOutcome
-from .pictures import GlobalPicture, TacticalPicture
+from .pictures import GlobalPicture, PictureValidationIssue, TacticalPicture
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
 from .server import MooseBridgeServer
@@ -116,6 +116,7 @@ from .sdk import (
 from .control_sdk import ControlSdkAdapter, sdk_from_control_client
 from .diagnostics import (
     format_cohort_assets,
+    format_global_picture_status,
     format_intel_cluster,
     format_intel_contact,
     format_intel_status,
@@ -123,6 +124,7 @@ from .diagnostics import (
     format_legion_status,
     format_legion_summary,
     format_mission_summary,
+    format_picture_issue,
 )
 from .state import MooseBridgeState, MooseObjectIdentity
 
@@ -233,6 +235,7 @@ __all__ = [
     "NearestResult",
     "OpsGroup",
     "OpsZone",
+    "PictureValidationIssue",
     "TargetObjectSnapshot",
     "TargetSnapshot",
     "TacticalIntent",
@@ -248,6 +251,7 @@ __all__ = [
     "executable_candidates",
     "expand_platform_categories",
     "format_cohort_assets",
+    "format_global_picture_status",
     "format_intel_cluster",
     "format_intel_contact",
     "format_intel_status",
@@ -255,6 +259,7 @@ __all__ = [
     "format_legion_status",
     "format_legion_summary",
     "format_mission_summary",
+    "format_picture_issue",
     "get_auftrag_type_spec",
     "platform_categories_match",
     "recommend_auftrag",

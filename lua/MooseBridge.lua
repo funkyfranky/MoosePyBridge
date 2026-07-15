@@ -14,6 +14,13 @@ local function dcs_time()
   return nil
 end
 
+local function mission_date()
+  if not UTILS or not UTILS.GetDCSMissionDate then return nil end
+  local ok, value = pcall(function() return UTILS.GetDCSMissionDate() end)
+  if ok then return value end
+  return nil
+end
+
 local function wall_time()
   if os and os.date then return os.date("!%Y-%m-%dT%H:%M:%SZ") end
   return nil
@@ -64,6 +71,7 @@ function MOOSE_BRIDGE:New(host, port)
   self.HeartbeatInterval = 5
   self.LastHeartbeat = 0
   self.LastConnectAttempt = -9999
+  self.MissionDate = mission_date()
   self:RegisterDefaultCommands()
   return self
 end
@@ -120,7 +128,7 @@ function MOOSE_BRIDGE:_NextMarkId()
 end
 
 function MOOSE_BRIDGE:_BaseMessage(message_type)
-  return {version=1,type=message_type,id=self:_NextId(message_type),source="dcs",sequence=self.Sequence,mission_time=mission_time(),dcs_time=dcs_time(),wall_time=wall_time()}
+  return {version=1,type=message_type,id=self:_NextId(message_type),source="dcs",sequence=self.Sequence,mission_time=mission_time(),dcs_time=dcs_time(),mission_date=self.MissionDate,wall_time=wall_time()}
 end
 
 function MOOSE_BRIDGE:Send(message)
@@ -512,6 +520,17 @@ function MOOSE_BRIDGE:_CoordinatesForPoint(point, format)
   return result
 end
 
+function MOOSE_BRIDGE:_AddPointFields(item, point)
+  if type(item) ~= "table" or type(point) ~= "table" then return item end
+  local coordinates = self:_CoordinatesForPoint(point, "ll")
+  item.x = coordinates.x
+  item.y = coordinates.y
+  item.z = coordinates.z
+  item.latitude = coordinates.latitude
+  item.longitude = coordinates.longitude
+  return item
+end
+
 function MOOSE_BRIDGE:_DistanceBetweenPoints(point_a, point_b)
   if not point_a or not point_b then error("Distance requires two points") end
   local dx = (point_b.x or 0) - (point_a.x or 0)
@@ -650,7 +669,7 @@ function MOOSE_BRIDGE:_BuildGroupSnapshotItem(group_name, group)
   local alive_unit_count = self:_CountGroupUnits(group, true)
   local point = self:_PointForGroupName(name)
   local item = {object_id="GROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="GROUP",category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active),unit_count=self:_NumberOrZero(unit_count),alive_unit_count=self:_NumberOrZero(alive_unit_count)}
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -680,7 +699,7 @@ function MOOSE_BRIDGE:_BuildUnitSnapshotItem(unit_name, unit)
   local active = self:_SafeCall(unit, "IsActive")
   local point = self:_DcsPoint(dcs_unit)
   local item = {object_id="UNIT:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="UNIT",group_name=group_name and safe_tostring(group_name) or nil,category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active)}
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -716,7 +735,7 @@ function MOOSE_BRIDGE:_BuildStaticSnapshotItem(static_name, static)
   if alive == nil then alive = self:_IsDcsObjectAlive(dcs_static) end
   local point = self:_DcsPoint(dcs_static) or self:_PointFromMooseObject(static)
   local item = {object_id="STATIC:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="STATIC",category=category and safe_tostring(category) or "STATIC",coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,alive=self:_BoolOrFalse(alive)}
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -741,7 +760,7 @@ function MOOSE_BRIDGE:_BuildAirbaseSnapshotItem(airbase)
   if airbase.getDesc then local ok, desc = pcall(function() return airbase:getDesc() end); if ok and type(desc) == "table" then display_name = desc.displayName end end
   local point = self:_DcsCall(airbase, "getPoint")
   local item = {object_id="AIRBASE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="AIRBASE",category=self:_AirbaseCategoryToName(airbase_category) or "AIRBASE",dcs_category=object_category,dcs_category_name=self:_ObjectCategoryToName(object_category),coalition=self:_CoalitionToName(coalition_value),dcs_type=dcs_type and safe_tostring(dcs_type) or nil,display_name=display_name and safe_tostring(display_name) or nil}
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -768,7 +787,7 @@ function MOOSE_BRIDGE:_BuildZoneSnapshotItem(zone_name, zone, source)
   end
   local radius = self:_SafeCall(zone, "GetRadius") or zone.radius
   local item = {object_id="ZONE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="ZONE",category="ZONE",source=source,radius=radius}
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -914,7 +933,7 @@ function MOOSE_BRIDGE:_BuildOpsGroupSnapshotItem(group_name, opsgroup, source)
     auftrag_queue_ids=self:_CollectAuftragIdsFromQueue(opsgroup and opsgroup.missionqueue),
     detected_group_ids=self:_CollectDetectedGroupIds(opsgroup),
   }
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -995,7 +1014,7 @@ function MOOSE_BRIDGE:_BuildTargetObjectSnapshot(target, target_object)
     life=target_object.Life,
     life0=target_object.Life0,
   }
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -1029,7 +1048,7 @@ function MOOSE_BRIDGE:_BuildTargetSnapshot(target)
     is_destroyed=self:_BoolOrFalse(target.isDestroyed),
     objects=target_objects,
   }
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -1128,7 +1147,7 @@ function MOOSE_BRIDGE:_BuildLegionSnapshotItem(legion_name, legion, source)
     n_cohorts=self:_CountTable((legion and legion.cohorts) or {}),
     auftrag_queue_ids=self:_CollectAuftragIdsFromQueue(legion and legion.missionqueue),
   }
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -1233,7 +1252,7 @@ function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
     opsgroup_count=self:_CountSet(opsgroups),
     opsgroup_ids=self:_CollectOpsGroupIdsFromSet(opsgroups),
   }
-  if point then item.x = point.x; item.y = point.y; item.z = point.z end
+  if point then self:_AddPointFields(item, point) end
   return item
 end
 
@@ -1316,7 +1335,7 @@ end
 
 function MOOSE_BRIDGE:RegisterDefaultCommands()
   self:RegisterCommand("time.get", function(cmd)
-    return {action="time.get", mission_time=mission_time(), dcs_time=dcs_time(), wall_time=wall_time()}
+    return {action="time.get", mission_time=mission_time(), dcs_time=dcs_time(), mission_date=self.MissionDate, wall_time=wall_time()}
   end)
 
   self:RegisterCommand("message.to_all", function(cmd)

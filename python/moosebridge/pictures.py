@@ -10,8 +10,8 @@ from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
 
 
-class HasDcsPoint(Protocol):
-    """Protocol for snapshot models with DCS x/y/z coordinates."""
+class HasGeographicPoint(Protocol):
+    """Protocol for snapshot models with DCS and geographic coordinates."""
 
     object_id: str
     dcs_name: str
@@ -20,11 +20,23 @@ class HasDcsPoint(Protocol):
     x: float | None
     y: float | None
     z: float | None
+    latitude: float | None
+    longitude: float | None
     raw: dict[str, Any]
 
 
 GeoJsonFeature = dict[str, Any]
 GeoJsonFeatureCollection = dict[str, Any]
+
+
+@dataclass(slots=True, frozen=True)
+class PictureValidationIssue:
+    """One consistency issue found in a situation picture."""
+
+    severity: str
+    code: str
+    message: str
+    object_id: str | None = None
 
 
 def _clean_properties(properties: dict[str, Any]) -> dict[str, Any]:
@@ -33,18 +45,18 @@ def _clean_properties(properties: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in properties.items() if value is not None}
 
 
-def _point_geometry(x: float | None, z: float | None) -> dict[str, Any] | None:
-    """Return GeoJSON point geometry using DCS x/z as planar coordinates."""
+def _point_geometry(longitude: float | None, latitude: float | None) -> dict[str, Any] | None:
+    """Return a WGS84 GeoJSON point in longitude/latitude order."""
 
-    if x is None or z is None:
+    if longitude is None or latitude is None:
         return None
-    return {"type": "Point", "coordinates": [x, z]}
+    return {"type": "Point", "coordinates": [longitude, latitude]}
 
 
 def _line_geometry(points: Iterable[tuple[float | None, float | None]]) -> dict[str, Any] | None:
-    """Return GeoJSON line geometry using DCS x/z as planar coordinates."""
+    """Return a WGS84 GeoJSON line in longitude/latitude order."""
 
-    coordinates = [[x, z] for x, z in points if x is not None and z is not None]
+    coordinates = [[longitude, latitude] for longitude, latitude in points if longitude is not None and latitude is not None]
     if len(coordinates) < 2:
         return None
     return {"type": "LineString", "coordinates": coordinates}
@@ -70,37 +82,47 @@ def _feature(
         "name": name,
         "object_type": object_type,
         "category": category,
-        "coordinate_system": "dcs",
+        "coordinate_system": "WGS84",
     }
     feature_properties.update(properties or {})
     return {"type": "Feature", "geometry": geometry, "properties": _clean_properties(feature_properties)}
 
 
-def _point_feature(item: HasDcsPoint, layer: str, properties: dict[str, Any] | None = None) -> GeoJsonFeature | None:
+def _point_feature(item: HasGeographicPoint, layer: str, properties: dict[str, Any] | None = None) -> GeoJsonFeature | None:
     """Build a point feature from a typed snapshot object."""
 
+    feature_properties = {
+        "x": _as_float(getattr(item, "x", None)),
+        "y": _as_float(getattr(item, "y", None)),
+        "z": _as_float(getattr(item, "z", None)),
+    }
+    feature_properties.update(properties or {})
     return _feature(
-        geometry=_point_geometry(_as_float(getattr(item, "x", None)), _as_float(getattr(item, "z", None))),
+        geometry=_point_geometry(
+            _as_float(getattr(item, "longitude", None)), _as_float(getattr(item, "latitude", None))
+        ),
         layer=layer,
         object_id=str(getattr(item, "object_id", "")),
         name=str(getattr(item, "dcs_name", "") or "") or None,
         object_type=str(getattr(item, "object_type", "") or "") or None,
         category=getattr(item, "category", None),
-        properties=properties,
+        properties=feature_properties,
     )
 
 
 def _raw_point_feature(item: dict[str, Any], layer: str, properties: dict[str, Any] | None = None) -> GeoJsonFeature | None:
     """Build a point feature from a raw snapshot dictionary."""
 
+    feature_properties = dict(item)
+    feature_properties.update(properties or {})
     return _feature(
-        geometry=_point_geometry(_as_float(item.get("x")), _as_float(item.get("z"))),
+        geometry=_point_geometry(_as_float(item.get("longitude")), _as_float(item.get("latitude"))),
         layer=layer,
         object_id=str(item.get("object_id") or ""),
         name=str(item.get("dcs_name") or item.get("name") or "") or None,
         object_type=str(item.get("object_type") or "") or None,
         category=str(item.get("category") or "") or None,
-        properties=properties or item,
+        properties=feature_properties,
     )
 
 
@@ -119,7 +141,7 @@ def _feature_collection(features: Iterable[GeoJsonFeature | None], *, scope: str
     return {
         "type": "FeatureCollection",
         "features": [feature for feature in features if feature is not None],
-        "properties": {"scope": scope, "coordinate_system": "dcs", **metadata},
+        "properties": {"scope": scope, "coordinate_system": "WGS84", **metadata},
     }
 
 
@@ -260,7 +282,7 @@ class TacticalPicture:
                 continue
             features.append(
                 _feature(
-                    geometry=_point_geometry(target.x, target.z),
+                    geometry=_point_geometry(target.longitude, target.latitude),
                     layer="missions",
                     object_id=mission.object_id,
                     name=mission.name,
@@ -272,6 +294,9 @@ class TacticalPicture:
                         "assigned_group_ids": mission.assigned_group_ids,
                         "target_name": target.name,
                         "target_object_id": target.object_id,
+                        "x": target.x,
+                        "y": target.y,
+                        "z": target.z,
                     },
                 )
             )
@@ -296,6 +321,170 @@ class GlobalPicture:
     intels: list[Intel] = field(default_factory=list)
     intel_contacts: list[IntelContact] = field(default_factory=list)
     intel_clusters: list[IntelCluster] = field(default_factory=list)
+
+    def counts(self) -> dict[str, int]:
+        """Return object counts by global-picture layer."""
+
+        return {
+            "groups": len(self.groups),
+            "units": len(self.units),
+            "statics": len(self.statics),
+            "airbases": len(self.airbases),
+            "zones": len(self.zones),
+            "opszones": len(self.opszones),
+            "opsgroups": len(self.opsgroups),
+            "missions": len(self.missions),
+            "legions": len(self.legions),
+            "cohorts": len(self.cohorts),
+            "intels": len(self.intels),
+            "intel_contacts": len(self.intel_contacts),
+            "intel_clusters": len(self.intel_clusters),
+        }
+
+    def validate(self) -> list[PictureValidationIssue]:
+        """Validate global-truth identities, references and map geometry."""
+
+        issues: list[PictureValidationIssue] = []
+        raw_layers = {
+            "groups": self.groups,
+            "units": self.units,
+            "statics": self.statics,
+            "airbases": self.airbases,
+            "zones": self.zones,
+        }
+        seen_ids: dict[str, str] = {}
+
+        def record_id(layer: str, object_id: str) -> None:
+            if not object_id:
+                issues.append(PictureValidationIssue("error", "missing_object_id", f"{layer} item has no object_id"))
+                return
+            previous_layer = seen_ids.get(object_id)
+            if previous_layer:
+                issues.append(
+                    PictureValidationIssue("error", "duplicate_object_id", f"also present in {previous_layer}", object_id)
+                )
+            else:
+                seen_ids[object_id] = layer
+
+        for layer, items in raw_layers.items():
+            for item in items:
+                object_id = str(item.get("object_id") or "")
+                record_id(layer, object_id)
+                if not object_id:
+                    continue
+
+                has_x = _as_float(item.get("x")) is not None
+                has_z = _as_float(item.get("z")) is not None
+                latitude = _as_float(item.get("latitude"))
+                longitude = _as_float(item.get("longitude"))
+                has_latitude = latitude is not None
+                has_longitude = longitude is not None
+                if has_x != has_z:
+                    issues.append(PictureValidationIssue("error", "partial_position", "only x or z is present", object_id))
+                if has_latitude != has_longitude:
+                    issues.append(
+                        PictureValidationIssue(
+                            "error", "partial_geographic_position", "only latitude or longitude is present", object_id
+                        )
+                    )
+                if has_x and has_z and not (has_latitude and has_longitude):
+                    issues.append(
+                        PictureValidationIssue(
+                            "warning", "missing_geographic_position", "DCS position has no latitude/longitude", object_id
+                        )
+                    )
+                if latitude is not None and not -90 <= latitude <= 90:
+                    issues.append(PictureValidationIssue("error", "invalid_latitude", f"latitude={latitude}", object_id))
+                if longitude is not None and not -180 <= longitude <= 180:
+                    issues.append(PictureValidationIssue("error", "invalid_longitude", f"longitude={longitude}", object_id))
+                if item.get("alive") is True and not (has_x and has_z):
+                    issues.append(
+                        PictureValidationIssue("warning", "alive_without_position", "alive object has no x/z position", object_id)
+                    )
+                if layer in {"airbases", "zones"} and not (has_x and has_z):
+                    issues.append(
+                        PictureValidationIssue("warning", "map_object_without_position", f"{layer} item has no x/z position", object_id)
+                    )
+
+        typed_layers = {
+            "opszones": self.opszones,
+            "opsgroups": self.opsgroups,
+            "missions": self.missions,
+            "legions": self.legions,
+            "cohorts": self.cohorts,
+            "intels": self.intels,
+            "intel_contacts": self.intel_contacts,
+            "intel_clusters": self.intel_clusters,
+        }
+        for layer, items in typed_layers.items():
+            for item in items:
+                record_id(layer, item.object_id)
+                x = _as_float(getattr(item, "x", None))
+                z = _as_float(getattr(item, "z", None))
+                latitude = _as_float(getattr(item, "latitude", None))
+                longitude = _as_float(getattr(item, "longitude", None))
+                if x is not None and z is not None and (latitude is None or longitude is None):
+                    issues.append(
+                        PictureValidationIssue(
+                            "warning", "missing_geographic_position", "DCS position has no latitude/longitude", item.object_id
+                        )
+                    )
+                if latitude is not None and not -90 <= latitude <= 90:
+                    issues.append(PictureValidationIssue("error", "invalid_latitude", f"latitude={latitude}", item.object_id))
+                if longitude is not None and not -180 <= longitude <= 180:
+                    issues.append(PictureValidationIssue("error", "invalid_longitude", f"longitude={longitude}", item.object_id))
+
+        for zone in self.opszones:
+            if zone.x is None or zone.z is None:
+                issues.append(
+                    PictureValidationIssue("warning", "map_object_without_position", "OPSZONE has no x/z position", zone.object_id)
+                )
+
+        group_ids = {str(item.get("object_id") or "") for item in self.groups}
+        for unit in self.units:
+            group_name = unit.get("group_name")
+            if group_name and f"GROUP:{group_name}" not in group_ids:
+                issues.append(
+                    PictureValidationIssue(
+                        "warning",
+                        "unit_group_missing",
+                        f"references missing GROUP:{group_name}",
+                        str(unit.get("object_id") or "") or None,
+                    )
+                )
+
+        for zone in self.zones:
+            radius = _as_float(zone.get("radius"))
+            if radius is not None and radius <= 0:
+                issues.append(
+                    PictureValidationIssue(
+                        "error", "invalid_zone_radius", f"radius must be positive, got {radius}", str(zone.get("object_id") or "") or None
+                    )
+                )
+
+        opsgroup_ids = {group.object_id for group in self.opsgroups}
+        for group in self.opsgroups:
+            if group.group_name and f"GROUP:{group.group_name}" not in group_ids:
+                issues.append(
+                    PictureValidationIssue(
+                        "warning", "opsgroup_group_missing", f"references missing GROUP:{group.group_name}", group.object_id
+                    )
+                )
+            if group.alive and (group.x is None or group.z is None):
+                issues.append(
+                    PictureValidationIssue("warning", "alive_without_position", "alive OPSGROUP has no x/z position", group.object_id)
+                )
+
+        for mission in self.missions:
+            for group_id in mission.assigned_group_ids:
+                if group_id not in opsgroup_ids:
+                    issues.append(
+                        PictureValidationIssue(
+                            "warning", "mission_opsgroup_missing", f"references missing {group_id}", mission.object_id
+                        )
+                    )
+
+        return issues
 
     def to_geojson(self) -> GeoJsonFeatureCollection:
         """Return a GeoJSON FeatureCollection suitable for an admin/global map."""
@@ -323,18 +512,30 @@ class GlobalPicture:
                 continue
             features.append(
                 _feature(
-                    geometry=_point_geometry(target.x, target.z),
+                    geometry=_point_geometry(target.longitude, target.latitude),
                     layer="missions",
                     object_id=mission.object_id,
                     name=mission.name,
                     object_type="AUFTRAG",
                     category=mission.type,
-                    properties={"mission_type": mission.type, "status": mission.status, "target_name": target.name},
+                    properties={
+                        "mission_type": mission.type,
+                        "status": mission.status,
+                        "target_name": target.name,
+                        "x": target.x,
+                        "y": target.y,
+                        "z": target.z,
+                    },
                 )
             )
             for group_id in mission.assigned_group_ids:
                 group = groups_by_id.get(group_id)
-                geometry = _line_geometry(((group.x if group else None, group.z if group else None), (target.x, target.z)))
+                geometry = _line_geometry(
+                    (
+                        (group.longitude if group else None, group.latitude if group else None),
+                        (target.longitude, target.latitude),
+                    )
+                )
                 features.append(
                     _feature(
                         geometry=geometry,

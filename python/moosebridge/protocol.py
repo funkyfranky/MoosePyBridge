@@ -42,6 +42,7 @@ class BridgeMessage:
     sequence: int | None = None
     mission_time: float | None = None
     dcs_time: float | None = None
+    mission_date: str | None = None
     wall_time: str = field(default_factory=utc_now_iso)
     correlation_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
@@ -66,6 +67,8 @@ class BridgeMessage:
             data["mission_time"] = self.mission_time
         if self.dcs_time is not None:
             data["dcs_time"] = self.dcs_time
+        if self.mission_date is not None:
+            data["mission_date"] = self.mission_date
         if self.correlation_id is not None:
             data["correlation_id"] = self.correlation_id
         if self.payload:
