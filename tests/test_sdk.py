@@ -79,6 +79,17 @@ class FakeSdkServer:
                     "distance_nm": 1,
                 },
             }
+        if command.action == "time.get":
+            return {
+                "ok": True,
+                "type": "ack",
+                "source": "dcs",
+                "sequence": 7,
+                "mission_time": 3_661.25,
+                "dcs_time": 90_061.25,
+                "wall_time": "2026-07-15T10:00:00Z",
+                "result": {"action": "time.get"},
+            }
         if command.action == "snapshot.units":
             self.state.apply_message(
                 {
@@ -220,6 +231,25 @@ def test_sdk_distance_returns_typed_result() -> None:
         assert result.distance_m == 1852
         assert result.distance_nm == 1
         assert server.commands[0][0].params == {"object_id_a": "GROUP:Aerial-1", "object_id_b": "ZONE:Town Fight"}
+
+    asyncio.run(scenario())
+
+
+def test_sdk_get_time_returns_typed_dcs_clock() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        clock = await client.get_time(timeout=4.0)
+
+        assert clock.mission_time == 3_661.25
+        assert clock.dcs_time == 90_061.25
+        assert clock.day_offset == 1
+        assert clock.time_of_day == "01:01:01.250"
+        assert clock.mission_elapsed == "01:01:01.250"
+        assert clock.wall_time == "2026-07-15T10:00:00Z"
+        assert server.commands[0][0].action == "time.get"
+        assert server.commands[0][1] == 4.0
 
     asyncio.run(scenario())
 
@@ -384,6 +414,17 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
 
     server.state.apply_message(
         {
+            "type": "heartbeat",
+            "source": "dcs",
+            "sequence": 5,
+            "mission_time": 120.0,
+            "dcs_time": 43_320.0,
+            "wall_time": "2026-07-15T10:00:00Z",
+        }
+    )
+
+    server.state.apply_message(
+        {
             "type": "snapshot",
             "kind": "intels",
             "payload": {
@@ -512,6 +553,9 @@ def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
     assert [mission.object_id for mission in picture.missions] == ["AUFTRAG:1"]
     assert geojson["type"] == "FeatureCollection"
     assert geojson["properties"]["scope"] == "tactical"
+    assert geojson["properties"]["mission_time"] == 120.0
+    assert geojson["properties"]["mission_elapsed"] == "00:02:00.000"
+    assert geojson["properties"]["dcs_time_of_day"] == "12:02:00.000"
     assert "known_enemy_contacts" in layers
     assert "friendly_opsgroups" in layers
     assert "friendly_legions" in layers

@@ -9,6 +9,7 @@ import math
 from typing import Any
 
 from .auftraege import AuftragCommand, AuftragEvent
+from .clock import DcsTime
 from .auftrag_specs import auftrag_action_suffix
 from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Legion
@@ -587,6 +588,7 @@ class MooseBridgeClient:
         return TacticalPicture(
             coalition=coalition,
             intel_id=intel,
+            clock=self.state.clock,
             intel=self.intel(intel),
             contacts=contacts,
             clusters=clusters,
@@ -601,6 +603,7 @@ class MooseBridgeClient:
         """Build a global/admin situation picture from local truth snapshots."""
 
         return GlobalPicture(
+            clock=self.state.clock,
             groups=list(self.state.groups.values()),
             units=list(self.state.units.values()),
             statics=list(self.state.statics.values()),
@@ -752,6 +755,12 @@ class MooseBridgeClient:
         """Request an INTEL snapshot through the SDK."""
 
         return require_ok(await self.server.snapshot_intels())
+
+    async def get_time(self, timeout: float = 10.0) -> DcsTime:
+        """Read mission elapsed time, DCS world time and UTC wall time."""
+
+        ack = require_ok(await self.server.send_command(BridgeCommand(action="time.get", params={}), timeout=timeout))
+        return DcsTime.from_message(ack)
 
     async def snapshot_intel_contacts(self) -> dict[str, Any]:
         """Request an INTEL contact snapshot through the SDK."""

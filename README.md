@@ -246,6 +246,9 @@ tactical_geojson = tactical.to_geojson()
 
 await bridge.add_intel_agent("INTEL:BlueIntel", "GROUP:Blue EWR")
 
+clock = await bridge.get_time()
+print(clock.mission_time, clock.time_of_day, clock.day_offset, clock.wall_time)
+
 global_picture = await bridge.refresh_global_picture()
 global_geojson = global_picture.to_geojson()
 ```
@@ -410,8 +413,14 @@ Python command:
 DCS ACK:
 
 ```json
-{"version":1,"type":"ack","id":"ack-...","source":"dcs","correlation_id":"cmd-...","ok":true,"result":{"message":"Message sent to coalition","coalition":"blue"}}
+{"version":1,"type":"ack","id":"ack-...","source":"dcs","correlation_id":"cmd-...","mission_time":3138.265,"dcs_time":46338.265,"wall_time":"2026-07-15T10:00:00Z","ok":true,"result":{"message":"Message sent to coalition","coalition":"blue"}}
 ```
+
+Every DCS message reports three clocks: `mission_time` from `timer.getTime()`,
+`dcs_time` from `timer.getAbsTime()`, and UTC `wall_time`. Values of
+`dcs_time` above 86400 retain their day offset. The SDK exposes them as
+`DcsTime` through `await bridge.get_time()` and stores the latest value in
+`bridge.state.clock`.
 
 ## Design constraints
 

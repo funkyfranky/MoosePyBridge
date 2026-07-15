@@ -9,6 +9,11 @@ local function mission_time()
   return nil
 end
 
+local function dcs_time()
+  if timer and timer.getAbsTime then return timer.getAbsTime() end
+  return nil
+end
+
 local function wall_time()
   if os and os.date then return os.date("!%Y-%m-%dT%H:%M:%SZ") end
   return nil
@@ -115,7 +120,7 @@ function MOOSE_BRIDGE:_NextMarkId()
 end
 
 function MOOSE_BRIDGE:_BaseMessage(message_type)
-  return {version=1,type=message_type,id=self:_NextId(message_type),source="dcs",sequence=self.Sequence,mission_time=mission_time(),wall_time=wall_time()}
+  return {version=1,type=message_type,id=self:_NextId(message_type),source="dcs",sequence=self.Sequence,mission_time=mission_time(),dcs_time=dcs_time(),wall_time=wall_time()}
 end
 
 function MOOSE_BRIDGE:Send(message)
@@ -1310,6 +1315,10 @@ function MOOSE_BRIDGE:BuildAuftragSnapshot()
 end
 
 function MOOSE_BRIDGE:RegisterDefaultCommands()
+  self:RegisterCommand("time.get", function(cmd)
+    return {action="time.get", mission_time=mission_time(), dcs_time=dcs_time(), wall_time=wall_time()}
+  end)
+
   self:RegisterCommand("message.to_all", function(cmd)
     local p = cmd.params or {}
     MESSAGE:New(p.text or "", p.duration or 10):ToAll()

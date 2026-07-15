@@ -275,6 +275,30 @@ def test_state_indexes_intel_snapshots_and_events() -> None:
     assert state.intel_contact("INTELCONTACT:BlueIntel:Ground-1") is None
 
 
+def test_state_tracks_dcs_clock_for_each_snapshot_kind() -> None:
+    state = MooseBridgeState()
+
+    state.apply_message(
+        {
+            "type": "snapshot",
+            "source": "dcs",
+            "sequence": 42,
+            "mission_time": 10.25,
+            "dcs_time": 86_410.5,
+            "wall_time": "2026-07-15T10:00:00Z",
+            "kind": "intels",
+            "payload": {"intels": []},
+        }
+    )
+
+    assert state.clock is not None
+    assert state.clock.mission_time == 10.25
+    assert state.clock.day_offset == 1
+    assert state.clock.time_of_day == "00:00:10.500"
+    assert state.clock.mission_elapsed == "00:00:10.250"
+    assert state.snapshot_clocks["intels"] is state.clock
+
+
 def test_state_indexes_objects_snapshot() -> None:
     state = MooseBridgeState()
 

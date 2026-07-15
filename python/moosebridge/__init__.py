@@ -1,6 +1,7 @@
 """MOOSE Bridge Python package."""
 
 from .advisory import AdvisoryIssue, AuftragAdvisoryResult, AuftragCandidate, evaluate_auftrag_request
+from .clock import DcsTime
 from .auftraege import (
     AuftragARTY,
     AuftragAIRDEFENSE,
@@ -213,6 +214,7 @@ __all__ = [
     "ControlSdkAdapter",
     "CoordinateResult",
     "DistanceResult",
+    "DcsTime",
     "GeneralSet",
     "GlobalPicture",
     "GroupSet",

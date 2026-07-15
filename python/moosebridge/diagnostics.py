@@ -171,7 +171,16 @@ def format_intel_status(
     lines: list[str] = []
     title = "INTEL status"
     if timestamp:
-        title = f"[{datetime.now().strftime('%H:%M:%S')}] {title}"
+        clock = bridge.state.clock
+        if clock:
+            values = [f"wall={clock.wall_time or '-'}"]
+            if clock.time_of_day is not None:
+                values.append(f"dcs=D+{clock.day_offset or 0} {clock.time_of_day}")
+            if clock.mission_elapsed is not None:
+                values.append(f"mission={clock.mission_elapsed}")
+            title = f"[{' | '.join(values)}] {title}"
+        else:
+            title = f"[{datetime.now().strftime('%H:%M:%S')}] {title}"
     lines.append(title)
     lines.append("-" * 90)
 

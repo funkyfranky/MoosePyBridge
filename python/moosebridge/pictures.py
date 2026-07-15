@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Protocol
 
+from .clock import DcsTime
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
 
@@ -132,6 +133,7 @@ class TacticalPicture:
 
     coalition: str
     intel_id: str
+    clock: DcsTime | None = None
     intel: Intel | None = None
     contacts: list[IntelContact] = field(default_factory=list)
     clusters: list[IntelCluster] = field(default_factory=list)
@@ -153,7 +155,7 @@ class TacticalPicture:
         return _feature_collection(
             features,
             scope="tactical",
-            metadata={"coalition": self.coalition, "intel_id": self.intel_id},
+            metadata={"coalition": self.coalition, "intel_id": self.intel_id, **(self.clock.to_dict() if self.clock else {})},
         )
 
     def _zone_features(self) -> list[GeoJsonFeature | None]:
@@ -280,6 +282,7 @@ class TacticalPicture:
 class GlobalPicture:
     """Admin/debug picture based on global truth snapshots."""
 
+    clock: DcsTime | None = None
     groups: list[dict[str, Any]] = field(default_factory=list)
     units: list[dict[str, Any]] = field(default_factory=list)
     statics: list[dict[str, Any]] = field(default_factory=list)
@@ -309,7 +312,7 @@ class GlobalPicture:
         features.extend(_point_feature(item, "intel_contacts", {"intel_id": item.intel_id, "threat_level": item.threat_level}) for item in self.intel_contacts)
         features.extend(_point_feature(item, "intel_clusters", {"intel_id": item.intel_id, "size": item.size}) for item in self.intel_clusters)
         features.extend(self._mission_features())
-        return _feature_collection(features, scope="global", metadata={})
+        return _feature_collection(features, scope="global", metadata=self.clock.to_dict() if self.clock else {})
 
     def _mission_features(self) -> list[GeoJsonFeature | None]:
         features: list[GeoJsonFeature | None] = []

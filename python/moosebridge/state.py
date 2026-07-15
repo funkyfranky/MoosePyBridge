@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
 
 from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
+from .clock import DcsTime
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
 from .outcomes import AuftragOutcome
@@ -49,6 +50,8 @@ class MooseBridgeState:
 
     connected: bool = False
     last_heartbeat: dict[str, Any] | None = None
+    clock: DcsTime | None = None
+    snapshot_clocks: dict[str, DcsTime] = field(default_factory=dict)
     objects: dict[str, dict[str, Any]] = field(default_factory=dict)
     groups: dict[str, dict[str, Any]] = field(default_factory=dict)
     units: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -82,6 +85,9 @@ class MooseBridgeState:
         """
 
         message_type = message.get("type")
+
+        if message.get("source") == "dcs" or any(key in message for key in ("mission_time", "dcs_time")):
+            self.clock = DcsTime.from_message(message)
 
         if message_type == "heartbeat":
             self.connected = True
@@ -287,6 +293,8 @@ class MooseBridgeState:
 
         kind = message.get("kind")
         payload = message.get("payload") or {}
+        if isinstance(kind, str) and self.clock is not None:
+            self.snapshot_clocks[kind] = self.clock
 
         if kind == "groups":
             self.groups = self._index_objects(payload.get("groups", []))
