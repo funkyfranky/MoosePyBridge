@@ -48,6 +48,7 @@ from moosebridge.diagnostics import (
     format_legion_status,
     format_mission_summary,
 )
+from moosebridge.models import OpsZone
 from moosebridge.sdk import CoordinateResult, DistanceResult, GlobalPicture, MooseBridgeClient, NearestResult, TacticalPicture
 from moosebridge.state import MooseBridgeState
 
@@ -685,6 +686,42 @@ def test_global_picture_exports_polygon_zone_geometry() -> None:
     assert feature["properties"]["shape"] == "polygon"
     assert "radius_m" not in feature["properties"]
     assert "vertices" not in feature["properties"]
+
+
+def test_global_picture_uses_linked_polygon_geometry_for_opszone() -> None:
+    picture = GlobalPicture(
+        zones=[
+            {
+                "object_id": "ZONE:Capture Area",
+                "dcs_name": "Capture Area",
+                "object_type": "ZONE",
+                "shape": "polygon",
+                "vertices": [
+                    {"latitude": 54.0, "longitude": 12.0},
+                    {"latitude": 54.0, "longitude": 12.1},
+                    {"latitude": 54.1, "longitude": 12.05},
+                ],
+            }
+        ],
+        opszones=[
+            OpsZone.from_payload(
+                {
+                    "object_id": "OPSZONE:Capture Alpha",
+                    "dcs_name": "Capture Alpha",
+                    "zone_name": "Capture Area",
+                    "owner_current_name": "blue",
+                    "is_contested": True,
+                }
+            )
+        ],
+    )
+
+    opszone = next(feature for feature in picture.to_geojson()["features"] if feature["properties"]["layer"] == "opszones")
+
+    assert opszone["geometry"]["type"] == "Polygon"
+    assert opszone["properties"]["coalition"] == "blue"
+    assert opszone["properties"]["contested"] is True
+    assert opszone["properties"]["shape"] == "polygon"
 
 
 def test_global_picture_validator_reports_broken_truth_references() -> None:

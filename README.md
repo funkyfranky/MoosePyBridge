@@ -280,7 +280,16 @@ Open `http://127.0.0.1:8000`. The viewer connects to the daemon control API on
 `127.0.0.1:51001`, refreshes the global picture every five seconds, and pushes
 updates to the browser through a WebSocket. Alternatively, run
 `python -m moosebridge.map_server`; append `--help` to change hosts, ports,
-update interval, or command timeout.
+update interval, command timeout, or movement history limits. The viewer keeps
+15 minutes and at most 180 samples per moving object by default. For example:
+
+```powershell
+python -m moosebridge.map_server --history-seconds 1800 --history-max-points 360
+```
+
+Movement history is derived from periodic DCS positions because DCS does not
+emit position-change events. Tracks are removed when an object dies or
+disappears and are reset when mission time restarts.
 
 To monitor and validate the global truth picture without command-line
 parameters, edit the constants in and run:

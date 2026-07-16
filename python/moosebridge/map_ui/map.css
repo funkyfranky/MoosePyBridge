@@ -105,6 +105,7 @@ button, input { font: inherit; letter-spacing: 0; }
 .detail-subtitle { margin-top: 4px; color: var(--muted); font-family: Consolas, "SFMono-Regular", monospace; font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
 .detail-actions { display: flex; flex: 0 0 auto; gap: 1px; }
 .detail-actions .icon-button { width: 30px; height: 30px; padding: 6px; }
+.detail-stack-count { min-width: 34px; align-self: center; color: var(--muted); font-size: 12px; text-align: center; font-variant-numeric: tabular-nums; }
 .detail-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
 .detail-badge { padding: 3px 7px; color: #3e4843; background: #e5e9e6; border: 1px solid #cbd2ce; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
 .detail-badge.is-blue { color: #174f7d; background: #e6f1fa; border-color: #9dc3e1; }

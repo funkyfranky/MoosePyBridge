@@ -167,6 +167,44 @@ def _raw_zone_feature(item: dict[str, Any]) -> GeoJsonFeature | None:
     )
 
 
+def _opszone_feature(item: OpsZone, zone_feature: GeoJsonFeature | None = None) -> GeoJsonFeature | None:
+    """Build an OPSZONE feature using its underlying MOOSE zone geometry when available."""
+
+    linked_properties = zone_feature.get("properties", {}) if zone_feature else {}
+    geometry = zone_feature.get("geometry") if zone_feature else None
+    if geometry is None:
+        geometry = _point_geometry(item.longitude, item.latitude)
+    return _feature(
+        geometry=geometry,
+        layer="opszones",
+        object_id=item.object_id,
+        name=item.dcs_name,
+        object_type=item.object_type,
+        category=item.category,
+        properties={
+            "x": item.x,
+            "y": item.y,
+            "z": item.z,
+            "zone_name": item.zone_name,
+            "zone_type": item.zone_type,
+            "state": item.state,
+            "owner": item.owner_current_name,
+            "owner_previous": item.owner_previous_name,
+            "coalition": item.owner_current_name,
+            "contested": item.is_contested,
+            "radius_m": item.zone_radius or linked_properties.get("radius_m"),
+            "n_red": item.n_red,
+            "n_blue": item.n_blue,
+            "n_neutral": item.n_neutral,
+            "threat_red": item.threat_red,
+            "threat_blue": item.threat_blue,
+            "threat_neutral": item.threat_neutral,
+            "airbase_name": item.airbase_name,
+            "shape": linked_properties.get("shape"),
+        },
+    )
+
+
 def _as_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -223,20 +261,7 @@ class TacticalPicture:
 
     def _zone_features(self) -> list[GeoJsonFeature | None]:
         return [
-            _point_feature(
-                zone,
-                "opszones",
-                {
-                    "state": zone.state,
-                    "owner": zone.owner_current_name,
-                    "contested": zone.is_contested,
-                    "radius_m": zone.zone_radius,
-                    "n_red": zone.n_red,
-                    "n_blue": zone.n_blue,
-                    "threat_red": zone.threat_red,
-                    "threat_blue": zone.threat_blue,
-                },
-            )
+            _opszone_feature(zone)
             for zone in self.opszones
         ]
 
@@ -535,15 +560,14 @@ class GlobalPicture:
         features.extend(_raw_point_feature(item, "units") for item in self.units)
         features.extend(_raw_point_feature(item, "statics") for item in self.statics)
         features.extend(_raw_point_feature(item, "airbases") for item in self.airbases)
-        features.extend(_raw_zone_feature(item) for item in self.zones)
-        features.extend(
-            _point_feature(
-                item,
-                "opszones",
-                {"state": item.state, "owner": item.owner_current_name, "radius_m": item.zone_radius},
-            )
-            for item in self.opszones
-        )
+        zone_features = [_raw_zone_feature(item) for item in self.zones]
+        features.extend(zone_features)
+        zones_by_name = {
+            str(feature.get("properties", {}).get("name") or ""): feature
+            for feature in zone_features
+            if feature is not None
+        }
+        features.extend(_opszone_feature(item, zones_by_name.get(item.zone_name or "")) for item in self.opszones)
         features.extend(_point_feature(item, "opsgroups", {"coalition": item.coalition, "state": item.state}) for item in self.opsgroups)
         features.extend(_point_feature(item, "legions", {"coalition": item.coalition or item.coalition_name, "state": item.state}) for item in self.legions)  # type: ignore[arg-type]
         features.extend(_point_feature(item, "intel_contacts", {"intel_id": item.intel_id, "threat_level": item.threat_level}) for item in self.intel_contacts)

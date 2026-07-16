@@ -3,6 +3,7 @@
 
   const EMPTY = { type: "FeatureCollection", features: [] };
   const layerSpecs = [
+    { key: "trajectories", label: "Movement history", color: "#52665d", icon: "route", default: true },
     { key: "groups", label: "Groups", color: "#245f96", icon: "boxes", size: 1.05, default: true },
     { key: "units", label: "Units", color: "#37a078", icon: "truck", size: 0.82, default: true },
     { key: "statics", label: "Static objects", color: "#6d746f", icon: "warehouse", size: 0.82, default: true },
@@ -69,6 +70,8 @@
   let reconnectTimer = null;
   let selectedFeature = null;
   let selectedObjectId = null;
+  let selectionCandidates = [];
+  let selectionIndex = 0;
 
   const map = new maplibregl.Map({
     container: "map",
@@ -77,6 +80,7 @@
     minZoom: 3,
     style: {
       version: 8,
+      glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
       sources: {
         osm: {
           type: "raster",
@@ -109,6 +113,9 @@
     detailSubtitle: document.getElementById("detail-subtitle"),
     detailBadges: document.getElementById("detail-badges"),
     detailSections: document.getElementById("detail-sections"),
+    detailStackCount: document.getElementById("detail-stack-count"),
+    detailPrevious: document.getElementById("detail-previous"),
+    detailNext: document.getElementById("detail-next"),
     detailFocus: document.getElementById("detail-focus"),
     detailCopy: document.getElementById("detail-copy"),
     detailClose: document.getElementById("detail-close"),
@@ -131,7 +138,7 @@
   }
 
   function coalitionFilterCategory(properties) {
-    const coalition = String(properties.coalition || "").toLowerCase();
+    const coalition = String(properties.coalition || properties.owner || "").toLowerCase();
     return ["blue", "red", "neutral"].includes(coalition) ? coalition : "unassigned";
   }
 
@@ -262,18 +269,53 @@
     map.addSource("zone-areas", { type: "geojson", data: EMPTY, promoteId: "object_id" });
 
     for (const spec of layerSpecs) {
+      if (spec.key === "trajectories") {
+        addMapLayer(spec, {
+          type: "line",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "line-color": ["match", ["get", "map_coalition"], "blue", coalitionColors.blue, "red", coalitionColors.red, "neutral", coalitionColors.neutral, spec.color],
+            "line-width": 2.2,
+            "line-opacity": 0.72,
+          },
+        });
+        continue;
+      }
       if (spec.key === "zones" || spec.key === "opszones") {
+        const areaColor = spec.key === "opszones"
+          ? ["case",
+              ["==", ["get", "contested"], true], "#d06f27",
+              ["match", ["get", "owner"], "blue", coalitionColors.blue, "red", coalitionColors.red, "neutral", coalitionColors.neutral, spec.color],
+            ]
+          : spec.color;
         addMapLayer(spec, {
           type: "fill",
           source: "zone-areas",
           filter: ["==", ["get", "layer"], spec.key],
-          paint: { "fill-color": spec.color, "fill-opacity": spec.key === "opszones" ? 0.2 : 0.1 },
+          paint: { "fill-color": areaColor, "fill-opacity": spec.key === "opszones" ? 0.22 : 0.1 },
         });
         addMapLayer(spec, {
           type: "line",
           source: "zone-areas",
           filter: ["==", ["get", "layer"], spec.key],
-          paint: { "line-color": spec.color, "line-width": spec.key === "opszones" ? 2 : 1 },
+          paint: { "line-color": areaColor, "line-width": spec.key === "opszones" ? 2.4 : 1.2 },
+        });
+        addMapLayer(spec, {
+          type: "symbol",
+          source: "zone-areas",
+          minzoom: spec.key === "opszones" ? 4 : 7,
+          filter: ["==", ["get", "layer"], spec.key],
+          layout: {
+            "text-field": ["get", "name"],
+            "text-size": spec.key === "opszones" ? 12 : 11,
+            "text-allow-overlap": false,
+            "text-padding": 6,
+          },
+          paint: {
+            "text-color": spec.key === "opszones" ? "#28302d" : "#68500f",
+            "text-halo-color": "rgba(255,255,255,0.9)",
+            "text-halo-width": 1.4,
+          },
         });
         continue;
       }
@@ -348,7 +390,12 @@
     updateCounts();
     updateClocks(picture.properties || {});
     if (selectedObjectId) {
-      const refreshed = latestPicture.features.find((feature) => feature.properties?.object_id === selectedObjectId);
+      selectionCandidates = selectionCandidates
+        .map((candidate) => latestPicture.features.find((feature) => feature.properties?.object_id === candidate.properties?.object_id))
+        .filter(Boolean);
+      selectionIndex = Math.max(0, selectionCandidates.findIndex((feature) => feature.properties?.object_id === selectedObjectId));
+      const refreshed = selectionCandidates[selectionIndex]
+        || latestPicture.features.find((feature) => feature.properties?.object_id === selectedObjectId);
       if (refreshed) showDetails(refreshed);
       else closeDetails();
     }
@@ -399,7 +446,10 @@
       counts.set(`coalition:${feature.properties?.map_coalition}`, (counts.get(`coalition:${feature.properties?.map_coalition}`) || 0) + 1);
       counts.set(`status:${feature.properties?.map_status}`, (counts.get(`status:${feature.properties?.map_status}`) || 0) + 1);
     });
-    elements.featureCount.textContent = `${latestPicture.features.length} objects`;
+    const trajectoryCount = counts.get("trajectories") || 0;
+    elements.featureCount.textContent = trajectoryCount
+      ? `${latestPicture.features.length - trajectoryCount} objects · ${trajectoryCount} tracks`
+      : `${latestPicture.features.length} objects`;
     document.querySelectorAll("[data-layer-count]").forEach((node) => {
       node.textContent = String(counts.get(node.dataset.layerCount) || 0);
     });
@@ -561,6 +611,10 @@
     threat_level_max: "Max threat", threat_level_sum: "Total threat", threat_level_avg: "Average threat", radius_m: "Radius",
     object_id: "Object ID", name: "Name", type: "Type", airbase_id: "Airbase ID", dcs_type: "DCS type", dcs_category_name: "DCS category", display_name: "Display name",
     group_name: "Group", source: "Source", recce_name: "Detected by", speed: "Speed", size: "Contacts",
+    tracked_object_id: "Tracked object", source_layer: "Source layer", sample_count: "Samples", track_sample_count: "Track samples",
+    derived_speed_kts: "Current speed", derived_heading_deg: "Movement heading", track_distance_m: "Track distance",
+    track_duration_s: "Track duration", distance_m: "Distance", duration_s: "Duration", average_speed_mps: "Average speed",
+    last_update_mission_time: "Last DCS update",
   };
 
   function humanizeKey(key) {
@@ -570,6 +624,20 @@
   function formattedField(key, value) {
     if (key === "radius_m") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m`;
     if (key === "speed" || key === "speed_kts") return `${Number(value).toFixed(1)} kt`;
+    if (key === "derived_speed_kts") return `${Number(value).toFixed(1)} kt`;
+    if (key === "derived_heading_deg") return `${Number(value).toFixed(1)}°`;
+    if (key === "average_speed_mps") return `${(Number(value) * 1.9438444924406).toFixed(1)} kt`;
+    if (key === "track_distance_m" || key === "distance_m") {
+      const distance = Number(value);
+      return distance >= 1000 ? `${(distance / 1000).toFixed(1)} km` : `${distance.toFixed(0)} m`;
+    }
+    if (key === "track_duration_s" || key === "duration_s" || key === "last_update_mission_time") {
+      const seconds = Math.max(0, Math.floor(Number(value)));
+      const hours = String(Math.floor(seconds / 3600)).padStart(2, "0");
+      const minutes = String(Math.floor(seconds % 3600 / 60)).padStart(2, "0");
+      const remaining = String(seconds % 60).padStart(2, "0");
+      return `${hours}:${minutes}:${remaining}`;
+    }
     return readableValue(value);
   }
 
@@ -619,6 +687,11 @@
     elements.detailTitle.textContent = properties.name || properties.display_name || properties.object_id || "Unnamed object";
     elements.detailSubtitle.textContent = properties.object_id || "";
     elements.detailCopy.hidden = !properties.object_id;
+    const stacked = selectionCandidates.length > 1;
+    elements.detailStackCount.hidden = !stacked;
+    elements.detailPrevious.hidden = !stacked;
+    elements.detailNext.hidden = !stacked;
+    elements.detailStackCount.textContent = stacked ? `${selectionIndex + 1} / ${selectionCandidates.length}` : "";
     elements.detailBadges.replaceChildren();
     elements.detailSections.replaceChildren();
 
@@ -629,7 +702,7 @@
     if (properties.state) addBadge(String(properties.state));
 
     const consumed = new Set(["name", "layer", "map_symbol", "coordinate_system", "dcs_name", "latitude", "longitude", "x", "y", "z", "category", "coalition", "owner", "state", "alive", "active", "object_type", "dcs_category"]);
-    const operational = detailRows(properties, ["mission_type", "status", "target", "target_id", "threat_level", "threat_level_max", "threat_level_sum", "threat_level_avg", "unit_count", "alive_unit_count", "size", "speed", "radius_m"], consumed);
+    const operational = detailRows(properties, ["mission_type", "status", "target", "target_id", "threat_level", "threat_level_max", "threat_level_sum", "threat_level_avg", "unit_count", "alive_unit_count", "size", "speed", "radius_m", "derived_speed_kts", "derived_heading_deg", "track_distance_m", "track_duration_s", "last_update_mission_time", "sample_count", "distance_m", "duration_s", "average_speed_mps"], consumed);
     if (properties.unit_count !== undefined && properties.alive_unit_count !== undefined) {
       const start = operational.findIndex(([label]) => label === fieldLabels.unit_count);
       operational.splice(Math.max(0, start), 2, ["Strength", `${properties.alive_unit_count} / ${properties.unit_count} alive`]);
@@ -646,7 +719,7 @@
         [fieldLabels.type, readableValue(properties.type)],
       ]);
     } else {
-      addDetailSection("Identity and relationships", "fingerprint", detailRows(properties, ["object_id", "display_name", "dcs_type", "dcs_category_name", "group_name", "legion_id", "opsgroup_id", "intel_id", "recce_name", "source"], consumed));
+      addDetailSection("Identity and relationships", "fingerprint", detailRows(properties, ["object_id", "tracked_object_id", "source_layer", "display_name", "dcs_type", "dcs_category_name", "group_name", "legion_id", "opsgroup_id", "intel_id", "recce_name", "source"], consumed));
     }
 
     const position = [];
@@ -676,7 +749,15 @@
   function closeDetails() {
     selectedFeature = null;
     selectedObjectId = null;
+    selectionCandidates = [];
+    selectionIndex = 0;
     elements.detailPanel.hidden = true;
+  }
+
+  function showSelectionAt(index) {
+    if (!selectionCandidates.length) return;
+    selectionIndex = (index + selectionCandidates.length) % selectionCandidates.length;
+    showDetails(selectionCandidates[selectionIndex]);
   }
 
   function focusSelectedFeature() {
@@ -686,6 +767,10 @@
     } else if (selectedFeature.geometry.type === "Polygon") {
       const bounds = new maplibregl.LngLatBounds();
       selectedFeature.geometry.coordinates.flat().forEach((coordinate) => bounds.extend(coordinate));
+      if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 100, maxZoom: 12, duration: 500 });
+    } else if (selectedFeature.geometry.type === "LineString") {
+      const bounds = new maplibregl.LngLatBounds();
+      selectedFeature.geometry.coordinates.forEach((coordinate) => bounds.extend(coordinate));
       if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 100, maxZoom: 12, duration: 500 });
     }
   }
@@ -738,6 +823,8 @@
     elements.layersToggle.setAttribute("aria-expanded", String(!hidden));
   });
   elements.detailClose.addEventListener("click", closeDetails);
+  elements.detailPrevious.addEventListener("click", () => showSelectionAt(selectionIndex - 1));
+  elements.detailNext.addEventListener("click", () => showSelectionAt(selectionIndex + 1));
   elements.detailFocus.addEventListener("click", focusSelectedFeature);
   elements.detailCopy.addEventListener("click", async () => {
     if (!selectedObjectId) return;
@@ -760,7 +847,15 @@
   map.on("click", (event) => {
     const layers = [...mapLayerIds.values()].flat().filter((id) => map.getLayer(id));
     const features = map.queryRenderedFeatures(event.point, { layers });
-    if (features.length) showDetails(features[0]);
+    const seen = new Set();
+    selectionCandidates = features.filter((feature) => {
+      const objectId = feature.properties?.object_id;
+      if (!objectId || seen.has(objectId)) return false;
+      seen.add(objectId);
+      return true;
+    });
+    selectionIndex = 0;
+    if (selectionCandidates.length) showDetails(selectionCandidates[0]);
   });
   map.on("mousemove", (event) => {
     const layers = [...mapLayerIds.values()].flat().filter((id) => map.getLayer(id));
