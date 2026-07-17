@@ -18,6 +18,7 @@
     { key: "zones", label: "Zones", color: "#c19424", icon: "map-pin", default: false },
     { key: "territories", label: "Territories", color: "#59635e", icon: "map", default: true },
     { key: "frontlines", label: "Frontlines", color: "#573a58", icon: "git-commit-horizontal", default: true },
+    { key: "incursions", label: "Incursions", color: "#d06f27", icon: "shield-alert", size: 1.12, default: true },
     { key: "opszones", label: "OPS zones", color: "#8b5ea7", icon: "shield", default: true },
     { key: "opsgroups", label: "OPS groups", color: "#1e8171", icon: "badge", size: 1.1, default: true },
     { key: "legions", label: "Legions", color: "#283a4f", icon: "shield", size: 1.18, default: true },
@@ -64,6 +65,7 @@
     "intel-contact": { icon: "Crosshair", frame: "triangle" },
     "intel-cluster": { icon: "Radar", frame: "circle" },
     "mission": { icon: "Target", frame: "diamond" },
+    "incursion": { icon: "ShieldAlert", frame: "triangle" },
   };
   const mapLayerIds = new Map();
   const mapLayerBaseFilters = new Map();
@@ -168,6 +170,7 @@
     } else if (layer === "intel_contacts") definition = "intel-contact";
     else if (layer === "intel_clusters") definition = "intel-cluster";
     else if (layer === "missions") definition = "mission";
+    else if (layer === "incursions") definition = "incursion";
     const coalition = Object.hasOwn(coalitionColors, properties.coalition) ? properties.coalition : "unknown";
     return `${definition}-${coalition}`;
   }

@@ -330,13 +330,20 @@ seconds by default:
 
 - alive blue and red ground groups are used once each, without counting their
   units again;
+- aircraft, helicopters, and ships do not influence the land frontline;
 - group positions are smoothed before influence-field calculation;
 - polygon territories form a combined calculation area that includes neutral
   gaps between them;
+- declared territory ownership supplies a weak control prior instead of
+  replacing force-derived influence;
+- isolated hostile ground groups inside an opposing territory are published
+  as `Incursions` and do not bend the main frontline; nearby external support
+  or a connected force of at least three groups establishes a lodgement that
+  participates in the main-front calculation;
 - all generated line vertices are converted through one batched DCS
   `coord.LOtoLL` call;
-- the result is published through the separately switchable `Frontlines`
-  map layer.
+- the results are published through separately switchable `Frontlines` and
+  `Incursions` map layers.
 
 The recalculation interval and smoothing factor can be changed when starting
 the server:
@@ -363,11 +370,12 @@ The script has no command-line parameters. Edit its constants and synthetic
 forces directly. It writes `tmp/frontline_prototype.geojson` and a standalone
 interactive diagnostic viewer to `tmp/frontline_prototype.html`.
 
-The reusable API consists of `ForcePoint`, `FrontlineCalculationArea`,
-`FrontlineConfig`, `FrontlineForceTracker`, and `FrontlineEngine` in
-`moosebridge.frontlines`. Python owns the influence model and frontline
-calculation. MOOSE/DCS remain the source of object state and Mission
-Editor-aligned passive territory geometry.
+The reusable API consists of `ForcePoint`, `TerritoryControlRegion`,
+`FrontlineCalculationArea`, `FrontlineConfig`, `FrontlineForceTracker`,
+`classify_frontline_forces()`, and `FrontlineEngine` in
+`moosebridge.frontlines`. Python owns the influence model, incursion
+classification, and frontline calculation. MOOSE/DCS remain the source of
+object state and Mission Editor-aligned passive territory geometry.
 
 To monitor and validate the global truth picture without command-line
 parameters, edit the constants in and run:

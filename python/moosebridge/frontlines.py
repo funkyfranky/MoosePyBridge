@@ -18,6 +18,7 @@ from shapely.geometry.base import BaseGeometry
 CoalitionName = Literal["blue", "red"]
 FloatGrid = NDArray[np.float32]
 BoolGrid = NDArray[np.bool_]
+LAND_FRONTLINE_CATEGORIES = frozenset({"ground", "ground unit", "ground units"})
 
 
 @dataclass(slots=True, frozen=True)
@@ -40,6 +41,176 @@ class ForcePoint:
             raise ValueError("ForcePoint coordinates must be finite")
         if not math.isfinite(self.weight) or self.weight <= 0:
             raise ValueError("ForcePoint weight must be positive")
+
+
+@dataclass(slots=True, frozen=True)
+class TerritoryControlRegion:
+    """One declared blue/red territory used as a weak control prior."""
+
+    object_id: str
+    name: str
+    coalition: CoalitionName
+    vertices: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        if self.coalition not in {"blue", "red"}:
+            raise ValueError(f"Unsupported territory coalition: {self.coalition}")
+        if len(self.vertices) < 3:
+            raise ValueError("TerritoryControlRegion requires at least three vertices")
+        geometry = Polygon(self.vertices)
+        if geometry.is_empty or geometry.area <= 0 or not geometry.is_valid:
+            raise ValueError("TerritoryControlRegion requires a valid non-empty polygon")
+
+    @property
+    def geometry(self) -> Polygon:
+        return Polygon(self.vertices)
+
+    @classmethod
+    def from_territory(cls, territory: Any) -> "TerritoryControlRegion":
+        """Create a control region from a typed TERRITORY snapshot."""
+
+        coalition = str(getattr(territory, "coalition", "") or "").strip().lower()
+        if coalition not in {"blue", "red"}:
+            raise ValueError("TERRITORY requires a blue or red coalition")
+        vertices = _territory_vertices(territory)
+        object_id = str(getattr(territory, "object_id", "") or "")
+        name = str(getattr(territory, "name", None) or getattr(territory, "dcs_name", None) or object_id or "Territory")
+        return cls(object_id or f"TERRITORY:{name}", name, coalition, vertices)  # type: ignore[arg-type]
+
+
+def territory_control_regions(territories: Iterable[Any]) -> tuple[TerritoryControlRegion, ...]:
+    """Return valid blue/red polygon territories in stable order."""
+
+    regions: list[TerritoryControlRegion] = []
+    for territory in territories:
+        try:
+            regions.append(TerritoryControlRegion.from_territory(territory))
+        except ValueError:
+            continue
+    return tuple(sorted(regions, key=lambda region: region.object_id))
+
+
+@dataclass(slots=True, frozen=True)
+class Incursion:
+    """An isolated ground force operating inside hostile territory."""
+
+    force: ForcePoint
+    territory_id: str
+    territory_name: str
+    territory_coalition: CoalitionName
+    connected_force_count: int
+    nearest_external_support_m: float | None
+
+
+@dataclass(slots=True, frozen=True)
+class FrontlineForceClassification:
+    """Ground forces separated into main-front and incursion roles."""
+
+    main_forces: tuple[ForcePoint, ...]
+    incursions: tuple[Incursion, ...]
+
+
+def classify_frontline_forces(
+    forces: Iterable[ForcePoint],
+    control_regions: Iterable[TerritoryControlRegion],
+    *,
+    support_radius_m: float = 30_000.0,
+    lodgement_min_forces: int = 3,
+) -> FrontlineForceClassification:
+    """Keep isolated hostile-territory forces from distorting the main front."""
+
+    if support_radius_m <= 0:
+        raise ValueError("support_radius_m must be positive")
+    if lodgement_min_forces < 1:
+        raise ValueError("lodgement_min_forces must be positive")
+
+    force_points = tuple(forces)
+    regions = tuple(control_regions)
+    hostile_region: dict[str, TerritoryControlRegion] = {}
+    for force in force_points:
+        point = Point(force.x, force.z)
+        region = next(
+            (
+                candidate
+                for candidate in regions
+                if candidate.coalition != force.coalition and candidate.geometry.contains(point)
+            ),
+            None,
+        )
+        if region is not None:
+            hostile_region[force.object_id] = region
+
+    unvisited = set(force.object_id for force in force_points)
+    forces_by_id = {force.object_id: force for force in force_points}
+    incursion_ids: set[str] = set()
+    incursions: list[Incursion] = []
+    for seed in force_points:
+        if seed.object_id not in unvisited:
+            continue
+        component_ids: set[str] = set()
+        pending = [seed]
+        unvisited.remove(seed.object_id)
+        while pending:
+            current = pending.pop()
+            component_ids.add(current.object_id)
+            for candidate_id in tuple(unvisited):
+                candidate = forces_by_id[candidate_id]
+                if candidate.coalition != current.coalition:
+                    continue
+                if math.hypot(candidate.x - current.x, candidate.z - current.z) <= support_radius_m:
+                    unvisited.remove(candidate_id)
+                    pending.append(candidate)
+
+        for region_id in {
+            hostile_region[force_id].object_id
+            for force_id in component_ids
+            if force_id in hostile_region
+        }:
+            region = next(candidate for candidate in regions if candidate.object_id == region_id)
+            members_inside = [
+                forces_by_id[force_id]
+                for force_id in component_ids
+                if hostile_region.get(force_id) == region
+            ]
+            component_entirely_inside = len(members_inside) == len(component_ids)
+            if not component_entirely_inside or len(members_inside) >= lodgement_min_forces:
+                continue
+            outside_support = [
+                candidate
+                for candidate in force_points
+                if candidate.coalition == seed.coalition
+                and candidate.object_id not in component_ids
+                and not region.geometry.contains(Point(candidate.x, candidate.z))
+            ]
+            for member in members_inside:
+                nearest = min(
+                    (math.hypot(candidate.x - member.x, candidate.z - member.z) for candidate in outside_support),
+                    default=None,
+                )
+                incursion_ids.add(member.object_id)
+                incursions.append(
+                    Incursion(
+                        force=member,
+                        territory_id=region.object_id,
+                        territory_name=region.name,
+                        territory_coalition=region.coalition,
+                        connected_force_count=len(members_inside),
+                        nearest_external_support_m=nearest,
+                    )
+                )
+
+    return FrontlineForceClassification(
+        main_forces=tuple(force for force in force_points if force.object_id not in incursion_ids),
+        incursions=tuple(sorted(incursions, key=lambda incursion: incursion.force.object_id)),
+    )
+
+
+def _territory_vertices(territory: Any) -> tuple[tuple[float, float], ...]:
+    return tuple(
+        (float(vertex.x), float(vertex.z))
+        for vertex in getattr(territory, "vertices", ())
+        if getattr(vertex, "x", None) is not None and getattr(vertex, "z", None) is not None
+    )
 
 
 @dataclass(slots=True, frozen=True)
@@ -68,11 +239,7 @@ class FrontlineCalculationArea:
     def from_territory(cls, territory: Any) -> "FrontlineCalculationArea":
         """Create a calculation area from a typed TERRITORY snapshot."""
 
-        vertices = tuple(
-            (float(vertex.x), float(vertex.z))
-            for vertex in getattr(territory, "vertices", ())
-            if getattr(vertex, "x", None) is not None and getattr(vertex, "z", None) is not None
-        )
+        vertices = _territory_vertices(territory)
         if len(vertices) < 3:
             raise ValueError("TERRITORY requires polygon vertices for frontline calculation")
         name = getattr(territory, "name", None) or getattr(territory, "dcs_name", None) or "Territory"
@@ -85,11 +252,7 @@ class FrontlineCalculationArea:
         polygons: list[Polygon] = []
         names: list[str] = []
         for territory in territories:
-            vertices = tuple(
-                (float(vertex.x), float(vertex.z))
-                for vertex in getattr(territory, "vertices", ())
-                if getattr(vertex, "x", None) is not None and getattr(vertex, "z", None) is not None
-            )
+            vertices = _territory_vertices(territory)
             if len(vertices) < 3:
                 continue
             polygon = Polygon(vertices)
@@ -117,7 +280,7 @@ def force_points_from_groups(groups: Iterable[dict[str, Any]]) -> tuple[ForcePoi
         coalition = str(group.get("coalition") or "").strip().lower()
         x = group.get("x")
         z = group.get("z")
-        if not object_id or group.get("alive") is not True or category not in {"ground", "ground unit", "ground units"}:
+        if not object_id or group.get("alive") is not True or category not in LAND_FRONTLINE_CATEGORIES:
             continue
         if coalition not in {"blue", "red"} or not isinstance(x, (int, float)) or not isinstance(z, (int, float)):
             continue
@@ -185,6 +348,9 @@ class FrontlineConfig:
     minimum_segment_length_m: float = 5_000.0
     bounds_padding_m: float = 30_000.0
     maximum_grid_cells: int = 1_000_000
+    territory_control_ratio: float = 0.08
+    incursion_support_radius_m: float = 30_000.0
+    incursion_lodgement_min_forces: int = 3
 
     def __post_init__(self) -> None:
         positive = {
@@ -199,12 +365,17 @@ class FrontlineConfig:
         ratios = {
             "minimum_activity_ratio": self.minimum_activity_ratio,
             "minimum_opposition_ratio": self.minimum_opposition_ratio,
+            "territory_control_ratio": self.territory_control_ratio,
         }
         for name, value in ratios.items():
             if not 0 <= value < 1:
                 raise ValueError(f"{name} must be in [0, 1)")
         if self.simplify_tolerance_m < 0 or self.minimum_segment_length_m < 0 or self.bounds_padding_m < 0:
             raise ValueError("Distance limits cannot be negative")
+        if self.incursion_support_radius_m <= 0:
+            raise ValueError("incursion_support_radius_m must be positive")
+        if self.incursion_lodgement_min_forces < 1:
+            raise ValueError("incursion_lodgement_min_forces must be positive")
 
 
 @dataclass(slots=True, frozen=True)
@@ -314,6 +485,7 @@ class FrontlineEngine:
         forces: Iterable[ForcePoint],
         *,
         area: FrontlineCalculationArea | None = None,
+        control_regions: Iterable[TerritoryControlRegion] = (),
     ) -> FrontlineResult:
         """Build influence fields and extract balanced opposing contours."""
 
@@ -324,6 +496,7 @@ class FrontlineEngine:
         blue_seed = np.zeros((len(z_coordinates), len(x_coordinates)), dtype=np.float32)
         red_seed = np.zeros_like(blue_seed)
         area_geometry = area.geometry if area is not None else None
+        regions = tuple(control_regions)
         included_forces: list[ForcePoint] = []
 
         for force in force_points:
@@ -349,6 +522,14 @@ class FrontlineEngine:
             truncate=self.config.influence_truncate,
         ).astype(np.float32, copy=False)
 
+        territory_prior = self._apply_territory_control_prior(
+            blue_influence,
+            red_influence,
+            x_coordinates,
+            z_coordinates,
+            regions,
+            {force.coalition for force in included_forces},
+        )
         active_mask = self._active_mask(blue_influence, red_influence, x_coordinates, z_coordinates, area_geometry)
         segments = self._extract_segments(blue_influence - red_influence, active_mask, x_coordinates, z_coordinates, area_geometry)
         elapsed_ms = (perf_counter() - started) * 1_000
@@ -363,6 +544,8 @@ class FrontlineEngine:
             "active_cells": int(np.count_nonzero(active_mask)),
             "segment_count": len(segments),
             "frontline_length_m": sum(segment.length_m for segment in segments),
+            "territory_control_region_count": len(regions),
+            "territory_control_prior": territory_prior,
         }
         return FrontlineResult(
             forces=tuple(included_forces),
@@ -378,6 +561,29 @@ class FrontlineEngine:
             elapsed_ms=elapsed_ms,
             diagnostics=diagnostics,
         )
+
+    def _apply_territory_control_prior(
+        self,
+        blue: FloatGrid,
+        red: FloatGrid,
+        x_coordinates: NDArray[np.float64],
+        z_coordinates: NDArray[np.float64],
+        regions: tuple[TerritoryControlRegion, ...],
+        present_coalitions: set[CoalitionName],
+    ) -> float:
+        ratio = self.config.territory_control_ratio
+        peak = float((blue + red).max(initial=0.0))
+        prior = peak * ratio
+        if prior <= 0 or not regions:
+            return 0.0
+        grid_x, grid_z = np.meshgrid(x_coordinates, z_coordinates)
+        for region in regions:
+            if region.coalition not in present_coalitions:
+                continue
+            mask = shapely.intersects_xy(region.geometry, grid_x, grid_z)
+            target = blue if region.coalition == "blue" else red
+            target[mask] += prior
+        return prior
 
     def _bounds(
         self,

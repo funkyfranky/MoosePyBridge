@@ -375,9 +375,15 @@ The live baseline is now connected:
 1. Passive MOOSE territories and alive global ground-group snapshots feed the
    Python frontline engine.
 2. Positions are smoothed and recalculated on a slower map-server interval.
-3. DCS converts generated vertices to WGS84 with one batched `coord.LOtoLL`
+3. Territory ownership acts as a weak control prior. Isolated hostile ground
+   groups are classified as incursions instead of pulling the main front
+   around themselves.
+4. Aircraft, helicopters, and ships are excluded from the land-front model.
+   Maritime control remains a separate future layer.
+5. DCS converts generated vertices to WGS84 with one batched `coord.LOtoLL`
    bridge command.
-4. The browser map publishes a separately switchable `Frontlines` layer.
+6. The browser map publishes separately switchable `Frontlines` and
+   `Incursions` layers.
 
 The next milestone is to replace equal group weights with combat-capability,
 remaining-strength, readiness, and confidence weights, then validate temporal
@@ -386,10 +392,11 @@ LLM consume it.
 
 ## Frontline architecture baseline
 
-Python owns strategic territories, force influence, and operational frontlines.
-MOOSE supplies Mission Editor-aligned passive territory geometry plus DCS and
-OPS object state. Small tactical `OPSZONE`s may exist inside territories, but
-they are not used as large-area territory scanners.
+MOOSE owns the Mission Editor-aligned passive territory definitions. Python
+owns their strategic interpretation, force influence, incursion
+classification, and operational-front calculation. MOOSE also supplies DCS
+and OPS object state. Small tactical `OPSZONE`s may exist inside territories,
+but they are not used as large-area territory scanners.
 
 The passive MOOSE-side `TERRITORY` class is implemented in
 `lua/Territory.lua`. It wraps a `ZONE_BASE`, stores its declared coalition, and
@@ -407,7 +414,9 @@ The calculation engine and live adapters are implemented in
 - SciPy smooths their influence fields.
 - ContourPy extracts equal-influence contours.
 - Shapely validates, clips, simplifies, and measures the resulting lines.
-- The map server smooths live forces, applies the combined territory boundary,
-  converts line vertices through DCS, and publishes the result as GeoJSON.
+- The map server selects only living ground groups, smooths their positions,
+  separates isolated incursions, applies the combined territory boundary and
+  weak ownership prior, converts line vertices through DCS, and publishes the
+  results as GeoJSON.
 - `examples/frontline/frontline_prototype.py` generates GeoJSON and an
   interactive diagnostic HTML viewer without requiring a running DCS server.

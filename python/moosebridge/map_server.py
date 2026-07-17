@@ -19,12 +19,15 @@ from fastapi.staticfiles import StaticFiles
 from .control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from .control_sdk import sdk_from_control_client
 from .frontlines import (
+    FrontlineForceClassification,
     FrontlineCalculationArea,
     FrontlineConfig,
     FrontlineEngine,
     FrontlineForceTracker,
     FrontlineResult,
+    classify_frontline_forces,
     force_points_from_groups,
+    territory_control_regions,
 )
 from .pictures import GlobalPicture
 
@@ -37,6 +40,9 @@ DEFAULT_HISTORY_SECONDS = 15 * 60.0
 DEFAULT_HISTORY_MAX_POINTS = 180
 DEFAULT_FRONTLINE_INTERVAL = 15.0
 DEFAULT_FRONTLINE_POSITION_ALPHA = 0.35
+DEFAULT_TERRITORY_CONTROL_RATIO = 0.08
+DEFAULT_INCURSION_SUPPORT_RADIUS_M = 30_000.0
+DEFAULT_LODGEMENT_MIN_FORCES = 3
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
 
@@ -116,6 +122,9 @@ class GlobalMapRuntime:
     history_max_points: int = DEFAULT_HISTORY_MAX_POINTS
     frontline_interval: float = DEFAULT_FRONTLINE_INTERVAL
     frontline_position_alpha: float = DEFAULT_FRONTLINE_POSITION_ALPHA
+    territory_control_ratio: float = DEFAULT_TERRITORY_CONTROL_RATIO
+    incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M
+    lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
     error: str | None = None
@@ -125,6 +134,7 @@ class GlobalMapRuntime:
     _last_mission_time: float | None = None
     _frontline_mission_time: float | None = None
     _frontline_features: list[dict[str, Any]] = field(default_factory=list)
+    _incursion_features: list[dict[str, Any]] = field(default_factory=list)
     _frontline_diagnostics: dict[str, Any] = field(default_factory=dict)
     _frontline_error: str | None = None
     _frontline_tracker: FrontlineForceTracker = field(init=False)
@@ -134,7 +144,13 @@ class GlobalMapRuntime:
         if self.frontline_interval <= 0:
             raise ValueError("frontline_interval must be positive")
         self._frontline_tracker = FrontlineForceTracker(self.frontline_position_alpha)
-        self._frontline_engine = FrontlineEngine(FrontlineConfig())
+        self._frontline_engine = FrontlineEngine(
+            FrontlineConfig(
+                territory_control_ratio=self.territory_control_ratio,
+                incursion_support_radius_m=self.incursion_support_radius_m,
+                incursion_lodgement_min_forces=self.lodgement_min_forces,
+            )
+        )
 
     def status_payload(self) -> dict[str, Any]:
         """Return the current browser-facing service status."""
@@ -152,6 +168,7 @@ class GlobalMapRuntime:
             "trajectory_count": sum(1 for feature in self.picture.get("features", []) if feature.get("properties", {}).get("layer") == "trajectories"),
             "history_seconds": self.history_seconds,
             "frontline_count": len(self._frontline_features),
+            "incursion_count": len(self._incursion_features),
             "frontline_updated_mission_time": self._frontline_mission_time,
             "frontline_error": self._frontline_error,
         }
@@ -232,6 +249,7 @@ class GlobalMapRuntime:
         ):
             self._frontline_tracker.reset()
             self._frontline_features.clear()
+            self._incursion_features.clear()
             self._frontline_diagnostics.clear()
             self._frontline_error = None
             self._frontline_mission_time = None
@@ -243,21 +261,40 @@ class GlobalMapRuntime:
         )
         if due:
             forces = self._frontline_tracker.update(force_points_from_groups(picture.groups))
-            if {force.coalition for force in forces} == {"blue", "red"}:
+            regions = territory_control_regions(picture.territories)
+            classification = classify_frontline_forces(
+                forces,
+                regions,
+                support_radius_m=self._frontline_engine.config.incursion_support_radius_m,
+                lodgement_min_forces=self._frontline_engine.config.incursion_lodgement_min_forces,
+            )
+            self._incursion_features = self._incursion_geojson_features(classification, geojson)
+            if {force.coalition for force in classification.main_forces} == {"blue", "red"}:
                 area = None
                 try:
                     area = FrontlineCalculationArea.from_territories(picture.territories)
                 except ValueError:
                     pass
-                result = self._frontline_engine.calculate(forces, area=area)
+                result = self._frontline_engine.calculate(
+                    classification.main_forces,
+                    area=area,
+                    control_regions=regions,
+                )
                 self._frontline_features = await self._frontline_geojson_features(result, bridge)
-                self._frontline_diagnostics = dict(result.diagnostics)
+                self._frontline_diagnostics = {
+                    **result.diagnostics,
+                    "ground_force_count": len(forces),
+                    "main_force_count": len(classification.main_forces),
+                    "incursion_count": len(classification.incursions),
+                }
             else:
                 self._frontline_features = []
                 self._frontline_diagnostics = {
                     "input_force_count": len(forces),
+                    "main_force_count": len(classification.main_forces),
+                    "incursion_count": len(classification.incursions),
                     "segment_count": 0,
-                    "reason": "both blue and red ground forces are required",
+                    "reason": "both blue and red main-front ground forces are required",
                 }
             self._frontline_mission_time = mission_time
             self._frontline_error = None
@@ -265,11 +302,58 @@ class GlobalMapRuntime:
         features = geojson.get("features")
         if isinstance(features, list):
             features.extend(self._frontline_features)
+            features.extend(self._incursion_features)
         properties = geojson.setdefault("properties", {})
         properties["frontline_count"] = len(self._frontline_features)
+        properties["incursion_count"] = len(self._incursion_features)
         properties["frontline_updated_mission_time"] = self._frontline_mission_time
         properties["frontline_diagnostics"] = self._frontline_diagnostics
         return geojson
+
+    @staticmethod
+    def _incursion_geojson_features(
+        classification: FrontlineForceClassification,
+        geojson: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        source_by_id = {
+            str(feature.get("properties", {}).get("object_id") or ""): feature
+            for feature in geojson.get("features", [])
+            if isinstance(feature, dict)
+        }
+        features: list[dict[str, Any]] = []
+        for incursion in classification.incursions:
+            source = source_by_id.get(incursion.force.object_id)
+            geometry = source.get("geometry") if isinstance(source, dict) else None
+            if not isinstance(geometry, dict) or geometry.get("type") != "Point":
+                continue
+            source_properties = source.get("properties") if isinstance(source.get("properties"), dict) else {}
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": geometry,
+                    "properties": {
+                        "layer": "incursions",
+                        "object_id": f"INCURSION:{incursion.force.object_id}",
+                        "name": f"Incursion: {incursion.force.label or incursion.force.object_id}",
+                        "object_type": "INCURSION",
+                        "category": "Ground incursion",
+                        "coalition": incursion.force.coalition,
+                        "alive": True,
+                        "source_group_id": incursion.force.object_id,
+                        "territory_id": incursion.territory_id,
+                        "territory_name": incursion.territory_name,
+                        "territory_coalition": incursion.territory_coalition,
+                        "connected_force_count": incursion.connected_force_count,
+                        "nearest_external_support_m": incursion.nearest_external_support_m,
+                        "x": incursion.force.x,
+                        "z": incursion.force.z,
+                        "latitude": source_properties.get("latitude"),
+                        "longitude": source_properties.get("longitude"),
+                        "coordinate_system": "WGS84",
+                    },
+                }
+            )
+        return features
 
     @staticmethod
     async def _frontline_geojson_features(result: FrontlineResult, bridge: Any) -> list[dict[str, Any]]:
@@ -402,7 +486,9 @@ class GlobalMapRuntime:
                         LOGGER.debug("Frontline update still unavailable: %s", exc)
                     self._frontline_error = frontline_error
                     self._frontline_features = []
+                    self._incursion_features = []
                     geojson["properties"]["frontline_count"] = 0
+                    geojson["properties"]["incursion_count"] = 0
                     geojson["properties"]["frontline_error"] = self._frontline_error
                 self.update_picture(geojson)
                 if not self.connected:
@@ -444,18 +530,24 @@ def create_app(
     history_max_points: int = DEFAULT_HISTORY_MAX_POINTS,
     frontline_interval: float = DEFAULT_FRONTLINE_INTERVAL,
     frontline_position_alpha: float = DEFAULT_FRONTLINE_POSITION_ALPHA,
+    territory_control_ratio: float = DEFAULT_TERRITORY_CONTROL_RATIO,
+    incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M,
+    lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES,
 ) -> FastAPI:
     """Create the FastAPI map application."""
 
     runtime = GlobalMapRuntime(
-        control_host,
-        control_port,
-        interval,
-        timeout,
-        history_seconds,
-        history_max_points,
-        frontline_interval,
-        frontline_position_alpha,
+        control_host=control_host,
+        control_port=control_port,
+        interval=interval,
+        timeout=timeout,
+        history_seconds=history_seconds,
+        history_max_points=history_max_points,
+        frontline_interval=frontline_interval,
+        frontline_position_alpha=frontline_position_alpha,
+        territory_control_ratio=territory_control_ratio,
+        incursion_support_radius_m=incursion_support_radius_m,
+        lodgement_min_forces=lodgement_min_forces,
     )
 
     @asynccontextmanager
@@ -512,6 +604,9 @@ def main() -> None:
     parser.add_argument("--history-max-points", type=int, default=DEFAULT_HISTORY_MAX_POINTS, help="Maximum trajectory samples per object.")
     parser.add_argument("--frontline-interval", type=float, default=DEFAULT_FRONTLINE_INTERVAL, help="Frontline recalculation interval in mission seconds.")
     parser.add_argument("--frontline-position-alpha", type=float, default=DEFAULT_FRONTLINE_POSITION_ALPHA, help="Frontline force-position smoothing factor.")
+    parser.add_argument("--territory-control-ratio", type=float, default=DEFAULT_TERRITORY_CONTROL_RATIO, help="Weak territory-owner influence relative to peak force influence.")
+    parser.add_argument("--incursion-support-radius", type=float, default=DEFAULT_INCURSION_SUPPORT_RADIUS_M, help="Ground-force connection radius in meters.")
+    parser.add_argument("--lodgement-min-forces", type=int, default=DEFAULT_LODGEMENT_MIN_FORCES, help="Connected hostile groups required to establish a lodgement.")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -533,6 +628,9 @@ def main() -> None:
         history_max_points=max(2, args.history_max_points),
         frontline_interval=max(1.0, args.frontline_interval),
         frontline_position_alpha=min(1.0, max(0.01, args.frontline_position_alpha)),
+        territory_control_ratio=min(0.99, max(0.0, args.territory_control_ratio)),
+        incursion_support_radius_m=max(1.0, args.incursion_support_radius),
+        lodgement_min_forces=max(1, args.lodgement_min_forces),
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 

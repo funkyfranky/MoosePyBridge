@@ -8,6 +8,7 @@ pytest.importorskip("fastapi")
 
 from moosebridge.clock import DcsTime
 from moosebridge.map_server import GlobalMapRuntime, create_app, empty_picture
+from moosebridge.models import Territory
 from moosebridge.pictures import GlobalPicture
 from moosebridge.sdk import GeographicPoint
 
@@ -43,6 +44,7 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "trajectory_count": 0,
         "history_seconds": 900.0,
         "frontline_count": 0,
+        "incursion_count": 0,
         "frontline_updated_mission_time": None,
         "frontline_error": None,
     }
@@ -139,6 +141,63 @@ def test_map_runtime_builds_and_reuses_live_frontline() -> None:
         assert first_geojson["properties"]["frontline_count"] == len(frontlines)
         assert second_geojson["properties"]["frontline_count"] == len(frontlines)
         assert bridge.calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_map_runtime_publishes_incursion_without_bending_main_front() -> None:
+    class Bridge:
+        async def convert_points(self, points: list[tuple[float, float]]) -> list[GeographicPoint]:
+            return [
+                GeographicPoint(x=x, y=0, z=z, latitude=54 + z / 100_000, longitude=12 + x / 100_000)
+                for x, z in points
+            ]
+
+    async def scenario() -> None:
+        territory = Territory.from_payload(
+            {
+                "object_id": "TERRITORY:Blue",
+                "dcs_name": "Blue",
+                "name": "Blue",
+                "object_type": "TERRITORY",
+                "coalition": "blue",
+                "vertices": [
+                    {"x": -50_000, "z": -50_000, "latitude": 53.5, "longitude": 11.5},
+                    {"x": 0, "z": -50_000, "latitude": 53.5, "longitude": 12.0},
+                    {"x": 0, "z": 50_000, "latitude": 54.5, "longitude": 12.0},
+                    {"x": -50_000, "z": 50_000, "latitude": 54.5, "longitude": 11.5},
+                ],
+            }
+        )
+        red_territory = Territory.from_payload(
+            {
+                "object_id": "TERRITORY:Red",
+                "dcs_name": "Red",
+                "name": "Red",
+                "object_type": "TERRITORY",
+                "coalition": "red",
+                "vertices": [
+                    {"x": 0, "z": -50_000, "latitude": 53.5, "longitude": 12.0},
+                    {"x": 50_000, "z": -50_000, "latitude": 53.5, "longitude": 12.5},
+                    {"x": 50_000, "z": 50_000, "latitude": 54.5, "longitude": 12.5},
+                    {"x": 0, "z": 50_000, "latitude": 54.5, "longitude": 12.0},
+                ],
+            }
+        )
+        groups = [
+            {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "x": -30_000, "y": 0, "z": 0, "latitude": 54, "longitude": 11.7},
+            {"object_id": "GROUP:RedRear", "dcs_name": "Red Rear", "category": "Ground Unit", "coalition": "red", "alive": True, "x": 30_000, "y": 0, "z": 0, "latitude": 54, "longitude": 12.3},
+            {"object_id": "GROUP:RedIncursion", "dcs_name": "Red Incursion", "category": "Ground Unit", "coalition": "red", "alive": True, "x": -20_000, "y": 0, "z": 20_000, "latitude": 54.2, "longitude": 11.8},
+        ]
+        picture = GlobalPicture(clock=DcsTime(mission_time=100), groups=groups, territories=[territory, red_territory])
+        runtime = GlobalMapRuntime()
+        geojson = await runtime.update_frontline(picture, picture.to_geojson(), Bridge())
+
+        incursions = [feature for feature in geojson["features"] if feature["properties"]["layer"] == "incursions"]
+        assert len(incursions) == 1
+        assert incursions[0]["properties"]["source_group_id"] == "GROUP:RedIncursion"
+        assert geojson["properties"]["incursion_count"] == 1
+        assert geojson["properties"]["frontline_diagnostics"]["main_force_count"] == 2
 
     asyncio.run(scenario())
 
