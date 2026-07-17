@@ -49,7 +49,15 @@ from moosebridge.diagnostics import (
     format_mission_summary,
 )
 from moosebridge.models import OpsZone, Territory
-from moosebridge.sdk import CoordinateResult, DistanceResult, GlobalPicture, MooseBridgeClient, NearestResult, TacticalPicture
+from moosebridge.sdk import (
+    CoordinateResult,
+    DistanceResult,
+    GeographicPoint,
+    GlobalPicture,
+    MooseBridgeClient,
+    NearestResult,
+    TacticalPicture,
+)
 from moosebridge.state import MooseBridgeState
 
 
@@ -84,6 +92,21 @@ class FakeSdkServer:
                     "distance_m": 1852,
                     "distance_km": 1.852,
                     "distance_nm": 1,
+                },
+            }
+        if command.action == "coordinates.convert_points":
+            return {
+                "ok": True,
+                "result": {
+                    "action": command.action,
+                    "points": [
+                        {
+                            **point,
+                            "latitude": 54 + point["z"] / 100_000,
+                            "longitude": 12 + point["x"] / 100_000,
+                        }
+                        for point in command.params["points"]
+                    ],
                 },
             }
         if command.action == "time.get":
@@ -227,6 +250,28 @@ def test_sdk_coords_returns_typed_result() -> None:
         assert command.action == "object.coords"
         assert command.params == {"object_id": "ZONE:Town Fight", "format": "mgrs"}
         assert timeout == 4.0
+
+    asyncio.run(scenario())
+
+
+def test_sdk_converts_multiple_points_in_one_command() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        result = await client.convert_points([(100, 200), (300, 5, 400)], timeout=6)
+
+        assert result == [
+            GeographicPoint(100, 0, 200, 54.002, 12.001),
+            GeographicPoint(300, 5, 400, 54.004, 12.003),
+        ]
+        command, timeout = server.commands[0]
+        assert command.action == "coordinates.convert_points"
+        assert command.params["points"] == [
+            {"x": 100.0, "y": 0.0, "z": 200.0},
+            {"x": 300.0, "y": 5.0, "z": 400.0},
+        ]
+        assert timeout == 6
 
     asyncio.run(scenario())
 

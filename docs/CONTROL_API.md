@@ -208,6 +208,7 @@ status = await control.status()
 await bridge.snapshot_kind("units")
 
 coords = await bridge.coords("ZONE:Town Fight", format="mgrs")
+points = await bridge.convert_points([(1000, 2000), (3000, 4000)])
 distance = await bridge.distance("GROUP:Aerial-1", "ZONE:Town Fight")
 nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True, limit=5)
 trace = await bridge.trace_auftrag("AUFTRAG:1")
@@ -236,7 +237,7 @@ The SDK currently exposes helpers for:
 
 - snapshots: `snapshot_kind`, `snapshot_all`, `request_snapshots`
 - tactical annotations: `mark_object`, `smoke_object`, `draw_zone`
-- object utilities: `coords`, `distance`, `nearest`
+- object utilities: `coords`, `convert_points`, `distance`, `nearest`
 - messages: `message_all`, `message_coalition`
 - AUFTRAG: `add_auftrag`, `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
   `get_auftrag_summary`, `wait_for_auftrag_outcome`, `pause_mission`,

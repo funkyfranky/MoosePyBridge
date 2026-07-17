@@ -119,6 +119,7 @@ from .server import MooseBridgeServer
 from .sdk import (
     CoordinateResult,
     DistanceResult,
+    GeographicPoint,
     MooseBridgeAuftragNotFoundError,
     MooseBridgeAuftragTimeoutError,
     MooseBridgeClient,
@@ -228,6 +229,7 @@ __all__ = [
     "ControlSdkAdapter",
     "CoordinateResult",
     "DistanceResult",
+    "GeographicPoint",
     "DcsTime",
     "GeneralSet",
     "GlobalPicture",

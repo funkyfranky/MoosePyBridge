@@ -15,7 +15,7 @@ if LOCAL_PYTHON_DIR.exists():
     sys.path.insert(0, str(LOCAL_PYTHON_DIR))
 
 from moosebridge.frontline_diagnostics import write_frontline_diagnostic_html
-from moosebridge.frontlines import ForcePoint, FrontlineArea, FrontlineConfig, FrontlineEngine
+from moosebridge.frontlines import ForcePoint, FrontlineCalculationArea, FrontlineConfig, FrontlineEngine
 
 
 RANDOM_SEED = 17
@@ -55,7 +55,7 @@ def synthetic_forces() -> list[ForcePoint]:
 def main() -> int:
     """Run the isolated calculation and write its diagnostic artifacts."""
 
-    area = FrontlineArea(
+    area = FrontlineCalculationArea(
         "Synthetic Campaign Area",
         (
             (-105_000, -88_000),

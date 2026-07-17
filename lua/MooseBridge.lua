@@ -1463,6 +1463,27 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     return result
   end)
 
+  self:RegisterCommand("coordinates.convert_points", function(cmd)
+    local p = cmd.params or {}
+    if type(p.points) ~= "table" then error("coordinates.convert_points requires points") end
+    if #p.points > 5000 then error("coordinates.convert_points accepts at most 5000 points") end
+    local points = {}
+    for index, point in ipairs(p.points) do
+      if type(point) ~= "table" or type(point.x) ~= "number" or type(point.z) ~= "number" then
+        error("Invalid point at index " .. safe_tostring(index))
+      end
+      local converted = self:_CoordinatesForPoint({x=point.x, y=point.y or 0, z=point.z}, "ll")
+      points[#points + 1] = {
+        x=converted.x,
+        y=converted.y,
+        z=converted.z,
+        latitude=converted.latitude,
+        longitude=converted.longitude,
+      }
+    end
+    return {action="coordinates.convert_points", count=#points, points=points}
+  end)
+
   self:RegisterCommand("object.distance", function(cmd)
     local p = cmd.params or {}
     local object_id_a = self:_OptionalString(p.object_id_a)

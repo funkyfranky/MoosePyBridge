@@ -9,13 +9,25 @@ pytest.importorskip("numpy")
 pytest.importorskip("scipy")
 pytest.importorskip("shapely")
 
+from shapely.geometry import Point
+
 from moosebridge.frontline_diagnostics import write_frontline_diagnostic_html
-from moosebridge.frontlines import ForcePoint, FrontlineArea, FrontlineConfig, FrontlineEngine
+from moosebridge.frontlines import (
+    ForcePoint,
+    FrontlineCalculationArea,
+    FrontlineConfig,
+    FrontlineEngine,
+    FrontlineForceTracker,
+    force_points_from_groups,
+)
 from moosebridge.models import Territory
 
 
-def square() -> FrontlineArea:
-    return FrontlineArea("Test", ((-50_000, -50_000), (50_000, -50_000), (50_000, 50_000), (-50_000, 50_000)))
+def square() -> FrontlineCalculationArea:
+    return FrontlineCalculationArea(
+        "Test",
+        ((-50_000, -50_000), (50_000, -50_000), (50_000, 50_000), (-50_000, 50_000)),
+    )
 
 
 def test_equal_opposing_forces_create_centered_frontline() -> None:
@@ -58,7 +70,10 @@ def test_area_excludes_outside_forces() -> None:
 
 def test_grid_uses_exact_spacing_and_enforces_cell_limit() -> None:
     config = FrontlineConfig(grid_spacing_m=3_000, maximum_grid_cells=2_000)
-    result = FrontlineEngine(config).calculate([], area=FrontlineArea("Odd", ((0, 0), (10_001, 0), (10_001, 10_001), (0, 10_001))))
+    result = FrontlineEngine(config).calculate(
+        [],
+        area=FrontlineCalculationArea("Odd", ((0, 0), (10_001, 0), (10_001, 10_001), (0, 10_001))),
+    )
 
     assert result.x_coordinates[1] - result.x_coordinates[0] == 3_000
 
@@ -82,10 +97,50 @@ def test_frontline_area_from_typed_territory() -> None:
         }
     )
 
-    area = FrontlineArea.from_territory(territory)
+    area = FrontlineCalculationArea.from_territory(territory)
 
     assert area.name == "North"
     assert area.vertices[2] == (10_000.0, 10_000.0)
+
+
+def test_combined_territories_span_neutral_gap() -> None:
+    left = Territory.from_payload(
+        {
+            "object_id": "TERRITORY:Blue",
+            "dcs_name": "Blue",
+            "object_type": "TERRITORY",
+            "vertices": [{"x": 0, "z": 0}, {"x": 10, "z": 0}, {"x": 10, "z": 10}, {"x": 0, "z": 10}],
+        }
+    )
+    right = Territory.from_payload(
+        {
+            "object_id": "TERRITORY:Red",
+            "dcs_name": "Red",
+            "object_type": "TERRITORY",
+            "vertices": [{"x": 20, "z": 0}, {"x": 30, "z": 0}, {"x": 30, "z": 10}, {"x": 20, "z": 10}],
+        }
+    )
+
+    area = FrontlineCalculationArea.from_territories([left, right])
+
+    assert area.geometry.covers(Point(15, 5))
+
+
+def test_live_group_adapter_and_position_smoothing() -> None:
+    groups = [
+        {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "x": 0, "z": 10},
+        {"object_id": "GROUP:Red", "category": "Ground Unit", "coalition": "red", "alive": True, "x": 100, "z": 10},
+        {"object_id": "GROUP:Air", "category": "Airplane", "coalition": "blue", "alive": True, "x": 0, "z": 0},
+        {"object_id": "GROUP:Dead", "category": "Ground Unit", "coalition": "red", "alive": False, "x": 0, "z": 0},
+    ]
+    tracker = FrontlineForceTracker(position_alpha=0.25)
+
+    first = tracker.update(force_points_from_groups(groups))
+    groups[0]["x"] = 100
+    second = tracker.update(force_points_from_groups(groups))
+
+    assert [force.object_id for force in first] == ["GROUP:Blue", "GROUP:Red"]
+    assert second[0].x == 25
 
 
 def test_geojson_and_html_diagnostics(tmp_path) -> None:

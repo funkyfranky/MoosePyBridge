@@ -6,7 +6,10 @@ import pytest
 
 pytest.importorskip("fastapi")
 
+from moosebridge.clock import DcsTime
 from moosebridge.map_server import GlobalMapRuntime, create_app, empty_picture
+from moosebridge.pictures import GlobalPicture
+from moosebridge.sdk import GeographicPoint
 
 
 def test_empty_picture_is_wgs84_geojson() -> None:
@@ -39,6 +42,9 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "wall_time": None,
         "trajectory_count": 0,
         "history_seconds": 900.0,
+        "frontline_count": 0,
+        "frontline_updated_mission_time": None,
+        "frontline_error": None,
     }
 
 
@@ -102,6 +108,39 @@ def test_map_runtime_resets_tracks_when_mission_time_restarts() -> None:
 
     assert len(runtime.tracks["GROUP:Moving"]) == 1
     assert not any(feature["properties"]["layer"] == "trajectories" for feature in picture["features"])
+
+
+def test_map_runtime_builds_and_reuses_live_frontline() -> None:
+    class Bridge:
+        calls = 0
+
+        async def convert_points(self, points: list[tuple[float, float]]) -> list[GeographicPoint]:
+            self.calls += 1
+            return [
+                GeographicPoint(x=x, y=0, z=z, latitude=54 + z / 100_000, longitude=12 + x / 100_000)
+                for x, z in points
+            ]
+
+    async def scenario() -> None:
+        runtime = GlobalMapRuntime(frontline_interval=15)
+        bridge = Bridge()
+        groups = [
+            {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "x": -15_000, "z": 0},
+            {"object_id": "GROUP:Red", "dcs_name": "Red", "category": "Ground Unit", "coalition": "red", "alive": True, "x": 15_000, "z": 0},
+        ]
+        first = GlobalPicture(clock=DcsTime(mission_time=100), groups=groups)
+        first_geojson = await runtime.update_frontline(first, first.to_geojson(), bridge)
+        second = GlobalPicture(clock=DcsTime(mission_time=105), groups=groups)
+        second_geojson = await runtime.update_frontline(second, second.to_geojson(), bridge)
+
+        frontlines = [feature for feature in first_geojson["features"] if feature["properties"]["layer"] == "frontlines"]
+        assert frontlines
+        assert frontlines[0]["geometry"]["type"] == "LineString"
+        assert first_geojson["properties"]["frontline_count"] == len(frontlines)
+        assert second_geojson["properties"]["frontline_count"] == len(frontlines)
+        assert bridge.calls == 1
+
+    asyncio.run(scenario())
 
 
 def test_map_runtime_task_stops_cleanly() -> None:

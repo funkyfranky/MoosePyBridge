@@ -145,7 +145,7 @@ await bridge.set_territory_coalition("TERRITORY:Territory North", "red")
 
 Coalition changes update the state mirror through
 `territory.coalition_changed`. Global pictures export territory polygons as a
-separate GeoJSON/map layer, and `FrontlineArea.from_territory()` adapts the
+separate GeoJSON/map layer, and `FrontlineCalculationArea.from_territory()` adapts the
 same geometry for Python's frontline engine. See `examples/sdk/territories.py`
 for a parameterless client example.
 
@@ -325,11 +325,31 @@ Movement history is derived from periodic DCS positions because DCS does not
 emit position-change events. Tracks are removed when an object dies or
 disappears and are reset when mission time restarts.
 
-### Operational frontline prototype
+The map server also calculates a live operational frontline every 15 mission
+seconds by default:
 
-The optional frontline module derives an operational boundary from weighted
-blue and red ground-force positions. It uses passive polygon geometry as a
-calculation boundary; it does not create or scan large MOOSE `OPSZONE`s.
+- alive blue and red ground groups are used once each, without counting their
+  units again;
+- group positions are smoothed before influence-field calculation;
+- polygon territories form a combined calculation area that includes neutral
+  gaps between them;
+- all generated line vertices are converted through one batched DCS
+  `coord.LOtoLL` call;
+- the result is published through the separately switchable `Frontlines`
+  map layer.
+
+The recalculation interval and smoothing factor can be changed when starting
+the server:
+
+```powershell
+python -m moosebridge.map_server --frontline-interval 15 --frontline-position-alpha 0.35
+```
+
+### Operational frontline diagnostics
+
+The frontline module derives an operational line from weighted blue and red
+ground-force positions. It uses passive polygon geometry as a calculation
+boundary; it does not create or scan large MOOSE `OPSZONE`s.
 
 Install the numerical/geospatial dependencies and run the isolated synthetic
 example:
@@ -343,10 +363,11 @@ The script has no command-line parameters. Edit its constants and synthetic
 forces directly. It writes `tmp/frontline_prototype.geojson` and a standalone
 interactive diagnostic viewer to `tmp/frontline_prototype.html`.
 
-The reusable API consists of `ForcePoint`, `FrontlineArea`, `FrontlineConfig`,
-and `FrontlineEngine` in `moosebridge.frontlines`. Python owns the influence
-model and frontline calculation. MOOSE/DCS remain the source of object state
-and Mission Editor-aligned passive territory geometry.
+The reusable API consists of `ForcePoint`, `FrontlineCalculationArea`,
+`FrontlineConfig`, `FrontlineForceTracker`, and `FrontlineEngine` in
+`moosebridge.frontlines`. Python owns the influence model and frontline
+calculation. MOOSE/DCS remain the source of object state and Mission
+Editor-aligned passive territory geometry.
 
 To monitor and validate the global truth picture without command-line
 parameters, edit the constants in and run:

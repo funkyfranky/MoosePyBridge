@@ -43,7 +43,7 @@ class ForcePoint:
 
 
 @dataclass(slots=True, frozen=True)
-class FrontlineArea:
+class FrontlineCalculationArea:
     """Passive polygon limiting influence and frontline calculations."""
 
     name: str
@@ -51,12 +51,12 @@ class FrontlineArea:
 
     def __post_init__(self) -> None:
         if len(self.vertices) < 3:
-            raise ValueError("FrontlineArea requires at least three vertices")
+            raise ValueError("FrontlineCalculationArea requires at least three vertices")
         geometry = Polygon(self.vertices)
         if geometry.is_empty or geometry.area <= 0:
-            raise ValueError("FrontlineArea requires a non-empty polygon")
+            raise ValueError("FrontlineCalculationArea requires a non-empty polygon")
         if not geometry.is_valid:
-            raise ValueError(f"FrontlineArea polygon is invalid: {shapely.is_valid_reason(geometry)}")
+            raise ValueError(f"FrontlineCalculationArea polygon is invalid: {shapely.is_valid_reason(geometry)}")
 
     @property
     def geometry(self) -> Polygon:
@@ -65,7 +65,7 @@ class FrontlineArea:
         return Polygon(self.vertices)
 
     @classmethod
-    def from_territory(cls, territory: Any) -> "FrontlineArea":
+    def from_territory(cls, territory: Any) -> "FrontlineCalculationArea":
         """Create a calculation area from a typed TERRITORY snapshot."""
 
         vertices = tuple(
@@ -77,6 +77,99 @@ class FrontlineArea:
             raise ValueError("TERRITORY requires polygon vertices for frontline calculation")
         name = getattr(territory, "name", None) or getattr(territory, "dcs_name", None) or "Territory"
         return cls(str(name), vertices)
+
+    @classmethod
+    def from_territories(cls, territories: Iterable[Any]) -> "FrontlineCalculationArea":
+        """Create one campaign calculation area spanning polygon territories."""
+
+        polygons: list[Polygon] = []
+        names: list[str] = []
+        for territory in territories:
+            vertices = tuple(
+                (float(vertex.x), float(vertex.z))
+                for vertex in getattr(territory, "vertices", ())
+                if getattr(vertex, "x", None) is not None and getattr(vertex, "z", None) is not None
+            )
+            if len(vertices) < 3:
+                continue
+            polygon = Polygon(vertices)
+            if not polygon.is_empty and polygon.is_valid and polygon.area > 0:
+                polygons.append(polygon)
+                names.append(str(getattr(territory, "name", None) or getattr(territory, "dcs_name", None) or "Territory"))
+        if not polygons:
+            raise ValueError("At least one polygon TERRITORY is required for a frontline calculation area")
+        geometry = shapely.union_all(polygons).convex_hull
+        if not isinstance(geometry, Polygon):
+            raise ValueError("Territories do not define a polygon calculation area")
+        return cls(
+            names[0] if len(names) == 1 else "Combined territories",
+            tuple((float(x), float(z)) for x, z in list(geometry.exterior.coords)[:-1]),
+        )
+
+
+def force_points_from_groups(groups: Iterable[dict[str, Any]]) -> tuple[ForcePoint, ...]:
+    """Select alive blue/red ground groups from a global truth snapshot."""
+
+    forces: list[ForcePoint] = []
+    for group in groups:
+        object_id = str(group.get("object_id") or "")
+        category = str(group.get("category") or "").strip().lower().replace("_", " ")
+        coalition = str(group.get("coalition") or "").strip().lower()
+        x = group.get("x")
+        z = group.get("z")
+        if not object_id or group.get("alive") is not True or category not in {"ground", "ground unit", "ground units"}:
+            continue
+        if coalition not in {"blue", "red"} or not isinstance(x, (int, float)) or not isinstance(z, (int, float)):
+            continue
+        forces.append(
+            ForcePoint(
+                object_id=object_id,
+                coalition=coalition,  # type: ignore[arg-type]
+                x=float(x),
+                z=float(z),
+                label=str(group.get("dcs_name") or group.get("name") or group.get("object_id") or ""),
+            )
+        )
+    return tuple(sorted(forces, key=lambda force: force.object_id))
+
+
+@dataclass(slots=True)
+class FrontlineForceTracker:
+    """Smooth live force positions before recalculating a frontline."""
+
+    position_alpha: float = 0.35
+    _positions: dict[str, ForcePoint] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not 0 < self.position_alpha <= 1:
+            raise ValueError("position_alpha must be in (0, 1]")
+
+    def update(self, forces: Iterable[ForcePoint]) -> tuple[ForcePoint, ...]:
+        """Return exponentially smoothed positions for the current force set."""
+
+        updated: dict[str, ForcePoint] = {}
+        for force in forces:
+            previous = self._positions.get(force.object_id)
+            if previous is None or previous.coalition != force.coalition:
+                smoothed = force
+            else:
+                alpha = self.position_alpha
+                smoothed = ForcePoint(
+                    object_id=force.object_id,
+                    coalition=force.coalition,
+                    x=previous.x + alpha * (force.x - previous.x),
+                    z=previous.z + alpha * (force.z - previous.z),
+                    weight=force.weight,
+                    label=force.label,
+                )
+            updated[force.object_id] = smoothed
+        self._positions = updated
+        return tuple(updated[key] for key in sorted(updated))
+
+    def reset(self) -> None:
+        """Discard positions from a previous mission timeline."""
+
+        self._positions.clear()
 
 
 @dataclass(slots=True, frozen=True)
@@ -144,7 +237,7 @@ class FrontlineResult:
 
     forces: tuple[ForcePoint, ...]
     config: FrontlineConfig
-    area: FrontlineArea | None
+    area: FrontlineCalculationArea | None
     bounds: tuple[float, float, float, float]
     x_coordinates: NDArray[np.float64]
     z_coordinates: NDArray[np.float64]
@@ -220,7 +313,7 @@ class FrontlineEngine:
         self,
         forces: Iterable[ForcePoint],
         *,
-        area: FrontlineArea | None = None,
+        area: FrontlineCalculationArea | None = None,
     ) -> FrontlineResult:
         """Build influence fields and extract balanced opposing contours."""
 
@@ -289,12 +382,12 @@ class FrontlineEngine:
     def _bounds(
         self,
         forces: tuple[ForcePoint, ...],
-        area: FrontlineArea | None,
+        area: FrontlineCalculationArea | None,
     ) -> tuple[float, float, float, float]:
         if area is not None:
             return tuple(float(value) for value in area.geometry.bounds)  # type: ignore[return-value]
         if not forces:
-            raise ValueError("Frontline calculation requires forces or a FrontlineArea")
+            raise ValueError("Frontline calculation requires forces or a FrontlineCalculationArea")
         padding = self.config.bounds_padding_m
         return (
             min(force.x for force in forces) - padding,

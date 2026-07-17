@@ -17,6 +17,7 @@
     },
     { key: "zones", label: "Zones", color: "#c19424", icon: "map-pin", default: false },
     { key: "territories", label: "Territories", color: "#59635e", icon: "map", default: true },
+    { key: "frontlines", label: "Frontlines", color: "#573a58", icon: "git-commit-horizontal", default: true },
     { key: "opszones", label: "OPS zones", color: "#8b5ea7", icon: "shield", default: true },
     { key: "opsgroups", label: "OPS groups", color: "#1e8171", icon: "badge", size: 1.1, default: true },
     { key: "legions", label: "Legions", color: "#283a4f", icon: "shield", size: 1.18, default: true },
@@ -278,6 +279,28 @@
             "line-color": ["match", ["get", "map_coalition"], "blue", coalitionColors.blue, "red", coalitionColors.red, "neutral", coalitionColors.neutral, spec.color],
             "line-width": 2.2,
             "line-opacity": 0.72,
+          },
+        });
+        continue;
+      }
+      if (spec.key === "frontlines") {
+        addMapLayer(spec, {
+          type: "line",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "line-color": "rgba(255,255,255,0.92)",
+            "line-width": 7,
+            "line-opacity": 0.9,
+          },
+        });
+        addMapLayer(spec, {
+          type: "line",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "line-color": spec.color,
+            "line-width": 4,
+            "line-dasharray": [2, 1.2],
+            "line-opacity": 0.96,
           },
         });
         continue;

@@ -93,6 +93,32 @@ class CoordinateResult:
 
 
 @dataclass(slots=True, frozen=True)
+class GeographicPoint:
+    """One DCS-local point converted to WGS84 by DCS."""
+
+    x: float
+    y: float
+    z: float
+    latitude: float
+    longitude: float
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "GeographicPoint":
+        """Build a converted point from a bridge result payload."""
+
+        values = {
+            "x": _optional_float(payload.get("x")),
+            "y": _optional_float(payload.get("y")),
+            "z": _optional_float(payload.get("z")),
+            "latitude": _optional_float(payload.get("latitude")),
+            "longitude": _optional_float(payload.get("longitude")),
+        }
+        if any(value is None for value in values.values()):
+            raise ValueError("Converted point is missing x/y/z or latitude/longitude")
+        return cls(**values)  # type: ignore[arg-type]
+
+
+@dataclass(slots=True, frozen=True)
 class DistanceResult:
     """Distance between two resolved DCS objects."""
 
@@ -1226,6 +1252,43 @@ class MooseBridgeClient:
             )
         )
         return CoordinateResult.from_ack(ack)
+
+    async def convert_points(
+        self,
+        points: Iterable[tuple[float, float] | tuple[float, float, float]],
+        *,
+        timeout: float = 10.0,
+    ) -> list[GeographicPoint]:
+        """Convert DCS-local points to WGS84 in one bridge roundtrip."""
+
+        payload: list[dict[str, float]] = []
+        for point in points:
+            if len(point) == 2:
+                x, z = point
+                y = 0.0
+            elif len(point) == 3:
+                x, y, z = point
+            else:
+                raise ValueError("Each point must contain (x, z) or (x, y, z)")
+            values = (float(x), float(y), float(z))
+            if not all(math.isfinite(value) for value in values):
+                raise ValueError("Point coordinates must be finite")
+            payload.append({"x": values[0], "y": values[1], "z": values[2]})
+        if len(payload) > 5000:
+            raise ValueError("convert_points accepts at most 5000 points")
+        if not payload:
+            return []
+        ack = require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="coordinates.convert_points", params={"points": payload}),
+                timeout=timeout,
+            )
+        )
+        result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+        converted = result.get("points") if isinstance(result.get("points"), list) else []
+        if len(converted) != len(payload):
+            raise ValueError(f"DCS converted {len(converted)} of {len(payload)} points")
+        return [GeographicPoint.from_payload(item) for item in converted if isinstance(item, dict)]
 
     async def distance(self, object_id_a: str, object_id_b: str, timeout: float = 10.0) -> DistanceResult:
         """Measure distance between two bridge object ids.

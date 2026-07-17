@@ -18,6 +18,15 @@ from fastapi.staticfiles import StaticFiles
 
 from .control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from .control_sdk import sdk_from_control_client
+from .frontlines import (
+    FrontlineCalculationArea,
+    FrontlineConfig,
+    FrontlineEngine,
+    FrontlineForceTracker,
+    FrontlineResult,
+    force_points_from_groups,
+)
+from .pictures import GlobalPicture
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_MAP_HOST = "127.0.0.1"
@@ -26,6 +35,8 @@ DEFAULT_UPDATE_INTERVAL = 5.0
 DEFAULT_COMMAND_TIMEOUT = 15.0
 DEFAULT_HISTORY_SECONDS = 15 * 60.0
 DEFAULT_HISTORY_MAX_POINTS = 180
+DEFAULT_FRONTLINE_INTERVAL = 15.0
+DEFAULT_FRONTLINE_POSITION_ALPHA = 0.35
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
 
@@ -103,6 +114,8 @@ class GlobalMapRuntime:
     timeout: float = DEFAULT_COMMAND_TIMEOUT
     history_seconds: float = DEFAULT_HISTORY_SECONDS
     history_max_points: int = DEFAULT_HISTORY_MAX_POINTS
+    frontline_interval: float = DEFAULT_FRONTLINE_INTERVAL
+    frontline_position_alpha: float = DEFAULT_FRONTLINE_POSITION_ALPHA
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
     error: str | None = None
@@ -110,6 +123,18 @@ class GlobalMapRuntime:
     tracks: dict[str, deque[TrackPoint]] = field(default_factory=dict)
     _task: asyncio.Task[None] | None = None
     _last_mission_time: float | None = None
+    _frontline_mission_time: float | None = None
+    _frontline_features: list[dict[str, Any]] = field(default_factory=list)
+    _frontline_diagnostics: dict[str, Any] = field(default_factory=dict)
+    _frontline_error: str | None = None
+    _frontline_tracker: FrontlineForceTracker = field(init=False)
+    _frontline_engine: FrontlineEngine = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.frontline_interval <= 0:
+            raise ValueError("frontline_interval must be positive")
+        self._frontline_tracker = FrontlineForceTracker(self.frontline_position_alpha)
+        self._frontline_engine = FrontlineEngine(FrontlineConfig())
 
     def status_payload(self) -> dict[str, Any]:
         """Return the current browser-facing service status."""
@@ -126,6 +151,9 @@ class GlobalMapRuntime:
             "wall_time": properties.get("wall_time"),
             "trajectory_count": sum(1 for feature in self.picture.get("features", []) if feature.get("properties", {}).get("layer") == "trajectories"),
             "history_seconds": self.history_seconds,
+            "frontline_count": len(self._frontline_features),
+            "frontline_updated_mission_time": self._frontline_mission_time,
+            "frontline_error": self._frontline_error,
         }
 
     def update_picture(self, picture: dict[str, Any]) -> dict[str, Any]:
@@ -187,6 +215,94 @@ class GlobalMapRuntime:
         properties["history_seconds"] = self.history_seconds
         self.picture = {**picture, "features": [*decorated_features, *trajectories], "properties": properties}
         return self.picture
+
+    async def update_frontline(
+        self,
+        picture: GlobalPicture,
+        geojson: dict[str, Any],
+        bridge: Any,
+    ) -> dict[str, Any]:
+        """Append a periodically recalculated operational frontline."""
+
+        mission_time = picture.clock.mission_time if picture.clock else None
+        if (
+            mission_time is not None
+            and self._frontline_mission_time is not None
+            and mission_time < self._frontline_mission_time
+        ):
+            self._frontline_tracker.reset()
+            self._frontline_features.clear()
+            self._frontline_diagnostics.clear()
+            self._frontline_error = None
+            self._frontline_mission_time = None
+
+        due = (
+            self._frontline_mission_time is None
+            or mission_time is None
+            or mission_time - self._frontline_mission_time >= self.frontline_interval
+        )
+        if due:
+            forces = self._frontline_tracker.update(force_points_from_groups(picture.groups))
+            if {force.coalition for force in forces} == {"blue", "red"}:
+                area = None
+                try:
+                    area = FrontlineCalculationArea.from_territories(picture.territories)
+                except ValueError:
+                    pass
+                result = self._frontline_engine.calculate(forces, area=area)
+                self._frontline_features = await self._frontline_geojson_features(result, bridge)
+                self._frontline_diagnostics = dict(result.diagnostics)
+            else:
+                self._frontline_features = []
+                self._frontline_diagnostics = {
+                    "input_force_count": len(forces),
+                    "segment_count": 0,
+                    "reason": "both blue and red ground forces are required",
+                }
+            self._frontline_mission_time = mission_time
+            self._frontline_error = None
+
+        features = geojson.get("features")
+        if isinstance(features, list):
+            features.extend(self._frontline_features)
+        properties = geojson.setdefault("properties", {})
+        properties["frontline_count"] = len(self._frontline_features)
+        properties["frontline_updated_mission_time"] = self._frontline_mission_time
+        properties["frontline_diagnostics"] = self._frontline_diagnostics
+        return geojson
+
+    @staticmethod
+    async def _frontline_geojson_features(result: FrontlineResult, bridge: Any) -> list[dict[str, Any]]:
+        points = [point for segment in result.segments for point in segment.points]
+        converted = await bridge.convert_points(points) if points else []
+        features: list[dict[str, Any]] = []
+        cursor = 0
+        for segment in result.segments:
+            segment_points = converted[cursor : cursor + len(segment.points)]
+            cursor += len(segment.points)
+            coordinates = [[point.longitude, point.latitude] for point in segment_points]
+            if len(coordinates) < 2:
+                continue
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "LineString", "coordinates": coordinates},
+                    "properties": {
+                        "layer": "frontlines",
+                        "object_id": f"FRONTLINE:{segment.index}",
+                        "name": f"Frontline {segment.index}",
+                        "object_type": "FRONTLINE",
+                        "category": "Operational frontline",
+                        "length_m": segment.length_m,
+                        "force_count": result.diagnostics.get("included_force_count", 0),
+                        "blue_force_count": result.diagnostics.get("blue_force_count", 0),
+                        "red_force_count": result.diagnostics.get("red_force_count", 0),
+                        "calculation_ms": result.elapsed_ms,
+                        "coordinate_system": "WGS84",
+                    },
+                }
+            )
+        return features
 
     @staticmethod
     def _add_movement_properties(properties: dict[str, Any], history: deque[TrackPoint], mission_time: float) -> None:
@@ -275,7 +391,20 @@ class GlobalMapRuntime:
                 if not status.get("connected"):
                     raise ConnectionError("DCS is not connected to the MooseBridge daemon")
                 picture = await bridge.refresh_global_picture()
-                self.update_picture(picture.to_geojson())
+                geojson = picture.to_geojson()
+                try:
+                    geojson = await self.update_frontline(picture, geojson, bridge)
+                except Exception as exc:
+                    frontline_error = str(exc)
+                    if frontline_error != self._frontline_error:
+                        LOGGER.warning("Frontline update failed: %s", exc)
+                    else:
+                        LOGGER.debug("Frontline update still unavailable: %s", exc)
+                    self._frontline_error = frontline_error
+                    self._frontline_features = []
+                    geojson["properties"]["frontline_count"] = 0
+                    geojson["properties"]["frontline_error"] = self._frontline_error
+                self.update_picture(geojson)
                 if not self.connected:
                     LOGGER.info("Global map connected to DCS")
                 self.connected = True
@@ -313,10 +442,21 @@ def create_app(
     timeout: float = DEFAULT_COMMAND_TIMEOUT,
     history_seconds: float = DEFAULT_HISTORY_SECONDS,
     history_max_points: int = DEFAULT_HISTORY_MAX_POINTS,
+    frontline_interval: float = DEFAULT_FRONTLINE_INTERVAL,
+    frontline_position_alpha: float = DEFAULT_FRONTLINE_POSITION_ALPHA,
 ) -> FastAPI:
     """Create the FastAPI map application."""
 
-    runtime = GlobalMapRuntime(control_host, control_port, interval, timeout, history_seconds, history_max_points)
+    runtime = GlobalMapRuntime(
+        control_host,
+        control_port,
+        interval,
+        timeout,
+        history_seconds,
+        history_max_points,
+        frontline_interval,
+        frontline_position_alpha,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -370,6 +510,8 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=DEFAULT_COMMAND_TIMEOUT, help="DCS command timeout in seconds.")
     parser.add_argument("--history-seconds", type=float, default=DEFAULT_HISTORY_SECONDS, help="Trajectory history duration in mission seconds.")
     parser.add_argument("--history-max-points", type=int, default=DEFAULT_HISTORY_MAX_POINTS, help="Maximum trajectory samples per object.")
+    parser.add_argument("--frontline-interval", type=float, default=DEFAULT_FRONTLINE_INTERVAL, help="Frontline recalculation interval in mission seconds.")
+    parser.add_argument("--frontline-position-alpha", type=float, default=DEFAULT_FRONTLINE_POSITION_ALPHA, help="Frontline force-position smoothing factor.")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -389,6 +531,8 @@ def main() -> None:
         timeout=max(1.0, args.timeout),
         history_seconds=max(0.0, args.history_seconds),
         history_max_points=max(2, args.history_max_points),
+        frontline_interval=max(1.0, args.frontline_interval),
+        frontline_position_alpha=min(1.0, max(0.01, args.frontline_position_alpha)),
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 
