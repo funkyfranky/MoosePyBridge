@@ -373,12 +373,34 @@ Later behavior:
 The next concrete milestone is to deepen the current daemon, SDK, and advisory
 baseline:
 
-1. Build the browser-readable situation picture on top of the SDK GeoJSON
-   models, starting with tactical INTEL views and global/admin truth views.
-2. Add OPSGROUP and OPSZONE command helpers for common control operations.
-3. Add structured audit records for recommendations, approvals, commands, ACKs,
-   and outcomes.
-4. Start policy checks for approval-required and autonomous modes on top of the
-   existing SDK/control command path.
-5. Define map update semantics for live movement, trails, stale contacts, and
-   event-driven refreshes.
+1. Connect passive MOOSE territory polygons and current ground-force snapshots
+   to the isolated Python frontline engine.
+2. Define force weights from unit category, combat capability, readiness, and
+   confidence instead of treating every group equally.
+3. Add temporal stabilization and confidence metadata so operational fronts do
+   not jump on every position update.
+4. Publish frontlines as a separate map layer without turning large territories
+   into periodically scanned `OPSZONE`s.
+5. Validate the model against authored DCS mission scenarios before strategic
+   rules or an LLM consume it.
+
+## Frontline architecture baseline
+
+Python owns strategic territories, force influence, and operational frontlines.
+MOOSE supplies Mission Editor-aligned passive territory geometry plus DCS and
+OPS object state. Small tactical `OPSZONE`s may exist inside territories, but
+they are not used as large-area territory scanners.
+
+The passive MOOSE-side `TERRITORY` class is implemented in
+`lua/Territory.lua`. It wraps a `ZONE_BASE`, stores its declared coalition, and
+registers itself in `_DATABASE.TERRITORIES`. It intentionally has no FSM,
+scheduler, object scan, capture evaluation, or strategic decision logic.
+
+The first isolated prototype is implemented in `moosebridge.frontlines`:
+
+- NumPy rasterizes weighted force positions.
+- SciPy smooths their influence fields.
+- ContourPy extracts equal-influence contours.
+- Shapely validates, clips, simplifies, and measures the resulting lines.
+- `examples/frontline/frontline_prototype.py` generates GeoJSON and an
+  interactive diagnostic HTML viewer without requiring a running DCS server.

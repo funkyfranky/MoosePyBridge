@@ -98,15 +98,16 @@ High-level layers:
 Load the files in this order:
 
 1. `Moose.lua`
-2. `lua/MooseBridgeJson.lua`
-3. `lua/MooseBridge.lua`
-4. optional extension files, for example:
+2. optional MOOSE-side classes such as `lua/Territory.lua`
+3. `lua/MooseBridgeJson.lua`
+4. `lua/MooseBridge.lua`
+5. optional extension files, for example:
    - `lua/MooseBridgeSocketTuningExtension.lua`
    - `lua/MooseBridgePayloadExtension.lua`
    - `lua/MooseBridgeAuftragExecutionExtension.lua`
    - `lua/MooseBridgeAuftragTraceExtension.lua`
    - `lua/MooseBridgeIntelExtension.lua` (load after the execution extension for OPSGROUP agents)
-5. mission-specific setup such as `lua/MooseBridgeMissionExample.lua`
+6. mission-specific setup such as `lua/MooseBridgeMissionExample.lua`
 
 The minimal example contains:
 
@@ -114,6 +115,23 @@ The minimal example contains:
 Bridge = MOOSE_BRIDGE:New("127.0.0.1", 51000)
 Bridge:Start()
 ```
+
+Passive strategic territories can be defined from Mission Editor zones:
+
+```lua
+local north = TERRITORY:New("Territory North", coalition.side.BLUE)
+local south = TERRITORY:New(
+  ZONE:FindByName("Territory South"),
+  coalition.side.RED,
+  "Southern Territory"
+)
+
+north:Draw()
+```
+
+`TERRITORY` registers objects in `_DATABASE.TERRITORIES` and exposes their
+zone geometry and declared coalition without scanning DCS objects, scheduling
+updates, or evaluating capture logic.
 
 ## Python setup
 
@@ -290,6 +308,29 @@ python -m moosebridge.map_server --history-seconds 1800 --history-max-points 360
 Movement history is derived from periodic DCS positions because DCS does not
 emit position-change events. Tracks are removed when an object dies or
 disappears and are reset when mission time restarts.
+
+### Operational frontline prototype
+
+The optional frontline module derives an operational boundary from weighted
+blue and red ground-force positions. It uses passive polygon geometry as a
+calculation boundary; it does not create or scan large MOOSE `OPSZONE`s.
+
+Install the numerical/geospatial dependencies and run the isolated synthetic
+example:
+
+```powershell
+python -m pip install -e ".[frontline]"
+python examples/frontline/frontline_prototype.py
+```
+
+The script has no command-line parameters. Edit its constants and synthetic
+forces directly. It writes `tmp/frontline_prototype.geojson` and a standalone
+interactive diagnostic viewer to `tmp/frontline_prototype.html`.
+
+The reusable API consists of `ForcePoint`, `FrontlineArea`, `FrontlineConfig`,
+and `FrontlineEngine` in `moosebridge.frontlines`. Python owns the influence
+model and frontline calculation. MOOSE/DCS remain the source of object state
+and Mission Editor-aligned passive territory geometry.
 
 To monitor and validate the global truth picture without command-line
 parameters, edit the constants in and run:
