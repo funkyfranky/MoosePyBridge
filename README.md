@@ -133,6 +133,22 @@ north:Draw()
 zone geometry and declared coalition without scanning DCS objects, scheduling
 updates, or evaluating capture logic.
 
+Python receives these objects as typed, passive SDK state:
+
+```python
+await bridge.refresh_territory_state()
+
+north = bridge.territory("TERRITORY:Territory North")
+blue_territories = bridge.territories(coalition="blue")
+await bridge.set_territory_coalition("TERRITORY:Territory North", "red")
+```
+
+Coalition changes update the state mirror through
+`territory.coalition_changed`. Global pictures export territory polygons as a
+separate GeoJSON/map layer, and `FrontlineArea.from_territory()` adapts the
+same geometry for Python's frontline engine. See `examples/sdk/territories.py`
+for a parameterless client example.
+
 ## Python setup
 
 From the project root:

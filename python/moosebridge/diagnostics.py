@@ -59,7 +59,8 @@ def format_global_picture_status(picture: GlobalPicture, *, issue_limit: int = 2
             f"truth: groups={counts['groups']} (alive={alive_groups}) "
             f"units={counts['units']} (alive={alive_units}) "
             f"statics={counts['statics']} (alive={alive_statics}) "
-            f"airbases={counts['airbases']} zones={counts['zones']}"
+            f"airbases={counts['airbases']} zones={counts['zones']} "
+            f"territories={counts['territories']}"
         ),
         (
             f"coalitions/groups: blue={coalitions['blue']} red={coalitions['red']} "

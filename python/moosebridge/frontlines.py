@@ -64,6 +64,20 @@ class FrontlineArea:
 
         return Polygon(self.vertices)
 
+    @classmethod
+    def from_territory(cls, territory: Any) -> "FrontlineArea":
+        """Create a calculation area from a typed TERRITORY snapshot."""
+
+        vertices = tuple(
+            (float(vertex.x), float(vertex.z))
+            for vertex in getattr(territory, "vertices", ())
+            if getattr(vertex, "x", None) is not None and getattr(vertex, "z", None) is not None
+        )
+        if len(vertices) < 3:
+            raise ValueError("TERRITORY requires polygon vertices for frontline calculation")
+        name = getattr(territory, "name", None) or getattr(territory, "dcs_name", None) or "Territory"
+        return cls(str(name), vertices)
+
 
 @dataclass(slots=True, frozen=True)
 class FrontlineConfig:

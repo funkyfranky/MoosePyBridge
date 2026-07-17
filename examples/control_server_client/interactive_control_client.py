@@ -1135,6 +1135,11 @@ def compact_item(kind: str, item: dict[str, Any]) -> str:
         )
     if kind == "zones":
         return f"{label} category={item.get('category')} source={item.get('source')} radius={item.get('radius')} x={item.get('x')} z={item.get('z')}"
+    if kind == "territories":
+        return (
+            f"{label} coalition={item.get('coalition')} zone={item.get('zone_name')} "
+            f"shape={item.get('shape')} vertices={len(item.get('vertices') or [])}"
+        )
     if kind == "opszones":
         return (
             f"{label} state={item.get('state')} owner={item.get('owner_current_name')} "

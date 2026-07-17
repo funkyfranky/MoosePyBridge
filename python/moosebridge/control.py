@@ -30,6 +30,7 @@ STATE_KINDS = (
     "statics",
     "airbases",
     "zones",
+    "territories",
     "objects",
     "opszones",
     "opsgroups",

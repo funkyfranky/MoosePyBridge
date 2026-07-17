@@ -72,6 +72,11 @@ class ControlSdkAdapter:
 
         return await self._snapshot("zones")
 
+    async def snapshot_territories(self) -> dict[str, Any]:
+        """Request a TERRITORY snapshot through the control API."""
+
+        return await self._snapshot("territories")
+
     async def snapshot_opszones(self) -> dict[str, Any]:
         """Request an OPSZONE snapshot through the control API."""
 

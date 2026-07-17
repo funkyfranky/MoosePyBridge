@@ -130,6 +130,33 @@ def test_state_payload_roundtrip_applies_requested_kinds() -> None:
     assert target.snapshot_clocks["objects"].sequence == 12
 
 
+def test_state_payload_roundtrip_includes_territories() -> None:
+    source = MooseBridgeState(connected=True)
+    source.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "territories",
+            "payload": {
+                "territories": [
+                    {
+                        "object_id": "TERRITORY:North",
+                        "dcs_name": "North",
+                        "object_type": "TERRITORY",
+                        "coalition": "blue",
+                    }
+                ]
+            },
+        }
+    )
+
+    payload = state_payload(source, kinds=("territories",))
+    target = apply_state_payload(MooseBridgeState(), payload)
+
+    assert payload["counts"]["territories"] == 1
+    assert target.territory("TERRITORY:North") is not None
+    assert target.territory("TERRITORY:North").coalition == "blue"  # type: ignore[union-attr]
+
+
 def test_interactive_snapshot_aliases_normalize_to_bridge_actions() -> None:
     actions = normalize_snapshot_actions(("groups", "units", "snapshot.cohorts", "all"))
 

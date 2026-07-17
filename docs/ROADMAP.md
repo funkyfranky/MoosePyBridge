@@ -395,6 +395,10 @@ The passive MOOSE-side `TERRITORY` class is implemented in
 `lua/Territory.lua`. It wraps a `ZONE_BASE`, stores its declared coalition, and
 registers itself in `_DATABASE.TERRITORIES`. It intentionally has no FSM,
 scheduler, object scan, capture evaluation, or strategic decision logic.
+Territory snapshots, typed Python state, event-based coalition changes,
+GeoJSON export, and the dedicated map layer are implemented. The same typed
+geometry can be passed to the frontline engine with
+`FrontlineArea.from_territory()`.
 
 The first isolated prototype is implemented in `moosebridge.frontlines`:
 

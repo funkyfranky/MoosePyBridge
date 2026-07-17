@@ -13,7 +13,7 @@ from .clock import DcsTime
 from .auftrag_specs import auftrag_action_suffix
 from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Legion
-from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
+from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
@@ -45,6 +45,7 @@ SNAPSHOT_KINDS = {
     "statics",
     "airbases",
     "zones",
+    "territories",
     "objects",
     "opszones",
     "opsgroups",
@@ -402,6 +403,19 @@ class MooseBridgeClient:
 
         return self.state.opszone(object_id)
 
+    def territory(self, object_id: str) -> Territory | None:
+        """Return a typed TERRITORY by object id."""
+
+        return self.state.territory(object_id)
+
+    def territories(self, coalition: str | None = None) -> list[Territory]:
+        """Return known territories, optionally limited to one coalition."""
+
+        territories = list(self.state.territory_objects.values())
+        if coalition is None:
+            return territories
+        return [territory for territory in territories if _same_coalition(territory.coalition, coalition)]
+
     def opsgroup(self, object_id: str) -> OpsGroup | None:
         """Return a typed OPSGROUP by object id.
 
@@ -609,6 +623,7 @@ class MooseBridgeClient:
             statics=list(self.state.statics.values()),
             airbases=list(self.state.airbases.values()),
             zones=list(self.state.zones.values()),
+            territories=list(self.state.territory_objects.values()),
             opszones=list(self.state.opszone_objects.values()),
             opsgroups=list(self.state.opsgroup_objects.values()),
             missions=list(self.state.auftrag_objects.values()),
@@ -652,6 +667,12 @@ class MooseBridgeClient:
         await self.snapshot_auftraege()
         await self.snapshot_legions()
         await self.snapshot_cohorts()
+        return self.state
+
+    async def refresh_territory_state(self) -> MooseBridgeState:
+        """Refresh passive strategic TERRITORY snapshots."""
+
+        await self.snapshot_territories()
         return self.state
 
     async def refresh_intel_state(self) -> MooseBridgeState:
@@ -705,6 +726,11 @@ class MooseBridgeClient:
         """Request a ZONE snapshot through the SDK."""
 
         return require_ok(await self.server.snapshot_zones())
+
+    async def snapshot_territories(self) -> dict[str, Any]:
+        """Request a TERRITORY snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_territories())
 
     async def snapshot_opszones(self) -> dict[str, Any]:
         """Request an OPSZONE snapshot through the SDK.
@@ -1257,6 +1283,34 @@ class MooseBridgeClient:
             }
         )
         return require_ok(await self.server.send_command(BridgeCommand(action="zone.draw", params=params), timeout=timeout))
+
+    async def set_territory_coalition(
+        self,
+        territory_id: str,
+        coalition: str,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Set declarative TERRITORY ownership in MOOSE.
+
+        Strategic logic remains in Python; this command only updates the
+        mission-side TERRITORY mirror and emits a coalition-changed event.
+        """
+
+        normalized = coalition.strip().lower()
+        if normalized not in {"blue", "red", "neutral"}:
+            raise ValueError("coalition must be blue, red, or neutral")
+        if not territory_id.startswith("TERRITORY:") or not territory_id.removeprefix("TERRITORY:").strip():
+            raise ValueError("territory_id must use TERRITORY:<name>")
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="territory.set_coalition",
+                    params={"territory_id": territory_id, "coalition": normalized},
+                ),
+                timeout=timeout,
+            )
+        )
 
     async def trace_auftrag(self, auftrag_id: str, timeout: float = 10.0) -> dict[str, Any]:
         """Trace AUFTRAG assignment and execution state.

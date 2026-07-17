@@ -412,6 +412,11 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.zones", params={}))
 
+    async def snapshot_territories(self) -> dict[str, Any]:
+        """Request a TERRITORY snapshot from DCS/MOOSE."""
+
+        return await self.send_command(BridgeCommand(action="snapshot.territories", params={}))
+
     async def snapshot_opszones(self) -> dict[str, Any]:
         """Request an OPSZONE snapshot from DCS/MOOSE.
 
@@ -489,6 +494,7 @@ Interactive commands:
   statics                 Request and print a STATIC snapshot.
   airbases                Request and print an AIRBASE snapshot.
   zones                   Request and print a ZONE snapshot.
+  territories             Request a TERRITORY snapshot.
   opszones                Request and print an OPSZONE snapshot.
   opsgroups               Request and print an OPSGROUP snapshot.
   auftraege               Request and print an AUFTRAG snapshot.
@@ -648,6 +654,20 @@ def _print_zone_snapshot(zones: dict[str, dict[str, Any]], limit: int = 60) -> N
 
     if len(items) > limit:
         print(f"  ... {len(items) - limit} more zones not shown")
+
+
+def _print_territory_snapshot(territories: dict[str, dict[str, Any]], limit: int = 60) -> None:
+    """Print a compact TERRITORY snapshot summary."""
+
+    items = list(territories.values())
+    print(f"territories={len(items)}")
+    for item in items[:limit]:
+        print(
+            f"  {item.get('object_id', '')} coalition={item.get('coalition', '')} "
+            f"zone={item.get('zone_name', '')} shape={item.get('shape', '')}"
+        )
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more territories not shown")
 
 
 def _print_opszone_snapshot(opszones: dict[str, dict[str, Any]], limit: int = 60) -> None:
@@ -851,6 +871,11 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
                 ack = await server.snapshot_zones()
                 print(f"ACK: {ack}")
                 _print_zone_snapshot(server.state.zones)
+                continue
+            if command == "territories":
+                ack = await server.snapshot_territories()
+                print(f"ACK: {ack}")
+                _print_territory_snapshot(server.state.territories)
                 continue
             if command == "opszones":
                 ack = await server.snapshot_opszones()

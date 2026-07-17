@@ -1,6 +1,6 @@
 """Tests for typed MOOSE Bridge snapshot models."""
 
-from moosebridge.models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, TargetSnapshot
+from moosebridge.models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, TargetSnapshot, Territory
 from moosebridge.state import MooseBridgeState
 
 
@@ -30,6 +30,50 @@ def test_opszone_model_from_payload() -> None:
     assert zone.owner_current_name == "neutral"
     assert zone.latitude == 54.10851
     assert zone.longitude == 12.64489
+
+
+def test_territory_model_and_coalition_event() -> None:
+    payload = {
+        "object_id": "TERRITORY:North",
+        "dcs_name": "North",
+        "object_type": "TERRITORY",
+        "category": "TERRITORY",
+        "source": "database.TERRITORIES",
+        "name": "North",
+        "zone_name": "Territory North",
+        "zone_class_name": "ZONE_POLYGON",
+        "coalition": "blue",
+        "shape": "polygon",
+        "x": 150,
+        "z": 250,
+        "latitude": 54.05,
+        "longitude": 12.05,
+        "vertices": [
+            {"x": 100, "z": 200, "latitude": 54.0, "longitude": 12.0},
+            {"x": 200, "z": 200, "latitude": 54.0, "longitude": 12.1},
+            {"x": 150, "z": 300, "latitude": 54.1, "longitude": 12.05},
+        ],
+    }
+    territory = Territory.from_payload(payload)
+
+    assert territory.zone_name == "Territory North"
+    assert territory.coalition == "blue"
+    assert len(territory.vertices) == 3
+    assert territory.vertices[1].x == 200
+
+    state = MooseBridgeState()
+    state.apply_message({"type": "snapshot", "kind": "territories", "payload": {"territories": [payload]}})
+    assert state.territory("TERRITORY:North") == territory
+
+    changed = dict(payload, coalition="red")
+    state.apply_message(
+        {
+            "type": "event",
+            "event": "territory.coalition_changed",
+            "payload": {"territory_id": "TERRITORY:North", "territory": changed},
+        }
+    )
+    assert state.territory("TERRITORY:North").coalition == "red"  # type: ignore[union-attr]
 
 
 def test_opsgroup_model_from_payload() -> None:

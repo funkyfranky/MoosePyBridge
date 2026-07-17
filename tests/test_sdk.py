@@ -48,7 +48,7 @@ from moosebridge.diagnostics import (
     format_legion_status,
     format_mission_summary,
 )
-from moosebridge.models import OpsZone
+from moosebridge.models import OpsZone, Territory
 from moosebridge.sdk import CoordinateResult, DistanceResult, GlobalPicture, MooseBridgeClient, NearestResult, TacticalPicture
 from moosebridge.state import MooseBridgeState
 
@@ -185,6 +185,9 @@ class FakeSdkServer:
     async def snapshot_zones(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.zones", params={}))
 
+    async def snapshot_territories(self) -> dict[str, Any]:
+        return await self.send_command(BridgeCommand(action="snapshot.territories", params={}))
+
     async def snapshot_opszones(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.opszones", params={}))
 
@@ -239,6 +242,47 @@ def test_sdk_distance_returns_typed_result() -> None:
         assert result.distance_m == 1852
         assert result.distance_nm == 1
         assert server.commands[0][0].params == {"object_id_a": "GROUP:Aerial-1", "object_id_b": "ZONE:Town Fight"}
+
+    asyncio.run(scenario())
+
+
+def test_sdk_territory_access_and_coalition_command() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        server.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "territories",
+                "payload": {
+                    "territories": [
+                        {
+                            "object_id": "TERRITORY:North",
+                            "dcs_name": "North",
+                            "object_type": "TERRITORY",
+                            "coalition": "blue",
+                        },
+                        {
+                            "object_id": "TERRITORY:South",
+                            "dcs_name": "South",
+                            "object_type": "TERRITORY",
+                            "coalition": "red",
+                        },
+                    ]
+                },
+            }
+        )
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        assert client.territory("TERRITORY:North") is not None
+        assert [item.object_id for item in client.territories("blue")] == ["TERRITORY:North"]
+        await client.snapshot_territories()
+        await client.set_territory_coalition("TERRITORY:North", "red", timeout=4)
+
+        assert server.commands[-2][0].action == "snapshot.territories"
+        command, timeout = server.commands[-1]
+        assert command.action == "territory.set_coalition"
+        assert command.params == {"territory_id": "TERRITORY:North", "coalition": "red"}
+        assert timeout == 4
 
     asyncio.run(scenario())
 
@@ -722,6 +766,40 @@ def test_global_picture_uses_linked_polygon_geometry_for_opszone() -> None:
     assert opszone["properties"]["coalition"] == "blue"
     assert opszone["properties"]["contested"] is True
     assert opszone["properties"]["shape"] == "polygon"
+
+
+def test_global_picture_exports_typed_territory_polygon() -> None:
+    territory = Territory.from_payload(
+        {
+            "object_id": "TERRITORY:North",
+            "dcs_name": "North",
+            "name": "North",
+            "object_type": "TERRITORY",
+            "coalition": "blue",
+            "shape": "polygon",
+            "zone_name": "Territory North",
+            "x": 150,
+            "z": 250,
+            "latitude": 54.05,
+            "longitude": 12.05,
+            "vertices": [
+                {"x": 100, "z": 200, "latitude": 54.0, "longitude": 12.0},
+                {"x": 200, "z": 200, "latitude": 54.0, "longitude": 12.1},
+                {"x": 150, "z": 300, "latitude": 54.1, "longitude": 12.05},
+            ],
+        }
+    )
+    picture = GlobalPicture(territories=[territory])
+
+    feature = picture.to_geojson()["features"][0]
+
+    assert picture.counts()["territories"] == 1
+    assert feature["properties"]["layer"] == "territories"
+    assert feature["properties"]["coalition"] == "blue"
+    assert feature["properties"]["zone_name"] == "Territory North"
+    assert feature["geometry"]["type"] == "Polygon"
+    assert feature["geometry"]["coordinates"][0][0] == [12.0, 54.0]
+    assert picture.validate() == []
 
 
 def test_global_picture_validator_reports_broken_truth_references() -> None:

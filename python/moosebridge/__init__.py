@@ -98,7 +98,19 @@ from .intents import (
     tactical_recommendation_from_auftrag,
 )
 from .legions import Cohort, CohortSummary, Legion
-from .models import Auftrag, Intel, IntelCluster, IntelContact, MooseSnapshotObject, OpsGroup, OpsZone, TargetObjectSnapshot, TargetSnapshot
+from .models import (
+    Auftrag,
+    Intel,
+    IntelCluster,
+    IntelContact,
+    MooseSnapshotObject,
+    OpsGroup,
+    OpsZone,
+    TargetObjectSnapshot,
+    TargetSnapshot,
+    Territory,
+    TerritoryVertex,
+)
 from .outcomes import AuftragOutcome
 from .pictures import GlobalPicture, PictureValidationIssue, TacticalPicture
 from .protocol import BridgeCommand, BridgeMessage
@@ -238,6 +250,8 @@ __all__ = [
     "PictureValidationIssue",
     "TargetObjectSnapshot",
     "TargetSnapshot",
+    "Territory",
+    "TerritoryVertex",
     "TacticalIntent",
     "TacticalPicture",
     "TacticalRecommendation",

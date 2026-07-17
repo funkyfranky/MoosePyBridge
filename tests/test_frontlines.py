@@ -11,6 +11,7 @@ pytest.importorskip("shapely")
 
 from moosebridge.frontline_diagnostics import write_frontline_diagnostic_html
 from moosebridge.frontlines import ForcePoint, FrontlineArea, FrontlineConfig, FrontlineEngine
+from moosebridge.models import Territory
 
 
 def square() -> FrontlineArea:
@@ -63,6 +64,28 @@ def test_grid_uses_exact_spacing_and_enforces_cell_limit() -> None:
 
     with pytest.raises(ValueError, match="above maximum_grid_cells"):
         FrontlineEngine(FrontlineConfig(grid_spacing_m=100, maximum_grid_cells=100)).calculate([], area=square())
+
+
+def test_frontline_area_from_typed_territory() -> None:
+    territory = Territory.from_payload(
+        {
+            "object_id": "TERRITORY:North",
+            "dcs_name": "North",
+            "name": "North",
+            "object_type": "TERRITORY",
+            "vertices": [
+                {"x": 0, "z": 0},
+                {"x": 10_000, "z": 0},
+                {"x": 10_000, "z": 10_000},
+                {"x": 0, "z": 10_000},
+            ],
+        }
+    )
+
+    area = FrontlineArea.from_territory(territory)
+
+    assert area.name == "North"
+    assert area.vertices[2] == (10_000.0, 10_000.0)
 
 
 def test_geojson_and_html_diagnostics(tmp_path) -> None:

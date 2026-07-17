@@ -8,7 +8,7 @@ from typing import Any, Callable, TypeVar
 from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
 from .clock import DcsTime
 from .legions import Cohort, Legion
-from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
+from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
 
 
@@ -58,6 +58,7 @@ class MooseBridgeState:
     statics: dict[str, dict[str, Any]] = field(default_factory=dict)
     airbases: dict[str, dict[str, Any]] = field(default_factory=dict)
     zones: dict[str, dict[str, Any]] = field(default_factory=dict)
+    territories: dict[str, dict[str, Any]] = field(default_factory=dict)
     opszones: dict[str, dict[str, Any]] = field(default_factory=dict)
     opsgroups: dict[str, dict[str, Any]] = field(default_factory=dict)
     auftraege: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -67,6 +68,7 @@ class MooseBridgeState:
     intel_contacts: dict[str, dict[str, Any]] = field(default_factory=dict)
     intel_clusters: dict[str, dict[str, Any]] = field(default_factory=dict)
     opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
+    territory_objects: dict[str, Territory] = field(default_factory=dict)
     opsgroup_objects: dict[str, OpsGroup] = field(default_factory=dict)
     auftrag_objects: dict[str, Auftrag] = field(default_factory=dict)
     cohort_objects: dict[str, Cohort] = field(default_factory=dict)
@@ -112,6 +114,11 @@ class MooseBridgeState:
         """
 
         return self.opszone_objects.get(object_id)
+
+    def territory(self, object_id: str) -> Territory | None:
+        """Return a typed TERRITORY by object id."""
+
+        return self.territory_objects.get(object_id)
 
     def intel(self, object_id: str) -> Intel | None:
         """Return a typed INTEL object by object id.
@@ -306,6 +313,10 @@ class MooseBridgeState:
             self.airbases = self._index_objects(payload.get("airbases", []))
         elif kind == "zones":
             self.zones = self._index_objects(payload.get("zones", []))
+        elif kind == "territories":
+            items = payload.get("territories", [])
+            self.territories = self._index_objects(items)
+            self.territory_objects = self._index_typed_objects(items, Territory.from_payload)
         elif kind == "objects":
             self.objects = self._index_objects(payload.get("objects", []))
         elif kind == "opszones":
@@ -348,6 +359,14 @@ class MooseBridgeState:
 
         payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
         event_name = str(message.get("event") or payload.get("event") or "")
+        if event_name == "territory.coalition_changed":
+            territory_payload = payload.get("territory") if isinstance(payload.get("territory"), dict) else None
+            if territory_payload:
+                object_id = str(territory_payload.get("object_id") or "")
+                if object_id:
+                    self.territories[object_id] = territory_payload
+                    self.territory_objects[object_id] = Territory.from_payload(territory_payload)
+            return
         if event_name.startswith("intel."):
             self._apply_intel_event(event_name, payload)
             return

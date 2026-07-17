@@ -443,6 +443,83 @@ class OpsZone(MooseSnapshotObject):
 
 
 @dataclass(slots=True, frozen=True)
+class TerritoryVertex:
+    """One territory polygon vertex in DCS-local and WGS84 coordinates."""
+
+    x: float
+    z: float
+    latitude: float | None = None
+    longitude: float | None = None
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "TerritoryVertex | None":
+        """Create a vertex when local x/z coordinates are present."""
+
+        x = _optional_float(payload.get("x"))
+        z = _optional_float(payload.get("z"))
+        if x is None or z is None:
+            return None
+        return cls(
+            x=x,
+            z=z,
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class Territory(MooseSnapshotObject):
+    """Typed passive strategic TERRITORY snapshot."""
+
+    name: str | None = None
+    zone_name: str | None = None
+    zone_class_name: str | None = None
+    coalition: str | None = None
+    shape: str | None = None
+    radius: float | None = None
+    vertices: tuple[TerritoryVertex, ...] = ()
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "Territory":
+        """Create a TERRITORY model from a raw snapshot payload."""
+
+        raw_vertices = payload.get("vertices")
+        vertices: list[TerritoryVertex] = []
+        if isinstance(raw_vertices, list):
+            for raw_vertex in raw_vertices:
+                if not isinstance(raw_vertex, dict):
+                    continue
+                vertex = TerritoryVertex.from_payload(raw_vertex)
+                if vertex is not None:
+                    vertices.append(vertex)
+        return cls(
+            object_id=str(payload.get("object_id", "")),
+            dcs_name=str(payload.get("dcs_name", "")),
+            object_type=str(payload.get("object_type", "TERRITORY")),
+            category=_optional_str(payload.get("category")),
+            source=_optional_str(payload.get("source")),
+            raw=payload,
+            name=_optional_str(payload.get("name")),
+            zone_name=_optional_str(payload.get("zone_name")),
+            zone_class_name=_optional_str(payload.get("zone_class_name")),
+            coalition=_optional_str(payload.get("coalition")),
+            shape=_optional_str(payload.get("shape")),
+            radius=_optional_float(payload.get("radius")),
+            vertices=tuple(vertices),
+            x=_optional_float(payload.get("x")),
+            y=_optional_float(payload.get("y")),
+            z=_optional_float(payload.get("z")),
+            latitude=_optional_float(payload.get("latitude")),
+            longitude=_optional_float(payload.get("longitude")),
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class OpsGroup(MooseSnapshotObject):
     """Typed OPSGROUP snapshot."""
 

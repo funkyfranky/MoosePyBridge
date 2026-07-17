@@ -7,7 +7,7 @@ from typing import Any, Iterable, Protocol
 
 from .clock import DcsTime
 from .legions import Cohort, Legion
-from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone
+from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 
 
 class HasGeographicPoint(Protocol):
@@ -205,6 +205,44 @@ def _opszone_feature(item: OpsZone, zone_feature: GeoJsonFeature | None = None) 
     )
 
 
+def _territory_feature(item: Territory) -> GeoJsonFeature | None:
+    """Build a TERRITORY polygon or circular center feature."""
+
+    ring = [
+        [vertex.longitude, vertex.latitude]
+        for vertex in item.vertices
+        if vertex.longitude is not None and vertex.latitude is not None
+    ]
+    geometry: dict[str, Any] | None = None
+    if len(ring) >= 3:
+        if ring[0] != ring[-1]:
+            ring.append(ring[0])
+        geometry = {"type": "Polygon", "coordinates": [ring]}
+    if geometry is None:
+        geometry = _point_geometry(item.longitude, item.latitude)
+    return _feature(
+        geometry=geometry,
+        layer="territories",
+        object_id=item.object_id,
+        name=item.name or item.dcs_name,
+        object_type=item.object_type,
+        category=item.category,
+        properties={
+            "x": item.x,
+            "y": item.y,
+            "z": item.z,
+            "zone_name": item.zone_name,
+            "zone_class_name": item.zone_class_name,
+            "coalition": item.coalition,
+            "owner": item.coalition,
+            "shape": item.shape,
+            "radius_m": item.radius if not ring else None,
+            "vertex_count": len(item.vertices),
+            "source": item.source,
+        },
+    )
+
+
 def _as_float(value: Any) -> float | None:
     if value is None:
         return None
@@ -379,6 +417,7 @@ class GlobalPicture:
     statics: list[dict[str, Any]] = field(default_factory=list)
     airbases: list[dict[str, Any]] = field(default_factory=list)
     zones: list[dict[str, Any]] = field(default_factory=list)
+    territories: list[Territory] = field(default_factory=list)
     opszones: list[OpsZone] = field(default_factory=list)
     opsgroups: list[OpsGroup] = field(default_factory=list)
     missions: list[Auftrag] = field(default_factory=list)
@@ -397,6 +436,7 @@ class GlobalPicture:
             "statics": len(self.statics),
             "airbases": len(self.airbases),
             "zones": len(self.zones),
+            "territories": len(self.territories),
             "opszones": len(self.opszones),
             "opsgroups": len(self.opsgroups),
             "missions": len(self.missions),
@@ -473,6 +513,7 @@ class GlobalPicture:
                     )
 
         typed_layers = {
+            "territories": self.territories,
             "opszones": self.opszones,
             "opsgroups": self.opsgroups,
             "missions": self.missions,
@@ -504,6 +545,20 @@ class GlobalPicture:
             if zone.x is None or zone.z is None:
                 issues.append(
                     PictureValidationIssue("warning", "map_object_without_position", "OPSZONE has no x/z position", zone.object_id)
+                )
+
+        for territory in self.territories:
+            if territory.x is None or territory.z is None:
+                issues.append(
+                    PictureValidationIssue(
+                        "warning", "map_object_without_position", "TERRITORY has no x/z position", territory.object_id
+                    )
+                )
+            if territory.shape == "polygon" and len(territory.vertices) < 3:
+                issues.append(
+                    PictureValidationIssue(
+                        "error", "invalid_territory_polygon", "polygon requires at least three vertices", territory.object_id
+                    )
                 )
 
         group_ids = {str(item.get("object_id") or "") for item in self.groups}
@@ -562,6 +617,7 @@ class GlobalPicture:
         features.extend(_raw_point_feature(item, "airbases") for item in self.airbases)
         zone_features = [_raw_zone_feature(item) for item in self.zones]
         features.extend(zone_features)
+        features.extend(_territory_feature(item) for item in self.territories)
         zones_by_name = {
             str(feature.get("properties", {}).get("name") or ""): feature
             for feature in zone_features

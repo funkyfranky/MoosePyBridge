@@ -378,6 +378,19 @@ function MOOSE_BRIDGE:_PointForOpsZoneName(name)
   return self:_PointFromMooseObject(opszone)
 end
 
+function MOOSE_BRIDGE:_TerritoryForName(name)
+  if not _DATABASE then return nil end
+  local territory = self:_SafeCallArg(_DATABASE, "FindTerritory", name)
+  if not territory and type(_DATABASE.TERRITORIES) == "table" then territory = _DATABASE.TERRITORIES[name] end
+  return territory
+end
+
+function MOOSE_BRIDGE:_PointForTerritoryName(name)
+  local territory = self:_TerritoryForName(name)
+  if not territory then return nil end
+  return self:_PointFromMooseObject(territory)
+end
+
 function MOOSE_BRIDGE:_PointForZoneName(name)
   local zone = self.RegisteredZones and self.RegisteredZones[name]
   if not zone and _DATABASE and _DATABASE.ZONES then zone = _DATABASE.ZONES[name] end
@@ -404,6 +417,7 @@ function MOOSE_BRIDGE:_PointForObjectId(object_id)
   if object_type == "AIRBASE" then return self:_PointForAirbaseName(name) end
   if object_type == "ZONE" then return self:_PointForZoneName(name) end
   if object_type == "OPSZONE" then return self:_PointForOpsZoneName(name) end
+  if object_type == "TERRITORY" then return self:_PointForTerritoryName(name) end
   error("Unsupported object_id type for point lookup: " .. safe_tostring(object_type))
 end
 
@@ -537,8 +551,11 @@ function MOOSE_BRIDGE:_ZoneForDrawObjectId(object_id)
     local opszone = self.RegisteredOpsZones and self.RegisteredOpsZones[name]
     if not opszone and _DATABASE and type(_DATABASE.OPSZONES) == "table" then opszone = _DATABASE.OPSZONES[name] end
     zone = self:_SafeCall(opszone, "GetZone") or opszone and (opszone.zone or opszone.Zone or opszone.ZONE) or opszone
+  elseif object_type == "TERRITORY" then
+    local territory = self:_TerritoryForName(name)
+    zone = self:_SafeCall(territory, "GetZone") or territory and territory.zone
   else
-    error("DrawZone requires ZONE:<name> or OPSZONE:<name>, got " .. safe_tostring(object_type))
+    error("DrawZone requires ZONE:<name>, OPSZONE:<name>, or TERRITORY:<name>, got " .. safe_tostring(object_type))
   end
 
   if not zone then error("Zone not found: " .. safe_tostring(object_id)) end
@@ -830,6 +847,50 @@ function MOOSE_BRIDGE:BuildZoneSnapshot()
   return result
 end
 
+function MOOSE_BRIDGE:_BuildTerritorySnapshotItem(territory_name, territory, source)
+  local name = self:_SafeCall(territory, "GetName") or territory_name
+  if not name then return nil end
+  local zone = self:_SafeCall(territory, "GetZone") or territory.zone
+  if not zone then return nil end
+  local zone_name = self:_SafeCall(territory, "GetZoneName") or self:_ZoneName(nil, zone)
+  local zone_item = self:_BuildZoneSnapshotItem(zone_name, zone, source .. ".zone")
+  if not zone_item then return nil end
+  return {
+    object_id="TERRITORY:"..safe_tostring(name),
+    dcs_name=safe_tostring(name),
+    name=safe_tostring(name),
+    object_type="TERRITORY",
+    category="TERRITORY",
+    class_name=territory.ClassName or "TERRITORY",
+    source=source,
+    zone_name=safe_tostring(zone_name),
+    zone_class_name=zone.ClassName,
+    coalition=self:_CoalitionToName(self:_SafeCall(territory, "GetCoalition") or territory.coalition),
+    shape=zone_item.shape,
+    radius=zone_item.radius,
+    vertices=zone_item.vertices,
+    x=zone_item.x,
+    y=zone_item.y,
+    z=zone_item.z,
+    latitude=zone_item.latitude,
+    longitude=zone_item.longitude,
+  }
+end
+
+function MOOSE_BRIDGE:BuildTerritorySnapshot()
+  local result = {}
+  if not _DATABASE or type(_DATABASE.TERRITORIES) ~= "table" then return result end
+  for name, territory in pairs(_DATABASE.TERRITORIES) do
+    local ok, item = pcall(function() return self:_BuildTerritorySnapshotItem(name, territory, "database.TERRITORIES") end)
+    if ok and item and item.object_id then
+      result[#result + 1] = item
+    else
+      self:_Log("Failed to snapshot territory " .. safe_tostring(name) .. ": " .. safe_tostring(item))
+    end
+  end
+  return result
+end
+
 function MOOSE_BRIDGE:BuildObjectSnapshot()
   local objects = {}
   local function append_all(items) for _, item in ipairs(items or {}) do objects[#objects + 1] = item end end
@@ -838,6 +899,7 @@ function MOOSE_BRIDGE:BuildObjectSnapshot()
   append_all(self:BuildStaticSnapshot())
   append_all(self:BuildAirbaseSnapshot())
   append_all(self:BuildZoneSnapshot())
+  append_all(self:BuildTerritorySnapshot())
   return objects
 end
 
@@ -1443,6 +1505,35 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     }
   end)
 
+  self:RegisterCommand("territory.set_coalition", function(cmd)
+    local p = cmd.params or {}
+    local object_id = self:_OptionalString(p.territory_id) or self:_OptionalString(p.object_id)
+    local object_type, name = self:_SplitObjectId(object_id)
+    if object_type ~= "TERRITORY" or not name or name == "" then
+      error("territory.set_coalition requires TERRITORY:<name>")
+    end
+    local territory = self:_TerritoryForName(name)
+    if not territory then error("Territory not found: " .. safe_tostring(object_id)) end
+    local side = coalition_from_name(p.coalition)
+    if side == nil then error("Unknown coalition " .. safe_tostring(p.coalition)) end
+    local previous = self:_CoalitionToName(self:_SafeCall(territory, "GetCoalition") or territory.coalition)
+    local updated = self:_SafeCallArg(territory, "SetCoalition", side)
+    if not updated then error("Territory rejected coalition " .. safe_tostring(p.coalition)) end
+    local item = self:_BuildTerritorySnapshotItem(name, territory, "database.TERRITORIES")
+    self:SendEvent("territory.coalition_changed", {
+      territory_id=object_id,
+      previous_coalition=previous,
+      coalition=self:_CoalitionToName(side),
+      territory=item,
+    })
+    return {
+      action="territory.set_coalition",
+      territory_id=object_id,
+      previous_coalition=previous,
+      coalition=self:_CoalitionToName(side),
+    }
+  end)
+
   self:RegisterCommand("snapshot.groups", function(cmd)
     local groups = self:BuildGroupSnapshot(); self:SendSnapshot("groups", {groups=groups}); return {kind="groups", count=#groups}
   end)
@@ -1461,6 +1552,10 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
 
   self:RegisterCommand("snapshot.zones", function(cmd)
     local zones = self:BuildZoneSnapshot(); self:SendSnapshot("zones", {zones=zones}); return {kind="zones", count=#zones}
+  end)
+
+  self:RegisterCommand("snapshot.territories", function(cmd)
+    local territories = self:BuildTerritorySnapshot(); self:SendSnapshot("territories", {territories=territories}); return {kind="territories", count=#territories}
   end)
 
   self:RegisterCommand("snapshot.objects", function(cmd)
@@ -1493,6 +1588,7 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     local statics = self:BuildStaticSnapshot()
     local airbases = self:BuildAirbaseSnapshot()
     local zones = self:BuildZoneSnapshot()
+    local territories = self:BuildTerritorySnapshot()
     local opszones = self:BuildOpsZoneSnapshot()
     local opsgroups = self:BuildOpsGroupSnapshot()
     local auftraege = self:BuildAuftragSnapshot()
@@ -1503,12 +1599,13 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     self:SendSnapshot("statics", {statics=statics})
     self:SendSnapshot("airbases", {airbases=airbases})
     self:SendSnapshot("zones", {zones=zones})
+    self:SendSnapshot("territories", {territories=territories})
     self:SendSnapshot("opszones", {opszones=opszones})
     self:SendSnapshot("opsgroups", {opsgroups=opsgroups})
     self:SendSnapshot("auftraege", {auftraege=auftraege})
     self:SendSnapshot("legions", {legions=legions})
     self:SendSnapshot("cohorts", {cohorts=cohorts})
-    return {groups=#groups, units=#units, statics=#statics, airbases=#airbases, zones=#zones, opszones=#opszones, opsgroups=#opsgroups, auftraege=#auftraege, legions=#legions, cohorts=#cohorts}
+    return {groups=#groups, units=#units, statics=#statics, airbases=#airbases, zones=#zones, territories=#territories, opszones=#opszones, opsgroups=#opsgroups, auftraege=#auftraege, legions=#legions, cohorts=#cohorts}
   end)
 end
 

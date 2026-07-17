@@ -16,6 +16,7 @@
       ],
     },
     { key: "zones", label: "Zones", color: "#c19424", icon: "map-pin", default: false },
+    { key: "territories", label: "Territories", color: "#59635e", icon: "map", default: true },
     { key: "opszones", label: "OPS zones", color: "#8b5ea7", icon: "shield", default: true },
     { key: "opsgroups", label: "OPS groups", color: "#1e8171", icon: "badge", size: 1.1, default: true },
     { key: "legions", label: "Legions", color: "#283a4f", icon: "shield", size: 1.18, default: true },
@@ -281,38 +282,40 @@
         });
         continue;
       }
-      if (spec.key === "zones" || spec.key === "opszones") {
+      if (spec.key === "zones" || spec.key === "territories" || spec.key === "opszones") {
         const areaColor = spec.key === "opszones"
           ? ["case",
               ["==", ["get", "contested"], true], "#d06f27",
               ["match", ["get", "owner"], "blue", coalitionColors.blue, "red", coalitionColors.red, "neutral", coalitionColors.neutral, spec.color],
             ]
+          : spec.key === "territories"
+            ? ["match", ["get", "coalition"], "blue", coalitionColors.blue, "red", coalitionColors.red, "neutral", coalitionColors.neutral, spec.color]
           : spec.color;
         addMapLayer(spec, {
           type: "fill",
           source: "zone-areas",
           filter: ["==", ["get", "layer"], spec.key],
-          paint: { "fill-color": areaColor, "fill-opacity": spec.key === "opszones" ? 0.22 : 0.1 },
+          paint: { "fill-color": areaColor, "fill-opacity": spec.key === "territories" ? 0.14 : spec.key === "opszones" ? 0.22 : 0.1 },
         });
         addMapLayer(spec, {
           type: "line",
           source: "zone-areas",
           filter: ["==", ["get", "layer"], spec.key],
-          paint: { "line-color": areaColor, "line-width": spec.key === "opszones" ? 2.4 : 1.2 },
+          paint: { "line-color": areaColor, "line-width": spec.key === "territories" ? 2 : spec.key === "opszones" ? 2.4 : 1.2 },
         });
         addMapLayer(spec, {
           type: "symbol",
           source: "zone-areas",
-          minzoom: spec.key === "opszones" ? 4 : 7,
+          minzoom: spec.key === "zones" ? 7 : 4,
           filter: ["==", ["get", "layer"], spec.key],
           layout: {
             "text-field": ["get", "name"],
-            "text-size": spec.key === "opszones" ? 12 : 11,
+            "text-size": spec.key === "zones" ? 11 : 12,
             "text-allow-overlap": false,
             "text-padding": 6,
           },
           paint: {
-            "text-color": spec.key === "opszones" ? "#28302d" : "#68500f",
+            "text-color": spec.key === "zones" ? "#68500f" : "#28302d",
             "text-halo-color": "rgba(255,255,255,0.9)",
             "text-halo-width": 1.4,
           },
@@ -373,7 +376,7 @@
     return {
       type: "FeatureCollection",
       features: picture.features
-        .filter((feature) => ["zones", "opszones"].includes(feature.properties?.layer))
+        .filter((feature) => ["zones", "territories", "opszones"].includes(feature.properties?.layer))
         .map(zoneAreaFeature)
         .filter(Boolean),
     };
@@ -405,6 +408,7 @@
   function fitOperationalArea(picture) {
     const candidates = picture.features.filter((feature) => {
       const properties = feature.properties || {};
+      if (properties.layer === "territories" && feature.geometry?.type === "Polygon") return true;
       return feature.geometry?.type === "Point" && (
         properties.layer === "opszones" ||
         properties.layer === "legions" ||
@@ -413,7 +417,10 @@
     });
     if (!candidates.length) return;
     const bounds = new maplibregl.LngLatBounds();
-    candidates.forEach((feature) => bounds.extend(feature.geometry.coordinates));
+    candidates.forEach((feature) => {
+      if (feature.geometry.type === "Polygon") feature.geometry.coordinates.flat().forEach((coordinate) => bounds.extend(coordinate));
+      else bounds.extend(feature.geometry.coordinates);
+    });
     if (!bounds.isEmpty()) {
       map.fitBounds(bounds, { padding: 70, maxZoom: 9, duration: 0 });
       fitted = true;

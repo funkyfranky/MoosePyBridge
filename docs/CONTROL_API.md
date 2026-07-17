@@ -213,6 +213,25 @@ nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", aliv
 trace = await bridge.trace_auftrag("AUFTRAG:1")
 ```
 
+Passive MOOSE territories are mirrored as typed SDK objects. Their geometry is
+authored in the DCS Mission Editor and is not periodically scanned:
+
+```python
+await bridge.refresh_territory_state()
+
+territory = bridge.territory("TERRITORY:Territory North")
+blue_territories = bridge.territories(coalition="blue")
+
+await bridge.set_territory_coalition(
+    "TERRITORY:Territory North",
+    "red",
+)
+```
+
+`set_territory_coalition()` changes the declared owner in MOOSE. The
+`territory.coalition_changed` event immediately updates the daemon and SDK
+state mirrors; no polling loop is required for this change.
+
 The SDK currently exposes helpers for:
 
 - snapshots: `snapshot_kind`, `snapshot_all`, `request_snapshots`
@@ -225,6 +244,8 @@ The SDK currently exposes helpers for:
 - typed OPS state: `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,
   `available_missions_of_cohort`, `refresh_legion_state`, `refresh_ops_state`
+- typed territory state: `territory`, `territories`,
+  `refresh_territory_state`, `set_territory_coalition`
 - diagnostics: `format_legion_status`, `format_cohort_assets`,
   `format_mission_summary`
 
