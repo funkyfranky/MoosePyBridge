@@ -56,7 +56,7 @@ def test_dcs_connection_reset_during_close_is_handled() -> None:
         closed = False
 
         def get_extra_info(self, name: str) -> object:
-            return ("127.0.0.1", 51000) if name == "peername" else None
+            return ("127.0.0.1", 42000) if name == "peername" else None
 
         def close(self) -> None:
             self.closed = True

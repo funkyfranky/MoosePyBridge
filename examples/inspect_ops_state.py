@@ -5,7 +5,7 @@ The script starts a local Python bridge server, waits for the DCS Lua bridge to
 connect, requests selected snapshots, and prints compact diagnostic state.
 
 Examples:
-    python examples/inspect_ops_state.py --host 127.0.0.1 --port 51000
+    python examples/inspect_ops_state.py --host 127.0.0.1 --port 42000
     python examples/inspect_ops_state.py --snapshots legions cohorts --filter Parchim
 """
 

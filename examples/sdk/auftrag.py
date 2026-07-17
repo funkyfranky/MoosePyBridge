@@ -14,7 +14,7 @@ from moosebridge.control_sdk import sdk_from_control_client
 
 
 CONTROL_HOST = "127.0.0.1"
-CONTROL_PORT = 51001
+CONTROL_PORT = 42001
 COMMAND_TIMEOUT = 10.0
 
 

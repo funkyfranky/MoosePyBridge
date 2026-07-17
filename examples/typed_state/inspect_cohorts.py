@@ -7,7 +7,7 @@ Load order in DCS:
     4. MooseBridgeMissionExample.lua
 
 Example:
-    PYTHONPATH=python python examples/typed_state/inspect_cohorts.py --host 127.0.0.1 --port 51000
+    PYTHONPATH=python python examples/typed_state/inspect_cohorts.py --host 127.0.0.1 --port 42000
 """
 
 from __future__ import annotations

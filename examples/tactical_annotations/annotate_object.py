@@ -54,7 +54,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Annotate one DCS/MOOSE object with MESSAGE, SMOKE and MARK.")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=51000)
+    parser.add_argument("--port", type=int, default=42000)
     parser.add_argument("--log", default=None)
     parser.add_argument("--object-id", default="UNIT:Ground-1-1", help="Bridge object id, e.g. UNIT:Ground-1-1")
     parser.add_argument("--color", default="red", choices=sorted(SMOKE_COLORS))

@@ -35,8 +35,8 @@ The preferred runtime shape is:
 
 Initial local defaults:
 
-- DCS-facing bridge port: `51000`
-- Python control port: `51001`
+- DCS-facing bridge port: `42000`
+- Python control port: `42001`
 
 ## Guiding principles
 

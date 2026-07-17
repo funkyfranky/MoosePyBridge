@@ -12,7 +12,7 @@ This example performs advisory-only validation:
     - structured recommendation output for the best executable candidate
 
 Example:
-    PYTHONPATH=python python examples/advisory/validate_auftrag_request.py --mission-type BAI --target GROUP:Enemy-1 --coalition blue --altitude-ft 15000 --host 127.0.0.1 --port 51000
+    PYTHONPATH=python python examples/advisory/validate_auftrag_request.py --mission-type BAI --target GROUP:Enemy-1 --coalition blue --altitude-ft 15000 --host 127.0.0.1 --port 42000
 """
 
 from __future__ import annotations

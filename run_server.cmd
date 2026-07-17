@@ -1,3 +1,3 @@
 @echo off
 set PYTHONPATH=%CD%\python
-python -m moosebridge --host 127.0.0.1 --port 51000 --log moosebridge_raw.jsonl
+python -m moosebridge --host 127.0.0.1 --port 42000 --control-port 42001 --log moosebridge_raw.jsonl

@@ -9,7 +9,7 @@ Load order in DCS:
     4. MooseBridgeMissionExample.lua
 
 Example:
-    PYTHONPATH=python python examples/advisory/find_capable_cohorts.py --mission-type BAI --host 127.0.0.1 --port 51000
+    PYTHONPATH=python python examples/advisory/find_capable_cohorts.py --mission-type BAI --host 127.0.0.1 --port 42000
 """
 
 from __future__ import annotations

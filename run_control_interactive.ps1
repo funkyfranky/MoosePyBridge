@@ -2,7 +2,7 @@ param(
     [switch]$Help,
     [switch]$Debug,
     [string]$ControlHost = "127.0.0.1",
-    [int]$ControlPort = 51001,
+    [int]$ControlPort = 42001,
     [float]$Timeout = 10.0
 )
 

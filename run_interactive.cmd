@@ -1,7 +1,7 @@
 @echo off
 set PYTHONPATH=%CD%\python
 set HOST=127.0.0.1
-set PORT=51000
+set PORT=42000
 set LOG=moosebridge_raw.jsonl
 set READER_LIMIT=16777216
 

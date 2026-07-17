@@ -1,7 +1,7 @@
 @echo off
 set PYTHONPATH=%CD%\python
 set CONTROL_HOST=127.0.0.1
-set CONTROL_PORT=51001
+set CONTROL_PORT=42001
 set TIMEOUT=10.0
 set DEBUG=
 

@@ -6,7 +6,7 @@ connect, requests OPS snapshots through the SDK, and prints the typed Python
 state model.
 
 Example:
-    PYTHONPATH=python python examples/typed_state/inspect_ops_state.py --host 127.0.0.1 --port 51000
+    PYTHONPATH=python python examples/typed_state/inspect_ops_state.py --host 127.0.0.1 --port 42000
 """
 
 from __future__ import annotations

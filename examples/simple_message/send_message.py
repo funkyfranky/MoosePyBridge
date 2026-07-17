@@ -6,7 +6,7 @@ from moosebridge.server import MooseBridgeServer
 
 
 async def main() -> None:
-    server = MooseBridgeServer(host="127.0.0.1", port=51000, log_path=None)
+    server = MooseBridgeServer(host="127.0.0.1", port=42000, log_path=None)
     await server.start()
     print("Server started. Waiting for DCS bridge connection...")
     while not server.state.connected:

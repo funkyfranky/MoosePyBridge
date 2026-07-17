@@ -77,8 +77,8 @@ single daemon can expose a local control port for multiple clients.
 
 Default ports:
 
-- DCS/MOOSE Lua bridge: `51000`
-- local Python control API: `51001`
+- DCS/MOOSE Lua bridge: `42000`
+- local Python control API: `42001`
 
 High-level layers:
 
@@ -112,7 +112,7 @@ Load the files in this order:
 The minimal example contains:
 
 ```lua
-Bridge = MOOSE_BRIDGE:New("127.0.0.1", 51000)
+Bridge = MOOSE_BRIDGE:New("127.0.0.1", 42000)
 Bridge:Start()
 ```
 
@@ -155,7 +155,7 @@ From the project root:
 
 ```bash
 pip install -e .
-python -m moosebridge --host 127.0.0.1 --port 51000 --log moosebridge_raw.jsonl
+python -m moosebridge --host 127.0.0.1 --port 42000 --control-port 42001 --log moosebridge_raw.jsonl
 ```
 
 On Windows, the included helper scripts set `PYTHONPATH` for local development:
@@ -168,7 +168,7 @@ On Windows, the included helper scripts set `PYTHONPATH` for local development:
 The default console script starts the daemon with the local control API enabled:
 
 ```bash
-moosebridge-server --host 127.0.0.1 --port 51000 --log moosebridge_raw.jsonl
+moosebridge-server --host 127.0.0.1 --port 42000 --control-port 42001 --log moosebridge_raw.jsonl
 ```
 
 Additional installed entry points:
@@ -233,7 +233,7 @@ Server-backed SDK:
 ```python
 from moosebridge import MooseBridgeClient, MooseBridgeServer
 
-server = MooseBridgeServer(host="127.0.0.1", port=51000)
+server = MooseBridgeServer(host="127.0.0.1", port=42000)
 await server.start()
 bridge = MooseBridgeClient(server)
 
@@ -250,7 +250,7 @@ Control-client backed SDK:
 from moosebridge.control import MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
 
-control = MooseBridgeControlClient("127.0.0.1", 51001)
+control = MooseBridgeControlClient("127.0.0.1", 42001)
 bridge = sdk_from_control_client(control, timeout=10.0)
 
 await bridge.snapshot_kind("units")
@@ -311,7 +311,7 @@ python -m pip install -e ".[map]"
 ```
 
 Open `http://127.0.0.1:8000`. The viewer connects to the daemon control API on
-`127.0.0.1:51001`, refreshes the global picture every five seconds, and pushes
+`127.0.0.1:42001`, refreshes the global picture every five seconds, and pushes
 updates to the browser through a WebSocket. Alternatively, run
 `python -m moosebridge.map_server`; append `--help` to change hosts, ports,
 update interval, command timeout, or movement history limits. The viewer keeps

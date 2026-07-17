@@ -3,9 +3,9 @@
 The control API is a local JSONL protocol for Python tools that need to talk to a
 running MoosePyBridge daemon.
 
-DCS connects to the daemon on the DCS-facing bridge port, normally `51000`.
+DCS connects to the daemon on the DCS-facing bridge port, normally `42000`.
 Operator tools, scripts, and future agents connect to the control port, normally
-`51001`. This keeps one authoritative DCS/MOOSE connection while allowing
+`42001`. This keeps one authoritative DCS/MOOSE connection while allowing
 multiple clients to inspect state or request semantic commands.
 
 ## Transport
@@ -184,7 +184,7 @@ requests:
 ```python
 from moosebridge.control import MooseBridgeControlClient
 
-client = MooseBridgeControlClient("127.0.0.1", 51001)
+client = MooseBridgeControlClient("127.0.0.1", 42001)
 status = await client.status()
 state = await client.get_state(kinds=("groups", "cohorts", "legions"))
 ack = await client.send_dcs_command("message.to_all", {"text": "hello"})
@@ -201,7 +201,7 @@ interactive client and server-backed SDK users:
 from moosebridge.control import MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
 
-control = MooseBridgeControlClient("127.0.0.1", 51001)
+control = MooseBridgeControlClient("127.0.0.1", 42001)
 bridge = sdk_from_control_client(control, timeout=10.0)
 
 status = await control.status()

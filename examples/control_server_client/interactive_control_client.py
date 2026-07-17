@@ -10,8 +10,8 @@ Terminal 2:
 
     PYTHONPATH=python python examples/control_server_client/interactive_control_client.py
 
-The client talks only to the local control API, normally port 51001. DCS/MOOSE
-still connects to the daemon's DCS-facing port, normally 51000.
+The client talks only to the local control API, normally port 42001. DCS/MOOSE
+still connects to the daemon's DCS-facing port, normally 42000.
 """
 
 from __future__ import annotations

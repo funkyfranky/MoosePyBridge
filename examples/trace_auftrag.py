@@ -5,7 +5,7 @@ connect, calls the read-only ``auftrag.trace`` command, and prints the returned
 trace in a compact form.
 
 Examples:
-    python examples/trace_auftrag.py AUFTRAG:1 --host 127.0.0.1 --port 51000
+    python examples/trace_auftrag.py AUFTRAG:1 --host 127.0.0.1 --port 42000
     python examples/trace_auftrag.py AUFTRAG:1 --raw
 """
 

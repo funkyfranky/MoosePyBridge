@@ -14,7 +14,7 @@ from .state import MooseBridgeState
 from .streams import close_stream_writer
 
 LOGGER = logging.getLogger(__name__)
-DEFAULT_PORT = 51000
+DEFAULT_PORT = 42000
 DEFAULT_READER_LIMIT = 16 * 1024 * 1024
 
 
