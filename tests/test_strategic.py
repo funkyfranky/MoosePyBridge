@@ -264,3 +264,132 @@ def test_normalized_airbase_and_opszone_events_update_authoritative_state() -> N
 
     assert state.airbases["AIRBASE:Parchim"]["coalition"] == "red"
     assert state.opszone("OPSZONE:Town Fight").owner_current_name == "blue"  # type: ignore[union-attr]
+
+
+def test_base_captured_event_updates_objective_once_end_to_end() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        objective = StrategicObjective(
+            objective_id="OBJECTIVE:Parchim",
+            name="Parchim Airbase",
+            kind=ObjectiveKind.AIRBASE,
+            control_object_id="AIRBASE:Parchim",
+            ownership_policy=OwnershipPolicy.DCS_MANAGED,
+        )
+        bridge.add_strategic_objective(objective)
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "snapshot",
+                    "kind": "airbases",
+                    "payload": {"airbases": [{"object_id": "AIRBASE:Parchim", "coalition": "blue"}]},
+                }
+            )
+        )
+        baseline = len(bridge.objectives.events)
+        captured = {
+            "type": "event",
+            "event": "airbase.coalition_changed",
+            "mission_time": 125.5,
+            "payload": {
+                "airbase_id": "AIRBASE:Parchim",
+                "previous_coalition": "blue",
+                "coalition": "red",
+                "capturing_unit_id": "UNIT:Red Armor-1",
+                "airbase": {
+                    "object_id": "AIRBASE:Parchim",
+                    "name": "Parchim",
+                    "category": "Airdrome",
+                    "coalition": "red",
+                },
+            },
+        }
+
+        await server._handle_line(json.dumps(captured))
+        await server._handle_line(json.dumps(captured))
+
+        emitted = bridge.objectives.events[baseline:]
+        assert objective.owner == "red"
+        assert server.state.airbases["AIRBASE:Parchim"]["category"] == "Airdrome"
+        assert [event.event for event in emitted] == ["objective.control_changed"]
+        assert emitted[0].previous_owner == "blue"
+        assert emitted[0].owner == "red"
+        assert emitted[0].source == "airbase.coalition_changed"
+
+    asyncio.run(scenario())
+
+
+def test_sdk_waits_for_normalized_objective_control_event() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        objective = StrategicObjective(
+            objective_id="OBJECTIVE:Parchim",
+            name="Parchim",
+            kind=ObjectiveKind.AIRBASE,
+            control_object_id="AIRBASE:Parchim",
+            ownership_policy=OwnershipPolicy.DCS_MANAGED,
+        )
+        bridge.add_strategic_objective(objective)
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "snapshot",
+                    "kind": "airbases",
+                    "payload": {"airbases": [{"object_id": "AIRBASE:Parchim", "coalition": "blue"}]},
+                }
+            )
+        )
+
+        waiter = asyncio.create_task(
+            bridge.wait_for_objective_event(
+                objective_id="OBJECTIVE:Parchim",
+                timeout=1.0,
+            )
+        )
+        await asyncio.sleep(0)
+        assert server._event_waiters[0][0] == "airbase.coalition_changed"
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "event",
+                    "id": "event-capture-1",
+                    "event": "airbase.coalition_changed",
+                    "payload": {
+                        "airbase": {"object_id": "AIRBASE:Parchim", "coalition": "red"},
+                    },
+                }
+            )
+        )
+        event = await waiter
+
+        assert event.event == "objective.control_changed"
+        assert event.previous_owner == "blue"
+        assert event.owner == "red"
+
+    asyncio.run(scenario())
+
+
+def test_fixed_objective_rejects_external_event_wait() -> None:
+    async def scenario() -> None:
+        bridge = MooseBridgeClient(MooseBridgeServer())
+        bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Fixed",
+                name="Fixed",
+                kind=ObjectiveKind.CUSTOM,
+                control_object_id=None,
+                ownership_policy=OwnershipPolicy.FIXED,
+                owner="blue",
+            )
+        )
+
+        try:
+            await bridge.wait_for_objective_event(objective_id="OBJECTIVE:Fixed", timeout=0.01)
+        except ValueError as exc:
+            assert "no external ownership event" in str(exc)
+        else:
+            raise AssertionError("Expected fixed objective wait to fail")
+
+    asyncio.run(scenario())

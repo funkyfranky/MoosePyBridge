@@ -103,6 +103,7 @@ Load the files in this order:
 4. `lua/MooseBridge.lua`
 5. optional extension files, for example:
    - `lua/MooseBridgeSocketTuningExtension.lua`
+   - `lua/MooseBridgeDcsEventsExtension.lua`
    - `lua/MooseBridgePayloadExtension.lua`
    - `lua/MooseBridgeAuftragExecutionExtension.lua`
    - `lua/MooseBridgeAuftragTraceExtension.lua`
@@ -196,6 +197,24 @@ and events. `bridge.sync_strategic_objectives()` is available for explicit
 tests. A control change produces a normalized `objective.control_changed`
 event. `capture_actions(event, objective)` identifies components that require
 explicit handling; it does not respawn or destroy DCS objects by itself.
+
+`MooseBridgeDcsEventsExtension.lua` subscribes to MOOSE's
+`EVENTS.BaseCaptured` dispatcher and forwards a DCS airbase/FARP capture as
+`airbase.coalition_changed`. It includes the previous owner cached at bridge
+startup, the new authoritative DCS owner, the capturing unit/group, and a full
+updated AIRBASE snapshot. Repeated events without an ownership change are
+suppressed.
+
+To test the event path, set `AIRBASE_ID` and `OBJECTIVE_ID` directly in the
+parameterless example, start it before the capture, then let a hostile ground
+unit capture that airbase or FARP in DCS:
+
+```powershell
+& "C:\Program Files\Python313\python.exe" examples/sdk/monitor_airbase_capture.py
+```
+
+The example waits without polling and prints the normalized
+`objective.control_changed` transition.
 
 ## Python setup
 

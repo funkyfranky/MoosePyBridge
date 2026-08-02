@@ -30,7 +30,7 @@ from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
 from .state import MooseBridgeState
-from .strategic import ObjectiveEvent, StrategicObjective, StrategicObjectiveRegistry
+from .strategic import ObjectiveEvent, OwnershipPolicy, StrategicObjective, StrategicObjectiveRegistry
 from .weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY, RangeSource, WeaponRangeProfile, WeaponRangeRegistry
 
 SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
@@ -168,6 +168,18 @@ class NearestResult:
     distance_m: float
     distance_nm: float
     item: dict[str, Any]
+
+
+def _ownership_bridge_event(objective: StrategicObjective) -> str:
+    """Return the narrow bridge event stream authoritative for an objective."""
+
+    if objective.ownership_policy is OwnershipPolicy.DCS_MANAGED:
+        return "airbase.coalition_changed"
+    if objective.ownership_policy is OwnershipPolicy.MOOSE_MANAGED:
+        return "opszone.*"
+    if objective.ownership_policy is OwnershipPolicy.TERRITORY_INHERITED:
+        return "territory.coalition_changed"
+    raise ValueError(f"Fixed objective has no external ownership event: {objective.objective_id}")
 
 
 def _optional_float(value: Any) -> float | None:
@@ -487,12 +499,58 @@ class MooseBridgeClient:
 
         return self.objectives.sync(self.state, source=source)
 
+    async def wait_for_objective_event(
+        self,
+        event: str = "objective.control_changed",
+        *,
+        objective_id: str,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> ObjectiveEvent:
+        """Wait for a normalized strategic event driven by bridge events."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        history_index = len(self.objectives.events)
+        last_bridge_event_id = after_id
+        objective = self.objectives.get(objective_id)
+        if objective is None:
+            raise ValueError(f"Unknown strategic objective: {objective_id}")
+        bridge_event_name = _ownership_bridge_event(objective)
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"Timed out waiting for {event}")
+            message = await self.server.wait_for_event(
+                bridge_event_name,
+                timeout=remaining,
+                after_id=last_bridge_event_id,
+            )
+            last_bridge_event_id = str(message.get("id") or "") or last_bridge_event_id
+            source = str(message.get("event") or "bridge.event")
+            self.objectives.sync(self.state, source=source)
+            current_events = self.objectives.events
+            for objective_event in current_events[history_index:]:
+                if objective_event.event != event:
+                    continue
+                if objective_event.objective_id != objective_id:
+                    continue
+                return objective_event
+            history_index = len(current_events)
+
     def _on_bridge_message(self, message: dict[str, Any]) -> None:
         """Update strategic objectives after relevant state messages arrive."""
 
         message_type = str(message.get("type") or "")
         kind = str(message.get("kind") or "")
-        if message_type == "event" or (message_type == "snapshot" and kind in {
+        event_name = str(message.get("event") or "")
+        relevant_event = message_type == "event" and event_name in {
+            "airbase.coalition_changed",
+            "opszone.owner_changed",
+            "opszone.coalition_changed",
+            "territory.coalition_changed",
+        }
+        if relevant_event or (message_type == "snapshot" and kind in {
             "airbases",
             "opszones",
             "territories",
@@ -500,7 +558,6 @@ class MooseBridgeClient:
             "units",
             "statics",
         }):
-            event_name = str(message.get("event") or "")
             self.objectives.sync(self.state, source=event_name or f"snapshot.{kind}")
 
     def territories(self, coalition: str | None = None) -> list[Territory]:

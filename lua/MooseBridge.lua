@@ -52,8 +52,8 @@ local function append_unique(list, seen, value)
 end
 
 function MOOSE_BRIDGE:New(host, port)
-  local self = BASE and BASE:Inherit({}, BASE:New()) or {}
-  setmetatable(self, { __index = MOOSE_BRIDGE })
+  local self = BASE and BASE:Inherit(self, BASE:New()) or {}
+  if not BASE then setmetatable(self, { __index = MOOSE_BRIDGE }) end
   self.Host = host or "127.0.0.1"
   self.Port = port or 42000
   self.Socket = nil
@@ -85,10 +85,12 @@ function MOOSE_BRIDGE:Start()
   self:_Log("Starting bridge to " .. self.Host .. ":" .. tostring(self.Port))
   if not SCHEDULER then error("MOOSE_BRIDGE requires MOOSE SCHEDULER") end
   self.Scheduler = SCHEDULER:New(self, self._Tick, {}, 0, self.TickInterval)
+  if self._StartDcsEventForwarding then self:_StartDcsEventForwarding() end
   return self
 end
 
 function MOOSE_BRIDGE:Stop()
+  if self._StopDcsEventForwarding then self:_StopDcsEventForwarding() end
   if self.Scheduler then self.Scheduler:Stop(); self.Scheduler = nil end
   if self.Socket then self.Socket:close(); self.Socket = nil end
   self.Connected = false
