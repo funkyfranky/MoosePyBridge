@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
+from .ammunition import UnitAmmunition
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .auftrag_specs import auftrag_action_suffix
@@ -42,6 +43,7 @@ DRAW_ZONE_LINE_TYPES = {
 SNAPSHOT_KINDS = {
     "groups",
     "units",
+    "ammunition",
     "statics",
     "airbases",
     "zones",
@@ -451,6 +453,21 @@ class MooseBridgeClient:
 
         return self.state.opsgroup(object_id)
 
+    def unit_ammunition(self, unit_id: str) -> UnitAmmunition | None:
+        """Return the latest detailed ammunition state for one unit."""
+
+        normalized = unit_id if unit_id.startswith("UNIT:") else f"UNIT:{unit_id}"
+        return self.state.ammunition_objects.get(normalized)
+
+    def group_ammunition(self, group_id: str) -> list[UnitAmmunition]:
+        """Return ammunition states for units belonging to one group."""
+
+        normalized = group_id if group_id.startswith("GROUP:") else f"GROUP:{group_id}"
+        return sorted(
+            (item for item in self.state.ammunition_objects.values() if item.group_id == normalized),
+            key=lambda item: item.unit_id,
+        )
+
     def auftrag(self, object_id: str) -> Auftrag | None:
         """Return a typed AUFTRAG by object id.
 
@@ -737,6 +754,17 @@ class MooseBridgeClient:
         """Request a UNIT snapshot through the SDK."""
 
         return require_ok(await self.server.snapshot_units())
+
+    async def snapshot_ammunition(self) -> dict[str, Any]:
+        """Request detailed ammunition for active, living ground units."""
+
+        return require_ok(await self.server.snapshot_ammunition())
+
+    async def refresh_ammunition(self) -> tuple[UnitAmmunition, ...]:
+        """Refresh and return typed unit ammunition sorted by object id."""
+
+        await self.snapshot_ammunition()
+        return tuple(sorted(self.state.ammunition_objects.values(), key=lambda item: item.unit_id))
 
     async def snapshot_statics(self) -> dict[str, Any]:
         """Request a STATIC snapshot through the SDK."""

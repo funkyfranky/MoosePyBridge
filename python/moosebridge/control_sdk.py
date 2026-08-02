@@ -57,6 +57,11 @@ class ControlSdkAdapter:
 
         return await self._snapshot("units")
 
+    async def snapshot_ammunition(self) -> dict[str, Any]:
+        """Request a detailed ground-unit ammunition snapshot."""
+
+        return await self._snapshot("ammunition")
+
     async def snapshot_statics(self) -> dict[str, Any]:
         """Request a STATIC snapshot through the control API."""
 

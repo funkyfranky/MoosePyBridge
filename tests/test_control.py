@@ -157,6 +157,47 @@ def test_state_payload_roundtrip_includes_territories() -> None:
     assert target.territory("TERRITORY:North").coalition == "blue"  # type: ignore[union-attr]
 
 
+def test_state_payload_resets_ammunition_baseline_for_new_mission() -> None:
+    target = MooseBridgeState()
+    target.apply_message({"type": "heartbeat", "source": "dcs", "mission_time": 100})
+    target.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "ammunition",
+            "payload": {
+                "ammunition": [
+                    {
+                        "object_id": "UNIT:Gun-1",
+                        "unit_id": "UNIT:Gun-1",
+                        "dcs_type": "M-109",
+                        "weapons": [{"id": "155mm", "count": 39}],
+                    }
+                ]
+            },
+        }
+    )
+
+    apply_state_payload(
+        target,
+        {
+            "connected": True,
+            "clock": {"mission_time": 1},
+            "ammunition": [
+                {
+                    "object_id": "UNIT:Gun-1",
+                    "unit_id": "UNIT:Gun-1",
+                    "dcs_type": "M-109",
+                    "weapons": [{"id": "155mm", "count": 10, "initial_count": 10}],
+                }
+            ],
+        },
+    )
+
+    weapon = target.ammunition_objects["UNIT:Gun-1"].weapons[0]
+    assert weapon.initial_count == 10
+    assert weapon.current_count == 10
+
+
 def test_interactive_snapshot_aliases_normalize_to_bridge_actions() -> None:
     actions = normalize_snapshot_actions(("groups", "units", "snapshot.cohorts", "all"))
 

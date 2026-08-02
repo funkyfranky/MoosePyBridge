@@ -390,6 +390,13 @@ remaining-strength, readiness, and confidence weights, then validate temporal
 behavior against authored DCS mission scenarios before strategic rules or an
 LLM consume it.
 
+The ammunition foundation for that milestone is implemented as a separate
+`snapshot.ammunition` path. DCS/MOOSE supplies descriptor-preserving weapon
+counts and unit attributes; Python owns the observed initial-count baseline
+and typed SDK access. The next weighting step is to classify those weapon
+entries into capability-specific ammunition pools using DCS attributes and
+explicit type-name overrides where the DCS descriptor alone is ambiguous.
+
 ## Frontline architecture baseline
 
 MOOSE owns the Mission Editor-aligned passive territory definitions. Python

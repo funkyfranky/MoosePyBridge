@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, TypeVar
 
+from .ammunition import AmmunitionTracker, UnitAmmunition
 from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
 from .clock import DcsTime
 from .legions import Cohort, Legion
@@ -55,6 +56,7 @@ class MooseBridgeState:
     objects: dict[str, dict[str, Any]] = field(default_factory=dict)
     groups: dict[str, dict[str, Any]] = field(default_factory=dict)
     units: dict[str, dict[str, Any]] = field(default_factory=dict)
+    ammunition: dict[str, dict[str, Any]] = field(default_factory=dict)
     statics: dict[str, dict[str, Any]] = field(default_factory=dict)
     airbases: dict[str, dict[str, Any]] = field(default_factory=dict)
     zones: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -76,6 +78,8 @@ class MooseBridgeState:
     intel_objects: dict[str, Intel] = field(default_factory=dict)
     intel_contact_objects: dict[str, IntelContact] = field(default_factory=dict)
     intel_cluster_objects: dict[str, IntelCluster] = field(default_factory=dict)
+    ammunition_objects: dict[str, UnitAmmunition] = field(default_factory=dict)
+    ammunition_tracker: AmmunitionTracker = field(default_factory=AmmunitionTracker, repr=False)
     auftrag_outcomes: dict[str, AuftragOutcome] = field(default_factory=dict)
     auftrag_outcome_history: dict[str, list[AuftragOutcome]] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -89,7 +93,17 @@ class MooseBridgeState:
         message_type = message.get("type")
 
         if message.get("source") == "dcs" or any(key in message for key in ("mission_time", "dcs_time")):
-            self.clock = DcsTime.from_message(message)
+            previous_mission_time = self.clock.mission_time if self.clock else None
+            next_clock = DcsTime.from_message(message)
+            if (
+                previous_mission_time is not None
+                and next_clock.mission_time is not None
+                and next_clock.mission_time < previous_mission_time
+            ):
+                self.ammunition_tracker.reset()
+                self.ammunition.clear()
+                self.ammunition_objects.clear()
+            self.clock = next_clock
 
         if message_type == "heartbeat":
             self.connected = True
@@ -307,6 +321,11 @@ class MooseBridgeState:
             self.groups = self._index_objects(payload.get("groups", []))
         elif kind == "units":
             self.units = self._index_objects(payload.get("units", []))
+        elif kind == "ammunition":
+            source_items = payload.get("ammunition", [])
+            items = self.ammunition_tracker.update(source_items if isinstance(source_items, list) else [])
+            self.ammunition = self._index_objects(items)
+            self.ammunition_objects = self._index_typed_objects(items, UnitAmmunition.from_payload)
         elif kind == "statics":
             self.statics = self._index_objects(payload.get("statics", []))
         elif kind == "airbases":

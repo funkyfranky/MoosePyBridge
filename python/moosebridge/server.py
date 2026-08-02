@@ -388,6 +388,11 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.units", params={}))
 
+    async def snapshot_ammunition(self) -> dict[str, Any]:
+        """Request detailed ammunition for active, living ground units."""
+
+        return await self.send_command(BridgeCommand(action="snapshot.ammunition", params={}))
+
     async def snapshot_statics(self) -> dict[str, Any]:
         """Request a STATIC snapshot from DCS/MOOSE.
 

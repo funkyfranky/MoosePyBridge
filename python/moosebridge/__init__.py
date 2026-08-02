@@ -1,6 +1,7 @@
 """MOOSE Bridge Python package."""
 
 from .advisory import AdvisoryIssue, AuftragAdvisoryResult, AuftragCandidate, evaluate_auftrag_request
+from .ammunition import AmmunitionTracker, AmmunitionWeapon, UnitAmmunition
 from .clock import DcsTime
 from .auftraege import (
     AuftragARTY,
@@ -144,6 +145,8 @@ from .state import MooseBridgeState, MooseObjectIdentity
 __all__ = [
     "AUFTRAG_TYPE_NAMES",
     "AdvisoryIssue",
+    "AmmunitionTracker",
+    "AmmunitionWeapon",
     "Auftrag",
     "AuftragAdvisoryResult",
     "AuftragARTY",
@@ -257,6 +260,7 @@ __all__ = [
     "TacticalIntent",
     "TacticalPicture",
     "TacticalRecommendation",
+    "UnitAmmunition",
     "auftrag_action_suffix",
     "auftrag_command_params_from_recommendation",
     "auftrag_type_name",

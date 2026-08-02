@@ -27,6 +27,7 @@ DEFAULT_CONTROL_READER_LIMIT = 16 * 1024 * 1024
 STATE_KINDS = (
     "groups",
     "units",
+    "ammunition",
     "statics",
     "airbases",
     "zones",
@@ -113,12 +114,22 @@ def apply_state_payload(state: MooseBridgeState, payload: dict[str, Any]) -> Moo
     state.last_heartbeat = payload.get("last_heartbeat") if isinstance(payload.get("last_heartbeat"), dict) else None
     clock_payload = payload.get("clock") if isinstance(payload.get("clock"), dict) else None
     snapshot_clock_payloads = payload.get("snapshot_clocks") if isinstance(payload.get("snapshot_clocks"), dict) else {}
+    if clock_payload is not None:
+        previous_mission_time = state.clock.mission_time if state.clock else None
+        next_clock = DcsTime.from_message(clock_payload)
+        if (
+            previous_mission_time is not None
+            and next_clock.mission_time is not None
+            and next_clock.mission_time < previous_mission_time
+        ):
+            state.ammunition_tracker.reset()
+            state.ammunition.clear()
+            state.ammunition_objects.clear()
+        state.clock = next_clock
     for kind in STATE_KINDS:
         items = payload.get(kind)
         if isinstance(items, list):
             state.apply_message({"type": "snapshot", "kind": kind, "payload": {kind: items}})
-    if clock_payload is not None:
-        state.clock = DcsTime.from_message(clock_payload)
     state.snapshot_clocks = {
         str(kind): DcsTime.from_message(value)
         for kind, value in snapshot_clock_payloads.items()

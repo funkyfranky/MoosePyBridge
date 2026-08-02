@@ -1133,6 +1133,15 @@ def compact_item(kind: str, item: dict[str, Any]) -> str:
             f"{label} group={item.get('group_name')} coalition={item.get('coalition')} "
             f"type={item.get('dcs_type')} alive={item.get('alive')} x={item.get('x')} z={item.get('z')}"
         )
+    if kind == "ammunition":
+        weapons = item.get("weapons") if isinstance(item.get("weapons"), list) else []
+        counts = ", ".join(
+            f"{weapon.get('display_name') or weapon.get('type_name') or weapon.get('id')} "
+            f"{weapon.get('count')}/{weapon.get('initial_count')}"
+            for weapon in weapons
+            if isinstance(weapon, dict)
+        )
+        return f"{label} group={item.get('group_name')} type={item.get('dcs_type')} ammo=[{counts}]"
     if kind == "zones":
         return f"{label} category={item.get('category')} source={item.get('source')} radius={item.get('radius')} x={item.get('x')} z={item.get('z')}"
     if kind == "territories":

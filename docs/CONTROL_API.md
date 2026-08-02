@@ -106,6 +106,7 @@ Known state kinds:
 
 - `groups`
 - `units`
+- `ammunition`
 - `statics`
 - `airbases`
 - `zones`
@@ -125,11 +126,16 @@ Parameters:
 
 ```json
 {
-  "actions": ["snapshot.groups", "snapshot.units", "snapshot.cohorts"]
+  "actions": ["snapshot.groups", "snapshot.units", "snapshot.ammunition", "snapshot.cohorts"]
 }
 ```
 
 The server forwards each action as a DCS bridge command with empty params.
+`snapshot.ammunition` is an explicit dynamic snapshot for active, living
+ground units and is not part of `snapshot.all`. The Python state enriches each
+weapon entry with `initial_count` and `fraction`, using the first observed
+count as its per-mission baseline while preserving entries whose current
+`count` is zero.
 
 ### `control.command`
 

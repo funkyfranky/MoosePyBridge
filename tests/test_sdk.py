@@ -199,6 +199,9 @@ class FakeSdkServer:
     async def snapshot_units(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.units", params={}))
 
+    async def snapshot_ammunition(self) -> dict[str, Any]:
+        return await self.send_command(BridgeCommand(action="snapshot.ammunition", params={}))
+
     async def snapshot_statics(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.statics", params={}))
 
@@ -250,6 +253,42 @@ def test_sdk_coords_returns_typed_result() -> None:
         assert command.action == "object.coords"
         assert command.params == {"object_id": "ZONE:Town Fight", "format": "mgrs"}
         assert timeout == 4.0
+
+    asyncio.run(scenario())
+
+
+def test_sdk_refreshes_and_queries_typed_ammunition() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        server.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "ammunition",
+                "payload": {
+                    "ammunition": [
+                        {
+                            "object_id": "UNIT:Armor-1",
+                            "unit_id": "UNIT:Armor-1",
+                            "unit_name": "Armor-1",
+                            "group_id": "GROUP:Armor",
+                            "group_name": "Armor",
+                            "dcs_type": "Leopard-2",
+                            "category": "Ground Unit",
+                            "attributes": ["Tanks"],
+                            "weapons": [{"id": "DM53", "type_name": "DM53", "count": 26}],
+                        }
+                    ]
+                },
+            }
+        )
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        refreshed = await client.refresh_ammunition()
+
+        assert refreshed == (client.unit_ammunition("Armor-1"),)
+        assert client.group_ammunition("Armor") == [refreshed[0]]
+        assert refreshed[0].weapons[0].initial_count == 26
+        assert server.commands[-1][0].action == "snapshot.ammunition"
 
     asyncio.run(scenario())
 

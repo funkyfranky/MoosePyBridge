@@ -300,6 +300,27 @@ entries whose names match DCS airbases. Airbases remain available as
 INTEL diagnostics show agents as `alive/total`; both values come directly from
 the MOOSE `INTEL.detectionset` (`SET_GROUP`).
 
+Detailed ammunition is refreshed explicitly because DCS has no ammunition
+change event and `Unit.getAmmo()` is more expensive than reading ordinary
+object state:
+
+```python
+units = await bridge.refresh_ammunition()
+stryker = bridge.unit_ammunition("UNIT:Stryker-1")
+armor_group = bridge.group_ammunition("GROUP:Armor")
+
+for weapon in stryker.weapons if stryker else ():
+    print(weapon.display_name, weapon.current_count, weapon.initial_count, weapon.fraction)
+```
+
+Only active, living ground units are included. Weapon entries with `count=0`
+are retained. On the first Python observation, the current count becomes the
+observed initial count; a later higher value, for example after rearming,
+raises that baseline. Different weapon types are never summed into one total.
+The baseline resets when DCS mission time moves backwards. The ammunition
+snapshot is intentionally separate from `snapshot.all`, so callers can choose
+an appropriately slow update interval.
+
 ### Global map viewer
 
 Install the optional browser-map dependencies and start the viewer while the

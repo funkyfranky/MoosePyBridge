@@ -131,6 +131,111 @@ function MOOSE_BRIDGE:_BaseMessage(message_type)
   return {version=1,type=message_type,id=self:_NextId(message_type),source="dcs",sequence=self.Sequence,mission_time=mission_time(),dcs_time=dcs_time(),mission_date=self.MissionDate,wall_time=wall_time()}
 end
 
+local function ammo_number(value)
+  if type(value) == "number" then return value end
+  return nil
+end
+
+local function ammo_weapon_id(desc)
+  if type(desc) ~= "table" then return "unknown" end
+  if desc.typeName then return tostring(desc.typeName) end
+  if desc.displayName then return tostring(desc.displayName) end
+  return table.concat({
+    tostring(desc.category or ""),
+    tostring(desc.missileCategory or ""),
+    tostring(desc.guidance or ""),
+  }, ":")
+end
+
+local function detailed_ammo_weapon(item)
+  local desc = type(item) == "table" and type(item.desc) == "table" and item.desc or {}
+  local warhead = type(desc.warhead) == "table" and desc.warhead or {}
+  return {
+    id=ammo_weapon_id(desc),
+    count=ammo_number(item and item.count) or 0,
+    category=ammo_number(desc.category),
+    type_name=string_or_nil(desc.typeName),
+    display_name=string_or_nil(desc.displayName),
+    missile_category=ammo_number(desc.missileCategory),
+    guidance=ammo_number(desc.guidance),
+    range_min_m=ammo_number(desc.rangeMin),
+    range_max_alt_min_m=ammo_number(desc.rangeMaxAltMin),
+    range_max_alt_max_m=ammo_number(desc.rangeMaxAltMax),
+    distance_min_m=ammo_number(desc.distMin),
+    distance_max_m=ammo_number(desc.distMax),
+    warhead_type=ammo_number(warhead.type),
+    caliber=ammo_number(warhead.caliber),
+    warhead_mass=ammo_number(warhead.mass),
+    explosive_mass=ammo_number(warhead.explosiveMass),
+    shaped_explosive_mass=ammo_number(warhead.shapedExplosiveMass),
+    shaped_explosive_armor_thickness=ammo_number(warhead.shapedExplosiveArmorThickness),
+  }
+end
+
+if UNIT and not UNIT.GetAmmoDetailed then
+  --- Get compact, descriptor-preserving ammunition data for this unit.
+  -- @param #UNIT self
+  -- @return #table Detailed ammunition data, or nil if the DCS unit is unavailable.
+  function UNIT:GetAmmoDetailed()
+    local dcs_unit = self:GetDCSObject()
+    if not dcs_unit then return nil end
+    local ok_ammo, ammo = pcall(function() return dcs_unit:getAmmo() end)
+    if not ok_ammo then return nil end
+    local ok_desc, unit_desc = pcall(function() return dcs_unit:getDesc() end)
+    if not ok_desc or type(unit_desc) ~= "table" then unit_desc = {} end
+
+    local attributes = {}
+    if type(unit_desc.attributes) == "table" then
+      for name, enabled in pairs(unit_desc.attributes) do
+        if enabled then attributes[#attributes + 1] = tostring(name) end
+      end
+      table.sort(attributes)
+    end
+
+    local by_id = {}
+    if type(ammo) == "table" then
+      for _, item in pairs(ammo) do
+        local weapon = detailed_ammo_weapon(item)
+        local existing = by_id[weapon.id]
+        if existing then
+          existing.count = existing.count + weapon.count
+        else
+          by_id[weapon.id] = weapon
+        end
+      end
+    end
+
+    local weapons = {}
+    for _, weapon in pairs(by_id) do weapons[#weapons + 1] = weapon end
+    table.sort(weapons, function(a, b) return a.id < b.id end)
+    return {
+      unit_name=self:GetName(),
+      type_name=self:GetTypeName(),
+      attributes=attributes,
+      life=self:GetLife(),
+      life0=self:GetLife0(),
+      weapons=weapons,
+    }
+  end
+end
+
+if GROUP and not GROUP.GetAmmoDetailed then
+  --- Get detailed ammunition data for every available unit in this group.
+  -- @param #GROUP self
+  -- @return #table Group ammunition data.
+  function GROUP:GetAmmoDetailed()
+    local result = {group_name=self:GetName(), units={}}
+    local units = self:GetUnits()
+    if type(units) ~= "table" then return result end
+    for _, unit in pairs(units) do
+      local data = unit and unit.GetAmmoDetailed and unit:GetAmmoDetailed() or nil
+      if data then result.units[#result.units + 1] = data end
+    end
+    table.sort(result.units, function(a, b) return tostring(a.unit_name) < tostring(b.unit_name) end)
+    return result
+  end
+end
+
 function MOOSE_BRIDGE:Send(message)
   if not self.Socket then
     return self
@@ -764,6 +869,46 @@ function MOOSE_BRIDGE:BuildAirbaseSnapshot()
   for airbase_name, airbase in pairs(_DATABASE.AIRBASES) do
     local ok_item, item = pcall(function() return self:_BuildAirbaseSnapshotItem(airbase_name, airbase) end)
     if ok_item and item and item.dcs_name then result[#result + 1] = item else self:_Log("Failed to snapshot airbase " .. safe_tostring(airbase_name) .. ": " .. safe_tostring(item)) end
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_BuildAmmunitionSnapshotItem(unit_name, unit)
+  if not self:_IsMooseUnitAlive(unit) or not self:_BoolOrFalse(self:_SafeCall(unit, "IsActive")) then return nil end
+  local category = self:_SafeCall(unit, "GetCategoryName") or self:_SafeCall(unit, "GetCategory")
+  local category_name = category and safe_tostring(category):lower() or ""
+  if not category_name:find("ground", 1, true) then return nil end
+  local details = self:_SafeCall(unit, "GetAmmoDetailed")
+  if type(details) ~= "table" then return nil end
+  local name = self:_SafeCall(unit, "GetName") or unit_name
+  local group_name = self:_SafeCall(unit, "GetGroupName")
+  local group = self:_SafeCall(unit, "GetGroup")
+  if not group_name and group then group_name = self:_SafeCall(group, "GetName") end
+  return {
+    object_id="UNIT:"..safe_tostring(name),
+    unit_id="UNIT:"..safe_tostring(name),
+    unit_name=safe_tostring(name),
+    group_id=group_name and "GROUP:"..safe_tostring(group_name) or nil,
+    group_name=group_name and safe_tostring(group_name) or nil,
+    dcs_type=details.type_name,
+    category=category and safe_tostring(category) or nil,
+    attributes=details.attributes or {},
+    life=details.life,
+    life0=details.life0,
+    weapons=details.weapons or {},
+  }
+end
+
+function MOOSE_BRIDGE:BuildAmmunitionSnapshot()
+  local result = {}
+  if not _DATABASE or not _DATABASE.UNITS then return result end
+  for unit_name, unit in pairs(_DATABASE.UNITS) do
+    local ok, item = pcall(function() return self:_BuildAmmunitionSnapshotItem(unit_name, unit) end)
+    if ok and item then
+      result[#result + 1] = item
+    elseif not ok then
+      self:_Log("Failed to snapshot unit ammunition " .. safe_tostring(unit_name) .. ": " .. safe_tostring(item))
+    end
   end
   return result
 end
@@ -1561,6 +1706,10 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
 
   self:RegisterCommand("snapshot.units", function(cmd)
     local units = self:BuildUnitSnapshot(); self:SendSnapshot("units", {units=units}); return {kind="units", count=#units}
+  end)
+
+  self:RegisterCommand("snapshot.ammunition", function(cmd)
+    local ammunition = self:BuildAmmunitionSnapshot(); self:SendSnapshot("ammunition", {ammunition=ammunition}); return {kind="ammunition", count=#ammunition}
   end)
 
   self:RegisterCommand("snapshot.statics", function(cmd)
