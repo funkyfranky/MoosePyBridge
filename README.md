@@ -321,8 +321,8 @@ for weapon in stryker.weapons if stryker else ():
     )
 ```
 
-Only active, living ground units are included. Weapon entries with `count=0`
-are retained. On the first Python observation, the current count becomes the
+Only active, living ground and naval units are included. Weapon entries with
+`count=0` are retained. On the first Python observation, the current count becomes the
 observed initial count; a later higher value, for example after rearming,
 raises that baseline. Different weapon types are never summed into one total.
 The baseline resets when DCS mission time moves backwards. The ammunition
@@ -336,6 +336,104 @@ launch and target domains, and broad tactical `effects`. Concrete ammunition
 types such as `APFSDS`, `HEAT`, `HEI`, or `DPICM` remain available as
 `ammunition_type`; they refine effects but do not create a second hierarchy of
 weapon classes. Raw DCS descriptors remain available through `weapon.raw`.
+
+DCS descriptor enums and task selectors are modeled separately as
+`DcsWeaponCategory`, `DcsMissileCategory`, `DcsGuidanceType`,
+`DcsWarheadType`, and `DcsWeaponFlag`. Each ammunition entry exposes all known
+specific and parent task selectors through `weapon.weapon_flags`; every
+association records its `confidence`, evidence `source`, and whether it is a
+specific or broader selector. These associations do not claim that DCS can
+select one concrete round from all ammunition matching the same flag.
+
+```python
+from moosebridge import DcsWeaponFlag, WeaponRole
+
+selection = bridge.group_task_weapon("GROUP:SPH", role=WeaponRole.ARTILLERY)
+if selection.weapon_flag is not None:
+    assert isinstance(selection.weapon_flag, DcsWeaponFlag)
+    print(selection.weapon_flag.name, int(selection.weapon_flag), selection.confidence.value)
+```
+
+If no defensible association exists, the selection contains `weapon_flag=None`.
+Callers should then omit the DCS task `weaponType` and let DCS choose. Broad
+selectors such as `ANY_ROCKET` permit a weapon category; they do not identify
+one exact ammunition entry returned by `Unit.getAmmo()`.
+
+Task weapon ranges use the same executable boundary as DCS: one profile is
+keyed by `dcs_type + DcsWeaponFlag`. The packaged ground-unit data is generated
+offline from the versioned
+[dcs-lua-datamine](https://github.com/Quaggles/dcs-lua-datamine) descriptors;
+the runtime SDK has no GitHub or network dependency. Resolution order is:
+explicit manual profile, exact datamine weapon station, usable live DCS weapon
+descriptor, unambiguous datamine unit threat envelope, conservative role
+fallback, and optional generic flag fallback. Ambiguous unit envelopes are
+retained for diagnostics but are not assigned to several weapons. For example,
+the Bradley's unit-level range is not reused as both its cannon and TOW range.
+
+```python
+from moosebridge import DcsWeaponFlag, format_weapon_range
+
+profile = bridge.unit_weapon_range("UNIT:MLRS", DcsWeaponFlag.ANY_ROCKET)
+print(format_weapon_range(profile))
+
+if profile is not None and profile.contains(25_000):
+    print("Target is inside the task weapon envelope")
+```
+
+Scenario-specific profiles can be supplied without modifying the package:
+
+```python
+from moosebridge import (
+    DcsWeaponFlag,
+    MANUAL_WEAPON_RANGE_PROFILES,
+    RangeSource,
+    WeaponRangeProfile,
+    WeaponRangeRegistry,
+    sdk_from_control_client,
+)
+
+custom_profile = WeaponRangeProfile(
+    dcs_type="My Artillery Mod",
+    weapon_flag=DcsWeaponFlag.CONVENTIONAL_SHELL,
+    minimum_m=500,
+    maximum_m=40_000,
+    source=RangeSource.MANUAL,
+)
+registry = WeaponRangeRegistry(profiles=(*MANUAL_WEAPON_RANGE_PROFILES, custom_profile))
+bridge = sdk_from_control_client(control, weapon_ranges=registry)
+```
+
+Refresh the generated artifact from a local datamine checkout after a DCS
+update:
+
+```powershell
+python tools/import_dcs_datamine.py C:\path\to\dcs-lua-datamine
+```
+
+The generated JSON records the source commit and DCS build. It contains every
+ground-unit descriptor, including non-combat units and ambiguous descriptors,
+while the registry activates only defensible task-selector mappings.
+
+For a broad selector, the profile describes the envelope in which at least one
+matching weapon can fire. `weapon_ids` records the observed or manually known
+ammunition behind that envelope; it does not claim that DCS can select one
+specific round when several entries share the same task flag.
+
+The default role envelopes are deliberately conservative:
+
+| Weapon role | Minimum | Maximum |
+| --- | ---: | ---: |
+| `machine_gun` | 0 m | 800 m |
+| `autocannon` | 50 m | 1,500 m |
+| `main_gun` | 50 m | 2,000 m |
+| `atgm` | 100 m | 3,000 m |
+| `mortar` | 100 m | 5,000 m |
+| `artillery` | 500 m | 15,000 m |
+| `rocket_artillery` | 5,000 m | 20,000 m |
+
+When several roles share one DCS selector and no stronger data exists, their
+possible fallback envelopes are combined. Versioned datamine profiles and live
+DCS descriptor profiles take precedence over this `role_fallback` result.
 
 Classified ammunition can be aggregated into traceable unit and group
 readiness vectors:

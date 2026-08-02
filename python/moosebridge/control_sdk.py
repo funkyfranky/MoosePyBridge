@@ -10,6 +10,7 @@ from .state import MooseBridgeState
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
+    from .weapon_ranges import WeaponRangeRegistry
 
 
 class ControlSdkAdapter:
@@ -58,7 +59,7 @@ class ControlSdkAdapter:
         return await self._snapshot("units")
 
     async def snapshot_ammunition(self) -> dict[str, Any]:
-        """Request a detailed ground-unit ammunition snapshot."""
+        """Request a detailed ground and naval ammunition snapshot."""
 
         return await self._snapshot("ammunition")
 
@@ -123,9 +124,17 @@ class ControlSdkAdapter:
         return await self._snapshot("intel_clusters")
 
 
-def sdk_from_control_client(client: MooseBridgeControlClient, timeout: float = 10.0) -> "MooseBridgeClient":
+def sdk_from_control_client(
+    client: MooseBridgeControlClient,
+    timeout: float = 10.0,
+    *,
+    weapon_ranges: "WeaponRangeRegistry | None" = None,
+) -> "MooseBridgeClient":
     """Return a high-level SDK client backed by a control client."""
 
     from .sdk import MooseBridgeClient
 
-    return MooseBridgeClient(ControlSdkAdapter(client, timeout=timeout))  # type: ignore[arg-type]
+    return MooseBridgeClient(  # type: ignore[arg-type]
+        ControlSdkAdapter(client, timeout=timeout),
+        weapon_ranges=weapon_ranges,
+    )

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
-from .ammunition import UnitAmmunition
+from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, WeaponRole, select_task_weapon
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .auftrag_specs import auftrag_action_suffix
@@ -21,6 +21,7 @@ from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
 from .state import MooseBridgeState
+from .weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY, RangeSource, WeaponRangeProfile, WeaponRangeRegistry
 
 SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
 COORDINATE_FORMATS = {"xyz", "ll", "latlon", "latlong", "mgrs", "all"}
@@ -410,8 +411,9 @@ class MooseBridgeClient:
     :param server: Running bridge server instance.
     """
 
-    def __init__(self, server: MooseBridgeServer) -> None:
+    def __init__(self, server: MooseBridgeServer, *, weapon_ranges: WeaponRangeRegistry | None = None) -> None:
         self.server = server
+        self.weapon_range_registry = weapon_ranges or DEFAULT_WEAPON_RANGE_REGISTRY
         self._auftrag_ids_by_object: dict[int, str] = {}
 
     @property
@@ -468,6 +470,50 @@ class MooseBridgeClient:
             (item for item in self.state.ammunition_objects.values() if item.group_id == normalized),
             key=lambda item: item.unit_id,
         )
+
+    def group_task_weapon(
+        self,
+        group_id: str,
+        *,
+        role: WeaponRole | str | None = None,
+    ) -> TaskWeaponSelection:
+        """Recommend a DCS task ``weaponType`` from available group ammunition."""
+
+        weapons = (weapon for unit in self.group_ammunition(group_id) for weapon in unit.weapons)
+        return select_task_weapon(weapons, role=role)
+
+    def unit_weapon_range(
+        self,
+        unit_id: str,
+        weapon_flag: DcsWeaponFlag | int,
+    ) -> WeaponRangeProfile | None:
+        """Resolve a task weapon range for one unit from current ammunition data."""
+
+        ammunition = self.unit_ammunition(unit_id)
+        if ammunition is None or not ammunition.dcs_type:
+            return None
+        return self.weapon_range_registry.resolve(
+            ammunition.dcs_type,
+            weapon_flag,
+            ammunition=ammunition.weapons,
+        )
+
+    def group_weapon_ranges(
+        self,
+        group_id: str,
+        weapon_flag: DcsWeaponFlag | int,
+    ) -> tuple[WeaponRangeProfile, ...]:
+        """Resolve task ranges for the distinct unit types present in a group."""
+
+        profiles: dict[tuple[str, DcsWeaponFlag, float, float, RangeSource], WeaponRangeProfile] = {}
+        for unit in self.group_ammunition(group_id):
+            if not unit.dcs_type:
+                continue
+            profile = self.weapon_range_registry.resolve(unit.dcs_type, weapon_flag, ammunition=unit.weapons)
+            if profile is not None:
+                key = (profile.dcs_type, profile.weapon_flag, profile.minimum_m, profile.maximum_m, profile.source)
+                profiles[key] = profile
+        return tuple(sorted(profiles.values(), key=lambda item: (item.dcs_type.casefold(), item.minimum_m, item.maximum_m)))
 
     def unit_capabilities(self, unit_id: str) -> UnitCapabilities | None:
         """Build current combat capability readiness for one unit."""
@@ -769,7 +815,7 @@ class MooseBridgeClient:
         return require_ok(await self.server.snapshot_units())
 
     async def snapshot_ammunition(self) -> dict[str, Any]:
-        """Request detailed ammunition for active, living ground units."""
+        """Request detailed ammunition for active, living ground and naval units."""
 
         return require_ok(await self.server.snapshot_ammunition())
 

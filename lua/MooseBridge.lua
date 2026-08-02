@@ -163,6 +163,8 @@ local function detailed_ammo_weapon(item)
     range_max_alt_max_m=ammo_number(desc.rangeMaxAltMax),
     distance_min_m=ammo_number(desc.distMin),
     distance_max_m=ammo_number(desc.distMax),
+    altitude_min_m=ammo_number(desc.altMin),
+    altitude_max_m=ammo_number(desc.altMax),
     warhead_type=ammo_number(warhead.type),
     caliber=ammo_number(warhead.caliber),
     warhead_mass=ammo_number(warhead.mass),
@@ -890,7 +892,10 @@ function MOOSE_BRIDGE:_BuildAmmunitionSnapshotItem(unit_name, unit)
   if not self:_IsMooseUnitAlive(unit) or not self:_BoolOrFalse(self:_SafeCall(unit, "IsActive")) then return nil end
   local category = self:_SafeCall(unit, "GetCategoryName") or self:_SafeCall(unit, "GetCategory")
   local category_name = category and safe_tostring(category):lower() or ""
-  if not category_name:find("ground", 1, true) then return nil end
+  local supported_category = category_name:find("ground", 1, true)
+    or category_name:find("ship", 1, true)
+    or category_name:find("naval", 1, true)
+  if not supported_category then return nil end
   local details = self:_SafeCall(unit, "GetAmmoDetailed")
   if type(details) ~= "table" then
     -- MOOSE instances already present in _DATABASE may not see methods added

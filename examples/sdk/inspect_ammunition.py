@@ -17,18 +17,24 @@ LOCAL_PYTHON_DIR = REPO_ROOT / "python"
 if LOCAL_PYTHON_DIR.exists():
     sys.path.insert(0, str(LOCAL_PYTHON_DIR))
 
-from moosebridge import MooseBridgeClient, MooseBridgeCommandError, UnitAmmunition, format_group_capabilities
+from moosebridge import (
+    MooseBridgeClient,
+    MooseBridgeCommandError,
+    UnitAmmunition,
+    format_group_capabilities,
+    format_weapon_range,
+)
 from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
 
 
 GROUP_IDS = (
     "GROUP:MBT",
-    "GROUP:IFV",
+    #"GROUP:IFV",
     "GROUP:MLRS",
-    "GROUP:SPH",
+    #"GROUP:SPH",
     "GROUP:ATGM",
-    "GROUP:Truck",
+    #"GROUP:Truck",
 )
 
 CONTROL_HOST = "127.0.0.1"
@@ -53,7 +59,7 @@ def format_life(unit: UnitAmmunition) -> str:
     return f"{unit.life:.1f}/{unit.life0:.1f} ({format_percent(unit.life_fraction).strip()})"
 
 
-def print_unit_ammunition(unit: UnitAmmunition) -> None:
+def print_unit_ammunition(bridge: MooseBridgeClient, unit: UnitAmmunition) -> None:
     """Print one typed unit-ammunition snapshot."""
 
     print(f"Unit       : {unit.unit_id}")
@@ -70,6 +76,7 @@ def print_unit_ammunition(unit: UnitAmmunition) -> None:
     print("Ammunition:")
     print(f"  {'Weapon':<32} {'Family':<8} {'Role':<18} {'Current':>8} {'Initial':>8} {'Remaining':>10}")
     print(f"  {'-' * 32} {'-' * 8} {'-' * 18} {'-' * 8} {'-' * 8} {'-' * 10}")
+    task_flags = set()
     for weapon in unit.weapons:
         name = weapon.display_name or weapon.type_name or weapon.id
         print(
@@ -86,6 +93,28 @@ def print_unit_ammunition(unit: UnitAmmunition) -> None:
             f"    type={weapon.ammunition_type or 'n/a'} delivery={weapon.delivery.value} "
             f"targets={domains} effects={effects}"
         )
+        if weapon.weapon_flags:
+            print("    DCS task weapon flags:")
+            for association in weapon.weapon_flags:
+                marker = "preferred" if association.flag == weapon.preferred_weapon_flag else "compatible"
+                breadth = "specific" if association.specific else "broad"
+                print(
+                    f"      {association.flag.name:<30} value={int(association.flag):>12} "
+                    f"{marker}, {breadth}, {association.confidence.value}: {association.source}"
+                )
+        else:
+            print("    DCS task weapon flags: none inferred")
+        if weapon.preferred_weapon_flag is not None:
+            task_flags.add(weapon.preferred_weapon_flag)
+
+    if task_flags:
+        print("Task weapon ranges:")
+        for weapon_flag in sorted(task_flags, key=int):
+            profile = bridge.unit_weapon_range(unit.unit_id, weapon_flag)
+            if profile is None:
+                print(f"  {unit.dcs_type or 'Unknown type'} {weapon_flag.name} range=unknown")
+            else:
+                print(f"  {format_weapon_range(profile)}")
 
 
 def print_section(title: str) -> None:
@@ -108,7 +137,7 @@ def print_group_ammunition(bridge: MooseBridgeClient, group_id: str) -> None:
     for index, unit in enumerate(group_units):
         if index:
             print("-" * 76)
-        print_unit_ammunition(unit)
+        print_unit_ammunition(bridge, unit)
 
     print()
     print(format_group_capabilities(bridge.group_capabilities(group_id)))
@@ -130,7 +159,7 @@ async def run() -> int:
         print_group_ammunition(bridge, group_id)
 
     print()
-    print(f"Snapshot contained {len(all_units)} active ground unit(s) in total.")
+    print(f"Snapshot contained {len(all_units)} active ground or naval unit(s) in total.")
     return 0
 
 

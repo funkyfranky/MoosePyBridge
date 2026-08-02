@@ -9,6 +9,7 @@ from .capabilities import CapabilityReadiness, GroupCapabilities, UnitCapabiliti
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .pictures import GlobalPicture, PictureValidationIssue
+from .weapon_ranges import WeaponRangeProfile
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -46,6 +47,19 @@ def format_group_capabilities(profile: GroupCapabilities) -> str:
     lines = [f"{profile.group_id} capabilities units={len(profile.units)}"]
     lines.extend(f"  {format_capability_readiness(capability)}" for capability in profile.capabilities)
     return "\n".join(lines)
+
+
+def format_weapon_range(profile: WeaponRangeProfile | None) -> str:
+    """Return a readable task weapon range profile."""
+
+    if profile is None:
+        return "Weapon range: unknown"
+    weapon_ids = ", ".join(profile.weapon_ids) or "-"
+    return (
+        f"{profile.dcs_type} {profile.weapon_flag.name} "
+        f"range={profile.minimum_m / 1000:.3f}-{profile.maximum_m / 1000:.3f}km "
+        f"source={profile.source.value} weapons={weapon_ids}"
+    )
 
 
 def _clock_title(picture: GlobalPicture) -> str:
