@@ -25,10 +25,19 @@ def test_point_commands_use_at_point_actions() -> None:
 
     asyncio.run(server.smoke_at_point(1, 2, "red", y=3))
     asyncio.run(server.mark_at_point(4, 5, "mark", y=6))
+    asyncio.run(server.explosion_at_point(7, 8, 100, y=9, delay=2))
+    asyncio.run(server.explosion_object("UNIT:Target", 25, delay=1))
 
-    assert [command.action for command in sent] == ["smoke.at_point", "mark.at_point"]
+    assert [command.action for command in sent] == [
+        "smoke.at_point",
+        "mark.at_point",
+        "explosion.at_point",
+        "explosion.object",
+    ]
     assert sent[0].params == {"x": 1, "y": 3, "z": 2, "color": "red"}
     assert sent[1].params == {"x": 4, "y": 6, "z": 5, "text": "mark"}
+    assert sent[2].params == {"x": 7, "y": 9, "z": 8, "power": 100, "delay": 2}
+    assert sent[3].params == {"object_id": "UNIT:Target", "power": 25, "delay": 1}
 
 
 def test_new_snapshot_helpers_use_registered_lua_actions() -> None:

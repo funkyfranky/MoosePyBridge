@@ -242,7 +242,8 @@ state mirrors; no polling loop is required for this change.
 The SDK currently exposes helpers for:
 
 - snapshots: `snapshot_kind`, `snapshot_all`, `request_snapshots`
-- tactical annotations: `mark_object`, `smoke_object`, `draw_zone`
+- tactical effects and annotations: `mark_object`, `smoke_object`,
+  `explode_object`, `explode_point`, `draw_zone`
 - object utilities: `coords`, `convert_points`, `distance`, `nearest`
 - messages: `message_all`, `message_coalition`
 - AUFTRAG: `add_auftrag`, `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,

@@ -123,6 +123,7 @@ Current command families:
 - `message.*`
 - `mark.*`
 - `smoke.*`
+- `explosion.*`
 - `object.coords`
 - `object.distance`
 - `zone.draw`

@@ -368,6 +368,45 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="smoke.object", params={"object_id": object_id, "color": color}))
 
+    async def explosion_at_point(
+        self,
+        x: float,
+        z: float,
+        power: float,
+        y: float | None = None,
+        delay: float = 0.0,
+    ) -> dict[str, Any]:
+        """Create an explosion at a DCS world point.
+
+        :param x: DCS world x coordinate.
+        :param z: DCS world z coordinate.
+        :param power: Explosion intensity in kilograms of TNT.
+        :param y: Optional DCS world y coordinate. DCS terrain height is used when omitted.
+        :param delay: Delay before the explosion in seconds.
+        :returns: ACK message received from DCS.
+        """
+
+        params: dict[str, Any] = {"x": x, "z": z, "power": power, "delay": delay}
+        if y is not None:
+            params["y"] = y
+        return await self.send_command(BridgeCommand(action="explosion.at_point", params=params))
+
+    async def explosion_object(self, object_id: str, power: float, delay: float = 0.0) -> dict[str, Any]:
+        """Create an explosion at the resolved position of an object id.
+
+        :param object_id: Stable bridge object id such as ``UNIT:Name``.
+        :param power: Explosion intensity in kilograms of TNT.
+        :param delay: Delay before the explosion in seconds.
+        :returns: ACK message received from DCS.
+        """
+
+        return await self.send_command(
+            BridgeCommand(
+                action="explosion.object",
+                params={"object_id": object_id, "power": power, "delay": delay},
+            )
+        )
+
     async def mark_at_point(self, x: float, z: float, text: str, y: float = 0.0) -> dict[str, Any]:
         """Create a map mark at a DCS world point.
 

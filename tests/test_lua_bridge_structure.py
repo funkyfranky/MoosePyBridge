@@ -15,5 +15,10 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridgeDcsEventsExtension.lua").read_text(encoding="utf-8")
 
     assert "self:HandleEvent(EVENTS.BaseCaptured)" in source
+    assert "self:HandleEvent(EVENTS.UnitLost)" in source
+    assert "self:HandleEvent(EVENTS.Dead)" in source
     assert "function MOOSE_BRIDGE:OnEventBaseCaptured(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventUnitLost(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventDead(EventData)" in source
     assert 'self:SendEvent("airbase.coalition_changed"' in source
+    assert 'self:SendEvent("object.destroyed"' in source

@@ -23,6 +23,7 @@ from .ammunition import (
     select_task_weapon,
 )
 from .clock import DcsTime
+from .dcs_events import DestroyedObjectEvent
 from .capabilities import (
     CapabilityKind,
     CapabilityReadiness,
@@ -307,6 +308,7 @@ __all__ = [
     "ControlSdkAdapter",
     "CoordinateResult",
     "DistanceResult",
+    "DestroyedObjectEvent",
     "DEFAULT_WEAPON_RANGE_REGISTRY",
     "GeographicPoint",
     "DcsTime",

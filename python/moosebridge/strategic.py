@@ -398,6 +398,11 @@ def _component_health(object_id: str, state: MooseBridgeState) -> float | None:
     payload = collections.get(prefix, {}).get(object_id)
     if payload is None:
         return None
+    if prefix == "GROUP":
+        unit_count = _number(payload.get("unit_count"))
+        alive_unit_count = _number(payload.get("alive_unit_count"))
+        if unit_count is not None and alive_unit_count is not None and unit_count > 0:
+            return max(0.0, min(1.0, alive_unit_count / unit_count))
     life = _number(payload.get("life"))
     life_initial = _number(payload.get("life_initial")) or _number(payload.get("life0"))
     if life is not None and life_initial is not None and life_initial > 0:

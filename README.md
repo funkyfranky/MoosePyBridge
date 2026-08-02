@@ -56,6 +56,7 @@ Implemented baseline:
   - `message.*`
   - `mark.*`
   - `smoke.*`
+  - `explosion.*`
   - `object.coords`
   - `object.distance`
   - `zone.draw`
@@ -63,7 +64,7 @@ Implemented baseline:
   - selected `auftrag.*` execution and trace commands
 - advisory helpers for validating AUFTRAG requests and finding suitable
   LEGION/COHORT candidates
-- SDK helpers for coordinate lookup, distance measurement, zone drawing,
+- SDK helpers for coordinate lookup, distance measurement, explosions, zone drawing,
   nearest-object queries, AUFTRAG tracing, snapshot refresh, and control-client
   adaptation
 - SDK picture models for tactical INTEL-based and global truth-based GeoJSON
@@ -215,6 +216,25 @@ unit capture that airbase or FARP in DCS:
 
 The example waits without polling and prints the normalized
 `objective.control_changed` transition.
+
+The same DCS event extension subscribes to `EVENTS.UnitLost` and `EVENTS.Dead`
+and forwards each loss as `object.destroyed`. DCS can use either event depending
+on the object and destruction path; matching events for the same loss are
+deduplicated in Lua. The payload contains a dead UNIT/STATIC tombstone
+and, for units, a current MOOSE GROUP snapshot. Python merges the tombstone
+with the last known object state, removes stale ammunition data, and updates
+strategic component health without requesting another snapshot. This remains
+fully event-driven and does not poll destroyed objects.
+
+Set `UNIT_ID` directly in the parameterless test example and destroy that unit
+in DCS:
+
+```powershell
+& "C:\Program Files\Python313\python.exe" examples/sdk/monitor_unit_lost.py
+```
+
+The example waits specifically for that object and then prints the updated
+unit and group state.
 
 ## Python setup
 

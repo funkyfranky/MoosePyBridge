@@ -703,6 +703,24 @@ function MOOSE_BRIDGE:_SmokePoint(point, color)
   return {x=point.x, y=point.y or 0, z=point.z, color=smoke_color}
 end
 
+function MOOSE_BRIDGE:_ExplosionPoint(point, power, delay)
+  local explosion_power = self:_NumberOrNil(power)
+  local explosion_delay = self:_NumberOrNil(delay) or 0
+  if explosion_power == nil or explosion_power <= 0 then error("Explosion power must be a positive number in kg TNT") end
+  if explosion_delay < 0 then error("Explosion delay must be zero or greater") end
+
+  local coordinate = self:_CoordinateFromPoint(point)
+  if not coordinate.Explosion then error("COORDINATE:Explosion is not available") end
+  coordinate:Explosion(explosion_power, explosion_delay)
+  return {
+    x=point.x,
+    y=point.y or 0,
+    z=point.z,
+    power_kg_tnt=explosion_power,
+    delay_seconds=explosion_delay,
+  }
+end
+
 function MOOSE_BRIDGE:_MarkPoint(point, text)
   local coordinate = self:_CoordinateFromPoint(point)
   local mark_text = text or "MOOSE Bridge mark"
@@ -1621,6 +1639,22 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   self:RegisterCommand("smoke.object", function(cmd)
     local p = cmd.params or {}; local point = self:_PointForObjectId(p.object_id)
     return self:_SmokePoint(point, p.color or "white")
+  end)
+
+  local explosion_at_point_handler = function(cmd)
+    local p = cmd.params or {}
+    local point = self:_PointFromParams(p)
+    if p.y == nil and land and land.getHeight then
+      point.y = land.getHeight({x=point.x, y=point.z})
+    end
+    return self:_ExplosionPoint(point, p.power, p.delay)
+  end
+  self:RegisterCommand("explosion.at_point", explosion_at_point_handler)
+  self:RegisterCommand("explosion.point", explosion_at_point_handler)
+
+  self:RegisterCommand("explosion.object", function(cmd)
+    local p = cmd.params or {}; local point = self:_PointForObjectId(p.object_id)
+    return self:_ExplosionPoint(point, p.power, p.delay)
   end)
 
   self:RegisterCommand("mark.object", function(cmd)

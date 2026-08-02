@@ -6,6 +6,10 @@
 
 if not MOOSE_BRIDGE then error("Load MooseBridge.lua before MooseBridgeDcsEventsExtension.lua") end
 
+local function bridge_event_available(event_id)
+  return type(event_id) == "number" and event_id > 0
+end
+
 --- Cache current DCS ownership for all known MOOSE AIRBASE objects.
 -- The DCS BaseCaptured event already exposes the new owner, so the cache is
 -- needed to include the previous owner in the normalized bridge event.
@@ -55,22 +59,43 @@ end
 --- Subscribe to selected low-frequency DCS events through MOOSE.
 function MOOSE_BRIDGE:_StartDcsEventForwarding()
   if self.DcsEventForwardingStarted then return self end
-  if not EVENTS or not EVENTS.BaseCaptured or not self.HandleEvent then
-    self:_Log("DCS BaseCaptured event forwarding unavailable")
+  if not EVENTS or not self.HandleEvent then
+    self:_Log("DCS event forwarding unavailable")
     return self
   end
-  self:_CacheAirbaseCoalitions()
-  self:HandleEvent(EVENTS.BaseCaptured)
+  self.DcsRegisteredEvents = {}
+  if bridge_event_available(EVENTS.BaseCaptured) then
+    self:_CacheAirbaseCoalitions()
+    self:HandleEvent(EVENTS.BaseCaptured)
+    self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.BaseCaptured
+    self:_Log("DCS BaseCaptured event forwarding enabled")
+  end
+  if bridge_event_available(EVENTS.UnitLost) then
+    self:HandleEvent(EVENTS.UnitLost)
+    self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.UnitLost
+    self:_Log("DCS UnitLost event forwarding enabled")
+  end
+  if bridge_event_available(EVENTS.Dead) then
+    self:HandleEvent(EVENTS.Dead)
+    self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.Dead
+    self:_Log("DCS Dead event forwarding enabled")
+  end
+  if #self.DcsRegisteredEvents == 0 then
+    self:_Log("No supported DCS events available for forwarding")
+    return self
+  end
   self.DcsEventForwardingStarted = true
-  self:_Log("DCS BaseCaptured event forwarding enabled")
   return self
 end
 
 --- Unsubscribe from DCS events owned by this bridge instance.
 function MOOSE_BRIDGE:_StopDcsEventForwarding()
-  if self.DcsEventForwardingStarted and EVENTS and EVENTS.BaseCaptured and self.UnHandleEvent then
-    self:UnHandleEvent(EVENTS.BaseCaptured)
+  if self.DcsEventForwardingStarted and self.UnHandleEvent then
+    for _, event_id in ipairs(self.DcsRegisteredEvents or {}) do
+      self:UnHandleEvent(event_id)
+    end
   end
+  self.DcsRegisteredEvents = {}
   self.DcsEventForwardingStarted = false
   return self
 end
@@ -113,4 +138,101 @@ function MOOSE_BRIDGE:OnEventBaseCaptured(EventData)
   if not ok then
     self:_Log("Failed to forward BaseCaptured event: " .. tostring(err))
   end
+end
+
+--- Build a tombstone and current group snapshot for a lost DCS object.
+function MOOSE_BRIDGE:_BuildUnitLostPayload(EventData)
+  if type(EventData) ~= "table" then error("UnitLost event data is missing") end
+  local name = EventData.IniUnitName or EventData.IniDCSUnitName
+  if not name then error("UnitLost event has no initiator name") end
+
+  local is_static = Object and Object.Category
+    and EventData.IniObjectCategory == Object.Category.STATIC
+  local object_type = is_static and "STATIC" or "UNIT"
+  local object_id = object_type .. ":" .. tostring(name)
+  local item = nil
+
+  if is_static then
+    local static = EventData.IniUnit
+    if not static and _DATABASE and _DATABASE.STATICS then static = _DATABASE.STATICS[name] end
+    if static then
+      local ok, value = pcall(function() return self:_BuildStaticSnapshotItem(name, static) end)
+      if ok then item = value end
+    end
+  else
+    local unit = EventData.IniUnit
+    if not unit and _DATABASE and _DATABASE.UNITS then unit = _DATABASE.UNITS[name] end
+    if unit then
+      local ok, value = pcall(function() return self:_BuildUnitSnapshotItem(name, unit) end)
+      if ok then item = value end
+    end
+  end
+
+  item = item or {
+    object_id=object_id,
+    dcs_name=tostring(name),
+    object_type=object_type,
+  }
+  item.object_id = object_id
+  item.object_type = object_type
+  item.alive = false
+  item.active = false
+  item.coalition = item.coalition or self:_CoalitionToName(EventData.IniCoalition)
+  item.category = item.category or (EventData.IniCategory and tostring(EventData.IniCategory) or nil)
+  item.dcs_type = item.dcs_type or (EventData.IniTypeName and tostring(EventData.IniTypeName) or nil)
+
+  local group_name = EventData.IniGroupName or EventData.IniDCSGroupName or item.group_name
+  local group_item = nil
+  if not is_static and group_name then
+    local group = EventData.IniGroup
+    if not group and _DATABASE and _DATABASE.GROUPS then group = _DATABASE.GROUPS[group_name] end
+    if group then
+      local ok, value = pcall(function() return self:_BuildGroupSnapshotItem(group_name, group) end)
+      if ok then group_item = value end
+    end
+    item.group_name = tostring(group_name)
+  end
+
+  return {
+    object_id=object_id,
+    object_type=object_type,
+    group_id=group_name and ("GROUP:" .. tostring(group_name)) or nil,
+    object=item,
+    group=group_item,
+  }
+end
+
+--- Forward one DCS destruction event as object.destroyed.
+-- UnitLost and Dead can describe the same loss, depending on the DCS object
+-- and destruction path. Suppress the second event without polling object state.
+function MOOSE_BRIDGE:_ForwardObjectDestroyed(EventData, event_name)
+  local ok, err = pcall(function()
+    local payload = self:_BuildUnitLostPayload(EventData)
+    local event_time = tonumber(EventData.time)
+    local dedup_time = event_time or (timer and timer.getTime and timer.getTime()) or 0
+    self.DcsDestroyedEventTimes = self.DcsDestroyedEventTimes or {}
+    local previous_time = self.DcsDestroyedEventTimes[payload.object_id]
+    if previous_time and math.abs(dedup_time - previous_time) <= 2 then return end
+    self.DcsDestroyedEventTimes[payload.object_id] = dedup_time
+
+    payload.dcs_event_id = EventData.id
+    payload.dcs_event_name = event_name
+    payload.dcs_event_time = event_time
+    self:SendEvent("object.destroyed", payload)
+  end)
+  if not ok then
+    self:_Log("Failed to forward " .. tostring(event_name) .. " event: " .. tostring(err))
+  end
+end
+
+--- Forward DCS S_EVENT_UNIT_LOST as object.destroyed.
+-- @param Core.Event#EVENTDATA EventData MOOSE-normalized DCS event data.
+function MOOSE_BRIDGE:OnEventUnitLost(EventData)
+  self:_ForwardObjectDestroyed(EventData, "S_EVENT_UNIT_LOST")
+end
+
+--- Forward DCS S_EVENT_DEAD as object.destroyed.
+-- @param Core.Event#EVENTDATA EventData MOOSE-normalized DCS event data.
+function MOOSE_BRIDGE:OnEventDead(EventData)
+  self:_ForwardObjectDestroyed(EventData, "S_EVENT_DEAD")
 end

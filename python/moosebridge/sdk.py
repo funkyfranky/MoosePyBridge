@@ -11,6 +11,7 @@ from typing import Any
 from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, WeaponRole, select_task_weapon
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
+from .dcs_events import DestroyedObjectEvent
 from .auftrag_specs import auftrag_action_suffix
 from .capabilities import (
     GroupCapabilities,
@@ -538,6 +539,25 @@ class MooseBridgeClient:
                 return objective_event
             history_index = len(current_events)
 
+    async def wait_for_object_destroyed(
+        self,
+        object_id: str,
+        *,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> DestroyedObjectEvent:
+        """Wait for one UNIT or STATIC destruction reported by DCS."""
+
+        if not object_id.startswith(("UNIT:", "STATIC:")):
+            raise ValueError("object_id must start with UNIT: or STATIC:")
+        message = await self.server.wait_for_event(
+            "object.destroyed",
+            filters={"object_id": object_id},
+            timeout=timeout,
+            after_id=after_id,
+        )
+        return DestroyedObjectEvent.from_message(message)
+
     def _on_bridge_message(self, message: dict[str, Any]) -> None:
         """Update strategic objectives after relevant state messages arrive."""
 
@@ -545,6 +565,7 @@ class MooseBridgeClient:
         kind = str(message.get("kind") or "")
         event_name = str(message.get("event") or "")
         relevant_event = message_type == "event" and event_name in {
+            "object.destroyed",
             "airbase.coalition_changed",
             "opszone.owner_changed",
             "opszone.coalition_changed",
@@ -1425,6 +1446,74 @@ class MooseBridgeClient:
         """
 
         return require_ok(await self.server.smoke_object(object_id, validate_smoke_color(color)))
+
+    async def explode_point(
+        self,
+        x: float,
+        z: float,
+        power: float,
+        y: float | None = None,
+        delay: float = 0.0,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Create an explosion at a DCS world point.
+
+        :param x: DCS world x coordinate.
+        :param z: DCS world z coordinate.
+        :param power: Explosion intensity in kilograms of TNT.
+        :param y: Optional DCS world y coordinate. DCS terrain height is used when omitted.
+        :param delay: Delay before the explosion in seconds.
+        :param timeout: Command timeout in seconds.
+        :returns: ACK message received from DCS.
+        :raises ValueError: If power or delay is invalid.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        if power <= 0:
+            raise ValueError("Explosion power must be greater than zero")
+        if delay < 0:
+            raise ValueError("Explosion delay must be zero or greater")
+        params: dict[str, Any] = {"x": x, "z": z, "power": power, "delay": delay}
+        if y is not None:
+            params["y"] = y
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="explosion.at_point", params=params),
+                timeout=timeout,
+            )
+        )
+
+    async def explode_object(
+        self,
+        object_id: str,
+        power: float,
+        delay: float = 0.0,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Create an explosion at the resolved position of an object id.
+
+        :param object_id: Stable bridge object id such as ``UNIT:Name``.
+        :param power: Explosion intensity in kilograms of TNT.
+        :param delay: Delay before the explosion in seconds.
+        :param timeout: Command timeout in seconds.
+        :returns: ACK message received from DCS.
+        :raises ValueError: If power or delay is invalid.
+        :raises MooseBridgeCommandError: If DCS rejects the command.
+        """
+
+        if power <= 0:
+            raise ValueError("Explosion power must be greater than zero")
+        if delay < 0:
+            raise ValueError("Explosion delay must be zero or greater")
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="explosion.object",
+                    params={"object_id": object_id, "power": power, "delay": delay},
+                ),
+                timeout=timeout,
+            )
+        )
 
     async def mark_point(self, x: float, z: float, text: str, y: float = 0.0) -> dict[str, Any]:
         """Create a map mark at a DCS world point.

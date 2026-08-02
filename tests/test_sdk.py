@@ -238,7 +238,6 @@ class FakeSdkServer:
     async def snapshot_intel_clusters(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.intel_clusters", params={}))
 
-
 def test_sdk_coords_returns_typed_result() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -253,6 +252,32 @@ def test_sdk_coords_returns_typed_result() -> None:
         assert command.action == "object.coords"
         assert command.params == {"object_id": "ZONE:Town Fight", "format": "mgrs"}
         assert timeout == 4.0
+
+    asyncio.run(scenario())
+
+
+def test_sdk_explosion_helpers_validate_and_forward_parameters() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        await client.explode_point(100, 200, 75, y=5, delay=3)
+        await client.explode_object("UNIT:Target", 25)
+
+        assert server.commands[0][0].action == "explosion.at_point"
+        assert server.commands[0][0].params == {"x": 100, "y": 5, "z": 200, "power": 75, "delay": 3}
+        assert server.commands[1][0].action == "explosion.object"
+        assert server.commands[1][0].params == {"object_id": "UNIT:Target", "power": 25, "delay": 0.0}
+
+        await client.explode_point(300, 400, 50)
+        assert server.commands[2][0].params == {"x": 300, "z": 400, "power": 50, "delay": 0.0}
+
+        try:
+            await client.explode_point(0, 0, 0)
+        except ValueError as exc:
+            assert "greater than zero" in str(exc)
+        else:
+            raise AssertionError("Zero explosion power should be rejected")
 
     asyncio.run(scenario())
 

@@ -378,6 +378,28 @@ class MooseBridgeState:
 
         payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
         event_name = str(message.get("event") or payload.get("event") or "")
+        if event_name == "object.destroyed":
+            object_payload = payload.get("object") if isinstance(payload.get("object"), dict) else {}
+            object_id = str(payload.get("object_id") or object_payload.get("object_id") or "")
+            object_type = str(payload.get("object_type") or object_payload.get("object_type") or "").upper()
+            if object_id and object_type in {"UNIT", "STATIC"}:
+                collection = self.units if object_type == "UNIT" else self.statics
+                updated = {**collection.get(object_id, {}), **object_payload}
+                updated.update({"object_id": object_id, "object_type": object_type, "alive": False, "active": False})
+                collection[object_id] = updated
+                if object_id in self.objects:
+                    self.objects[object_id] = {**self.objects[object_id], **updated}
+                if object_type == "UNIT":
+                    self.ammunition.pop(object_id, None)
+                    self.ammunition_objects.pop(object_id, None)
+            group_payload = payload.get("group") if isinstance(payload.get("group"), dict) else None
+            if group_payload:
+                group_id = str(group_payload.get("object_id") or payload.get("group_id") or "")
+                if group_id:
+                    self.groups[group_id] = {**self.groups.get(group_id, {}), **group_payload}
+                    if group_id in self.objects:
+                        self.objects[group_id] = {**self.objects[group_id], **self.groups[group_id]}
+            return
         if event_name == "airbase.coalition_changed":
             airbase_payload = payload.get("airbase") if isinstance(payload.get("airbase"), dict) else None
             if airbase_payload:

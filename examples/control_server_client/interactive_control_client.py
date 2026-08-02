@@ -63,6 +63,10 @@ Commands:
   markpoint <x> <z> <text>        Create a map mark at a DCS world point.
   smoke <object_id> [color]       Create smoke at an object position.
   smokepoint <x> <z> [color]      Create smoke at a DCS world point.
+  explode <object_id> <power> [delay]
+                                  Explode at an object position (kg TNT).
+  explodepoint <x> <z> <power> [delay]
+                                  Explode at a DCS world point (kg TNT).
   message [all|blue|red|neutral] <text>
                                   Send a message to all players or one coalition.
   quit, exit                      Close the client.
@@ -82,6 +86,8 @@ Examples:
   mark "ZONE:Town Fight" Target area
   drawzone "ZONE:Town Fight" --coalition blue --color red --alpha 0.8 --fill-alpha 0.15 --line-type dashed
   markpoint -33711 -510211 Fire mission
+  explodepoint -33711 -510211 100
+  explode UNIT:Target-1 25 5
   send smoke.object {"object_id":"UNIT:Scout-1","color":"red"}
   message MoosePyBridge connected
   message blue Push now
@@ -1482,6 +1488,30 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
             timeout=timeout,
         )
         print_command_feedback(ack, "smoke.at_point", debug)
+        return True
+    if command == "explode":
+        object_id, rest = split_object_argument(argument, known_object_ids(client))
+        if not object_id or not rest or len(rest) > 2:
+            print("Usage: explode <object_id> <power_kg_tnt> [delay_seconds]")
+            return True
+        power = parse_float(rest[0], "power")
+        delay = parse_float(rest[1], "delay") if len(rest) == 2 else 0.0
+        ack = await sdk.explode_object(object_id, power, delay, timeout=timeout)
+        print_command_feedback(ack, "explosion.object", debug)
+        return True
+    if command == "explodepoint":
+        parts = argument.split()
+        if len(parts) not in {3, 4}:
+            print("Usage: explodepoint <x> <z> <power_kg_tnt> [delay_seconds]")
+            return True
+        ack = await sdk.explode_point(
+            parse_float(parts[0], "x"),
+            parse_float(parts[1], "z"),
+            parse_float(parts[2], "power"),
+            delay=parse_float(parts[3], "delay") if len(parts) == 4 else 0.0,
+            timeout=timeout,
+        )
+        print_command_feedback(ack, "explosion.at_point", debug)
         return True
     if command == "message":
         recipient, text = parse_message_argument(argument)
