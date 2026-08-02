@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import math
 from typing import Iterable
 
-from .ammunition import AmmunitionWeapon, UnitAmmunition, WeaponEffect, WeaponRole
+from .ammunition import AmmunitionWeapon, DcsWeaponFlag, UnitAmmunition, WeaponEffect, WeaponRole
+from .weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY, WeaponRangeRegistry
 
 
 class CapabilityKind(str, Enum):
@@ -19,6 +21,16 @@ class CapabilityKind(str, Enum):
     INDIRECT_FIRE = "indirect_fire"
     AIR_DEFENSE = "air_defense"
     ANTI_SHIP = "anti_ship"
+
+
+class InfluenceKind(str, Enum):
+    """Independent spatial effects used by tactical reasoning."""
+
+    CONTROL = "control"
+    DIRECT_FIRE = "direct_fire"
+    INDIRECT_FIRE = "indirect_fire"
+    AIR_DEFENSE = "air_defense"
+    LOGISTICS = "logistics"
 
 
 @dataclass(slots=True, frozen=True)
@@ -64,6 +76,61 @@ class GroupCapabilities:
         return next((item for item in self.capabilities if item.kind == normalized), None)
 
 
+@dataclass(slots=True, frozen=True)
+class InfluenceReadiness:
+    """One traceable tactical influence contribution."""
+
+    kind: InfluenceKind
+    base_power: float
+    ammo_readiness: float
+    health_readiness: float
+    effective_power: float
+    minimum_range_m: float = 0.0
+    maximum_range_m: float = 0.0
+    contributing_roles: tuple[WeaponRole, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("base_power", self.base_power),
+            ("ammo_readiness", self.ammo_readiness),
+            ("health_readiness", self.health_readiness),
+            ("effective_power", self.effective_power),
+            ("minimum_range_m", self.minimum_range_m),
+            ("maximum_range_m", self.maximum_range_m),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        if self.maximum_range_m < self.minimum_range_m:
+            raise ValueError("maximum_range_m must not be smaller than minimum_range_m")
+
+
+@dataclass(slots=True, frozen=True)
+class UnitInfluence:
+    """Separated tactical influences for one active ground unit."""
+
+    unit_id: str
+    group_id: str | None
+    dcs_type: str | None
+    influences: tuple[InfluenceReadiness, ...]
+
+    def get(self, kind: InfluenceKind | str) -> InfluenceReadiness | None:
+        normalized = InfluenceKind(kind)
+        return next((item for item in self.influences if item.kind == normalized), None)
+
+
+@dataclass(slots=True, frozen=True)
+class GroupInfluence:
+    """Aggregated tactical influences for one DCS group."""
+
+    group_id: str
+    units: tuple[UnitInfluence, ...]
+    influences: tuple[InfluenceReadiness, ...]
+
+    def get(self, kind: InfluenceKind | str) -> InfluenceReadiness | None:
+        normalized = InfluenceKind(kind)
+        return next((item for item in self.influences if item.kind == normalized), None)
+
+
 # These coefficients are relative defaults for diagnostics and later scenario
 # calibration. They are deliberately centralized and do not claim to be DCS
 # weapon-performance values.
@@ -94,6 +161,46 @@ INDIRECT_ROLES = frozenset({WeaponRole.ARTILLERY, WeaponRole.MORTAR, WeaponRole.
 DIRECT_COMBAT_ROLES = frozenset(
     {WeaponRole.MACHINE_GUN, WeaponRole.AUTOCANNON, WeaponRole.MAIN_GUN, WeaponRole.ATGM}
 )
+
+ROLE_INFLUENCE_POWER: dict[tuple[WeaponRole, InfluenceKind], float] = {
+    (WeaponRole.MACHINE_GUN, InfluenceKind.CONTROL): 0.25,
+    (WeaponRole.AUTOCANNON, InfluenceKind.CONTROL): 1.00,
+    (WeaponRole.MAIN_GUN, InfluenceKind.CONTROL): 1.50,
+    (WeaponRole.ATGM, InfluenceKind.CONTROL): 1.25,
+    (WeaponRole.ARTILLERY, InfluenceKind.CONTROL): 0.15,
+    (WeaponRole.MORTAR, InfluenceKind.CONTROL): 0.15,
+    (WeaponRole.ROCKET_ARTILLERY, InfluenceKind.CONTROL): 0.10,
+    (WeaponRole.MACHINE_GUN, InfluenceKind.DIRECT_FIRE): 0.25,
+    (WeaponRole.AUTOCANNON, InfluenceKind.DIRECT_FIRE): 1.00,
+    (WeaponRole.MAIN_GUN, InfluenceKind.DIRECT_FIRE): 1.50,
+    (WeaponRole.ATGM, InfluenceKind.DIRECT_FIRE): 1.25,
+    (WeaponRole.ARTILLERY, InfluenceKind.INDIRECT_FIRE): 1.00,
+    (WeaponRole.MORTAR, InfluenceKind.INDIRECT_FIRE): 0.70,
+    (WeaponRole.ROCKET_ARTILLERY, InfluenceKind.INDIRECT_FIRE): 1.20,
+    (WeaponRole.SAM, InfluenceKind.AIR_DEFENSE): 1.00,
+}
+
+ROLE_WEAPON_FLAG: dict[WeaponRole, DcsWeaponFlag] = {
+    WeaponRole.MACHINE_GUN: DcsWeaponFlag.BUILT_IN_CANNON,
+    WeaponRole.AUTOCANNON: DcsWeaponFlag.BUILT_IN_CANNON,
+    WeaponRole.MAIN_GUN: DcsWeaponFlag.BUILT_IN_CANNON,
+    WeaponRole.ATGM: DcsWeaponFlag.ANTI_TANK_MISSILE,
+    WeaponRole.ARTILLERY: DcsWeaponFlag.CONVENTIONAL_SHELL,
+    WeaponRole.MORTAR: DcsWeaponFlag.CONVENTIONAL_SHELL,
+    WeaponRole.ROCKET_ARTILLERY: DcsWeaponFlag.ANY_ROCKET,
+    WeaponRole.SAM: DcsWeaponFlag.ANY_MISSILE,
+}
+
+LOGISTICS_ATTRIBUTE_TERMS = (
+    "logistic",
+    "supply",
+    "truck",
+    "transport",
+    "unarmed",
+    "refuel",
+    "fuel",
+)
+LOGISTICS_POWER = 0.10
 
 
 def _health_readiness(unit: UnitAmmunition) -> float:
@@ -218,3 +325,129 @@ def build_group_capabilities(
             )
         )
     return GroupCapabilities(group_id=group_id, units=unit_profiles, capabilities=tuple(values))
+
+
+def _is_logistics_unit(unit: UnitAmmunition) -> bool:
+    attributes = " ".join(unit.attributes).casefold()
+    armed_roles = {weapon.role for weapon in unit.weapons if weapon.role != WeaponRole.UNKNOWN}
+    if armed_roles:
+        return False
+    if "unarmed" in attributes:
+        return True
+    return not unit.weapons and any(term in attributes for term in LOGISTICS_ATTRIBUTE_TERMS)
+
+
+def _role_range(
+    unit: UnitAmmunition,
+    role: WeaponRole,
+    weapons: tuple[AmmunitionWeapon, ...],
+    registry: WeaponRangeRegistry,
+) -> tuple[float, float]:
+    flag = ROLE_WEAPON_FLAG.get(role)
+    if flag is None or not unit.dcs_type:
+        return 0.0, 0.0
+    profile = registry.resolve(unit.dcs_type, flag, ammunition=weapons)
+    return (profile.minimum_m, profile.maximum_m) if profile is not None else (0.0, 0.0)
+
+
+def build_unit_influence(
+    unit: UnitAmmunition,
+    *,
+    weapon_ranges: WeaponRangeRegistry = DEFAULT_WEAPON_RANGE_REGISTRY,
+) -> UnitInfluence:
+    """Build independent control, fire, air-defense, and logistics effects."""
+
+    health = _health_readiness(unit)
+    values: list[InfluenceReadiness] = []
+    for kind in (
+        InfluenceKind.CONTROL,
+        InfluenceKind.DIRECT_FIRE,
+        InfluenceKind.INDIRECT_FIRE,
+        InfluenceKind.AIR_DEFENSE,
+    ):
+        contributions: list[tuple[WeaponRole, float, float, float, float]] = []
+        for (role, candidate), base_power in ROLE_INFLUENCE_POWER.items():
+            if candidate != kind:
+                continue
+            weapons = tuple(weapon for weapon in unit.weapons if weapon.role == role)
+            if not weapons:
+                continue
+            ammo = _role_ammunition_readiness(weapons)
+            minimum, maximum = (
+                (0.0, 0.0)
+                if kind == InfluenceKind.CONTROL
+                else _role_range(unit, role, weapons, weapon_ranges)
+            )
+            contributions.append((role, base_power, ammo, minimum, maximum))
+        if not contributions:
+            continue
+        base_power = sum(item[1] for item in contributions)
+        ready_power = sum(item[1] * item[2] for item in contributions)
+        values.append(
+            InfluenceReadiness(
+                kind=kind,
+                base_power=base_power,
+                ammo_readiness=ready_power / base_power if base_power else 0.0,
+                health_readiness=health,
+                effective_power=ready_power * health,
+                minimum_range_m=min(item[3] for item in contributions),
+                maximum_range_m=max(item[4] for item in contributions),
+                contributing_roles=tuple(sorted((item[0] for item in contributions), key=lambda role: role.value)),
+            )
+        )
+
+    if _is_logistics_unit(unit):
+        values.append(
+            InfluenceReadiness(
+                kind=InfluenceKind.LOGISTICS,
+                base_power=LOGISTICS_POWER,
+                ammo_readiness=1.0,
+                health_readiness=health,
+                effective_power=LOGISTICS_POWER * health,
+                maximum_range_m=5_000.0,
+            )
+        )
+
+    return UnitInfluence(unit.unit_id, unit.group_id, unit.dcs_type, tuple(values))
+
+
+def build_group_influence(
+    units: Iterable[UnitAmmunition],
+    group_id: str,
+    *,
+    weapon_ranges: WeaponRangeRegistry = DEFAULT_WEAPON_RANGE_REGISTRY,
+) -> GroupInfluence:
+    """Aggregate separated tactical influences for one group."""
+
+    unit_profiles = tuple(
+        sorted(
+            (build_unit_influence(unit, weapon_ranges=weapon_ranges) for unit in units),
+            key=lambda item: item.unit_id,
+        )
+    )
+    values: list[InfluenceReadiness] = []
+    for kind in InfluenceKind:
+        entries = tuple(entry for unit in unit_profiles if (entry := unit.get(kind)) is not None)
+        if not entries:
+            continue
+        base_power = sum(entry.base_power for entry in entries)
+        roles = {role for entry in entries for role in entry.contributing_roles}
+        values.append(
+            InfluenceReadiness(
+                kind=kind,
+                base_power=base_power,
+                ammo_readiness=(
+                    sum(entry.base_power * entry.ammo_readiness for entry in entries) / base_power
+                    if base_power else 0.0
+                ),
+                health_readiness=(
+                    sum(entry.base_power * entry.health_readiness for entry in entries) / base_power
+                    if base_power else 0.0
+                ),
+                effective_power=sum(entry.effective_power for entry in entries),
+                minimum_range_m=min(entry.minimum_range_m for entry in entries),
+                maximum_range_m=max(entry.maximum_range_m for entry in entries),
+                contributing_roles=tuple(sorted(roles, key=lambda role: role.value)),
+            )
+        )
+    return GroupInfluence(group_id, unit_profiles, tuple(values))

@@ -12,7 +12,16 @@ from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, Weap
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .auftrag_specs import auftrag_action_suffix
-from .capabilities import GroupCapabilities, UnitCapabilities, build_group_capabilities, build_unit_capabilities
+from .capabilities import (
+    GroupCapabilities,
+    GroupInfluence,
+    UnitCapabilities,
+    UnitInfluence,
+    build_group_capabilities,
+    build_group_influence,
+    build_unit_capabilities,
+    build_unit_influence,
+)
 from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
@@ -21,6 +30,7 @@ from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
 from .state import MooseBridgeState
+from .strategic import ObjectiveEvent, StrategicObjective, StrategicObjectiveRegistry
 from .weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY, RangeSource, WeaponRangeProfile, WeaponRangeRegistry
 
 SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
@@ -414,7 +424,11 @@ class MooseBridgeClient:
     def __init__(self, server: MooseBridgeServer, *, weapon_ranges: WeaponRangeRegistry | None = None) -> None:
         self.server = server
         self.weapon_range_registry = weapon_ranges or DEFAULT_WEAPON_RANGE_REGISTRY
+        self.objectives = StrategicObjectiveRegistry()
         self._auftrag_ids_by_object: dict[int, str] = {}
+        add_listener = getattr(server, "add_message_listener", None)
+        if callable(add_listener):
+            add_listener(self._on_bridge_message)
 
     @property
     def state(self) -> MooseBridgeState:
@@ -438,6 +452,56 @@ class MooseBridgeClient:
         """Return a typed TERRITORY by object id."""
 
         return self.state.territory(object_id)
+
+    def add_strategic_objective(
+        self,
+        objective: StrategicObjective,
+        *,
+        replace: bool = False,
+        sync: bool = True,
+    ) -> StrategicObjective:
+        """Add a Python-owned strategic objective during the mission."""
+
+        added = self.objectives.add(objective, replace=replace)
+        if sync:
+            self.objectives.sync(self.state, source="current_state")
+        return added
+
+    def remove_strategic_objective(self, objective: StrategicObjective | str) -> StrategicObjective:
+        """Remove a strategic objective during the mission."""
+
+        return self.objectives.remove(objective)
+
+    def strategic_objective(self, objective_id: str) -> StrategicObjective | None:
+        """Return one strategic objective by id."""
+
+        return self.objectives.get(objective_id)
+
+    def strategic_objectives(self, **filters: Any) -> tuple[StrategicObjective, ...]:
+        """Return strategic objectives, optionally filtered by registry fields."""
+
+        return self.objectives.filter(**filters)
+
+    def sync_strategic_objectives(self, *, source: str = "manual") -> tuple[ObjectiveEvent, ...]:
+        """Synchronize all strategic objectives from the current state mirror."""
+
+        return self.objectives.sync(self.state, source=source)
+
+    def _on_bridge_message(self, message: dict[str, Any]) -> None:
+        """Update strategic objectives after relevant state messages arrive."""
+
+        message_type = str(message.get("type") or "")
+        kind = str(message.get("kind") or "")
+        if message_type == "event" or (message_type == "snapshot" and kind in {
+            "airbases",
+            "opszones",
+            "territories",
+            "groups",
+            "units",
+            "statics",
+        }):
+            event_name = str(message.get("event") or "")
+            self.objectives.sync(self.state, source=event_name or f"snapshot.{kind}")
 
     def territories(self, coalition: str | None = None) -> list[Territory]:
         """Return known territories, optionally limited to one coalition."""
@@ -526,6 +590,25 @@ class MooseBridgeClient:
 
         normalized = group_id if group_id.startswith("GROUP:") else f"GROUP:{group_id}"
         return build_group_capabilities(self.group_ammunition(normalized), normalized)
+
+    def unit_influence(self, unit_id: str) -> UnitInfluence | None:
+        """Build separated tactical influences for one unit."""
+
+        ammunition = self.unit_ammunition(unit_id)
+        return (
+            build_unit_influence(ammunition, weapon_ranges=self.weapon_range_registry)
+            if ammunition else None
+        )
+
+    def group_influence(self, group_id: str) -> GroupInfluence:
+        """Build aggregated tactical influences for one group."""
+
+        normalized = group_id if group_id.startswith("GROUP:") else f"GROUP:{group_id}"
+        return build_group_influence(
+            self.group_ammunition(normalized),
+            normalized,
+            weapon_ranges=self.weapon_range_registry,
+        )
 
     def auftrag(self, object_id: str) -> Auftrag | None:
         """Return a typed AUFTRAG by object id.

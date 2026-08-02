@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from .control_sdk import sdk_from_control_client
+from .capabilities import GroupInfluence, build_group_influence
 from .frontlines import (
     FrontlineForceClassification,
     FrontlineCalculationArea,
@@ -39,8 +40,13 @@ DEFAULT_COMMAND_TIMEOUT = 15.0
 DEFAULT_HISTORY_SECONDS = 15 * 60.0
 DEFAULT_HISTORY_MAX_POINTS = 180
 DEFAULT_FRONTLINE_INTERVAL = 15.0
+DEFAULT_AMMUNITION_INTERVAL = 60.0
 DEFAULT_FRONTLINE_POSITION_ALPHA = 0.35
-DEFAULT_TERRITORY_CONTROL_RATIO = 0.08
+DEFAULT_FORCE_ANCHOR_SIGMA_M = 5_000.0
+DEFAULT_FORCE_ANCHOR_MARGIN_RATIO = 0.25
+DEFAULT_TERRITORY_CONTROL_RATIO = 1.0
+DEFAULT_TERRITORY_TRANSITION_M = 20_000.0
+DEFAULT_PRESSURE_TERRITORY_RATIO = 0.08
 DEFAULT_INCURSION_SUPPORT_RADIUS_M = 30_000.0
 DEFAULT_LODGEMENT_MIN_FORCES = 3
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
@@ -121,8 +127,13 @@ class GlobalMapRuntime:
     history_seconds: float = DEFAULT_HISTORY_SECONDS
     history_max_points: int = DEFAULT_HISTORY_MAX_POINTS
     frontline_interval: float = DEFAULT_FRONTLINE_INTERVAL
+    ammunition_interval: float = DEFAULT_AMMUNITION_INTERVAL
     frontline_position_alpha: float = DEFAULT_FRONTLINE_POSITION_ALPHA
+    force_anchor_sigma_m: float = DEFAULT_FORCE_ANCHOR_SIGMA_M
+    force_anchor_margin_ratio: float = DEFAULT_FORCE_ANCHOR_MARGIN_RATIO
     territory_control_ratio: float = DEFAULT_TERRITORY_CONTROL_RATIO
+    territory_transition_m: float = DEFAULT_TERRITORY_TRANSITION_M
+    pressure_territory_ratio: float = DEFAULT_PRESSURE_TERRITORY_RATIO
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES
     picture: dict[str, Any] = field(default_factory=empty_picture)
@@ -133,7 +144,10 @@ class GlobalMapRuntime:
     _task: asyncio.Task[None] | None = None
     _last_mission_time: float | None = None
     _frontline_mission_time: float | None = None
+    _influence_mission_time: float | None = None
+    _group_influences: dict[str, GroupInfluence] = field(default_factory=dict)
     _frontline_features: list[dict[str, Any]] = field(default_factory=list)
+    _pressure_frontline_features: list[dict[str, Any]] = field(default_factory=list)
     _incursion_features: list[dict[str, Any]] = field(default_factory=list)
     _frontline_diagnostics: dict[str, Any] = field(default_factory=dict)
     _frontline_error: str | None = None
@@ -143,10 +157,16 @@ class GlobalMapRuntime:
     def __post_init__(self) -> None:
         if self.frontline_interval <= 0:
             raise ValueError("frontline_interval must be positive")
+        if self.ammunition_interval <= 0:
+            raise ValueError("ammunition_interval must be positive")
         self._frontline_tracker = FrontlineForceTracker(self.frontline_position_alpha)
         self._frontline_engine = FrontlineEngine(
             FrontlineConfig(
                 territory_control_ratio=self.territory_control_ratio,
+                territory_transition_m=self.territory_transition_m,
+                pressure_territory_ratio=self.pressure_territory_ratio,
+                force_anchor_sigma_m=self.force_anchor_sigma_m,
+                force_anchor_margin_ratio=self.force_anchor_margin_ratio,
                 incursion_support_radius_m=self.incursion_support_radius_m,
                 incursion_lodgement_min_forces=self.lodgement_min_forces,
             )
@@ -168,8 +188,10 @@ class GlobalMapRuntime:
             "trajectory_count": sum(1 for feature in self.picture.get("features", []) if feature.get("properties", {}).get("layer") == "trajectories"),
             "history_seconds": self.history_seconds,
             "frontline_count": len(self._frontline_features),
+            "pressure_line_count": len(self._pressure_frontline_features),
             "incursion_count": len(self._incursion_features),
             "frontline_updated_mission_time": self._frontline_mission_time,
+            "influence_updated_mission_time": self._influence_mission_time,
             "frontline_error": self._frontline_error,
         }
 
@@ -249,10 +271,13 @@ class GlobalMapRuntime:
         ):
             self._frontline_tracker.reset()
             self._frontline_features.clear()
+            self._pressure_frontline_features.clear()
             self._incursion_features.clear()
             self._frontline_diagnostics.clear()
             self._frontline_error = None
             self._frontline_mission_time = None
+            self._influence_mission_time = None
+            self._group_influences.clear()
 
         due = (
             self._frontline_mission_time is None
@@ -260,7 +285,25 @@ class GlobalMapRuntime:
             or mission_time - self._frontline_mission_time >= self.frontline_interval
         )
         if due:
-            forces = self._frontline_tracker.update(force_points_from_groups(picture.groups))
+            influence_due = (
+                self._influence_mission_time is None
+                or mission_time is None
+                or mission_time - self._influence_mission_time >= self.ammunition_interval
+            )
+            if influence_due:
+                ammunition = await bridge.refresh_ammunition()
+                ammunition_by_group: dict[str, list[Any]] = {}
+                for unit in ammunition:
+                    if unit.group_id:
+                        ammunition_by_group.setdefault(unit.group_id, []).append(unit)
+                self._group_influences = {
+                    group_id: build_group_influence(units, group_id, weapon_ranges=bridge.weapon_range_registry)
+                    for group_id, units in ammunition_by_group.items()
+                }
+                self._influence_mission_time = mission_time
+            forces = self._frontline_tracker.update(
+                force_points_from_groups(picture.groups, influences=self._group_influences)
+            )
             regions = territory_control_regions(picture.territories)
             classification = classify_frontline_forces(
                 forces,
@@ -276,19 +319,45 @@ class GlobalMapRuntime:
                 except ValueError:
                     pass
                 result = self._frontline_engine.calculate(
-                    classification.main_forces,
+                    forces,
                     area=area,
                     control_regions=regions,
+                    pressure_forces=classification.main_forces,
                 )
-                self._frontline_features = await self._frontline_geojson_features(result, bridge)
+                (
+                    self._frontline_features,
+                    self._pressure_frontline_features,
+                ) = await self._frontline_geojson_features(result, bridge)
                 self._frontline_diagnostics = {
                     **result.diagnostics,
                     "ground_force_count": len(forces),
+                    "control_power_blue": sum(force.weight for force in forces if force.coalition == "blue"),
+                    "control_power_red": sum(force.weight for force in forces if force.coalition == "red"),
+                    "main_control_power_blue": sum(
+                        force.weight for force in classification.main_forces if force.coalition == "blue"
+                    ),
+                    "main_control_power_red": sum(
+                        force.weight for force in classification.main_forces if force.coalition == "red"
+                    ),
+                    "incursion_control_power_blue": sum(
+                        incursion.force.weight
+                        for incursion in classification.incursions
+                        if incursion.force.coalition == "blue"
+                    ),
+                    "incursion_control_power_red": sum(
+                        incursion.force.weight
+                        for incursion in classification.incursions
+                        if incursion.force.coalition == "red"
+                    ),
+                    "logistics_group_count": sum(
+                        1 for influence in self._group_influences.values() if influence.get("logistics") is not None
+                    ),
                     "main_force_count": len(classification.main_forces),
                     "incursion_count": len(classification.incursions),
                 }
             else:
                 self._frontline_features = []
+                self._pressure_frontline_features = []
                 self._frontline_diagnostics = {
                     "input_force_count": len(forces),
                     "main_force_count": len(classification.main_forces),
@@ -299,16 +368,48 @@ class GlobalMapRuntime:
             self._frontline_mission_time = mission_time
             self._frontline_error = None
 
+        self._add_influence_properties(geojson, self._group_influences)
+
         features = geojson.get("features")
         if isinstance(features, list):
             features.extend(self._frontline_features)
+            features.extend(self._pressure_frontline_features)
             features.extend(self._incursion_features)
         properties = geojson.setdefault("properties", {})
         properties["frontline_count"] = len(self._frontline_features)
+        properties["pressure_line_count"] = len(self._pressure_frontline_features)
         properties["incursion_count"] = len(self._incursion_features)
         properties["frontline_updated_mission_time"] = self._frontline_mission_time
         properties["frontline_diagnostics"] = self._frontline_diagnostics
         return geojson
+
+    @staticmethod
+    def _add_influence_properties(
+        geojson: dict[str, Any],
+        group_influences: dict[str, GroupInfluence],
+    ) -> None:
+        """Expose separated group influence values in map feature details."""
+
+        for feature in geojson.get("features", []):
+            properties = feature.get("properties") if isinstance(feature, dict) else None
+            if not isinstance(properties, dict) or properties.get("layer") != "groups":
+                continue
+            profile = group_influences.get(str(properties.get("object_id") or ""))
+            if profile is None:
+                continue
+            values = {
+                influence.kind.value: {
+                    "effective_power": round(influence.effective_power, 4),
+                    "ammo_readiness": round(influence.ammo_readiness, 4),
+                    "health_readiness": round(influence.health_readiness, 4),
+                    "minimum_range_m": round(influence.minimum_range_m, 3),
+                    "maximum_range_m": round(influence.maximum_range_m, 3),
+                    "roles": [role.value for role in influence.contributing_roles],
+                }
+                for influence in profile.influences
+            }
+            properties["influence"] = values
+            properties["control_power"] = values.get("control", {}).get("effective_power", 0.0)
 
     @staticmethod
     def _incursion_geojson_features(
@@ -356,27 +457,36 @@ class GlobalMapRuntime:
         return features
 
     @staticmethod
-    async def _frontline_geojson_features(result: FrontlineResult, bridge: Any) -> list[dict[str, Any]]:
-        points = [point for segment in result.segments for point in segment.points]
+    async def _frontline_geojson_features(
+        result: FrontlineResult,
+        bridge: Any,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        tagged_segments = [
+            *((segment, "frontlines", "Frontline") for segment in result.segments),
+            *((segment, "pressure_frontlines", "Pressure line") for segment in result.pressure_segments),
+        ]
+        points = [point for segment, _, _ in tagged_segments for point in segment.points]
         converted = await bridge.convert_points(points) if points else []
-        features: list[dict[str, Any]] = []
+        frontline_features: list[dict[str, Any]] = []
+        pressure_features: list[dict[str, Any]] = []
         cursor = 0
-        for segment in result.segments:
+        for segment, layer, label in tagged_segments:
             segment_points = converted[cursor : cursor + len(segment.points)]
             cursor += len(segment.points)
             coordinates = [[point.longitude, point.latitude] for point in segment_points]
             if len(coordinates) < 2:
                 continue
-            features.append(
+            target = frontline_features if layer == "frontlines" else pressure_features
+            target.append(
                 {
                     "type": "Feature",
                     "geometry": {"type": "LineString", "coordinates": coordinates},
                     "properties": {
-                        "layer": "frontlines",
-                        "object_id": f"FRONTLINE:{segment.index}",
-                        "name": f"Frontline {segment.index}",
-                        "object_type": "FRONTLINE",
-                        "category": "Operational frontline",
+                        "layer": layer,
+                        "object_id": f"{'FRONTLINE' if layer == 'frontlines' else 'PRESSURE_FRONTLINE'}:{segment.index}",
+                        "name": f"{label} {segment.index}",
+                        "object_type": "FRONTLINE" if layer == "frontlines" else "PRESSURE_FRONTLINE",
+                        "category": "Territorial frontline" if layer == "frontlines" else "Force pressure balance",
                         "length_m": segment.length_m,
                         "force_count": result.diagnostics.get("included_force_count", 0),
                         "blue_force_count": result.diagnostics.get("blue_force_count", 0),
@@ -386,7 +496,7 @@ class GlobalMapRuntime:
                     },
                 }
             )
-        return features
+        return frontline_features, pressure_features
 
     @staticmethod
     def _add_movement_properties(properties: dict[str, Any], history: deque[TrackPoint], mission_time: float) -> None:
@@ -486,8 +596,10 @@ class GlobalMapRuntime:
                         LOGGER.debug("Frontline update still unavailable: %s", exc)
                     self._frontline_error = frontline_error
                     self._frontline_features = []
+                    self._pressure_frontline_features = []
                     self._incursion_features = []
                     geojson["properties"]["frontline_count"] = 0
+                    geojson["properties"]["pressure_line_count"] = 0
                     geojson["properties"]["incursion_count"] = 0
                     geojson["properties"]["frontline_error"] = self._frontline_error
                 self.update_picture(geojson)
@@ -529,8 +641,13 @@ def create_app(
     history_seconds: float = DEFAULT_HISTORY_SECONDS,
     history_max_points: int = DEFAULT_HISTORY_MAX_POINTS,
     frontline_interval: float = DEFAULT_FRONTLINE_INTERVAL,
+    ammunition_interval: float = DEFAULT_AMMUNITION_INTERVAL,
     frontline_position_alpha: float = DEFAULT_FRONTLINE_POSITION_ALPHA,
+    force_anchor_sigma_m: float = DEFAULT_FORCE_ANCHOR_SIGMA_M,
+    force_anchor_margin_ratio: float = DEFAULT_FORCE_ANCHOR_MARGIN_RATIO,
     territory_control_ratio: float = DEFAULT_TERRITORY_CONTROL_RATIO,
+    territory_transition_m: float = DEFAULT_TERRITORY_TRANSITION_M,
+    pressure_territory_ratio: float = DEFAULT_PRESSURE_TERRITORY_RATIO,
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M,
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES,
 ) -> FastAPI:
@@ -544,8 +661,13 @@ def create_app(
         history_seconds=history_seconds,
         history_max_points=history_max_points,
         frontline_interval=frontline_interval,
+        ammunition_interval=ammunition_interval,
         frontline_position_alpha=frontline_position_alpha,
+        force_anchor_sigma_m=force_anchor_sigma_m,
+        force_anchor_margin_ratio=force_anchor_margin_ratio,
         territory_control_ratio=territory_control_ratio,
+        territory_transition_m=territory_transition_m,
+        pressure_territory_ratio=pressure_territory_ratio,
         incursion_support_radius_m=incursion_support_radius_m,
         lodgement_min_forces=lodgement_min_forces,
     )
@@ -603,8 +725,13 @@ def main() -> None:
     parser.add_argument("--history-seconds", type=float, default=DEFAULT_HISTORY_SECONDS, help="Trajectory history duration in mission seconds.")
     parser.add_argument("--history-max-points", type=int, default=DEFAULT_HISTORY_MAX_POINTS, help="Maximum trajectory samples per object.")
     parser.add_argument("--frontline-interval", type=float, default=DEFAULT_FRONTLINE_INTERVAL, help="Frontline recalculation interval in mission seconds.")
+    parser.add_argument("--ammunition-interval", type=float, default=DEFAULT_AMMUNITION_INTERVAL, help="Ammunition and influence refresh interval in mission seconds.")
     parser.add_argument("--frontline-position-alpha", type=float, default=DEFAULT_FRONTLINE_POSITION_ALPHA, help="Frontline force-position smoothing factor.")
-    parser.add_argument("--territory-control-ratio", type=float, default=DEFAULT_TERRITORY_CONTROL_RATIO, help="Weak territory-owner influence relative to peak force influence.")
+    parser.add_argument("--force-anchor-sigma", type=float, default=DEFAULT_FORCE_ANCHOR_SIGMA_M, help="Local force-anchor radius scale in meters.")
+    parser.add_argument("--force-anchor-margin", type=float, default=DEFAULT_FORCE_ANCHOR_MARGIN_RATIO, help="Required own-coalition advantage at a force position.")
+    parser.add_argument("--territory-control-ratio", type=float, default=DEFAULT_TERRITORY_CONTROL_RATIO, help="Territorial ownership strength relative to peak force pressure.")
+    parser.add_argument("--territory-transition", type=float, default=DEFAULT_TERRITORY_TRANSITION_M, help="Distance scale for territorial control transition in meters.")
+    parser.add_argument("--pressure-territory-ratio", type=float, default=DEFAULT_PRESSURE_TERRITORY_RATIO, help="Weak territory prior used by the force pressure line.")
     parser.add_argument("--incursion-support-radius", type=float, default=DEFAULT_INCURSION_SUPPORT_RADIUS_M, help="Ground-force connection radius in meters.")
     parser.add_argument("--lodgement-min-forces", type=int, default=DEFAULT_LODGEMENT_MIN_FORCES, help="Connected hostile groups required to establish a lodgement.")
     parser.add_argument("--log-level", default="INFO")
@@ -627,8 +754,13 @@ def main() -> None:
         history_seconds=max(0.0, args.history_seconds),
         history_max_points=max(2, args.history_max_points),
         frontline_interval=max(1.0, args.frontline_interval),
+        ammunition_interval=max(1.0, args.ammunition_interval),
         frontline_position_alpha=min(1.0, max(0.01, args.frontline_position_alpha)),
-        territory_control_ratio=min(0.99, max(0.0, args.territory_control_ratio)),
+        force_anchor_sigma_m=max(0.0, args.force_anchor_sigma),
+        force_anchor_margin_ratio=min(0.99, max(0.0, args.force_anchor_margin)),
+        territory_control_ratio=max(0.0, args.territory_control_ratio),
+        territory_transition_m=max(1.0, args.territory_transition),
+        pressure_territory_ratio=max(0.0, args.pressure_territory_ratio),
         incursion_support_radius_m=max(1.0, args.incursion_support_radius),
         lodgement_min_forces=max(1, args.lodgement_min_forces),
     )

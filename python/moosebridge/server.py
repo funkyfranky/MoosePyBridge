@@ -7,7 +7,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .protocol import BridgeCommand, PendingCommand
 from .state import MooseBridgeState
@@ -84,7 +84,20 @@ class MooseBridgeServer:
         self._pending: dict[str, PendingCommand] = {}
         self._event_history: list[dict[str, Any]] = []
         self._event_waiters: list[tuple[str, dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
+        self._message_listeners: list[Callable[[dict[str, Any]], None]] = []
         self._raw_log_file = None
+
+    def add_message_listener(self, listener: Callable[[dict[str, Any]], None]) -> None:
+        """Register a synchronous listener called after state has been updated."""
+
+        if listener not in self._message_listeners:
+            self._message_listeners.append(listener)
+
+    def remove_message_listener(self, listener: Callable[[dict[str, Any]], None]) -> None:
+        """Remove a previously registered message listener."""
+
+        if listener in self._message_listeners:
+            self._message_listeners.remove(listener)
 
     def _fail_pending(self, exc: BaseException) -> None:
         """Fail all commands currently waiting for a DCS ACK."""
@@ -194,6 +207,11 @@ class MooseBridgeServer:
 
         LOGGER.debug("DCS -> Python: %s", message)
         self.state.apply_message(message)
+        for listener in tuple(self._message_listeners):
+            try:
+                listener(message)
+            except Exception:
+                LOGGER.exception("Bridge message listener failed")
 
         if message.get("type") == "ack":
             self._resolve_ack(message)

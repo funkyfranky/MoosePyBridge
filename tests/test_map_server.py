@@ -7,10 +7,40 @@ import pytest
 pytest.importorskip("fastapi")
 
 from moosebridge.clock import DcsTime
+from moosebridge.ammunition import UnitAmmunition
 from moosebridge.map_server import GlobalMapRuntime, create_app, empty_picture
 from moosebridge.models import Territory
 from moosebridge.pictures import GlobalPicture
 from moosebridge.sdk import GeographicPoint
+from moosebridge.weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY
+
+
+def _armed_unit(group_id: str) -> UnitAmmunition:
+    name = group_id.removeprefix("GROUP:")
+    return UnitAmmunition.from_payload(
+        {
+            "object_id": f"UNIT:{name}",
+            "unit_id": f"UNIT:{name}",
+            "unit_name": name,
+            "group_id": group_id,
+            "group_name": name,
+            "dcs_type": "Leopard-2",
+            "category": "Ground Unit",
+            "attributes": ["Tanks"],
+            "life": 10,
+            "life0": 10,
+            "weapons": [
+                {
+                    "id": "weapons.shells.DM53_120_AP",
+                    "display_name": "DM53 (120mm APFSDS-T)",
+                    "category": 0,
+                    "caliber": 120,
+                    "count": 10,
+                    "initial_count": 10,
+                }
+            ],
+        }
+    )
 
 
 def test_empty_picture_is_wgs84_geojson() -> None:
@@ -44,8 +74,10 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "trajectory_count": 0,
         "history_seconds": 900.0,
         "frontline_count": 0,
+        "pressure_line_count": 0,
         "incursion_count": 0,
         "frontline_updated_mission_time": None,
+        "influence_updated_mission_time": None,
         "frontline_error": None,
     }
 
@@ -115,6 +147,12 @@ def test_map_runtime_resets_tracks_when_mission_time_restarts() -> None:
 def test_map_runtime_builds_and_reuses_live_frontline() -> None:
     class Bridge:
         calls = 0
+        ammo_calls = 0
+        weapon_range_registry = DEFAULT_WEAPON_RANGE_REGISTRY
+
+        async def refresh_ammunition(self) -> tuple[UnitAmmunition, ...]:
+            self.ammo_calls += 1
+            return (_armed_unit("GROUP:Blue"), _armed_unit("GROUP:Red"))
 
         async def convert_points(self, points: list[tuple[float, float]]) -> list[GeographicPoint]:
             self.calls += 1
@@ -127,26 +165,49 @@ def test_map_runtime_builds_and_reuses_live_frontline() -> None:
         runtime = GlobalMapRuntime(frontline_interval=15)
         bridge = Bridge()
         groups = [
-            {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "x": -15_000, "z": 0},
-            {"object_id": "GROUP:Red", "dcs_name": "Red", "category": "Ground Unit", "coalition": "red", "alive": True, "x": 15_000, "z": 0},
+            {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "active": True, "x": -15_000, "z": 0, "latitude": 54.0, "longitude": 11.85},
+            {"object_id": "GROUP:Red", "dcs_name": "Red", "category": "Ground Unit", "coalition": "red", "alive": True, "active": True, "x": 15_000, "z": 0, "latitude": 54.0, "longitude": 12.15},
         ]
         first = GlobalPicture(clock=DcsTime(mission_time=100), groups=groups)
         first_geojson = await runtime.update_frontline(first, first.to_geojson(), bridge)
         second = GlobalPicture(clock=DcsTime(mission_time=105), groups=groups)
         second_geojson = await runtime.update_frontline(second, second.to_geojson(), bridge)
+        third = GlobalPicture(clock=DcsTime(mission_time=120), groups=groups)
+        await runtime.update_frontline(third, third.to_geojson(), bridge)
+        fourth = GlobalPicture(clock=DcsTime(mission_time=165), groups=groups)
+        await runtime.update_frontline(fourth, fourth.to_geojson(), bridge)
 
         frontlines = [feature for feature in first_geojson["features"] if feature["properties"]["layer"] == "frontlines"]
+        pressure_lines = [feature for feature in first_geojson["features"] if feature["properties"]["layer"] == "pressure_frontlines"]
         assert frontlines
+        assert pressure_lines
         assert frontlines[0]["geometry"]["type"] == "LineString"
         assert first_geojson["properties"]["frontline_count"] == len(frontlines)
+        assert first_geojson["properties"]["pressure_line_count"] == len(pressure_lines)
         assert second_geojson["properties"]["frontline_count"] == len(frontlines)
-        assert bridge.calls == 1
+        assert bridge.calls == 3
+        assert bridge.ammo_calls == 2
+        blue = next(
+            feature for feature in first_geojson["features"]
+            if feature["properties"].get("object_id") == "GROUP:Blue"
+        )
+        assert blue["properties"]["control_power"] == 1.5
+        assert blue["properties"]["influence"]["direct_fire"]["maximum_range_m"] == 3_500
 
     asyncio.run(scenario())
 
 
 def test_map_runtime_publishes_incursion_without_bending_main_front() -> None:
     class Bridge:
+        weapon_range_registry = DEFAULT_WEAPON_RANGE_REGISTRY
+
+        async def refresh_ammunition(self) -> tuple[UnitAmmunition, ...]:
+            return (
+                _armed_unit("GROUP:Blue"),
+                _armed_unit("GROUP:RedRear"),
+                _armed_unit("GROUP:RedIncursion"),
+            )
+
         async def convert_points(self, points: list[tuple[float, float]]) -> list[GeographicPoint]:
             return [
                 GeographicPoint(x=x, y=0, z=z, latitude=54 + z / 100_000, longitude=12 + x / 100_000)
@@ -185,9 +246,9 @@ def test_map_runtime_publishes_incursion_without_bending_main_front() -> None:
             }
         )
         groups = [
-            {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "x": -30_000, "y": 0, "z": 0, "latitude": 54, "longitude": 11.7},
-            {"object_id": "GROUP:RedRear", "dcs_name": "Red Rear", "category": "Ground Unit", "coalition": "red", "alive": True, "x": 30_000, "y": 0, "z": 0, "latitude": 54, "longitude": 12.3},
-            {"object_id": "GROUP:RedIncursion", "dcs_name": "Red Incursion", "category": "Ground Unit", "coalition": "red", "alive": True, "x": -20_000, "y": 0, "z": 20_000, "latitude": 54.2, "longitude": 11.8},
+            {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "active": True, "x": -30_000, "y": 0, "z": 0, "latitude": 54, "longitude": 11.7},
+            {"object_id": "GROUP:RedRear", "dcs_name": "Red Rear", "category": "Ground Unit", "coalition": "red", "alive": True, "active": True, "x": 30_000, "y": 0, "z": 0, "latitude": 54, "longitude": 12.3},
+            {"object_id": "GROUP:RedIncursion", "dcs_name": "Red Incursion", "category": "Ground Unit", "coalition": "red", "alive": True, "active": True, "x": -20_000, "y": 0, "z": 20_000, "latitude": 54.2, "longitude": 11.8},
         ]
         picture = GlobalPicture(clock=DcsTime(mission_time=100), groups=groups, territories=[territory, red_territory])
         runtime = GlobalMapRuntime()
@@ -198,6 +259,8 @@ def test_map_runtime_publishes_incursion_without_bending_main_front() -> None:
         assert incursions[0]["properties"]["source_group_id"] == "GROUP:RedIncursion"
         assert geojson["properties"]["incursion_count"] == 1
         assert geojson["properties"]["frontline_diagnostics"]["main_force_count"] == 2
+        assert geojson["properties"]["frontline_diagnostics"]["main_control_power_red"] == 1.5
+        assert geojson["properties"]["frontline_diagnostics"]["incursion_control_power_red"] == 1.5
 
     asyncio.run(scenario())
 

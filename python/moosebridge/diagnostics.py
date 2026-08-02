@@ -5,7 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from .capabilities import CapabilityReadiness, GroupCapabilities, UnitCapabilities
+from .capabilities import (
+    CapabilityReadiness,
+    GroupCapabilities,
+    GroupInfluence,
+    InfluenceReadiness,
+    UnitCapabilities,
+    UnitInfluence,
+)
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .pictures import GlobalPicture, PictureValidationIssue
@@ -46,6 +53,40 @@ def format_group_capabilities(profile: GroupCapabilities) -> str:
 
     lines = [f"{profile.group_id} capabilities units={len(profile.units)}"]
     lines.extend(f"  {format_capability_readiness(capability)}" for capability in profile.capabilities)
+    return "\n".join(lines)
+
+
+def format_influence_readiness(influence: InfluenceReadiness) -> str:
+    """Return one readable tactical influence line."""
+
+    roles = ",".join(role.value for role in influence.contributing_roles) or "-"
+    range_text = (
+        f" range={influence.minimum_range_m / 1000:.3f}-{influence.maximum_range_m / 1000:.3f}km"
+        if influence.maximum_range_m > 0 else ""
+    )
+    return (
+        f"{influence.kind.value:<14} "
+        f"base={influence.base_power:5.2f} "
+        f"ammo={influence.ammo_readiness:6.1%} "
+        f"health={influence.health_readiness:6.1%} "
+        f"effective={influence.effective_power:5.2f}"
+        f"{range_text} roles={roles}"
+    )
+
+
+def format_unit_influence(profile: UnitInfluence) -> str:
+    """Return separated tactical influences for one unit."""
+
+    lines = [f"{profile.unit_id} influence type={_text(profile.dcs_type)}"]
+    lines.extend(f"  {format_influence_readiness(item)}" for item in profile.influences)
+    return "\n".join(lines)
+
+
+def format_group_influence(profile: GroupInfluence) -> str:
+    """Return aggregated tactical influences for one group."""
+
+    lines = [f"{profile.group_id} influence units={len(profile.units)}"]
+    lines.extend(f"  {format_influence_readiness(item)}" for item in profile.influences)
     return "\n".join(lines)
 
 

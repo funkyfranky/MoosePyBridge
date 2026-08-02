@@ -18,6 +18,7 @@
     { key: "zones", label: "Zones", color: "#c19424", icon: "map-pin", default: false },
     { key: "territories", label: "Territories", color: "#59635e", icon: "map", default: true },
     { key: "frontlines", label: "Frontlines", color: "#573a58", icon: "git-commit-horizontal", default: true },
+    { key: "pressure_frontlines", label: "Pressure line", color: "#9a6f24", icon: "activity", default: false },
     { key: "incursions", label: "Incursions", color: "#d06f27", icon: "shield-alert", size: 1.12, default: true },
     { key: "opszones", label: "OPS zones", color: "#8b5ea7", icon: "shield", default: true },
     { key: "opsgroups", label: "OPS groups", color: "#1e8171", icon: "badge", size: 1.1, default: true },
@@ -304,6 +305,19 @@
             "line-width": 4,
             "line-dasharray": [2, 1.2],
             "line-opacity": 0.96,
+          },
+        });
+        continue;
+      }
+      if (spec.key === "pressure_frontlines") {
+        addMapLayer(spec, {
+          type: "line",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "line-color": spec.color,
+            "line-width": 2.5,
+            "line-dasharray": [1.2, 1.6],
+            "line-opacity": 0.82,
           },
         });
         continue;

@@ -149,6 +149,54 @@ separate GeoJSON/map layer, and `FrontlineCalculationArea.from_territory()` adap
 same geometry for Python's frontline engine. See `examples/sdk/territories.py`
 for a parameterless client example.
 
+### Strategic objectives
+
+Python owns strategic objectives. An objective may be created or removed at
+runtime and may contain multiple DCS/MOOSE components. Its ownership policy
+selects the authoritative source instead of inferring control generically:
+
+- `DCS_MANAGED` reads an `AIRBASE` or FARP owner from DCS state.
+- `MOOSE_MANAGED` reads an `OPSZONE` owner and contested state from MOOSE.
+- `TERRITORY_INHERITED` follows a passive `TERRITORY` declaration.
+- `FIXED` retains the owner assigned by Python.
+
+```python
+from moosebridge import (
+    CaptureBehavior,
+    ObjectiveComponent,
+    ObjectiveKind,
+    OwnershipPolicy,
+    StrategicObjective,
+)
+
+parchim = StrategicObjective(
+    objective_id="OBJECTIVE:Parchim",
+    name="Parchim Airbase",
+    kind=ObjectiveKind.AIRBASE,
+    control_object_id="AIRBASE:Parchim",
+    ownership_policy=OwnershipPolicy.DCS_MANAGED,
+    strategic_value=80,
+    priority=60,
+    components=(
+        ObjectiveComponent(
+            "STATIC:Parchim Depot",
+            role="storage",
+            weight=0.7,
+            capture_behavior=CaptureBehavior.RESPAWN_FOR_NEW_OWNER,
+        ),
+        ObjectiveComponent("GROUP:Parchim Defense", role="defense", weight=0.3),
+    ),
+)
+
+bridge.add_strategic_objective(parchim)
+```
+
+The SDK registry synchronizes automatically after relevant bridge snapshots
+and events. `bridge.sync_strategic_objectives()` is available for explicit
+tests. A control change produces a normalized `objective.control_changed`
+event. `capture_actions(event, objective)` identifies components that require
+explicit handling; it does not respawn or destroy DCS objects by itself.
+
 ## Python setup
 
 From the project root:
@@ -451,7 +499,24 @@ indirect-fire and air-defense units receive reduced presence, and an unarmed
 logistics unit retains a small default presence of `0.10`. Artillery and MLRS
 produce `indirect_fire`; they do not currently add local direct-fire power.
 The relative coefficients are centralized in `moosebridge.capabilities` for
-scenario-based calibration before frontline integration.
+scenario-based calibration.
+
+Spatial influence is modeled separately from diagnostic presence:
+
+```python
+from moosebridge import format_group_influence
+
+influence = bridge.group_influence("GROUP:Armor")
+print(format_group_influence(influence))
+```
+
+The independent kinds are `control`, `direct_fire`, `indirect_fire`,
+`air_defense`, and `logistics`. Only `control` contributes to the land
+frontline. Unarmed supply and transport units contribute exclusively to
+`logistics`; air-defense power does not move the ground frontline. Artillery
+retains only a small local control contribution while its principal effect is
+`indirect_fire`. Health and ammunition readiness affect each applicable value,
+and weapon ranges come from the same versioned range registry.
 
 ### Global map viewer
 
@@ -481,35 +546,57 @@ disappears and are reset when mission time restarts.
 The map server also calculates a live operational frontline every 15 mission
 seconds by default:
 
-- alive blue and red ground groups are used once each, without counting their
-  units again;
+- only active, living blue and red ground groups are considered;
+- group control weight is aggregated from the current per-unit health,
+  ammunition, weapon roles, and ranges;
+- unarmed logistics groups are excluded from the land frontline;
 - aircraft, helicopters, and ships do not influence the land frontline;
 - group positions are smoothed before influence-field calculation;
 - polygon territories form a combined calculation area that includes neutral
   gaps between them;
-- declared territory ownership supplies a weak control prior instead of
-  replacing force-derived influence;
+- distance to blue and red territory supplies the stable ownership field; its
+  neutral zero line runs between non-overlapping territory boundaries;
+- forces still inside their own territory add pressure and defensive strength
+  but do not move the territorial frontline;
+- forces in the neutral corridor or opposing territory deform the frontline
+  locally; active forces also anchor their immediate surroundings, allowing
+  bridgeheads and surrounded pockets;
 - isolated hostile ground groups inside an opposing territory are published
-  as `Incursions` and do not bend the main frontline; nearby external support
-  or a connected force of at least three groups establishes a lodgement that
-  participates in the main-front calculation;
+  as `Incursions`; they may form a local territorial pocket but do not distort
+  the main force-pressure calculation;
 - all generated line vertices are converted through one batched DCS
   `coord.LOtoLL` call;
-- the results are published through separately switchable `Frontlines` and
-  `Incursions` map layers.
+- the territorial result is published as `Frontlines`; the previous force
+  balance contour remains available as the default-hidden `Pressure line`,
+  alongside the `Incursions` layer.
+
+Positions and the frontline are recalculated independently from ammunition.
+The more expensive ammunition snapshot refreshes every 60 mission seconds by
+default, and its influence weights are reused between refreshes. Group map
+features expose the current separated values under `influence`.
 
 The recalculation interval and smoothing factor can be changed when starting
 the server:
 
 ```powershell
-python -m moosebridge.map_server --frontline-interval 15 --frontline-position-alpha 0.35
+python -m moosebridge.map_server --frontline-interval 15 --ammunition-interval 60 --frontline-position-alpha 0.35
 ```
+
+The local anchor defaults to a 5 km Gaussian scale and a 25 percent own-field
+margin. Both are configurable with `--force-anchor-sigma` and
+`--force-anchor-margin`.
+
+Territorial ownership has a default strength of `1.0` relative to peak force
+pressure and transitions over 20 km. These values are configurable with
+`--territory-control-ratio` and `--territory-transition`. The pressure line
+retains a weak independent territory prior controlled by
+`--pressure-territory-ratio`.
 
 ### Operational frontline diagnostics
 
-The frontline module derives an operational line from weighted blue and red
-ground-force positions. It uses passive polygon geometry as a calculation
-boundary; it does not create or scan large MOOSE `OPSZONE`s.
+The frontline module derives territorial control from passive MOOSE territory
+polygons and uses weighted blue/red ground forces for local deformation and a
+separate pressure balance. It does not create or scan large MOOSE `OPSZONE`s.
 
 Install the numerical/geospatial dependencies and run the isolated synthetic
 example:

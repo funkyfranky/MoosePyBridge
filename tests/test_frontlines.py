@@ -11,6 +11,7 @@ pytest.importorskip("shapely")
 
 from shapely.geometry import Point
 
+from moosebridge.capabilities import GroupInfluence, InfluenceKind, InfluenceReadiness
 from moosebridge.frontline_diagnostics import write_frontline_diagnostic_html
 from moosebridge.frontlines import (
     ForcePoint,
@@ -55,6 +56,95 @@ def test_single_coalition_has_no_frontline() -> None:
     result = FrontlineEngine().calculate([ForcePoint("GROUP:Blue", "blue", 0, 0)], area=square())
 
     assert result.segments == ()
+
+
+def test_force_anchor_keeps_living_defender_inside_own_local_field() -> None:
+    result = FrontlineEngine(
+        FrontlineConfig(
+            grid_spacing_m=1_000,
+            influence_sigma_m=20_000,
+            force_anchor_sigma_m=5_000,
+            simplify_tolerance_m=0,
+            minimum_segment_length_m=0,
+        )
+    ).calculate(
+        [
+            ForcePoint("GROUP:Blue", "blue", -10_000, 0, weight=20),
+            ForcePoint("GROUP:Red", "red", 10_000, 0, weight=1),
+        ],
+        area=square(),
+    )
+    x_index = int(abs(result.x_coordinates - 10_000).argmin())
+    z_index = int(abs(result.z_coordinates).argmin())
+
+    assert result.red_influence[z_index, x_index] > result.blue_influence[z_index, x_index]
+    assert result.diagnostics["force_anchor_count"] == 1
+    assert result.diagnostics["red_frontline_distance_min_m"] > 0
+
+
+def test_territorial_front_stays_between_territories_while_pressure_line_moves() -> None:
+    regions = [
+        TerritoryControlRegion(
+            "TERRITORY:Blue",
+            "Blue",
+            "blue",
+            ((-50_000, -50_000), (-5_000, -50_000), (-5_000, 50_000), (-50_000, 50_000)),
+        ),
+        TerritoryControlRegion(
+            "TERRITORY:Red",
+            "Red",
+            "red",
+            ((5_000, -50_000), (50_000, -50_000), (50_000, 50_000), (5_000, 50_000)),
+        ),
+    ]
+    result = FrontlineEngine(
+        FrontlineConfig(grid_spacing_m=1_000, simplify_tolerance_m=0, minimum_segment_length_m=0)
+    ).calculate(
+        [
+            ForcePoint("GROUP:Blue", "blue", -10_000, 0, weight=20),
+            ForcePoint("GROUP:Red", "red", 10_000, 0, weight=1),
+        ],
+        area=square(),
+        control_regions=regions,
+    )
+
+    assert result.segments
+    assert result.pressure_segments
+    assert max(abs(x) for segment in result.segments for x, _ in segment.points) <= 1_000
+    assert min(x for segment in result.pressure_segments for x, _ in segment.points) > 5_000
+    assert result.diagnostics["forward_force_count"] == 0
+
+
+def test_force_outside_own_territory_can_deform_territorial_control() -> None:
+    regions = [
+        TerritoryControlRegion(
+            "TERRITORY:Blue",
+            "Blue",
+            "blue",
+            ((-50_000, -50_000), (-5_000, -50_000), (-5_000, 50_000), (-50_000, 50_000)),
+        ),
+        TerritoryControlRegion(
+            "TERRITORY:Red",
+            "Red",
+            "red",
+            ((5_000, -50_000), (50_000, -50_000), (50_000, 50_000), (5_000, 50_000)),
+        ),
+    ]
+    result = FrontlineEngine(
+        FrontlineConfig(grid_spacing_m=1_000, simplify_tolerance_m=0, minimum_segment_length_m=0)
+    ).calculate(
+        [
+            ForcePoint("GROUP:BlueForward", "blue", 12_000, 0, weight=5),
+            ForcePoint("GROUP:Red", "red", 25_000, 0, weight=1),
+        ],
+        area=square(),
+        control_regions=regions,
+    )
+    x_index = int(abs(result.x_coordinates - 12_000).argmin())
+    z_index = int(abs(result.z_coordinates).argmin())
+
+    assert result.blue_influence[z_index, x_index] > result.red_influence[z_index, x_index]
+    assert result.diagnostics["forward_force_count"] == 1
 
 
 def test_area_excludes_outside_forces() -> None:
@@ -130,12 +220,13 @@ def test_combined_territories_span_neutral_gap() -> None:
 
 def test_live_group_adapter_and_position_smoothing() -> None:
     groups = [
-        {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "x": 0, "z": 10},
-        {"object_id": "GROUP:Red", "category": "Ground Unit", "coalition": "red", "alive": True, "x": 100, "z": 10},
-        {"object_id": "GROUP:Air", "category": "Airplane", "coalition": "blue", "alive": True, "x": 0, "z": 0},
-        {"object_id": "GROUP:Helo", "category": "Helicopter", "coalition": "blue", "alive": True, "x": 0, "z": 0},
-        {"object_id": "GROUP:Ship", "category": "Ship", "coalition": "blue", "alive": True, "x": 0, "z": 0},
-        {"object_id": "GROUP:Dead", "category": "Ground Unit", "coalition": "red", "alive": False, "x": 0, "z": 0},
+        {"object_id": "GROUP:Blue", "dcs_name": "Blue", "category": "Ground Unit", "coalition": "blue", "alive": True, "active": True, "x": 0, "z": 10},
+        {"object_id": "GROUP:Red", "category": "Ground Unit", "coalition": "red", "alive": True, "active": True, "x": 100, "z": 10},
+        {"object_id": "GROUP:Air", "category": "Airplane", "coalition": "blue", "alive": True, "active": True, "x": 0, "z": 0},
+        {"object_id": "GROUP:Helo", "category": "Helicopter", "coalition": "blue", "alive": True, "active": True, "x": 0, "z": 0},
+        {"object_id": "GROUP:Ship", "category": "Ship", "coalition": "blue", "alive": True, "active": True, "x": 0, "z": 0},
+        {"object_id": "GROUP:Dead", "category": "Ground Unit", "coalition": "red", "alive": False, "active": True, "x": 0, "z": 0},
+        {"object_id": "GROUP:Inactive", "category": "Ground Unit", "coalition": "blue", "alive": True, "active": False, "x": 0, "z": 0},
     ]
     tracker = FrontlineForceTracker(position_alpha=0.25)
 
@@ -145,6 +236,36 @@ def test_live_group_adapter_and_position_smoothing() -> None:
 
     assert [force.object_id for force in first] == ["GROUP:Blue", "GROUP:Red"]
     assert second[0].x == 25
+
+
+def test_weighted_group_adapter_excludes_logistics_and_inactive_groups() -> None:
+    groups = [
+        {"object_id": "GROUP:Armor", "category": "Ground Unit", "coalition": "blue", "alive": True, "active": True, "x": 0, "z": 0},
+        {"object_id": "GROUP:Supply", "category": "Ground Unit", "coalition": "blue", "alive": True, "active": True, "x": 10, "z": 0},
+        {"object_id": "GROUP:Inactive", "category": "Ground Unit", "coalition": "red", "alive": True, "active": False, "x": 20, "z": 0},
+    ]
+    influences = {
+        "GROUP:Armor": GroupInfluence(
+            "GROUP:Armor",
+            (),
+            (InfluenceReadiness(InfluenceKind.CONTROL, 2, 1, 1, 2),),
+        ),
+        "GROUP:Supply": GroupInfluence(
+            "GROUP:Supply",
+            (),
+            (InfluenceReadiness(InfluenceKind.LOGISTICS, 0.1, 1, 1, 0.1, maximum_range_m=5_000),),
+        ),
+        "GROUP:Inactive": GroupInfluence(
+            "GROUP:Inactive",
+            (),
+            (InfluenceReadiness(InfluenceKind.CONTROL, 5, 1, 1, 5),),
+        ),
+    }
+
+    forces = force_points_from_groups(groups, influences=influences)
+
+    assert [force.object_id for force in forces] == ["GROUP:Armor"]
+    assert forces[0].weight == 2
 
 
 def test_isolated_hostile_territory_force_becomes_incursion() -> None:

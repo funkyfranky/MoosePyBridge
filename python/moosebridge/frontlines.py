@@ -5,15 +5,17 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import math
 from time import perf_counter
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, Mapping
 
 import contourpy
 import numpy as np
 from numpy.typing import NDArray
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import distance_transform_edt, gaussian_filter
 import shapely
 from shapely.geometry import LineString, MultiLineString, Point, Polygon
 from shapely.geometry.base import BaseGeometry
+
+from .capabilities import GroupInfluence, InfluenceKind
 
 CoalitionName = Literal["blue", "red"]
 FloatGrid = NDArray[np.float32]
@@ -270,8 +272,12 @@ class FrontlineCalculationArea:
         )
 
 
-def force_points_from_groups(groups: Iterable[dict[str, Any]]) -> tuple[ForcePoint, ...]:
-    """Select alive blue/red ground groups from a global truth snapshot."""
+def force_points_from_groups(
+    groups: Iterable[dict[str, Any]],
+    *,
+    influences: Mapping[str, GroupInfluence] | None = None,
+) -> tuple[ForcePoint, ...]:
+    """Select active living ground groups and optionally apply control power."""
 
     forces: list[ForcePoint] = []
     for group in groups:
@@ -280,16 +286,29 @@ def force_points_from_groups(groups: Iterable[dict[str, Any]]) -> tuple[ForcePoi
         coalition = str(group.get("coalition") or "").strip().lower()
         x = group.get("x")
         z = group.get("z")
-        if not object_id or group.get("alive") is not True or category not in LAND_FRONTLINE_CATEGORIES:
+        if (
+            not object_id
+            or group.get("alive") is not True
+            or group.get("active") is not True
+            or category not in LAND_FRONTLINE_CATEGORIES
+        ):
             continue
         if coalition not in {"blue", "red"} or not isinstance(x, (int, float)) or not isinstance(z, (int, float)):
             continue
+        weight = 1.0
+        if influences is not None:
+            group_influence = influences.get(object_id)
+            control = group_influence.get(InfluenceKind.CONTROL) if group_influence is not None else None
+            if control is None or control.effective_power <= 0:
+                continue
+            weight = control.effective_power
         forces.append(
             ForcePoint(
                 object_id=object_id,
                 coalition=coalition,  # type: ignore[arg-type]
                 x=float(x),
                 z=float(z),
+                weight=weight,
                 label=str(group.get("dcs_name") or group.get("name") or group.get("object_id") or ""),
             )
         )
@@ -342,13 +361,17 @@ class FrontlineConfig:
     grid_spacing_m: float = 2_500.0
     influence_sigma_m: float = 20_000.0
     influence_truncate: float = 3.0
+    force_anchor_sigma_m: float = 5_000.0
+    force_anchor_margin_ratio: float = 0.25
     minimum_activity_ratio: float = 0.025
     minimum_opposition_ratio: float = 0.01
     simplify_tolerance_m: float = 750.0
     minimum_segment_length_m: float = 5_000.0
     bounds_padding_m: float = 30_000.0
     maximum_grid_cells: int = 1_000_000
-    territory_control_ratio: float = 0.08
+    territory_control_ratio: float = 1.0
+    territory_transition_m: float = 20_000.0
+    pressure_territory_ratio: float = 0.08
     incursion_support_radius_m: float = 30_000.0
     incursion_lodgement_min_forces: int = 3
 
@@ -357,21 +380,34 @@ class FrontlineConfig:
             "grid_spacing_m": self.grid_spacing_m,
             "influence_sigma_m": self.influence_sigma_m,
             "influence_truncate": self.influence_truncate,
+            "territory_transition_m": self.territory_transition_m,
             "maximum_grid_cells": self.maximum_grid_cells,
         }
         for name, value in positive.items():
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
-        ratios = {
+        mask_ratios = {
             "minimum_activity_ratio": self.minimum_activity_ratio,
             "minimum_opposition_ratio": self.minimum_opposition_ratio,
-            "territory_control_ratio": self.territory_control_ratio,
         }
-        for name, value in ratios.items():
+        for name, value in mask_ratios.items():
             if not 0 <= value < 1:
                 raise ValueError(f"{name} must be in [0, 1)")
-        if self.simplify_tolerance_m < 0 or self.minimum_segment_length_m < 0 or self.bounds_padding_m < 0:
+        for name, value in {
+            "territory_control_ratio": self.territory_control_ratio,
+            "pressure_territory_ratio": self.pressure_territory_ratio,
+        }.items():
+            if value < 0 or not math.isfinite(value):
+                raise ValueError(f"{name} must be finite and non-negative")
+        if (
+            self.simplify_tolerance_m < 0
+            or self.minimum_segment_length_m < 0
+            or self.bounds_padding_m < 0
+            or self.force_anchor_sigma_m < 0
+        ):
             raise ValueError("Distance limits cannot be negative")
+        if not 0 <= self.force_anchor_margin_ratio < 1:
+            raise ValueError("force_anchor_margin_ratio must be in [0, 1)")
         if self.incursion_support_radius_m <= 0:
             raise ValueError("incursion_support_radius_m must be positive")
         if self.incursion_lodgement_min_forces < 1:
@@ -416,6 +452,7 @@ class FrontlineResult:
     red_influence: FloatGrid
     active_mask: BoolGrid
     segments: tuple[FrontlineSegment, ...]
+    pressure_segments: tuple[FrontlineSegment, ...]
     elapsed_ms: float
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
@@ -460,6 +497,18 @@ class FrontlineResult:
             for force in self.forces
         )
         features.extend(segment.to_geojson_feature() for segment in self.segments)
+        features.extend(
+            {
+                **segment.to_geojson_feature(),
+                "properties": {
+                    **segment.to_geojson_feature()["properties"],
+                    "layer": "pressure_frontlines",
+                    "object_id": f"PRESSURE_FRONTLINE:{segment.index}",
+                    "name": f"Pressure line {segment.index}",
+                },
+            }
+            for segment in self.pressure_segments
+        )
         return {
             "type": "FeatureCollection",
             "features": features,
@@ -486,6 +535,7 @@ class FrontlineEngine:
         *,
         area: FrontlineCalculationArea | None = None,
         control_regions: Iterable[TerritoryControlRegion] = (),
+        pressure_forces: Iterable[ForcePoint] | None = None,
     ) -> FrontlineResult:
         """Build influence fields and extract balanced opposing contours."""
 
@@ -509,29 +559,104 @@ class FrontlineEngine:
             included_forces.append(force)
 
         sigma_cells = self.config.influence_sigma_m / self.config.grid_spacing_m
-        blue_influence = gaussian_filter(
+        blue_activity = gaussian_filter(
             blue_seed,
             sigma=sigma_cells,
             mode="constant",
             truncate=self.config.influence_truncate,
         ).astype(np.float32, copy=False)
-        red_influence = gaussian_filter(
+        red_activity = gaussian_filter(
             red_seed,
             sigma=sigma_cells,
             mode="constant",
             truncate=self.config.influence_truncate,
         ).astype(np.float32, copy=False)
-
-        territory_prior = self._apply_territory_control_prior(
-            blue_influence,
-            red_influence,
+        activity_mask = self._active_mask(
+            blue_activity,
+            red_activity,
+            x_coordinates,
+            z_coordinates,
+            area_geometry,
+        )
+        pressure_force_points = tuple(pressure_forces) if pressure_forces is not None else tuple(included_forces)
+        included_pressure_forces = tuple(
+            force
+            for force in pressure_force_points
+            if area_geometry is None or area_geometry.covers(Point(force.x, force.z))
+        )
+        if pressure_forces is None:
+            pressure_blue = blue_activity.copy()
+            pressure_red = red_activity.copy()
+        else:
+            pressure_blue, pressure_red = self._force_influence_fields(
+                included_pressure_forces,
+                x_coordinates,
+                z_coordinates,
+            )
+        self._apply_territory_control_prior(
+            pressure_blue,
+            pressure_red,
             x_coordinates,
             z_coordinates,
             regions,
             {force.coalition for force in included_forces},
+            ratio=self.config.pressure_territory_ratio,
         )
-        active_mask = self._active_mask(blue_influence, red_influence, x_coordinates, z_coordinates, area_geometry)
-        segments = self._extract_segments(blue_influence - red_influence, active_mask, x_coordinates, z_coordinates, area_geometry)
+        pressure_segments = self._extract_segments(
+            pressure_blue - pressure_red,
+            activity_mask,
+            x_coordinates,
+            z_coordinates,
+            area_geometry,
+        )
+
+        territory_coalitions = {region.coalition for region in regions}
+        if territory_coalitions == {"blue", "red"}:
+            blue_influence, red_influence, territory_prior = self._territory_control_fields(
+                blue_activity,
+                red_activity,
+                x_coordinates,
+                z_coordinates,
+                regions,
+            )
+            forward_forces = tuple(
+                force for force in included_forces if not self._inside_own_territory(force, regions)
+            )
+            forward_blue, forward_red = self._force_influence_fields(
+                forward_forces,
+                x_coordinates,
+                z_coordinates,
+            )
+            blue_influence += forward_blue
+            red_influence += forward_red
+        else:
+            blue_influence = pressure_blue.copy()
+            red_influence = pressure_red.copy()
+            territory_prior = self._apply_territory_control_prior(
+                blue_influence,
+                red_influence,
+                x_coordinates,
+                z_coordinates,
+                regions,
+                {force.coalition for force in included_forces},
+                ratio=self.config.territory_control_ratio,
+            )
+            forward_forces = tuple(included_forces)
+
+        anchor_diagnostics = self._apply_force_anchors(
+            blue_influence,
+            red_influence,
+            x_coordinates,
+            z_coordinates,
+            tuple(included_forces),
+        )
+        segments = self._extract_segments(
+            blue_influence - red_influence,
+            activity_mask,
+            x_coordinates,
+            z_coordinates,
+            area_geometry,
+        )
         elapsed_ms = (perf_counter() - started) * 1_000
         diagnostics = {
             "input_force_count": len(force_points),
@@ -541,11 +666,17 @@ class FrontlineEngine:
             "grid_columns": len(x_coordinates),
             "grid_rows": len(z_coordinates),
             "grid_cells": len(x_coordinates) * len(z_coordinates),
-            "active_cells": int(np.count_nonzero(active_mask)),
+            "active_cells": int(np.count_nonzero(activity_mask)),
             "segment_count": len(segments),
             "frontline_length_m": sum(segment.length_m for segment in segments),
+            "pressure_segment_count": len(pressure_segments),
+            "pressure_line_length_m": sum(segment.length_m for segment in pressure_segments),
+            "pressure_force_count": len(included_pressure_forces),
             "territory_control_region_count": len(regions),
             "territory_control_prior": territory_prior,
+            "forward_force_count": len(forward_forces),
+            **anchor_diagnostics,
+            **self._force_frontline_diagnostics(tuple(included_forces), segments),
         }
         return FrontlineResult(
             forces=tuple(included_forces),
@@ -556,8 +687,9 @@ class FrontlineEngine:
             z_coordinates=z_coordinates,
             blue_influence=blue_influence,
             red_influence=red_influence,
-            active_mask=active_mask,
+            active_mask=activity_mask,
             segments=segments,
+            pressure_segments=pressure_segments,
             elapsed_ms=elapsed_ms,
             diagnostics=diagnostics,
         )
@@ -570,8 +702,9 @@ class FrontlineEngine:
         z_coordinates: NDArray[np.float64],
         regions: tuple[TerritoryControlRegion, ...],
         present_coalitions: set[CoalitionName],
+        *,
+        ratio: float,
     ) -> float:
-        ratio = self.config.territory_control_ratio
         peak = float((blue + red).max(initial=0.0))
         prior = peak * ratio
         if prior <= 0 or not regions:
@@ -584,6 +717,145 @@ class FrontlineEngine:
             target = blue if region.coalition == "blue" else red
             target[mask] += prior
         return prior
+
+    def _territory_control_fields(
+        self,
+        blue_pressure: FloatGrid,
+        red_pressure: FloatGrid,
+        x_coordinates: NDArray[np.float64],
+        z_coordinates: NDArray[np.float64],
+        regions: tuple[TerritoryControlRegion, ...],
+    ) -> tuple[FloatGrid, FloatGrid, float]:
+        """Build a stable territorial field whose zero lies between territories."""
+
+        blue_geometry = shapely.union_all([region.geometry for region in regions if region.coalition == "blue"])
+        red_geometry = shapely.union_all([region.geometry for region in regions if region.coalition == "red"])
+        grid_x, grid_z = np.meshgrid(x_coordinates, z_coordinates)
+        blue_mask = shapely.intersects_xy(blue_geometry, grid_x, grid_z)
+        red_mask = shapely.intersects_xy(red_geometry, grid_x, grid_z)
+        spacing = self.config.grid_spacing_m
+        distance_to_blue = distance_transform_edt(~blue_mask) * spacing
+        distance_to_red = distance_transform_edt(~red_mask) * spacing
+        signed_proximity = np.clip(
+            (distance_to_red - distance_to_blue) / self.config.territory_transition_m,
+            -1.0,
+            1.0,
+        ).astype(np.float32, copy=False)
+        pressure_peak = float((blue_pressure + red_pressure).max(initial=0.0))
+        prior = pressure_peak * self.config.territory_control_ratio
+        blue = (prior * np.maximum(signed_proximity, 0.0)).astype(np.float32, copy=False)
+        red = (prior * np.maximum(-signed_proximity, 0.0)).astype(np.float32, copy=False)
+        return blue, red, prior
+
+    def _force_influence_fields(
+        self,
+        forces: tuple[ForcePoint, ...],
+        x_coordinates: NDArray[np.float64],
+        z_coordinates: NDArray[np.float64],
+    ) -> tuple[FloatGrid, FloatGrid]:
+        """Build broad influence fields for forces allowed to alter territory."""
+
+        blue_seed = np.zeros((len(z_coordinates), len(x_coordinates)), dtype=np.float32)
+        red_seed = np.zeros_like(blue_seed)
+        for force in forces:
+            x_index = int(np.clip(np.rint((force.x - x_coordinates[0]) / self.config.grid_spacing_m), 0, len(x_coordinates) - 1))
+            z_index = int(np.clip(np.rint((force.z - z_coordinates[0]) / self.config.grid_spacing_m), 0, len(z_coordinates) - 1))
+            target = blue_seed if force.coalition == "blue" else red_seed
+            target[z_index, x_index] += force.weight
+        sigma_cells = self.config.influence_sigma_m / self.config.grid_spacing_m
+        return (
+            gaussian_filter(
+                blue_seed,
+                sigma=sigma_cells,
+                mode="constant",
+                truncate=self.config.influence_truncate,
+            ).astype(np.float32, copy=False),
+            gaussian_filter(
+                red_seed,
+                sigma=sigma_cells,
+                mode="constant",
+                truncate=self.config.influence_truncate,
+            ).astype(np.float32, copy=False),
+        )
+
+    @staticmethod
+    def _inside_own_territory(
+        force: ForcePoint,
+        regions: tuple[TerritoryControlRegion, ...],
+    ) -> bool:
+        point = Point(force.x, force.z)
+        return any(region.coalition == force.coalition and region.geometry.covers(point) for region in regions)
+
+    def _apply_force_anchors(
+        self,
+        blue: FloatGrid,
+        red: FloatGrid,
+        x_coordinates: NDArray[np.float64],
+        z_coordinates: NDArray[np.float64],
+        forces: tuple[ForcePoint, ...],
+    ) -> dict[str, Any]:
+        """Keep a living controlling group inside its coalition's local field."""
+
+        sigma_m = self.config.force_anchor_sigma_m
+        if sigma_m <= 0 or not forces:
+            return {"force_anchor_count": 0, "force_anchor_added_blue": 0.0, "force_anchor_added_red": 0.0}
+
+        sigma_cells = sigma_m / self.config.grid_spacing_m
+        radius = max(1, math.ceil(sigma_cells * 2.5))
+        margin = self.config.force_anchor_margin_ratio
+        anchored_ids: set[str] = set()
+        added = {"blue": 0.0, "red": 0.0}
+
+        # Two simultaneous passes avoid coalition-order bias when anchor areas overlap.
+        for _ in range(2):
+            blue_before = blue.copy()
+            red_before = red.copy()
+            blue_add = np.zeros_like(blue)
+            red_add = np.zeros_like(red)
+            for force in forces:
+                x_index = int(np.clip(np.rint((force.x - x_coordinates[0]) / self.config.grid_spacing_m), 0, len(x_coordinates) - 1))
+                z_index = int(np.clip(np.rint((force.z - z_coordinates[0]) / self.config.grid_spacing_m), 0, len(z_coordinates) - 1))
+                own = blue_before if force.coalition == "blue" else red_before
+                enemy = red_before if force.coalition == "blue" else blue_before
+                deficit = float(enemy[z_index, x_index] * (1.0 + margin) - own[z_index, x_index])
+                if deficit <= 0:
+                    continue
+                target = blue_add if force.coalition == "blue" else red_add
+                z_start, z_stop = max(0, z_index - radius), min(target.shape[0], z_index + radius + 1)
+                x_start, x_stop = max(0, x_index - radius), min(target.shape[1], x_index + radius + 1)
+                dz = np.arange(z_start, z_stop, dtype=np.float32) - z_index
+                dx = np.arange(x_start, x_stop, dtype=np.float32) - x_index
+                kernel = np.exp(-((dz[:, None] ** 2 + dx[None, :] ** 2) / (2.0 * sigma_cells**2)))
+                target[z_start:z_stop, x_start:x_stop] += deficit * kernel
+                anchored_ids.add(force.object_id)
+                added[force.coalition] += deficit
+            blue += blue_add
+            red += red_add
+
+        return {
+            "force_anchor_count": len(anchored_ids),
+            "force_anchor_added_blue": added["blue"],
+            "force_anchor_added_red": added["red"],
+        }
+
+    @staticmethod
+    def _force_frontline_diagnostics(
+        forces: tuple[ForcePoint, ...],
+        segments: tuple[FrontlineSegment, ...],
+    ) -> dict[str, Any]:
+        """Summarize force-to-front distances for calibration and debugging."""
+
+        if not segments:
+            return {}
+        linework = MultiLineString([segment.points for segment in segments])
+        diagnostics: dict[str, Any] = {}
+        for coalition in ("blue", "red"):
+            distances = [Point(force.x, force.z).distance(linework) for force in forces if force.coalition == coalition]
+            if not distances:
+                continue
+            diagnostics[f"{coalition}_frontline_distance_min_m"] = min(distances)
+            diagnostics[f"{coalition}_frontline_distance_median_m"] = float(np.median(distances))
+        return diagnostics
 
     def _bounds(
         self,

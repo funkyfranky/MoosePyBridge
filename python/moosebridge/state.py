@@ -378,6 +378,21 @@ class MooseBridgeState:
 
         payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
         event_name = str(message.get("event") or payload.get("event") or "")
+        if event_name == "airbase.coalition_changed":
+            airbase_payload = payload.get("airbase") if isinstance(payload.get("airbase"), dict) else None
+            if airbase_payload:
+                object_id = str(airbase_payload.get("object_id") or "")
+                if object_id:
+                    self.airbases[object_id] = airbase_payload
+            return
+        if event_name in {"opszone.owner_changed", "opszone.coalition_changed"}:
+            opszone_payload = payload.get("opszone") if isinstance(payload.get("opszone"), dict) else None
+            if opszone_payload:
+                object_id = str(opszone_payload.get("object_id") or "")
+                if object_id:
+                    self.opszones[object_id] = opszone_payload
+                    self.opszone_objects[object_id] = OpsZone.from_payload(opszone_payload)
+            return
         if event_name == "territory.coalition_changed":
             territory_payload = payload.get("territory") if isinstance(payload.get("territory"), dict) else None
             if territory_payload:

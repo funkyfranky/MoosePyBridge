@@ -299,6 +299,8 @@ def test_sdk_refreshes_and_queries_typed_ammunition() -> None:
         assert refreshed[0].weapons[0].initial_count == 26
         assert client.unit_capabilities("Armor-1") is not None
         assert client.group_capabilities("Armor").get("anti_armor").effective_power == 1.5  # type: ignore[union-attr]
+        assert client.unit_influence("Armor-1").get("control").effective_power == 1.5  # type: ignore[union-attr]
+        assert client.group_influence("Armor").get("direct_fire").maximum_range_m == 3_500  # type: ignore[union-attr]
         assert server.commands[-1][0].action == "snapshot.ammunition"
 
     asyncio.run(scenario())

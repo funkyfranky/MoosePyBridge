@@ -3,7 +3,14 @@ from __future__ import annotations
 import pytest
 
 from moosebridge.ammunition import UnitAmmunition
-from moosebridge.capabilities import CapabilityKind, build_group_capabilities, build_unit_capabilities
+from moosebridge.capabilities import (
+    CapabilityKind,
+    InfluenceKind,
+    build_group_capabilities,
+    build_group_influence,
+    build_unit_capabilities,
+    build_unit_influence,
+)
 
 
 def _unit(
@@ -75,6 +82,13 @@ def test_unarmed_logistics_retains_only_small_presence() -> None:
     assert presence.base_power == 0.10
     assert presence.ammo_readiness == 1.0
 
+    influence = build_unit_influence(truck)
+    assert influence.get(InfluenceKind.CONTROL) is None
+    logistics = influence.get(InfluenceKind.LOGISTICS)
+    assert logistics is not None
+    assert logistics.base_power == 0.10
+    assert logistics.effective_power == 0.10
+
 
 def test_artillery_is_support_capability_with_reduced_presence() -> None:
     artillery = _unit(
@@ -102,6 +116,15 @@ def test_artillery_is_support_capability_with_reduced_presence() -> None:
     assert indirect.ammo_readiness == 0.5
     assert indirect.effective_power == 0.5
 
+    influence = build_unit_influence(artillery)
+    control = influence.get(InfluenceKind.CONTROL)
+    indirect_influence = influence.get(InfluenceKind.INDIRECT_FIRE)
+    assert control is not None
+    assert control.effective_power == 0.075
+    assert indirect_influence is not None
+    assert indirect_influence.effective_power == 0.5
+    assert (indirect_influence.minimum_range_m, indirect_influence.maximum_range_m) == (30, 22_000)
+
 
 def test_group_aggregation_preserves_per_unit_ammo_and_health_effects() -> None:
     ready = _unit(
@@ -127,3 +150,32 @@ def test_group_aggregation_preserves_per_unit_ammo_and_health_effects() -> None:
     assert anti_armor.ammo_readiness == 0.5
     assert anti_armor.health_readiness == 0.75
     assert anti_armor.effective_power == pytest.approx(1.5)
+
+    influence = build_group_influence([ready, depleted_and_damaged], "GROUP:Test Group")
+    control = influence.get(InfluenceKind.CONTROL)
+    assert control is not None
+    assert control.base_power == 3.0
+    assert control.effective_power == 1.5
+
+
+def test_air_defense_does_not_create_ground_control() -> None:
+    sam = _unit(
+        "UNIT:SAM",
+        dcs_type="SAM",
+        attributes=["SAM", "Air Defence"],
+        weapons=[
+            {
+                "id": "weapons.missiles.SAM",
+                "display_name": "SAM",
+                "category": 1,
+                "missile_category": 2,
+                "count": 4,
+                "initial_count": 4,
+            }
+        ],
+    )
+
+    influence = build_unit_influence(sam)
+
+    assert influence.get(InfluenceKind.CONTROL) is None
+    assert influence.get(InfluenceKind.AIR_DEFENSE).effective_power == 1.0  # type: ignore[union-attr]
