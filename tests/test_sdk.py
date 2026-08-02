@@ -275,7 +275,16 @@ def test_sdk_refreshes_and_queries_typed_ammunition() -> None:
                             "dcs_type": "Leopard-2",
                             "category": "Ground Unit",
                             "attributes": ["Tanks"],
-                            "weapons": [{"id": "DM53", "type_name": "DM53", "count": 26}],
+                            "weapons": [
+                                {
+                                    "id": "DM53",
+                                    "type_name": "weapons.shells.DM53_120_AP",
+                                    "display_name": "DM53 (120mm APFSDS-T)",
+                                    "category": 0,
+                                    "caliber": 120,
+                                    "count": 26,
+                                }
+                            ],
                         }
                     ]
                 },
@@ -288,6 +297,8 @@ def test_sdk_refreshes_and_queries_typed_ammunition() -> None:
         assert refreshed == (client.unit_ammunition("Armor-1"),)
         assert client.group_ammunition("Armor") == [refreshed[0]]
         assert refreshed[0].weapons[0].initial_count == 26
+        assert client.unit_capabilities("Armor-1") is not None
+        assert client.group_capabilities("Armor").get("anti_armor").effective_power == 1.5  # type: ignore[union-attr]
         assert server.commands[-1][0].action == "snapshot.ammunition"
 
     asyncio.run(scenario())

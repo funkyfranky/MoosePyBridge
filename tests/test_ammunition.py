@@ -1,6 +1,15 @@
 from __future__ import annotations
 
-from moosebridge.ammunition import AmmunitionTracker, UnitAmmunition
+from moosebridge.ammunition import (
+    AmmunitionTracker,
+    CombatDomain,
+    UnitAmmunition,
+    WeaponDelivery,
+    WeaponEffect,
+    WeaponFamily,
+    WeaponRole,
+    classify_ammunition_weapon,
+)
 from moosebridge.state import MooseBridgeState
 
 
@@ -64,6 +73,98 @@ def test_typed_ammunition_preserves_weapon_identity_and_life() -> None:
     assert ammunition.life_fraction == 0.75
     assert ammunition.weapons[0].type_name == "weapons.missiles.BGM_71D"
     assert ammunition.weapons[0].missile_category == 6
+    assert ammunition.weapons[0].family == WeaponFamily.MISSILE
+    assert ammunition.weapons[0].role == WeaponRole.ATGM
+    assert ammunition.weapons[0].effects == (WeaponEffect.ANTI_ARMOR,)
+    assert ammunition.weapons[0].launch_domain == CombatDomain.SURFACE
+    assert ammunition.weapons[0].target_domains == (CombatDomain.SURFACE,)
+
+
+def test_classifies_leopard_main_gun_ammunition_by_effect() -> None:
+    apfsds = classify_ammunition_weapon(
+        {"category": 0, "caliber": 120, "type_name": "weapons.shells.DM53_120_AP", "display_name": "DM53 (120mm APFSDS-T)"},
+        unit_attributes=("Modern Tanks", "Tanks"),
+        unit_category="Ground Unit",
+    )
+    heat = classify_ammunition_weapon(
+        {
+            "category": 0,
+            "caliber": 120,
+            "type_name": "weapons.shells.DM12_L55_120mm_HEAT_MP_T",
+            "display_name": "DM12 (120mm HEAT-MP-T)",
+            "explosive_mass": 14.3,
+        },
+        unit_attributes=("Modern Tanks", "Tanks"),
+        unit_category="Ground Unit",
+    )
+
+    assert apfsds.family == WeaponFamily.CANNON
+    assert apfsds.role == WeaponRole.MAIN_GUN
+    assert apfsds.ammunition_type == "APFSDS"
+    assert apfsds.effects == (WeaponEffect.ANTI_ARMOR,)
+    assert heat.effects == (
+        WeaponEffect.ANTI_ARMOR,
+        WeaponEffect.ANTI_PERSONNEL,
+        WeaponEffect.AREA_EFFECT,
+    )
+
+
+def test_classifies_bradley_autocannon_and_machine_gun() -> None:
+    autocannon = classify_ammunition_weapon(
+        {"category": 0, "caliber": 25, "display_name": "M791 (25mm APDS-T)"},
+        unit_attributes=("IFV", "ATGM"),
+        unit_category="Ground Unit",
+    )
+    machine_gun = classify_ammunition_weapon(
+        {"category": 0, "caliber": 7.62, "display_name": "7.62mm"},
+        unit_attributes=("IFV",),
+        unit_category="Ground Unit",
+    )
+
+    assert autocannon.role == WeaponRole.AUTOCANNON
+    assert autocannon.effects == (WeaponEffect.ANTI_LIGHT_ARMOR,)
+    assert machine_gun.family == WeaponFamily.GUN
+    assert machine_gun.role == WeaponRole.MACHINE_GUN
+    assert machine_gun.effects == (WeaponEffect.ANTI_PERSONNEL,)
+
+
+def test_classifies_indirect_cannon_and_rocket_artillery() -> None:
+    cannon = classify_ammunition_weapon(
+        {"category": 0, "caliber": 155, "display_name": "155mm HE"},
+        unit_attributes=("Artillery",),
+        unit_category="Ground Unit",
+    )
+    rocket = classify_ammunition_weapon(
+        {"category": 2, "caliber": 0, "display_name": "M26 (270mm DPICM)"},
+        unit_attributes=("Artillery", "MLRS"),
+        unit_category="Ground Unit",
+    )
+
+    assert cannon.role == WeaponRole.ARTILLERY
+    assert cannon.delivery == WeaponDelivery.INDIRECT
+    assert rocket.family == WeaponFamily.ROCKET
+    assert rocket.role == WeaponRole.ROCKET_ARTILLERY
+    assert rocket.delivery == WeaponDelivery.INDIRECT
+    assert WeaponEffect.AREA_EFFECT in rocket.effects
+    assert WeaponEffect.ANTI_LIGHT_ARMOR in rocket.effects
+
+
+def test_dcs_missile_category_distinguishes_sam_and_anti_ship_roles() -> None:
+    sam = classify_ammunition_weapon(
+        {"category": 1, "missile_category": 2, "display_name": "Generic missile"},
+        unit_category="Ground Unit",
+    )
+    anti_ship = classify_ammunition_weapon(
+        {"category": 1, "missile_category": 4, "display_name": "Generic missile"},
+        unit_category="Ship",
+    )
+
+    assert sam.role == WeaponRole.SAM
+    assert sam.target_domains == (CombatDomain.AIR,)
+    assert sam.effects == (WeaponEffect.ANTI_AIR,)
+    assert anti_ship.role == WeaponRole.ANTI_SHIP
+    assert anti_ship.launch_domain == CombatDomain.SEA
+    assert anti_ship.target_domains == (CombatDomain.SEA,)
 
 
 def test_state_resets_observed_baseline_when_mission_time_moves_back() -> None:
@@ -77,4 +178,3 @@ def test_state_resets_observed_baseline_when_mission_time_moves_back() -> None:
     state.apply_message({"type": "snapshot", "kind": "ammunition", "payload": {"ammunition": [_unit(4)]}})
 
     assert state.ammunition_objects["UNIT:Stryker-1"].weapons[0].initial_count == 4
-

@@ -12,6 +12,7 @@ from .ammunition import UnitAmmunition
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .auftrag_specs import auftrag_action_suffix
+from .capabilities import GroupCapabilities, UnitCapabilities, build_group_capabilities, build_unit_capabilities
 from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
@@ -467,6 +468,18 @@ class MooseBridgeClient:
             (item for item in self.state.ammunition_objects.values() if item.group_id == normalized),
             key=lambda item: item.unit_id,
         )
+
+    def unit_capabilities(self, unit_id: str) -> UnitCapabilities | None:
+        """Build current combat capability readiness for one unit."""
+
+        ammunition = self.unit_ammunition(unit_id)
+        return build_unit_capabilities(ammunition) if ammunition else None
+
+    def group_capabilities(self, group_id: str) -> GroupCapabilities:
+        """Build aggregated combat capability readiness for one group."""
+
+        normalized = group_id if group_id.startswith("GROUP:") else f"GROUP:{group_id}"
+        return build_group_capabilities(self.group_ammunition(normalized), normalized)
 
     def auftrag(self, object_id: str) -> Auftrag | None:
         """Return a typed AUFTRAG by object id.

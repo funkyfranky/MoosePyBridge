@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from .capabilities import CapabilityReadiness, GroupCapabilities, UnitCapabilities
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .pictures import GlobalPicture, PictureValidationIssue
@@ -15,6 +16,36 @@ if TYPE_CHECKING:
 
 def _text(value: object, default: str = "-") -> str:
     return str(value) if value not in (None, "") else default
+
+
+def format_capability_readiness(capability: CapabilityReadiness) -> str:
+    """Return one readable capability readiness line."""
+
+    roles = ",".join(role.value for role in capability.contributing_roles) or "-"
+    return (
+        f"{capability.kind.value:<18} "
+        f"base={capability.base_power:5.2f} "
+        f"ammo={capability.ammo_readiness:6.1%} "
+        f"health={capability.health_readiness:6.1%} "
+        f"effective={capability.effective_power:5.2f} "
+        f"roles={roles}"
+    )
+
+
+def format_unit_capabilities(profile: UnitCapabilities) -> str:
+    """Return a readable capability report for one unit."""
+
+    lines = [f"{profile.unit_id} type={_text(profile.dcs_type)}"]
+    lines.extend(f"  {format_capability_readiness(capability)}" for capability in profile.capabilities)
+    return "\n".join(lines)
+
+
+def format_group_capabilities(profile: GroupCapabilities) -> str:
+    """Return a readable aggregated capability report for one group."""
+
+    lines = [f"{profile.group_id} capabilities units={len(profile.units)}"]
+    lines.extend(f"  {format_capability_readiness(capability)}" for capability in profile.capabilities)
+    return "\n".join(lines)
 
 
 def _clock_title(picture: GlobalPicture) -> str:

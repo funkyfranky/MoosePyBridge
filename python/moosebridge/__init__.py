@@ -1,8 +1,27 @@
 """MOOSE Bridge Python package."""
 
 from .advisory import AdvisoryIssue, AuftragAdvisoryResult, AuftragCandidate, evaluate_auftrag_request
-from .ammunition import AmmunitionTracker, AmmunitionWeapon, UnitAmmunition
+from .ammunition import (
+    AmmunitionTracker,
+    AmmunitionWeapon,
+    CombatDomain,
+    UnitAmmunition,
+    WeaponClassification,
+    WeaponDelivery,
+    WeaponEffect,
+    WeaponFamily,
+    WeaponRole,
+    classify_ammunition_weapon,
+)
 from .clock import DcsTime
+from .capabilities import (
+    CapabilityKind,
+    CapabilityReadiness,
+    GroupCapabilities,
+    UnitCapabilities,
+    build_group_capabilities,
+    build_unit_capabilities,
+)
 from .auftraege import (
     AuftragARTY,
     AuftragAIRDEFENSE,
@@ -129,8 +148,10 @@ from .sdk import (
 )
 from .control_sdk import ControlSdkAdapter, sdk_from_control_client
 from .diagnostics import (
+    format_capability_readiness,
     format_cohort_assets,
     format_global_picture_status,
+    format_group_capabilities,
     format_intel_cluster,
     format_intel_contact,
     format_intel_status,
@@ -139,6 +160,7 @@ from .diagnostics import (
     format_legion_summary,
     format_mission_summary,
     format_picture_issue,
+    format_unit_capabilities,
 )
 from .state import MooseBridgeState, MooseObjectIdentity
 
@@ -226,9 +248,12 @@ __all__ = [
     "Auftrag_TROOPTRANSPORT",
     "BridgeCommand",
     "BridgeMessage",
+    "CapabilityKind",
+    "CapabilityReadiness",
     "Cohort",
     "CohortSummary",
     "CommandPayload",
+    "CombatDomain",
     "ControlSdkAdapter",
     "CoordinateResult",
     "DistanceResult",
@@ -237,6 +262,7 @@ __all__ = [
     "GeneralSet",
     "GlobalPicture",
     "GroupSet",
+    "GroupCapabilities",
     "Intel",
     "IntelCluster",
     "IntelContact",
@@ -261,17 +287,28 @@ __all__ = [
     "TacticalPicture",
     "TacticalRecommendation",
     "UnitAmmunition",
+    "UnitCapabilities",
+    "WeaponClassification",
+    "WeaponDelivery",
+    "WeaponEffect",
+    "WeaponFamily",
+    "WeaponRole",
     "auftrag_action_suffix",
     "auftrag_command_params_from_recommendation",
     "auftrag_type_name",
+    "build_group_capabilities",
+    "build_unit_capabilities",
     "canonical_auftrag_type",
     "canonical_mission_type",
+    "classify_ammunition_weapon",
     "command_action_for_auftrag_recommendation",
     "evaluate_auftrag_request",
     "executable_candidates",
     "expand_platform_categories",
     "format_cohort_assets",
+    "format_capability_readiness",
     "format_global_picture_status",
+    "format_group_capabilities",
     "format_intel_cluster",
     "format_intel_contact",
     "format_intel_status",
@@ -280,6 +317,7 @@ __all__ = [
     "format_legion_summary",
     "format_mission_summary",
     "format_picture_issue",
+    "format_unit_capabilities",
     "get_auftrag_type_spec",
     "platform_categories_match",
     "recommend_auftrag",

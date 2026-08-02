@@ -310,7 +310,15 @@ stryker = bridge.unit_ammunition("UNIT:Stryker-1")
 armor_group = bridge.group_ammunition("GROUP:Armor")
 
 for weapon in stryker.weapons if stryker else ():
-    print(weapon.display_name, weapon.current_count, weapon.initial_count, weapon.fraction)
+    print(
+        weapon.display_name,
+        weapon.family.value,
+        weapon.role.value,
+        [effect.value for effect in weapon.effects],
+        weapon.current_count,
+        weapon.initial_count,
+        weapon.fraction,
+    )
 ```
 
 Only active, living ground units are included. Weapon entries with `count=0`
@@ -320,6 +328,32 @@ raises that baseline. Different weapon types are never summed into one total.
 The baseline resets when DCS mission time moves backwards. The ammunition
 snapshot is intentionally separate from `snapshot.all`, so callers can choose
 an appropriately slow update interval.
+
+The SDK classifies ammunition in Python along independent dimensions:
+`family` (`gun`, `cannon`, `rocket`, `missile`, ...), operational `role`
+(`machine_gun`, `main_gun`, `artillery`, `atgm`, `sam`, ...), `delivery`,
+launch and target domains, and broad tactical `effects`. Concrete ammunition
+types such as `APFSDS`, `HEAT`, `HEI`, or `DPICM` remain available as
+`ammunition_type`; they refine effects but do not create a second hierarchy of
+weapon classes. Raw DCS descriptors remain available through `weapon.raw`.
+
+Classified ammunition can be aggregated into traceable unit and group
+readiness vectors:
+
+```python
+unit_profile = bridge.unit_capabilities("UNIT:Armor-1")
+group_profile = bridge.group_capabilities("GROUP:Armor")
+print(format_group_capabilities(group_profile))
+```
+
+Each capability keeps `base_power`, `ammo_readiness`, `health_readiness`, and
+`effective_power` separate. Ammunition counts are combined only inside the
+same weapon role and capability. Direct combat units receive normal presence,
+indirect-fire and air-defense units receive reduced presence, and an unarmed
+logistics unit retains a small default presence of `0.10`. Artillery and MLRS
+produce `indirect_fire`; they do not currently add local direct-fire power.
+The relative coefficients are centralized in `moosebridge.capabilities` for
+scenario-based calibration before frontline integration.
 
 ### Global map viewer
 

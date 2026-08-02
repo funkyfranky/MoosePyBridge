@@ -172,50 +172,63 @@ local function detailed_ammo_weapon(item)
   }
 end
 
+local function ammo_safe_call(object, method_name)
+  if not object then return nil end
+  local ok_method, method = pcall(function() return object[method_name] end)
+  if not ok_method or type(method) ~= "function" then return nil end
+  local ok, value = pcall(function() return method(object) end)
+  if ok then return value end
+  return nil
+end
+
+local function detailed_unit_ammunition(unit)
+  local dcs_unit = ammo_safe_call(unit, "GetDCSObject")
+  if not dcs_unit then return nil end
+  local ok_ammo, ammo = pcall(function() return dcs_unit:getAmmo() end)
+  if not ok_ammo then error(ammo) end
+  local ok_desc, unit_desc = pcall(function() return dcs_unit:getDesc() end)
+  if not ok_desc or type(unit_desc) ~= "table" then unit_desc = {} end
+
+  local attributes = {}
+  if type(unit_desc.attributes) == "table" then
+    for name, enabled in pairs(unit_desc.attributes) do
+      if enabled then attributes[#attributes + 1] = tostring(name) end
+    end
+    table.sort(attributes)
+  end
+
+  local by_id = {}
+  if type(ammo) == "table" then
+    for _, item in pairs(ammo) do
+      local weapon = detailed_ammo_weapon(item)
+      local existing = by_id[weapon.id]
+      if existing then
+        existing.count = existing.count + weapon.count
+      else
+        by_id[weapon.id] = weapon
+      end
+    end
+  end
+
+  local weapons = {}
+  for _, weapon in pairs(by_id) do weapons[#weapons + 1] = weapon end
+  table.sort(weapons, function(a, b) return a.id < b.id end)
+  return {
+    unit_name=ammo_safe_call(unit, "GetName"),
+    type_name=ammo_safe_call(unit, "GetTypeName") or string_or_nil(unit_desc.typeName),
+    attributes=attributes,
+    life=ammo_safe_call(unit, "GetLife") or ammo_safe_call(dcs_unit, "getLife"),
+    life0=ammo_safe_call(unit, "GetLife0") or ammo_safe_call(dcs_unit, "getLife0"),
+    weapons=weapons,
+  }
+end
+
 if UNIT and not UNIT.GetAmmoDetailed then
   --- Get compact, descriptor-preserving ammunition data for this unit.
   -- @param #UNIT self
   -- @return #table Detailed ammunition data, or nil if the DCS unit is unavailable.
   function UNIT:GetAmmoDetailed()
-    local dcs_unit = self:GetDCSObject()
-    if not dcs_unit then return nil end
-    local ok_ammo, ammo = pcall(function() return dcs_unit:getAmmo() end)
-    if not ok_ammo then return nil end
-    local ok_desc, unit_desc = pcall(function() return dcs_unit:getDesc() end)
-    if not ok_desc or type(unit_desc) ~= "table" then unit_desc = {} end
-
-    local attributes = {}
-    if type(unit_desc.attributes) == "table" then
-      for name, enabled in pairs(unit_desc.attributes) do
-        if enabled then attributes[#attributes + 1] = tostring(name) end
-      end
-      table.sort(attributes)
-    end
-
-    local by_id = {}
-    if type(ammo) == "table" then
-      for _, item in pairs(ammo) do
-        local weapon = detailed_ammo_weapon(item)
-        local existing = by_id[weapon.id]
-        if existing then
-          existing.count = existing.count + weapon.count
-        else
-          by_id[weapon.id] = weapon
-        end
-      end
-    end
-
-    local weapons = {}
-    for _, weapon in pairs(by_id) do weapons[#weapons + 1] = weapon end
-    table.sort(weapons, function(a, b) return a.id < b.id end)
-    return {
-      unit_name=self:GetName(),
-      type_name=self:GetTypeName(),
-      attributes=attributes,
-      life=self:GetLife(),
-      life0=self:GetLife0(),
-      weapons=weapons,
-    }
+    return detailed_unit_ammunition(self)
   end
 end
 
@@ -879,6 +892,16 @@ function MOOSE_BRIDGE:_BuildAmmunitionSnapshotItem(unit_name, unit)
   local category_name = category and safe_tostring(category):lower() or ""
   if not category_name:find("ground", 1, true) then return nil end
   local details = self:_SafeCall(unit, "GetAmmoDetailed")
+  if type(details) ~= "table" then
+    -- MOOSE instances already present in _DATABASE may not see methods added
+    -- to the UNIT class after their construction.
+    local ok_details, fallback_details = pcall(function() return detailed_unit_ammunition(unit) end)
+    if not ok_details then
+      self:_Log("Failed to read unit ammunition " .. safe_tostring(unit_name) .. ": " .. safe_tostring(fallback_details))
+      return nil
+    end
+    details = fallback_details
+  end
   if type(details) ~= "table" then return nil end
   local name = self:_SafeCall(unit, "GetName") or unit_name
   local group_name = self:_SafeCall(unit, "GetGroupName")

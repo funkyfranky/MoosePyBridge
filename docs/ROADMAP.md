@@ -385,17 +385,21 @@ The live baseline is now connected:
 6. The browser map publishes separately switchable `Frontlines` and
    `Incursions` layers.
 
-The next milestone is to replace equal group weights with combat-capability,
-remaining-strength, readiness, and confidence weights, then validate temporal
-behavior against authored DCS mission scenarios before strategic rules or an
-LLM consume it.
+The next milestone is to replace equal group weights with the implemented
+combat-capability and readiness vectors, then validate temporal behavior
+against authored DCS mission scenarios before strategic rules or an LLM
+consume it.
 
 The ammunition foundation for that milestone is implemented as a separate
 `snapshot.ammunition` path. DCS/MOOSE supplies descriptor-preserving weapon
-counts and unit attributes; Python owns the observed initial-count baseline
-and typed SDK access. The next weighting step is to classify those weapon
-entries into capability-specific ammunition pools using DCS attributes and
-explicit type-name overrides where the DCS descriptor alone is ambiguous.
+counts and unit attributes; Python owns the observed initial-count baseline,
+typed SDK access, and orthogonal family/role/delivery/domain/effect
+classification. Classified entries are aggregated into traceable unit and
+group readiness values without summing unrelated round counts. Direct combat,
+indirect support, air defense, and small unarmed-logistics presence remain
+separate. The next weighting step is spatial support: indirect-fire groups
+should strengthen friendly direct ground forces in range rather than become
+strong frontline anchors themselves.
 
 ## Frontline architecture baseline
 
