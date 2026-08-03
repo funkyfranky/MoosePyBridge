@@ -321,8 +321,10 @@ Current operational-planning baseline:
   LEGION constraints.
 - Same-phase requirements compete for finite COHORT stock; later phases may
   reuse surviving assets.
-- Feasible plans can be approved, but approval does not yet reserve assets or
-  create AUFTRAG objects.
+- Feasible plans can be approved and explicitly executed through a coalition
+  COMMANDER. The first event-driven executor covers CAPTURE plans, automatic
+  phase progression, parallel required AUFTRAG monitoring, optional support
+  missions, and blocked-state handoff without automatic retries.
 
 ## Phase 4: Command SDK and policies
 

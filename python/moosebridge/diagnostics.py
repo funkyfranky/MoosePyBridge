@@ -16,6 +16,7 @@ from .capabilities import (
 from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .operational import OperationalPlan, OperationalPlanAssessment
+from .operational_execution import OperationalPlanExecution
 from .pictures import GlobalPicture, PictureValidationIssue
 from .strategic import GoalCondition, StrategicGoal
 from .weapon_ranges import WeaponRangeProfile
@@ -165,6 +166,25 @@ def format_operational_plan_assessment(
     for issue in assessment.issues:
         reference = f" {issue.reference_id}" if issue.reference_id else ""
         lines.append(f"  {issue.severity.upper()} {issue.code}{reference}: {issue.message}")
+    return "\n".join(lines)
+
+
+def format_operational_plan_execution(execution: OperationalPlanExecution) -> str:
+    """Return a readable operational plan execution report."""
+
+    lines = [
+        f"{execution.plan_id} commander={execution.commander_id} status={execution.status.value}",
+        f"  current_phase={_text(execution.current_phase_id)} missions={len(execution.missions)} "
+        f"blocked_reason={_text(execution.blocked_reason)}",
+    ]
+    for mission in execution.missions:
+        requirement = f"{mission.phase_id}/{mission.intent_id}/{mission.requirement_id}"
+        lines.append(
+            f"  {requirement} type={mission.mission_type} required={mission.required} "
+            f"status={mission.status.value} auftrag={_text(mission.auftrag_id)}"
+        )
+        if mission.error:
+            lines.append(f"    error={mission.error}")
     return "\n".join(lines)
 
 
@@ -487,5 +507,6 @@ __all__ = [
     "format_mission_summary",
     "format_picture_issue",
     "format_operational_plan_assessment",
+    "format_operational_plan_execution",
     "format_strategic_goal",
 ]

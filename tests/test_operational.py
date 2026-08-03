@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 from moosebridge import (
     AssetRequirement,
     AssetRole,
@@ -16,7 +19,10 @@ from moosebridge import (
     StrategicGoalAction,
     StrategicObjective,
     format_operational_plan_assessment,
+    format_operational_plan_execution,
 )
+from moosebridge.protocol import BridgeCommand
+from moosebridge.state import MooseBridgeState
 
 
 def _bridge_with_goal() -> MooseBridgeClient:
@@ -306,3 +312,291 @@ def test_operational_diagnostics_show_phase_allocations_and_shortfalls() -> None
     assert "phase shape: Shape the battlespace" in rendered
     assert "required=1 available=0 shortfall=1" in rendered
     assert "ERROR asset_shortfall REQ:isolate" in rendered
+
+
+class _ExecutionServer:
+    def __init__(self, *, success: bool = True, final_owner: str = "blue") -> None:
+        self.state = MooseBridgeState(connected=True)
+        self.success = success
+        self.final_owner = final_owner
+        self.commands: list[BridgeCommand] = []
+        self._mission_number = 0
+        self._event_number = 0
+
+    async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
+        self.commands.append(command)
+        if command.action.startswith("auftrag.create_"):
+            self._mission_number += 1
+            return {
+                "ok": True,
+                "result": {
+                    "action": command.action,
+                    "auftrag_id": f"AUFTRAG:{self._mission_number}",
+                },
+            }
+        return {"ok": True, "result": {"action": command.action}}
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._event_number += 1
+        auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
+        return {
+            "type": "event",
+            "id": f"event-{self._event_number}",
+            "event": "auftrag.evaluated",
+            "payload": {
+                "auftrag_id": auftrag_id,
+                "auftrag_type": "CAPTUREZONE",
+                "status": "Done",
+                "summary": {"success": self.success, "Ntargets0": 1, "Ntargets": 0},
+            },
+        }
+
+    async def snapshot_opszones(self) -> dict[str, Any]:
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "opszones",
+                "payload": {
+                    "opszones": [
+                        {
+                            "object_id": "OPSZONE:Town",
+                            "object_type": "OPSZONE",
+                            "owner_current_name": self.final_owner,
+                            "is_contested": False,
+                        }
+                    ]
+                },
+            }
+        )
+        return {"ok": True, "result": {"kind": "opszones", "count": 1}}
+
+    async def snapshot_airbases(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "airbases", "count": 0}}
+
+    async def snapshot_territories(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "territories", "count": 0}}
+
+
+def _executable_capture_plan(*, success: bool = True, final_owner: str = "blue") -> tuple[MooseBridgeClient, OperationalPlan]:
+    bridge = MooseBridgeClient(_ExecutionServer(success=success, final_owner=final_owner))  # type: ignore[arg-type]
+    bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Town",
+            name="Town",
+            kind=ObjectiveKind.OPSZONE,
+            control_object_id="OPSZONE:Town",
+            ownership_policy=OwnershipPolicy.MOOSE_MANAGED,
+        )
+    )
+    bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Capture Town",
+            name="Capture Town",
+            coalition="blue",
+            action=StrategicGoalAction.CAPTURE,
+            objective_id="OBJECTIVE:Town",
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "commanders",
+            "payload": {
+                "commanders": [
+                    {
+                        "object_id": "COMMANDER:Blue Command",
+                        "object_type": "COMMANDER",
+                        "coalition": "blue",
+                        "legion_ids": ["LEGION:Blue Brigade"],
+                    }
+                ]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {"legions": [{"object_id": "LEGION:Blue Brigade", "coalition": "blue"}]},
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [
+                    {
+                        "object_id": "COHORT:Blue Armor",
+                        "legion_id": "LEGION:Blue Brigade",
+                        "is_ground": True,
+                        "available_asset_count": 3,
+                        "mission_types": ["CAPTUREZONE"],
+                    }
+                ]
+            },
+        }
+    )
+    plan = bridge.add_operational_plan(
+        OperationalPlan(
+            plan_id="PLAN:Capture Town",
+            name="Capture Town",
+            goal_id="GOAL:Capture Town",
+            coalition="blue",
+            phases=(
+                PlanPhase(
+                    phase_id="seize",
+                    name="Seize",
+                    intents=(
+                        MissionIntent(
+                            intent_id="capture-zone",
+                            name="Capture zone",
+                            auftrag_types=("CAPTUREZONE",),
+                            target_object_id="OPSZONE:Town",
+                            asset_requirements=(
+                                AssetRequirement(
+                                    requirement_id="REQ:Ground assault",
+                                    role=AssetRole.COMBAT,
+                                    min_count=2,
+                                    max_count=3,
+                                    mission_types=("CAPTUREZONE",),
+                                    performer_categories=("GROUND",),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    bridge.validate_operational_plan(plan)
+    bridge.approve_operational_plan(plan)
+    return bridge, plan
+
+
+def test_execute_capture_plan_uses_commander_events_and_confirms_goal() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_capture_plan()
+        observed: list[str] = []
+
+        execution = await bridge.execute_plan(plan, on_event=lambda event: observed.append(event.event))
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert plan.phases[0].status.value == "completed"
+        assert execution.missions[0].status.value == "succeeded"
+        assert bridge.strategic_goal("GOAL:Capture Town").status.value == "achieved"  # type: ignore[union-attr]
+        command = bridge.server.commands[0]  # type: ignore[attr-defined]
+        assert command.params["commander_id"] == "COMMANDER:Blue Command"
+        assert command.params["required_assets_min"] == 2
+        assert command.params["required_assets_max"] == 3
+        assert observed == [
+            "plan.started",
+            "phase.started",
+            "mission.submitted",
+            "mission.succeeded",
+            "phase.completed",
+            "plan.completed",
+        ]
+        assert "status=completed" in format_operational_plan_execution(execution)
+
+    asyncio.run(scenario())
+
+
+def test_execute_capture_plan_blocks_after_required_auftrag_failure() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_capture_plan(success=False)
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert plan.phases[0].status.value == "blocked"
+        assert execution.missions[0].status.value == "failed"
+        assert "without success" in (execution.blocked_reason or "")
+
+    asyncio.run(scenario())
+
+
+def test_optional_support_shortfall_is_skipped_without_blocking_capture() -> None:
+    async def scenario() -> None:
+        bridge, original = _executable_capture_plan()
+        original.status = OperationalPlanStatus.CANCELLED
+        capture_intent = original.phases[0].intents[0]
+        plan = bridge.add_operational_plan(
+            OperationalPlan(
+                plan_id="PLAN:Capture With Optional Support",
+                name="Capture with optional support",
+                goal_id="GOAL:Capture Town",
+                coalition="blue",
+                phases=(
+                    PlanPhase("seize", "Seize", (capture_intent,)),
+                    PlanPhase(
+                        "consolidate",
+                        "Consolidate",
+                        (
+                            MissionIntent(
+                                intent_id="air-defense",
+                                name="Establish air defense",
+                                auftrag_types=("AIRDEFENSE",),
+                                target_object_id="OPSZONE:Town",
+                                required=False,
+                                asset_requirements=(
+                                    AssetRequirement(
+                                        requirement_id="REQ:Air defense",
+                                        role=AssetRole.AIR_DEFENSE,
+                                        mission_types=("AIRDEFENSE",),
+                                        performer_categories=("GROUND",),
+                                    ),
+                                ),
+                            ),
+                        ),
+                        depends_on=("seize",),
+                    ),
+                ),
+            )
+        )
+        assessment = bridge.validate_operational_plan(plan)
+        assert assessment.feasible is True
+        bridge.approve_operational_plan(plan)
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert [mission.status.value for mission in execution.missions] == ["succeeded", "skipped"]
+        assert len(bridge.server.commands) == 1  # type: ignore[attr-defined]
+
+    asyncio.run(scenario())
+
+
+def test_plan_auftrag_rejects_abstract_bai_opszone_target_before_execution() -> None:
+    bridge, _ = _executable_capture_plan()
+    invalid = bridge.add_operational_plan(
+        OperationalPlan(
+            plan_id="PLAN:Invalid BAI",
+            name="Invalid BAI",
+            goal_id="GOAL:Capture Town",
+            coalition="blue",
+            phases=(
+                PlanPhase(
+                    phase_id="isolate",
+                    name="Isolate",
+                    intents=(_intent("bai", "BAI", AssetRole.COMBAT, category="AIR"),),
+                ),
+            ),
+        )
+    )
+    _apply_force_state(bridge)
+    bridge.validate_operational_plan(invalid)
+    bridge.approve_operational_plan(invalid)
+
+    try:
+        asyncio.run(bridge.execute_plan(invalid))
+    except ValueError as exc:
+        assert "requires a GROUP, UNIT or STATIC target" in str(exc)
+    else:
+        raise AssertionError("Abstract BAI OPSZONE target should be rejected")

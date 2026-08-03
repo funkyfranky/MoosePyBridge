@@ -22,6 +22,7 @@ from moosebridge import (
     StrategicGoalAction,
     StrategicObjective,
     format_operational_plan_assessment,
+    format_operational_plan_execution,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
@@ -33,12 +34,14 @@ COMMAND_TIMEOUT_SECONDS = 10.0
 
 COALITION = "blue"
 OPSZONE_ID = "OPSZONE:Town Fight"
+ISOLATION_TARGET_ID = "GROUP:Ground-1"
 OBJECTIVE_ID = "OBJECTIVE:Town Fight"
 GOAL_ID = "GOAL:Blue capture Town Fight"
 PLAN_ID = "PLAN:Blue capture Town Fight"
 
 # Approval records a command decision only. It does not create DCS AUFTRAGs.
 APPROVE_IF_FEASIBLE = False
+EXECUTE_IF_APPROVED = False
 
 
 def requirement(
@@ -106,7 +109,7 @@ async def main() -> int:
                             intent_id="interdict-defenders",
                             name="Interdict defending forces",
                             auftrag_types=("BAI",),
-                            target_object_id=OPSZONE_ID,
+                            target_object_id=ISOLATION_TARGET_ID,
                             asset_requirements=(
                                 requirement(
                                     "REQ:Strike",
@@ -189,6 +192,13 @@ async def main() -> int:
     print(format_operational_plan_assessment(plan, assessment))
     if assessment.feasible and not APPROVE_IF_FEASIBLE:
         print("\nPlan is feasible but remains unapproved. Set APPROVE_IF_FEASIBLE = True to approve it.")
+    elif plan.status.value == "approved" and EXECUTE_IF_APPROVED:
+        print("\nExecuting approved plan through the coalition COMMANDER ...")
+        execution = await bridge.execute_plan(plan, on_event=print)
+        print()
+        print(format_operational_plan_execution(execution))
+    elif plan.status.value == "approved":
+        print("\nPlan is approved but not executed. Set EXECUTE_IF_APPROVED = True to execute it.")
     return 0 if assessment.feasible else 2
 
 

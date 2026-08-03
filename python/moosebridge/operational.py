@@ -27,6 +27,7 @@ class OperationalPlanStatus(str, Enum):
     VALIDATED = "validated"
     APPROVED = "approved"
     EXECUTING = "executing"
+    BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -38,6 +39,7 @@ class PlanPhaseStatus(str, Enum):
     PENDING = "pending"
     READY = "ready"
     ACTIVE = "active"
+    BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
@@ -70,6 +72,7 @@ class AssetRequirement:
     performer_categories: tuple[str, ...] = ()
     preferred_legion_ids: tuple[str, ...] = ()
     allowed_legion_ids: tuple[str, ...] = ()
+    allowed_cohort_ids: tuple[str, ...] = ()
     require_payload: bool = False
     metadata: dict[str, Any] = field(default_factory=dict, compare=False)
 
@@ -91,6 +94,7 @@ class AssetRequirement:
         object.__setattr__(self, "performer_categories", categories)
         object.__setattr__(self, "preferred_legion_ids", tuple(dict.fromkeys(self.preferred_legion_ids)))
         object.__setattr__(self, "allowed_legion_ids", tuple(dict.fromkeys(self.allowed_legion_ids)))
+        object.__setattr__(self, "allowed_cohort_ids", tuple(dict.fromkeys(self.allowed_cohort_ids)))
 
 
 @dataclass(slots=True, frozen=True)
@@ -415,6 +419,8 @@ def _cohort_matches_requirement(
     mission_types: tuple[str, ...],
 ) -> bool:
     if requirement.allowed_legion_ids and cohort.legion_id not in requirement.allowed_legion_ids:
+        return False
+    if requirement.allowed_cohort_ids and cohort.object_id not in requirement.allowed_cohort_ids:
         return False
     if requirement.performer_categories and not platform_categories_match(
         cohort.performer_categories,

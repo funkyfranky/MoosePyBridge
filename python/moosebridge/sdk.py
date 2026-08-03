@@ -28,6 +28,11 @@ from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
 from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
+from .operational_execution import (
+    OperationalPlanExecution,
+    OperationalPlanExecutor,
+    PlanExecutionCallback,
+)
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
@@ -450,6 +455,7 @@ class MooseBridgeClient:
         self.objectives = StrategicObjectiveRegistry()
         self.goals = StrategicGoalRegistry(self.objectives)
         self.plans = OperationalPlanRegistry(self.goals)
+        self.plan_executor = OperationalPlanExecutor(self)
         self._auftrag_ids_by_object: dict[int, str] = {}
         add_listener = getattr(server, "add_message_listener", None)
         if callable(add_listener):
@@ -677,6 +683,49 @@ class MooseBridgeClient:
         """Approve a feasible plan without executing AUFTRAG missions."""
 
         return self.plans.approve(plan, mission_time=self._current_mission_time())
+
+    def operational_plan_execution(self, plan: OperationalPlan | str) -> OperationalPlanExecution | None:
+        """Return the latest runtime execution record for an operational plan."""
+
+        plan_id = plan.plan_id if isinstance(plan, OperationalPlan) else plan
+        return self.plan_executor.get(plan_id)
+
+    async def execute_plan(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        commander: str | None = None,
+        mission_timeout_s: float = 3600.0,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanExecution:
+        """Execute an approved capture plan through a MOOSE COMMANDER."""
+
+        item = plan if isinstance(plan, OperationalPlan) else self.operational_plan(plan)
+        if item is None:
+            raise KeyError(f"Unknown operational plan: {plan}")
+        return await self.plan_executor.execute(
+            item,
+            commander_id=commander,
+            mission_timeout_s=mission_timeout_s,
+            on_event=on_event,
+        )
+
+    async def execute_operational_plan(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        commander: str | None = None,
+        mission_timeout_s: float = 3600.0,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanExecution:
+        """Explicitly named alias for :meth:`execute_plan`."""
+
+        return await self.execute_plan(
+            plan,
+            commander=commander,
+            mission_timeout_s=mission_timeout_s,
+            on_event=on_event,
+        )
 
     async def wait_for_objective_event(
         self,

@@ -16,6 +16,7 @@ CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 INTERVAL_SECONDS = 10.0
 COMMANDER_ID: str | None = None  # For example: "COMMANDER:Blue Command"
+COMMANDER_ID="COMMANDER:Blue Commander"
 
 
 async def main() -> None:

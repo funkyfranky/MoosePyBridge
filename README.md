@@ -266,18 +266,29 @@ print(format_operational_plan_assessment(plan, assessment))
 
 if assessment.feasible:
     bridge.approve_operational_plan(plan)
+    execution = await bridge.execute_plan(plan, on_event=print)
+    print(format_operational_plan_execution(execution))
 ```
 
-Approval records a command decision only. It deliberately does not create,
-schedule, or assign AUFTRAG objects yet. This keeps planning and execution
-separate while the future executor, MOOSE allocation reconciliation, and
-replanning rules are developed. `OperationalPosture` currently records the planning intent
+Approval still records a command decision only. `execute_plan()` is the
+separate, explicit execution step. The initial executor supports `CAPTURE`
+goals and maps `BAI`, `PATROLZONE`, `CAPTUREZONE`, `AIRDEFENSE`,
+`AMMOSUPPLY`, `FUELSUPPLY`, and `REARMING` requirements to concrete AUFTRAGs.
+It submits all requirements in a phase before waiting for required outcomes,
+then advances automatically when their `auftrag.evaluated` events report
+success. Optional intents are submitted but do not gate phase completion.
+A required cancellation, failure, timeout, or an unconfirmed strategic goal
+sets the plan to `blocked`; no automatic retry is performed.
+
+The COMMANDER selects suitable LEGIONs by default. `allowed_legion_ids` and
+`allowed_cohort_ids` on `AssetRequirement` constrain that MOOSE recruitment
+when Python needs to make the selection. `OperationalPosture` currently records the planning intent
 (`economy`, `balanced`, or `overwhelming`); it does not silently alter asset
 counts.
 
 The parameterless example defines a phased OPSZONE capture plan directly in
 Python, refreshes LEGION/COHORT state, and prints all provisional allocations
-and shortfalls:
+and shortfalls. Set its approval and execution constants to run the plan:
 
 ```powershell
 & "C:\Program Files\Python313\python.exe" examples/sdk/plan_capture_goal.py

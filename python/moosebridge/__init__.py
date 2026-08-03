@@ -163,6 +163,15 @@ from .operational import (
     PlanValidationIssue,
     RequirementAssessment,
 )
+from .operational_execution import (
+    OperationalPlanExecution,
+    OperationalPlanExecutor,
+    PlanExecutionCallback,
+    PlanExecutionEvent,
+    PlanMissionExecution,
+    PlanMissionStatus,
+    build_plan_auftrag,
+)
 from .pictures import GlobalPicture, PictureValidationIssue, TacticalPicture
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
@@ -195,6 +204,7 @@ from .diagnostics import (
     format_legion_summary,
     format_mission_summary,
     format_operational_plan_assessment,
+    format_operational_plan_execution,
     format_picture_issue,
     format_strategic_goal,
     format_unit_capabilities,
@@ -388,13 +398,20 @@ __all__ = [
     "OperationalPlanAssessment",
     "OperationalPlanRegistry",
     "OperationalPlanStatus",
+    "OperationalPlanExecution",
+    "OperationalPlanExecutor",
     "OperationalPosture",
     "PictureValidationIssue",
     "PlanPhase",
     "PlanPhaseStatus",
+    "PlanExecutionCallback",
+    "PlanExecutionEvent",
+    "PlanMissionExecution",
+    "PlanMissionStatus",
     "PlanValidationIssue",
     "RangeSource",
     "RequirementAssessment",
+    "build_plan_auftrag",
     "DatamineMetadata",
     "DatamineRange",
     "DatamineRangeData",
@@ -459,6 +476,7 @@ __all__ = [
     "format_legion_summary",
     "format_mission_summary",
     "format_operational_plan_assessment",
+    "format_operational_plan_execution",
     "format_picture_issue",
     "format_strategic_goal",
     "format_unit_capabilities",

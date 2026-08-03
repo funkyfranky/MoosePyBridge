@@ -249,6 +249,8 @@ The SDK currently exposes helpers for:
 - AUFTRAG: `add_auftrag`, `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
   `get_auftrag_summary`, `wait_for_auftrag_outcome`, `pause_mission`,
   `resume_mission`, `cancel_mission`, `assign_mission`
+- operational execution: `execute_plan`, `execute_operational_plan`,
+  `operational_plan_execution`
 - typed OPS state: `commander`, `commanders`, `commander_for_coalition`,
   `legions_of_commander`, `missions_of_commander`, `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,
@@ -256,7 +258,7 @@ The SDK currently exposes helpers for:
 - typed territory state: `territory`, `territories`,
   `refresh_territory_state`, `set_territory_coalition`
 - diagnostics: `format_commander_status`, `format_legion_status`, `format_cohort_assets`,
-  `format_mission_summary`
+  `format_mission_summary`, `format_operational_plan_execution`
 
 Typed OPS state can be read from the SDK state mirror after requesting the
 relevant snapshots:
