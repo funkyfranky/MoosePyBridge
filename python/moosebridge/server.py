@@ -831,11 +831,12 @@ def _print_cohort_snapshot(cohorts: dict[str, dict[str, Any]], limit: int = 60) 
         category = item.get("category", "")
         unit_type = item.get("unit_type", "")
         stock = item.get("stock_asset_count", "")
+        available = item.get("available_asset_count", "")
         spawned = item.get("spawned_asset_count", "")
         mission_types = item.get("mission_type_keys", [])
         print(
             f"  {object_id} legion={legion_id} category={category} unit_type={unit_type} "
-            f"stock={stock} spawned={spawned} missions={len(mission_types)}"
+            f"stock={stock} available={available} spawned={spawned} missions={len(mission_types)}"
         )
 
     if len(items) > limit:

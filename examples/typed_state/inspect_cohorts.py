@@ -75,6 +75,7 @@ def print_cohorts(client: MooseBridgeClient) -> None:
             f"mission_type_keys=[{mission_type_keys}] "
             f"assets={cohort.asset_count} "
             f"stock={cohort.stock_asset_count} "
+            f"available={cohort.available_asset_count} "
             f"spawned={cohort.spawned_asset_count} "
             f"opsgroups=[{opsgroups}]"
         )

@@ -334,7 +334,8 @@ def print_trace_verbose(trace: dict[str, Any]) -> None:
                 continue
             print(
                 f"     {cohort.get('object_id')} legion={cohort.get('legion_id')} "
-                f"stock={cohort.get('stock_asset_count')} spawned={cohort.get('spawned_asset_count')} "
+                f"stock={cohort.get('stock_asset_count')} available={cohort.get('available_asset_count')} "
+                f"spawned={cohort.get('spawned_asset_count')} "
                 f"opsgroups={len(cohort.get('opsgroup_ids') or [])}"
             )
 
@@ -1174,6 +1175,7 @@ def compact_item(kind: str, item: dict[str, Any]) -> str:
         return (
             f"{label} legion={item.get('legion_id')} category={item.get('category')} "
             f"unit_type={item.get('unit_type')} stock={item.get('stock_asset_count')} "
+            f"available={item.get('available_asset_count')} "
             f"missions={len(item.get('mission_type_keys') or item.get('mission_types') or [])}"
         )
     if kind == "legions":

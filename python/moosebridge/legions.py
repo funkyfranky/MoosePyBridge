@@ -228,6 +228,7 @@ class Cohort:
     mission_range_m: float | None = None
     asset_count: int | None = None
     stock_asset_count: int | None = None
+    available_asset_count: int | None = None
     spawned_asset_count: int | None = None
     opsgroup_count: int | None = None
     opsgroup_ids: list[str] = field(default_factory=list)
@@ -325,6 +326,7 @@ class Cohort:
             mission_range_m=_optional_float(payload.get("mission_range_m") or payload.get("mission_range")),
             asset_count=_optional_int(payload.get("asset_count")),
             stock_asset_count=_optional_int(payload.get("stock_asset_count")),
+            available_asset_count=_optional_int(payload.get("available_asset_count")),
             spawned_asset_count=_optional_int(payload.get("spawned_asset_count")),
             opsgroup_count=_optional_int(payload.get("opsgroup_count")),
             opsgroup_ids=_string_list(payload.get("opsgroup_ids")),
@@ -356,6 +358,7 @@ class Legion:
     cohort_ids: list[str] = field(default_factory=list)
     cohorts: list[CohortSummary] = field(default_factory=list)
     n_cohorts: int | None = None
+    available_asset_count: int | None = None
     auftrag_queue_ids: list[str] = field(default_factory=list)
     x: float | None = None
     y: float | None = None
@@ -390,6 +393,7 @@ class Legion:
             cohort_ids=_string_list(payload.get("cohort_ids")),
             cohorts=cohorts,
             n_cohorts=_optional_int(payload.get("n_cohorts")),
+            available_asset_count=_optional_int(payload.get("available_asset_count")),
             auftrag_queue_ids=_string_list(payload.get("auftrag_queue_ids")),
             x=_optional_float(payload.get("x")),
             y=_optional_float(payload.get("y")),

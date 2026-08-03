@@ -15,7 +15,9 @@ from .capabilities import (
 )
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact
+from .operational import OperationalPlan, OperationalPlanAssessment
 from .pictures import GlobalPicture, PictureValidationIssue
+from .strategic import GoalCondition, StrategicGoal
 from .weapon_ranges import WeaponRangeProfile
 
 if TYPE_CHECKING:
@@ -101,6 +103,69 @@ def format_weapon_range(profile: WeaponRangeProfile | None) -> str:
         f"range={profile.minimum_m / 1000:.3f}-{profile.maximum_m / 1000:.3f}km "
         f"source={profile.source.value} weapons={weapon_ids}"
     )
+
+
+def _format_goal_condition(condition: GoalCondition) -> str:
+    value = condition.value
+    if isinstance(value, tuple):
+        rendered = ",".join(getattr(item, "value", str(item)) for item in value)
+    else:
+        rendered = getattr(value, "value", str(value))
+    return f"{condition.kind.value}={rendered}"
+
+
+def format_strategic_goal(goal: StrategicGoal) -> str:
+    """Return a readable strategic goal lifecycle summary."""
+
+    success = f" {goal.success_match.value} ".join(_format_goal_condition(item) for item in goal.success_conditions) or "manual"
+    failure = f" {goal.failure_match.value} ".join(_format_goal_condition(item) for item in goal.failure_conditions) or "-"
+    return "\n".join(
+        (
+            f"{goal.goal_id} action={goal.action.value} coalition={goal.coalition} "
+            f"status={goal.status.value} priority={goal.priority:g}",
+            f"  objective={goal.objective_id} evaluation={goal.evaluation_mode.value} "
+            f"deadline={_text(goal.deadline_mission_time)}",
+            f"  success: {success}",
+            f"  failure: {failure}",
+        )
+    )
+
+
+def format_operational_plan_assessment(
+    plan: OperationalPlan,
+    assessment: OperationalPlanAssessment,
+) -> str:
+    """Return a readable operational plan and provisional allocation report."""
+
+    lines = [
+        (
+            f"{plan.plan_id} goal={plan.goal_id} coalition={plan.coalition} "
+            f"posture={plan.posture.value} status={plan.status.value}"
+        ),
+        (
+            f"  feasible={assessment.feasible} requirements={len(assessment.requirements)} "
+            f"errors={len(assessment.errors)} warnings={len(assessment.warnings)}"
+        ),
+    ]
+    phase_names = {phase.phase_id: phase.name for phase in plan.phases}
+    current_phase: str | None = None
+    for requirement in assessment.requirements:
+        if requirement.phase_id != current_phase:
+            current_phase = requirement.phase_id
+            lines.append(f"  phase {current_phase}: {phase_names.get(current_phase, current_phase)}")
+        allocations = ", ".join(
+            f"{item.cohort_id} x{item.count} ({item.legion_id})"
+            for item in requirement.allocations
+        ) or "-"
+        lines.append(
+            f"    {requirement.intent_id}/{requirement.requirement_id}: "
+            f"required={requirement.required_count} available={requirement.available_count} "
+            f"shortfall={requirement.shortfall} allocation=[{allocations}]"
+        )
+    for issue in assessment.issues:
+        reference = f" {issue.reference_id}" if issue.reference_id else ""
+        lines.append(f"  {issue.severity.upper()} {issue.code}{reference}: {issue.message}")
+    return "\n".join(lines)
 
 
 def _clock_title(picture: GlobalPicture) -> str:
@@ -191,6 +256,7 @@ def format_cohort_assets(cohort: Cohort, mission_limit: int = 6) -> str:
         f"type={_text(cohort.unit_type)} "
         f"assets={_text(cohort.asset_count)} "
         f"stock={_text(cohort.stock_asset_count)} "
+        f"available={_text(cohort.available_asset_count)} "
         f"spawned={_text(cohort.spawned_asset_count)} "
         f"missions=[{missions}]"
     )
@@ -200,6 +266,7 @@ def format_legion_summary(legion: Legion, cohorts: list[Cohort], missions: list[
     """Return a two-line LEGION summary."""
 
     stock_total = sum(cohort.stock_asset_count or 0 for cohort in cohorts)
+    available_total = sum(cohort.available_asset_count or 0 for cohort in cohorts)
     spawned_total = sum(cohort.spawned_asset_count or 0 for cohort in cohorts)
     asset_total = sum(cohort.asset_count or 0 for cohort in cohorts)
     header = (
@@ -212,6 +279,7 @@ def format_legion_summary(legion: Legion, cohorts: list[Cohort], missions: list[
         f"  cohorts={len(cohorts)} "
         f"assets={asset_total} "
         f"stock={stock_total} "
+        f"available={available_total} "
         f"spawned={spawned_total} "
         f"missions={len(missions)}"
     )
@@ -377,4 +445,6 @@ __all__ = [
     "format_legion_summary",
     "format_mission_summary",
     "format_picture_issue",
+    "format_operational_plan_assessment",
+    "format_strategic_goal",
 ]

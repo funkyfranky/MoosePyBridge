@@ -130,6 +130,25 @@ def test_state_payload_roundtrip_applies_requested_kinds() -> None:
     assert target.snapshot_clocks["objects"].sequence == 12
 
 
+def test_state_payload_roundtrip_includes_loss_reports() -> None:
+    source = MooseBridgeState(connected=True)
+    source.loss_reports["LOSS:event-1"] = {
+        "object_id": "LOSS:event-1",
+        "object_type": "LOSS_REPORT",
+        "target_object_id": "UNIT:Armor-1",
+        "visible_to": ["blue", "red"],
+        "longitude": 12.2,
+        "latitude": 54.1,
+    }
+
+    target = MooseBridgeState()
+    payload = state_payload(source, kinds=("loss_reports",))
+    apply_state_payload(target, payload)
+
+    assert payload["counts"]["loss_reports"] == 1
+    assert target.loss_reports == source.loss_reports
+
+
 def test_state_payload_roundtrip_includes_territories() -> None:
     source = MooseBridgeState(connected=True)
     source.apply_message(

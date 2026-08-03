@@ -193,6 +193,85 @@ parchim = StrategicObjective(
 bridge.add_strategic_objective(parchim)
 ```
 
+Strategic objectives are global facts. Coalition-private intent is represented
+separately by `StrategicGoal`; only `blue` and `red` goals are accepted:
+
+```python
+from moosebridge import StrategicGoal, StrategicGoalAction
+
+capture_parchim = bridge.add_strategic_goal(
+    StrategicGoal(
+        goal_id="GOAL:Blue capture Parchim",
+        name="Capture Parchim",
+        coalition="blue",
+        action=StrategicGoalAction.CAPTURE,
+        objective_id=parchim.objective_id,
+        priority=90,
+    ),
+    activate=True,
+)
+
+mission_time = bridge.state.clock.mission_time if bridge.state.clock else 0
+defend_parchim = bridge.add_strategic_goal(
+    StrategicGoal(
+        goal_id="GOAL:Blue defend Parchim",
+        name="Defend Parchim for 30 minutes",
+        coalition="blue",
+        action=StrategicGoalAction.DEFEND,
+        objective_id=parchim.objective_id,
+        deadline_mission_time=mission_time + 1800,
+    )
+)
+```
+
+Supported actions are `CAPTURE`, `DEFEND`, `DESTROY`, `DISABLE`, `PROTECT`,
+and `INTERDICT`. Goals move through `planned`, `active`, `achieved`, `failed`,
+or `cancelled`. Capture, destruction and disablement complete immediately when
+their typed conditions match. Defense and protection are evaluated at their
+mission-time deadline; ownership changes and object losses can fail them
+earlier. Completed goals remain historical facts if the objective later changes
+again. A recapture therefore creates a new goal rather than reopening the old
+one. Custom typed `GoalCondition` values and manual completion are also
+available.
+`await bridge.wait_for_strategic_goal_event(goal_id)` waits for completion
+without periodically requesting objective snapshots.
+
+### Operational planning
+
+`OperationalPlan` translates one coalition-private `StrategicGoal` into ordered
+phases, mission intents, and explicit asset requirements. Validation uses the
+current LEGION/COHORT mirror and checks coalition, supported AUFTRAG types,
+platform category, payload availability, and `available_asset_count`. MOOSE
+calculates this value with `CountAvailableAssets()`, excluding assets already
+requested or reserved for another mission.
+
+Assets are allocated conservatively: a COHORT's stock cannot satisfy two
+requirements in the same phase, but can be reused in a later phase. The result
+is a provisional feasibility assessment, not a reservation in MOOSE.
+
+```python
+assessment = await bridge.refresh_and_validate_operational_plan(plan)
+print(format_operational_plan_assessment(plan, assessment))
+
+if assessment.feasible:
+    bridge.approve_operational_plan(plan)
+```
+
+Approval records a command decision only. It deliberately does not create,
+schedule, or assign AUFTRAG objects yet. This keeps planning and execution
+separate while the future executor, MOOSE allocation reconciliation, and
+replanning rules are developed. `OperationalPosture` currently records the planning intent
+(`economy`, `balanced`, or `overwhelming`); it does not silently alter asset
+counts.
+
+The parameterless example defines a phased OPSZONE capture plan directly in
+Python, refreshes LEGION/COHORT state, and prints all provisional allocations
+and shortfalls:
+
+```powershell
+& "C:\Program Files\Python313\python.exe" examples/sdk/plan_capture_goal.py
+```
+
 The SDK registry synchronizes automatically after relevant bridge snapshots
 and events. `bridge.sync_strategic_objectives()` is available for explicit
 tests. A control change produces a normalized `objective.control_changed`
@@ -378,6 +457,11 @@ print(format_global_picture_status(global_picture))
 `TacticalPicture` uses INTEL contacts and clusters for enemy knowledge.
 `GlobalPicture` uses global truth snapshots and is intended for admin/debug
 views or neutral analysis tools.
+Confirmed destruction events are stored separately as loss reports. They are
+visible in both coalition tactical pictures: as a friendly loss for the owning
+coalition and as an enemy loss for the opposing coalition. The global picture
+shows the same report as confirmed truth. Loss reports preserve the last known
+position and remain separate from MOOSE INTEL contacts.
 Both picture types export standard WGS84 GeoJSON. DCS `x/y/z` coordinates stay
 available as feature properties, while geometry coordinates use
 `[longitude, latitude]` values produced by DCS `coord.LOtoLL`.

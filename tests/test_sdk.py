@@ -507,6 +507,7 @@ def test_sdk_legion_convenience_methods_return_typed_state() -> None:
                         "object_type": "COHORT",
                         "legion_id": "LEGION:Wing Parchim",
                         "stock_asset_count": 2,
+                        "available_asset_count": 2,
                         "mission_types": ["BAI", "CAP"],
                         "payloads_by_mission": {"BAI": {"available_count": 1, "total_available": 1}},
                     }
@@ -540,6 +541,7 @@ def test_sdk_legion_convenience_methods_return_typed_state() -> None:
     assert legion.state == "Running"
     assert client.cohort("COHORT:F-4E Parchim Alpha") is cohorts[0]
     assert [cohort.stock_asset_count for cohort in cohorts] == [2]
+    assert [cohort.available_asset_count for cohort in cohorts] == [2]
     assert [mission.type for mission in missions] == ["BAI"]
     assert [mission.status for mission in missions] == ["Queued"]
     assert [cohort.object_id for cohort in client.ready_cohorts_of_legion("LEGION:Wing Parchim", "BAI")] == [
@@ -1055,6 +1057,7 @@ def test_diagnostics_format_legion_status_uses_sdk_state() -> None:
                         "object_type": "COHORT",
                         "legion_id": "LEGION:Wing Parchim",
                         "stock_asset_count": 2,
+                        "available_asset_count": 1,
                         "spawned_asset_count": 1,
                         "mission_types": ["BAI"],
                     }
@@ -1085,6 +1088,7 @@ def test_diagnostics_format_legion_status_uses_sdk_state() -> None:
 
     assert cohort is not None
     assert "stock=2" in format_cohort_assets(cohort)
+    assert "available=1" in format_cohort_assets(cohort)
     assert "type=BAI" in format_mission_summary(mission)
     report = format_legion_status(client, "LEGION:Wing Parchim", timestamp=False)
     assert "LEGION:Wing Parchim" in report

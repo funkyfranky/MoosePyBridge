@@ -479,7 +479,7 @@ def evaluate_auftrag_request(
     if target_id and target_payload is not None and target_coords is None:
         issues.append(AdvisoryIssue("warning", "TARGET_COORDINATE_UNKNOWN", f"No coordinate could be resolved for target {target_id}."))
 
-    cohorts = state.cohorts_with_stock_for_mission_type(mission_key)
+    cohorts = state.available_cohorts_for_mission_type(mission_key)
     candidates: list[AuftragCandidate] = []
     out_of_range_count = 0
     non_running_legion_count = 0
@@ -540,7 +540,13 @@ def evaluate_auftrag_request(
                 )
             )
         if not non_running_legion_count and not out_of_range_count:
-            issues.append(AdvisoryIssue("warning", "NO_CANDIDATES", "No matching COHORT candidates with stock were found."))
+            issues.append(
+                AdvisoryIssue(
+                    "warning",
+                    "NO_CANDIDATES",
+                    "No matching COHORT candidates with currently available assets were found.",
+                )
+            )
 
     return AuftragAdvisoryResult(
         mission_type=mission_key,

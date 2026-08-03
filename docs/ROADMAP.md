@@ -310,6 +310,19 @@ Each recommendation should include:
 - confidence
 - required approval mode
 
+Current operational-planning baseline:
+
+- `StrategicGoal` is translated into a human-reviewable `OperationalPlan`.
+- Ordered `PlanPhase` objects contain `MissionIntent` and `AssetRequirement`
+  objects rather than executable commands.
+- Validation uses coalition-owned LEGION/COHORT stock, supported AUFTRAG types,
+  platform categories, payload readiness, and explicit preferred/allowed
+  LEGION constraints.
+- Same-phase requirements compete for finite COHORT stock; later phases may
+  reuse surviving assets.
+- Feasible plans can be approved, but approval does not yet reserve assets or
+  create AUFTRAG objects.
+
 ## Phase 4: Command SDK and policies
 
 Goal: Python can command MOOSE semantically and safely.
@@ -371,36 +384,23 @@ Later behavior:
 
 ## Immediate next milestone
 
-The live baseline is now connected:
+The next milestone is controlled plan execution:
 
-1. Passive MOOSE territories and alive global ground-group snapshots feed the
-   Python frontline engine.
-2. Positions are smoothed and recalculated on a slower map-server interval.
-3. Territory ownership acts as a weak control prior. Isolated hostile ground
-   groups are classified as incursions instead of pulling the main front
-   around themselves.
-4. Aircraft, helicopters, and ships are excluded from the land-front model.
-   Maritime control remains a separate future layer.
-5. DCS converts generated vertices to WGS84 with one batched `coord.LOtoLL`
-   bridge command.
-6. The browser map publishes separately switchable `Frontlines` and
-   `Incursions` layers.
+1. Convert approved `MissionIntent` objects into concrete typed AUFTRAG
+   commands without duplicating constructor logic.
+2. Treat Python allocations as planning commitments, let MOOSE recruit and
+   reserve concrete warehouse assets, and reconcile the result through
+   AUFTRAG/LEGION state and events.
+3. Drive phase transitions from AUFTRAG FSM events and strategic objective
+   events rather than status polling.
+4. Revalidate before each phase and expose explicit replan, abort, and operator
+   approval decisions when assets or objectives have changed.
+5. Record the plan, allocation decision, generated command, ACK, lifecycle
+   events, and outcome as one traceable execution history.
 
-The next milestone is to replace equal group weights with the implemented
-combat-capability and readiness vectors, then validate temporal behavior
-against authored DCS mission scenarios before strategic rules or an LLM
-consume it.
-
-The ammunition foundation for that milestone is implemented as a separate
-`snapshot.ammunition` path. DCS/MOOSE supplies descriptor-preserving weapon
-counts and unit attributes; Python owns the observed initial-count baseline,
-typed SDK access, and orthogonal family/role/delivery/domain/effect
-classification. Classified entries are aggregated into traceable unit and
-group readiness values without summing unrelated round counts. Direct combat,
-indirect support, air defense, and small unarmed-logistics presence remain
-separate. The next weighting step is spatial support: indirect-fire groups
-should strengthen friendly direct ground forces in range rather than become
-strong frontline anchors themselves.
+The frontline, ammunition, capability, strategic objective, and strategic goal
+layers are established inputs to this planner. They remain Python-owned
+reasoning state; MOOSE remains the semantic execution interface to DCS.
 
 ## Frontline architecture baseline
 

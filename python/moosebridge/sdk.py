@@ -27,11 +27,20 @@ from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
+from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
 from .state import MooseBridgeState
-from .strategic import ObjectiveEvent, OwnershipPolicy, StrategicObjective, StrategicObjectiveRegistry
+from .strategic import (
+    ObjectiveEvent,
+    OwnershipPolicy,
+    StrategicGoal,
+    StrategicGoalEvent,
+    StrategicGoalRegistry,
+    StrategicObjective,
+    StrategicObjectiveRegistry,
+)
 from .weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY, RangeSource, WeaponRangeProfile, WeaponRangeRegistry
 
 SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
@@ -438,6 +447,8 @@ class MooseBridgeClient:
         self.server = server
         self.weapon_range_registry = weapon_ranges or DEFAULT_WEAPON_RANGE_REGISTRY
         self.objectives = StrategicObjectiveRegistry()
+        self.goals = StrategicGoalRegistry(self.objectives)
+        self.plans = OperationalPlanRegistry(self.goals)
         self._auftrag_ids_by_object: dict[int, str] = {}
         add_listener = getattr(server, "add_message_listener", None)
         if callable(add_listener):
@@ -477,13 +488,15 @@ class MooseBridgeClient:
 
         added = self.objectives.add(objective, replace=replace)
         if sync:
-            self.objectives.sync(self.state, source="current_state")
+            self.sync_strategic_objectives(source="current_state")
         return added
 
     def remove_strategic_objective(self, objective: StrategicObjective | str) -> StrategicObjective:
         """Remove a strategic objective during the mission."""
 
-        return self.objectives.remove(objective)
+        removed = self.objectives.remove(objective)
+        self.goals.sync(mission_time=self._current_mission_time(), source="objective.removed")
+        return removed
 
     def strategic_objective(self, objective_id: str) -> StrategicObjective | None:
         """Return one strategic objective by id."""
@@ -498,7 +511,171 @@ class MooseBridgeClient:
     def sync_strategic_objectives(self, *, source: str = "manual") -> tuple[ObjectiveEvent, ...]:
         """Synchronize all strategic objectives from the current state mirror."""
 
-        return self.objectives.sync(self.state, source=source)
+        events = self.objectives.sync(self.state, source=source)
+        self.goals.sync(mission_time=self._current_mission_time(), source=source)
+        return events
+
+    def add_strategic_goal(
+        self,
+        goal: StrategicGoal,
+        *,
+        replace: bool = False,
+        activate: bool = False,
+    ) -> StrategicGoal:
+        """Add a coalition-private strategic goal, optionally activating it."""
+
+        added = self.goals.add(goal, replace=replace)
+        if activate:
+            self.activate_strategic_goal(added)
+        return added
+
+    def activate_strategic_goal(self, goal: StrategicGoal | str) -> StrategicGoal:
+        """Activate a planned strategic goal and evaluate its current state."""
+
+        mission_time = self._current_mission_time()
+        activated = self.goals.activate(goal, mission_time=mission_time)
+        self.goals.sync(mission_time=mission_time, source="current_state")
+        return activated
+
+    def cancel_strategic_goal(self, goal: StrategicGoal | str, *, reason: str | None = None) -> StrategicGoal:
+        """Cancel a planned or active strategic goal."""
+
+        return self.goals.cancel(goal, mission_time=self._current_mission_time(), reason=reason)
+
+    def complete_strategic_goal(
+        self,
+        goal: StrategicGoal | str,
+        *,
+        achieved: bool,
+        reason: str | None = None,
+    ) -> StrategicGoal:
+        """Explicitly complete an active manual strategic goal."""
+
+        return self.goals.complete_manual(
+            goal,
+            achieved=achieved,
+            mission_time=self._current_mission_time(),
+            reason=reason,
+        )
+
+    def remove_strategic_goal(self, goal: StrategicGoal | str) -> StrategicGoal:
+        """Remove a strategic goal from the runtime registry."""
+
+        return self.goals.remove(goal)
+
+    def strategic_goal(self, goal_id: str) -> StrategicGoal | None:
+        """Return one strategic goal by id."""
+
+        return self.goals.get(goal_id)
+
+    def strategic_goals(self, **filters: Any) -> tuple[StrategicGoal, ...]:
+        """Return strategic goals, optionally filtered by registry fields."""
+
+        return self.goals.filter(**filters)
+
+    def sync_strategic_goals(self, *, source: str = "manual") -> tuple[StrategicGoalEvent, ...]:
+        """Evaluate active goals from current strategic objective state."""
+
+        return self.goals.sync(mission_time=self._current_mission_time(), source=source)
+
+    async def wait_for_strategic_goal_event(
+        self,
+        goal_id: str,
+        event: str = "goal.achieved",
+        *,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> StrategicGoalEvent:
+        """Wait for a local goal transition while consuming bridge events without polling."""
+
+        if self.goals.get(goal_id) is None:
+            raise ValueError(f"Unknown strategic goal: {goal_id}")
+        for existing in reversed(self.goals.events):
+            if existing.goal_id == goal_id and (event == "*" or existing.event == event):
+                return existing
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        future: asyncio.Future[StrategicGoalEvent] = loop.create_future()
+        last_bridge_event_id = after_id
+
+        def on_goal_event(goal_event: StrategicGoalEvent) -> None:
+            if future.done() or goal_event.goal_id != goal_id:
+                return
+            if event == "*" or goal_event.event == event:
+                future.set_result(goal_event)
+
+        self.goals.add_listener(on_goal_event)
+        bridge_waiter: asyncio.Task[dict[str, Any]] | None = None
+        try:
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError(f"Timed out waiting for {event} for {goal_id}")
+                bridge_waiter = asyncio.create_task(
+                    self.server.wait_for_event("*", timeout=remaining, after_id=last_bridge_event_id)
+                )
+                done, _ = await asyncio.wait(
+                    {future, bridge_waiter},
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if future in done:
+                    bridge_waiter.cancel()
+                    await asyncio.gather(bridge_waiter, return_exceptions=True)
+                    return future.result()
+                if bridge_waiter not in done:
+                    bridge_waiter.cancel()
+                    await asyncio.gather(bridge_waiter, return_exceptions=True)
+                    raise TimeoutError(f"Timed out waiting for {event} for {goal_id}")
+                message = bridge_waiter.result()
+                last_bridge_event_id = str(message.get("id") or "") or last_bridge_event_id
+                self._on_bridge_message(message)
+                bridge_waiter = None
+        finally:
+            self.goals.remove_listener(on_goal_event)
+            if bridge_waiter is not None and not bridge_waiter.done():
+                bridge_waiter.cancel()
+                await asyncio.gather(bridge_waiter, return_exceptions=True)
+
+    def add_operational_plan(self, plan: OperationalPlan, *, replace: bool = False) -> OperationalPlan:
+        """Add a draft operational plan for an existing strategic goal."""
+
+        if plan.created_mission_time is None:
+            plan.created_mission_time = self._current_mission_time()
+        return self.plans.add(plan, replace=replace)
+
+    def operational_plan(self, plan_id: str) -> OperationalPlan | None:
+        """Return one operational plan by id."""
+
+        return self.plans.get(plan_id)
+
+    def operational_plans(self) -> tuple[OperationalPlan, ...]:
+        """Return all operational plans in stable id order."""
+
+        return self.plans.all()
+
+    def validate_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlanAssessment:
+        """Validate a plan against currently mirrored LEGION and COHORT stock."""
+
+        return self.plans.validate(
+            plan,
+            legions=self.state.legion_objects.values(),
+            cohorts=self.state.cohort_objects.values(),
+            mission_time=self._current_mission_time(),
+        )
+
+    async def refresh_and_validate_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlanAssessment:
+        """Refresh LEGION/COHORT state and validate an operational plan."""
+
+        await self.snapshot_legions()
+        await self.snapshot_cohorts()
+        return self.validate_operational_plan(plan)
+
+    def approve_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlan:
+        """Approve a feasible plan without executing AUFTRAG missions."""
+
+        return self.plans.approve(plan, mission_time=self._current_mission_time())
 
     async def wait_for_objective_event(
         self,
@@ -529,7 +706,7 @@ class MooseBridgeClient:
             )
             last_bridge_event_id = str(message.get("id") or "") or last_bridge_event_id
             source = str(message.get("event") or "bridge.event")
-            self.objectives.sync(self.state, source=source)
+            self.sync_strategic_objectives(source=source)
             current_events = self.objectives.events
             for objective_event in current_events[history_index:]:
                 if objective_event.event != event:
@@ -564,6 +741,9 @@ class MooseBridgeClient:
         message_type = str(message.get("type") or "")
         kind = str(message.get("kind") or "")
         event_name = str(message.get("event") or "")
+        if message_type == "heartbeat":
+            self.goals.sync(mission_time=self._current_mission_time(), source="heartbeat")
+            return
         relevant_event = message_type == "event" and event_name in {
             "object.destroyed",
             "airbase.coalition_changed",
@@ -579,7 +759,12 @@ class MooseBridgeClient:
             "units",
             "statics",
         }):
-            self.objectives.sync(self.state, source=event_name or f"snapshot.{kind}")
+            source = event_name or f"snapshot.{kind}"
+            self.objectives.sync(self.state, source=source)
+            self.goals.sync(mission_time=self._current_mission_time(), source=source)
+
+    def _current_mission_time(self) -> float | None:
+        return self.state.clock.mission_time if self.state.clock else None
 
     def territories(self, coalition: str | None = None) -> list[Territory]:
         """Return known territories, optionally limited to one coalition."""
@@ -768,13 +953,13 @@ class MooseBridgeClient:
         self,
         legion_id: str,
         mission_type: str | None = None,
-        require_stock: bool = True,
+        require_available: bool = True,
     ) -> list[Cohort]:
         """Return COHORTs of a LEGION that are ready for optional mission work.
 
         :param legion_id: Stable LEGION object id.
         :param mission_type: Optional AUFTRAG mission type filter such as ``BAI``.
-        :param require_stock: If ``True``, require at least one stock asset.
+        :param require_available: If ``True``, require at least one unrequested and unreserved asset.
         :returns: Matching COHORTs from the local state mirror.
         """
 
@@ -782,8 +967,8 @@ class MooseBridgeClient:
         if mission_type:
             mission_key = mission_type.strip().upper()
             cohorts = [cohort for cohort in cohorts if mission_key in {key.upper() for key in cohort.mission_type_keys}]
-        if require_stock:
-            cohorts = [cohort for cohort in cohorts if (cohort.stock_asset_count or 0) > 0]
+        if require_available:
+            cohorts = [cohort for cohort in cohorts if (cohort.available_asset_count or 0) > 0]
         return cohorts
 
     def available_missions_of_cohort(self, cohort_id: str, require_payload: bool = False) -> list[str]:
@@ -861,6 +1046,12 @@ class MooseBridgeClient:
             for mission in self.state.auftrag_objects.values()
             if mission.object_id in mission_ids or any(group_id in opsgroup_ids for group_id in mission.assigned_group_ids)
         )
+        coalition_name = coalition.lower().strip()
+        loss_reports = [
+            report
+            for report in self.state.loss_reports.values()
+            if coalition_name in {str(side).lower() for side in report.get("visible_to", [])}
+        ]
 
         return TacticalPicture(
             coalition=coalition,
@@ -874,6 +1065,7 @@ class MooseBridgeClient:
             legions=legions,
             cohorts=cohorts,
             missions=missions,
+            loss_reports=loss_reports,
         )
 
     def build_global_picture(self) -> GlobalPicture:
@@ -895,6 +1087,7 @@ class MooseBridgeClient:
             intels=list(self.state.intel_objects.values()),
             intel_contacts=list(self.state.intel_contact_objects.values()),
             intel_clusters=list(self.state.intel_cluster_objects.values()),
+            loss_reports=list(self.state.loss_reports.values()),
         )
 
     async def request_snapshots(self, actions: tuple[str, ...]) -> None:

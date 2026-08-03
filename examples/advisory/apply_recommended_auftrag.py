@@ -134,7 +134,8 @@ def print_compact_trace(title: str, trace: dict[str, Any]) -> None:
         print(
             "  cohorts="
             + ", ".join(
-                f"{item.get('object_id')}[stock={item.get('stock_asset_count')} spawned={item.get('spawned_asset_count')} opsgroups={len(item.get('opsgroup_ids') or [])}]"
+                f"{item.get('object_id')}[stock={item.get('stock_asset_count')} available={item.get('available_asset_count')} "
+                f"spawned={item.get('spawned_asset_count')} opsgroups={len(item.get('opsgroup_ids') or [])}]"
                 for item in active_cohorts
             )
         )
@@ -198,6 +199,7 @@ def print_verbose_trace(title: str, trace: dict[str, Any]) -> None:
                 f"     {cohort.get('object_id')} "
                 f"legion={cohort.get('legion_id')} "
                 f"stock={cohort.get('stock_asset_count')} "
+                f"available={cohort.get('available_asset_count')} "
                 f"spawned={cohort.get('spawned_asset_count')} "
                 f"opsgroups={cohort.get('opsgroup_ids')}"
             )

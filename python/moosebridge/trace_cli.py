@@ -73,7 +73,8 @@ def _print_trace_result(trace: dict[str, Any]) -> None:
                 continue
             print(
                 f"     {cohort.get('object_id')} legion={cohort.get('legion_id')} "
-                f"stock={cohort.get('stock_asset_count')} spawned={cohort.get('spawned_asset_count')} "
+                f"stock={cohort.get('stock_asset_count')} available={cohort.get('available_asset_count')} "
+                f"spawned={cohort.get('spawned_asset_count')} "
                 f"opsgroups={cohort.get('opsgroup_ids')}"
             )
 

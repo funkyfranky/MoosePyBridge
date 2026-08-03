@@ -83,7 +83,7 @@ def print_capable_cohorts(client: MooseBridgeClient, mission_type: str) -> None:
     """
 
     capable = client.state.cohorts_capable_of(mission_type)
-    capable_with_stock = client.state.cohorts_with_stock_for_mission_type(mission_type)
+    available = client.state.available_cohorts_for_mission_type(mission_type)
 
     print(f"\nCapable cohorts: {len(capable)}")
     for cohort in capable:
@@ -94,12 +94,13 @@ def print_capable_cohorts(client: MooseBridgeClient, mission_type: str) -> None:
             f"legion={cohort.legion_id} "
             f"performers=[{performers}] "
             f"mission_types=[{mission_types}] "
-            f"stock={cohort.stock_asset_count}"
+            f"stock={cohort.stock_asset_count} "
+            f"available={cohort.available_asset_count}"
         )
 
-    print(f"\nCapable cohorts with stock: {len(capable_with_stock)}")
-    for cohort in capable_with_stock:
-        print(f"  {cohort.object_id} stock={cohort.stock_asset_count}")
+    print(f"\nCurrently available capable cohorts: {len(available)}")
+    for cohort in available:
+        print(f"  {cohort.object_id} available={cohort.available_asset_count}")
 
 
 async def async_main(args: argparse.Namespace) -> int:

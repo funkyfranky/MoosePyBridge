@@ -1413,6 +1413,7 @@ function MOOSE_BRIDGE:_BuildLegionSnapshotItem(legion_name, legion, source)
     cohort_ids=self:_CollectCohortIds(legion and legion.cohorts),
     cohorts=self:_BuildCohortSummaries(legion and legion.cohorts),
     n_cohorts=self:_CountTable((legion and legion.cohorts) or {}),
+    available_asset_count=self:_NumberOrNil(self:_SafeCall(legion, "CountAvailableAssets")),
     auftrag_queue_ids=self:_CollectAuftragIdsFromQueue(legion and legion.missionqueue),
   }
   if point then self:_AddPointFields(item, point) end
@@ -1516,6 +1517,7 @@ function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
     mission_performance=self:_CollectMissionPerformance(cohort, mission_types),
     asset_count=self:_NumberOrNil(self:_SafeCall(cohort, "CountAssets")),
     stock_asset_count=self:_NumberOrNil(self:_SafeCallArg(cohort, "CountAssets", true)),
+    available_asset_count=self:_NumberOrNil(self:_SafeCall(cohort, "CountAvailableAssets")),
     spawned_asset_count=self:_NumberOrNil(self:_SafeCallArg(cohort, "CountAssets", false)),
     opsgroup_count=self:_CountSet(opsgroups),
     opsgroup_ids=self:_CollectOpsGroupIdsFromSet(opsgroups),

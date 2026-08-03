@@ -25,6 +25,7 @@
     { key: "legions", label: "Legions", color: "#283a4f", icon: "shield", size: 1.18, default: true },
     { key: "intel_contacts", label: "INTEL contacts", color: "#c44343", icon: "crosshair", size: 0.95, default: true },
     { key: "intel_clusters", label: "INTEL clusters", color: "#d06f27", icon: "radar", size: 1.05, default: true },
+    { key: "loss_reports", label: "Loss reports", color: "#8f3434", icon: "shield-x", size: 1.0, default: true },
     { key: "missions", label: "Missions", color: "#ad3c76", icon: "target", size: 1.05, default: true },
   ];
   const coalitionColors = { blue: "#2776b9", red: "#c44343", neutral: "#858d88", unknown: "#59635e" };
@@ -65,6 +66,7 @@
     "legion-other": { icon: "Shield", frame: "diamond" },
     "intel-contact": { icon: "Crosshair", frame: "triangle" },
     "intel-cluster": { icon: "Radar", frame: "circle" },
+    "loss-report": { icon: "ShieldX", frame: "triangle" },
     "mission": { icon: "Target", frame: "diamond" },
     "incursion": { icon: "ShieldAlert", frame: "triangle" },
   };
@@ -170,6 +172,7 @@
       definition = properties.category === "AIRWING" ? "legion-airwing" : properties.category === "BRIGADE" ? "legion-brigade" : "legion-other";
     } else if (layer === "intel_contacts") definition = "intel-contact";
     else if (layer === "intel_clusters") definition = "intel-cluster";
+    else if (layer === "loss_reports") definition = "loss-report";
     else if (layer === "missions") definition = "mission";
     else if (layer === "incursions") definition = "incursion";
     const coalition = Object.hasOwn(coalitionColors, properties.coalition) ? properties.coalition : "unknown";

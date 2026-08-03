@@ -36,6 +36,11 @@ def destroyed_message() -> dict[str, object]:
                 "coalition": "red",
                 "alive": False,
                 "active": False,
+                "x": 100,
+                "y": 20,
+                "z": 200,
+                "latitude": 54.1,
+                "longitude": 12.2,
             },
             "group": {
                 "object_id": "GROUP:Armor-1",
@@ -88,6 +93,33 @@ def test_object_destroyed_event_updates_state_without_snapshot() -> None:
     assert state.groups["GROUP:Armor-1"]["alive_unit_count"] == 1
     assert "UNIT:Armor-1-1" not in state.ammunition
     assert "UNIT:Armor-1-1" not in state.ammunition_objects
+    report = state.loss_reports["LOSS:event-unit-lost-1"]
+    assert report["target_object_id"] == "UNIT:Armor-1-1"
+    assert report["victim_coalition"] == "red"
+    assert report["visible_to"] == ["blue", "red"]
+    assert report["confidence"] == "confirmed"
+    assert report["longitude"] == 12.2
+
+
+def test_loss_report_is_visible_in_both_tactical_pictures_and_global_truth() -> None:
+    server = MooseBridgeServer()
+    bridge = MooseBridgeClient(server)
+    server.state.apply_message(destroyed_message())
+
+    blue = bridge.build_tactical_picture("blue", "INTEL:Blue")
+    red = bridge.build_tactical_picture("red", "INTEL:Red")
+    global_picture = bridge.build_global_picture()
+
+    assert len(blue.loss_reports) == 1
+    assert len(red.loss_reports) == 1
+    assert blue.to_geojson()["features"][0]["properties"]["perspective"] == "enemy_loss"
+    assert red.to_geojson()["features"][0]["properties"]["perspective"] == "friendly_loss"
+    global_feature = next(
+        feature
+        for feature in global_picture.to_geojson()["features"]
+        if feature["properties"]["layer"] == "loss_reports"
+    )
+    assert global_feature["properties"]["perspective"] == "global_truth"
 
 
 def test_unit_lost_updates_strategic_component_health() -> None:

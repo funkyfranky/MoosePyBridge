@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import math
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .state import MooseBridgeState
 
@@ -51,6 +51,132 @@ class CaptureBehavior(str, Enum):
     DESTROY = "destroy"
     RESPAWN_FOR_NEW_OWNER = "respawn_for_new_owner"
     DISABLE = "disable"
+
+
+class StrategicGoalAction(str, Enum):
+    """Intent a coalition has toward a strategic objective."""
+
+    CAPTURE = "capture"
+    DEFEND = "defend"
+    DESTROY = "destroy"
+    DISABLE = "disable"
+    PROTECT = "protect"
+    INTERDICT = "interdict"
+
+
+class StrategicGoalStatus(str, Enum):
+    """Lifecycle state of a coalition-owned strategic goal."""
+
+    PLANNED = "planned"
+    ACTIVE = "active"
+    ACHIEVED = "achieved"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class GoalEvaluationMode(str, Enum):
+    """Point in time at which matching success conditions complete a goal."""
+
+    IMMEDIATE = "immediate"
+    AT_DEADLINE = "at_deadline"
+    MANUAL = "manual"
+
+
+class GoalConditionMatch(str, Enum):
+    """How a set of goal conditions is combined."""
+
+    ALL = "all"
+    ANY = "any"
+
+
+class GoalConditionKind(str, Enum):
+    """Serializable strategic goal predicates."""
+
+    OWNER_IS = "owner_is"
+    OWNER_IS_NOT = "owner_is_not"
+    STATUS_IS = "status_is"
+    STATUS_IN = "status_in"
+    HEALTH_AT_LEAST = "health_at_least"
+    HEALTH_AT_MOST = "health_at_most"
+    CONTESTED_IS = "contested_is"
+
+
+@dataclass(slots=True, frozen=True)
+class GoalCondition:
+    """One typed condition evaluated against a strategic objective."""
+
+    kind: GoalConditionKind
+    value: Any
+
+    def __post_init__(self) -> None:
+        kind = GoalConditionKind(self.kind)
+        value = self.value
+        if kind in {GoalConditionKind.OWNER_IS, GoalConditionKind.OWNER_IS_NOT}:
+            value = normalize_coalition(value)
+            if value not in {"blue", "red"}:
+                raise ValueError("owner goal conditions require coalition blue or red")
+        elif kind is GoalConditionKind.STATUS_IS:
+            value = ObjectiveStatus(value)
+        elif kind is GoalConditionKind.STATUS_IN:
+            value = tuple(ObjectiveStatus(item) for item in value)
+            if not value:
+                raise ValueError("status_in requires at least one objective status")
+        elif kind in {GoalConditionKind.HEALTH_AT_LEAST, GoalConditionKind.HEALTH_AT_MOST}:
+            value = float(value)
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise ValueError("health goal condition values must be between 0 and 1")
+        elif kind is GoalConditionKind.CONTESTED_IS:
+            if not isinstance(value, bool):
+                raise ValueError("contested_is requires a boolean value")
+        object.__setattr__(self, "kind", kind)
+        object.__setattr__(self, "value", value)
+
+    @classmethod
+    def owner_is(cls, coalition: str) -> "GoalCondition":
+        return cls(GoalConditionKind.OWNER_IS, coalition)
+
+    @classmethod
+    def owner_is_not(cls, coalition: str) -> "GoalCondition":
+        return cls(GoalConditionKind.OWNER_IS_NOT, coalition)
+
+    @classmethod
+    def status_is(cls, status: ObjectiveStatus | str) -> "GoalCondition":
+        return cls(GoalConditionKind.STATUS_IS, status)
+
+    @classmethod
+    def status_in(cls, *statuses: ObjectiveStatus | str) -> "GoalCondition":
+        return cls(GoalConditionKind.STATUS_IN, statuses)
+
+    @classmethod
+    def health_at_least(cls, health: float) -> "GoalCondition":
+        return cls(GoalConditionKind.HEALTH_AT_LEAST, health)
+
+    @classmethod
+    def health_at_most(cls, health: float) -> "GoalCondition":
+        return cls(GoalConditionKind.HEALTH_AT_MOST, health)
+
+    @classmethod
+    def contested_is(cls, contested: bool) -> "GoalCondition":
+        return cls(GoalConditionKind.CONTESTED_IS, contested)
+
+    def matches(self, objective: "StrategicObjective") -> bool:
+        """Return whether this condition currently matches an objective."""
+
+        if self.kind is GoalConditionKind.OWNER_IS:
+            return objective.owner == self.value
+        if self.kind is GoalConditionKind.OWNER_IS_NOT:
+            return objective.owner is not None and objective.owner != self.value
+        if self.kind is GoalConditionKind.STATUS_IS:
+            return objective.status is self.value
+        if self.kind is GoalConditionKind.STATUS_IN:
+            return objective.status in self.value
+        if self.kind is GoalConditionKind.HEALTH_AT_LEAST:
+            return objective.health is not None and objective.health >= self.value
+        if self.kind is GoalConditionKind.HEALTH_AT_MOST:
+            return objective.health is not None and objective.health <= self.value
+        if self.kind is GoalConditionKind.CONTESTED_IS:
+            return objective.contested is self.value
+        return False
 
 
 @dataclass(slots=True, frozen=True)
@@ -122,6 +248,80 @@ class StrategicObjective:
         component_ids = [component.object_id for component in self.components]
         if len(component_ids) != len(set(component_ids)):
             raise ValueError("objective components must have unique object ids")
+
+
+@dataclass(slots=True)
+class StrategicGoal:
+    """A private coalition intent directed at one strategic objective."""
+
+    goal_id: str
+    name: str
+    coalition: str
+    action: StrategicGoalAction
+    objective_id: str
+    priority: float = 0.0
+    status: StrategicGoalStatus = StrategicGoalStatus.PLANNED
+    evaluation_mode: GoalEvaluationMode | None = None
+    success_conditions: tuple[GoalCondition, ...] = ()
+    failure_conditions: tuple[GoalCondition, ...] = ()
+    success_match: GoalConditionMatch = GoalConditionMatch.ALL
+    failure_match: GoalConditionMatch = GoalConditionMatch.ANY
+    created_mission_time: float | None = None
+    activated_mission_time: float | None = None
+    deadline_mission_time: float | None = None
+    completed_mission_time: float | None = None
+    failure_reason: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.goal_id = self.goal_id.strip()
+        self.name = self.name.strip()
+        self.objective_id = self.objective_id.strip()
+        self.coalition = normalize_coalition(self.coalition) or ""
+        self.action = StrategicGoalAction(self.action)
+        self.status = StrategicGoalStatus(self.status)
+        self.evaluation_mode = self.evaluation_mode or _default_goal_evaluation_mode(self.action)
+        self.evaluation_mode = GoalEvaluationMode(self.evaluation_mode)
+        self.success_match = GoalConditionMatch(self.success_match)
+        self.failure_match = GoalConditionMatch(self.failure_match)
+        self.success_conditions = tuple(self.success_conditions) or _default_success_conditions(self.action, self.coalition)
+        self.failure_conditions = tuple(self.failure_conditions) or _default_failure_conditions(self.action, self.coalition)
+        if not self.goal_id:
+            raise ValueError("goal_id must not be empty")
+        if not self.name:
+            raise ValueError("goal name must not be empty")
+        if self.coalition not in {"blue", "red"}:
+            raise ValueError("strategic goals require coalition blue or red")
+        if not self.objective_id:
+            raise ValueError("strategic goal requires objective_id")
+        if not math.isfinite(self.priority) or self.priority < 0:
+            raise ValueError("goal priority must be finite and non-negative")
+        for field_name in (
+            "created_mission_time",
+            "activated_mission_time",
+            "deadline_mission_time",
+            "completed_mission_time",
+        ):
+            value = getattr(self, field_name)
+            if value is not None and (not math.isfinite(value) or value < 0):
+                raise ValueError(f"{field_name} must be finite and non-negative")
+        if self.evaluation_mode is GoalEvaluationMode.AT_DEADLINE and self.deadline_mission_time is None:
+            raise ValueError(f"{self.action.value} goals require deadline_mission_time")
+
+
+@dataclass(slots=True, frozen=True)
+class StrategicGoalEvent:
+    """One normalized strategic goal lifecycle transition."""
+
+    event: str
+    goal_id: str
+    objective_id: str
+    coalition: str
+    source: str
+    mission_time: float | None = None
+    previous_status: StrategicGoalStatus | None = None
+    status: StrategicGoalStatus | None = None
+    details: dict[str, Any] = field(default_factory=dict, compare=False)
 
 
 @dataclass(slots=True, frozen=True)
@@ -307,6 +507,255 @@ class StrategicObjectiveRegistry:
             del self._events[:1_000]
 
 
+class StrategicGoalRegistry:
+    """Coalition-private goals evaluated against a global objective registry."""
+
+    def __init__(self, objectives: StrategicObjectiveRegistry) -> None:
+        self.objectives = objectives
+        self._goals: dict[str, StrategicGoal] = {}
+        self._events: list[StrategicGoalEvent] = []
+        self._listeners: list[Callable[[StrategicGoalEvent], None]] = []
+
+    @property
+    def events(self) -> tuple[StrategicGoalEvent, ...]:
+        return tuple(self._events)
+
+    def add_listener(self, listener: Callable[[StrategicGoalEvent], None]) -> None:
+        """Subscribe to local strategic goal lifecycle events."""
+
+        if listener not in self._listeners:
+            self._listeners.append(listener)
+
+    def remove_listener(self, listener: Callable[[StrategicGoalEvent], None]) -> None:
+        """Remove a previously registered goal listener."""
+
+        if listener in self._listeners:
+            self._listeners.remove(listener)
+
+    def add(self, goal: StrategicGoal, *, replace: bool = False) -> StrategicGoal:
+        """Add a goal after validating its referenced objective."""
+
+        if self.objectives.get(goal.objective_id) is None:
+            raise ValueError(f"Unknown strategic objective: {goal.objective_id}")
+        if goal.goal_id in self._goals and not replace:
+            raise ValueError(f"Strategic goal already exists: {goal.goal_id}")
+        self._goals[goal.goal_id] = goal
+        self._record(
+            StrategicGoalEvent(
+                event="goal.created" if not replace else "goal.replaced",
+                goal_id=goal.goal_id,
+                objective_id=goal.objective_id,
+                coalition=goal.coalition,
+                source="python",
+                mission_time=goal.created_mission_time,
+                status=goal.status,
+            )
+        )
+        return goal
+
+    def activate(
+        self,
+        goal: StrategicGoal | str,
+        *,
+        mission_time: float | None = None,
+        source: str = "python",
+    ) -> StrategicGoal:
+        """Activate a planned goal."""
+
+        item = self._require(goal)
+        if item.status is not StrategicGoalStatus.PLANNED:
+            raise ValueError(f"Only planned goals can be activated: {item.goal_id}")
+        previous = item.status
+        item.status = StrategicGoalStatus.ACTIVE
+        item.activated_mission_time = mission_time
+        self._record(
+            StrategicGoalEvent(
+                event="goal.activated",
+                goal_id=item.goal_id,
+                objective_id=item.objective_id,
+                coalition=item.coalition,
+                source=source,
+                mission_time=mission_time,
+                previous_status=previous,
+                status=item.status,
+            )
+        )
+        return item
+
+    def cancel(
+        self,
+        goal: StrategicGoal | str,
+        *,
+        mission_time: float | None = None,
+        source: str = "python",
+        reason: str | None = None,
+    ) -> StrategicGoal:
+        """Cancel a planned or active goal."""
+
+        item = self._require(goal)
+        if item.status not in {StrategicGoalStatus.PLANNED, StrategicGoalStatus.ACTIVE}:
+            raise ValueError(f"Completed goals cannot be cancelled: {item.goal_id}")
+        self._transition(item, StrategicGoalStatus.CANCELLED, source, mission_time, reason=reason)
+        return item
+
+    def remove(self, goal: StrategicGoal | str) -> StrategicGoal:
+        goal_id = goal.goal_id if isinstance(goal, StrategicGoal) else goal
+        try:
+            return self._goals.pop(goal_id)
+        except KeyError as exc:
+            raise KeyError(f"Unknown strategic goal: {goal_id}") from exc
+
+    def get(self, goal_id: str) -> StrategicGoal | None:
+        return self._goals.get(goal_id)
+
+    def all(self) -> tuple[StrategicGoal, ...]:
+        return tuple(self._goals[key] for key in sorted(self._goals))
+
+    def filter(
+        self,
+        *,
+        coalition: str | None = None,
+        action: StrategicGoalAction | str | None = None,
+        status: StrategicGoalStatus | str | None = None,
+        objective_id: str | None = None,
+        minimum_priority: float | None = None,
+    ) -> tuple[StrategicGoal, ...]:
+        normalized_coalition = normalize_coalition(coalition) if coalition is not None else None
+        normalized_action = StrategicGoalAction(action) if action is not None else None
+        normalized_status = StrategicGoalStatus(status) if status is not None else None
+        return tuple(
+            goal
+            for goal in self.all()
+            if (normalized_coalition is None or goal.coalition == normalized_coalition)
+            and (normalized_action is None or goal.action is normalized_action)
+            and (normalized_status is None or goal.status is normalized_status)
+            and (objective_id is None or goal.objective_id == objective_id)
+            and (minimum_priority is None or goal.priority >= minimum_priority)
+        )
+
+    def sync(self, *, mission_time: float | None = None, source: str = "objective.sync") -> tuple[StrategicGoalEvent, ...]:
+        """Evaluate active goals from current objective state."""
+
+        emitted: list[StrategicGoalEvent] = []
+        for goal in self.all():
+            if goal.status is not StrategicGoalStatus.ACTIVE:
+                continue
+            objective = self.objectives.get(goal.objective_id)
+            if objective is None:
+                emitted.append(
+                    self._transition(
+                        goal,
+                        StrategicGoalStatus.FAILED,
+                        source,
+                        mission_time,
+                        reason="objective_removed",
+                    )
+                )
+                continue
+
+            if _conditions_match(goal.failure_conditions, goal.failure_match, objective):
+                emitted.append(
+                    self._transition(
+                        goal,
+                        StrategicGoalStatus.FAILED,
+                        source,
+                        mission_time,
+                        reason="failure_conditions_met",
+                    )
+                )
+                continue
+
+            success = _conditions_match(goal.success_conditions, goal.success_match, objective)
+            deadline_reached = (
+                goal.deadline_mission_time is not None
+                and mission_time is not None
+                and mission_time >= goal.deadline_mission_time
+            )
+            if goal.evaluation_mode is GoalEvaluationMode.IMMEDIATE and success:
+                emitted.append(self._transition(goal, StrategicGoalStatus.ACHIEVED, source, mission_time))
+            elif goal.evaluation_mode is GoalEvaluationMode.AT_DEADLINE and deadline_reached:
+                status = StrategicGoalStatus.ACHIEVED if success else StrategicGoalStatus.FAILED
+                emitted.append(
+                    self._transition(
+                        goal,
+                        status,
+                        source,
+                        mission_time,
+                        reason=None if success else "deadline_conditions_not_met",
+                    )
+                )
+            elif goal.evaluation_mode is not GoalEvaluationMode.AT_DEADLINE and deadline_reached:
+                emitted.append(
+                    self._transition(
+                        goal,
+                        StrategicGoalStatus.FAILED,
+                        source,
+                        mission_time,
+                        reason="deadline_expired",
+                    )
+                )
+        return tuple(emitted)
+
+    def complete_manual(
+        self,
+        goal: StrategicGoal | str,
+        *,
+        achieved: bool,
+        mission_time: float | None = None,
+        source: str = "python",
+        reason: str | None = None,
+    ) -> StrategicGoal:
+        """Complete one manual goal explicitly."""
+
+        item = self._require(goal)
+        if item.status is not StrategicGoalStatus.ACTIVE:
+            raise ValueError(f"Only active goals can be completed: {item.goal_id}")
+        status = StrategicGoalStatus.ACHIEVED if achieved else StrategicGoalStatus.FAILED
+        self._transition(item, status, source, mission_time, reason=reason)
+        return item
+
+    def _require(self, goal: StrategicGoal | str) -> StrategicGoal:
+        goal_id = goal.goal_id if isinstance(goal, StrategicGoal) else goal
+        item = self.get(goal_id)
+        if item is None:
+            raise KeyError(f"Unknown strategic goal: {goal_id}")
+        return item
+
+    def _transition(
+        self,
+        goal: StrategicGoal,
+        status: StrategicGoalStatus,
+        source: str,
+        mission_time: float | None,
+        *,
+        reason: str | None = None,
+    ) -> StrategicGoalEvent:
+        previous = goal.status
+        goal.status = status
+        goal.completed_mission_time = mission_time
+        goal.failure_reason = reason if status is StrategicGoalStatus.FAILED else None
+        event = StrategicGoalEvent(
+            event=f"goal.{status.value}",
+            goal_id=goal.goal_id,
+            objective_id=goal.objective_id,
+            coalition=goal.coalition,
+            source=source,
+            mission_time=mission_time,
+            previous_status=previous,
+            status=status,
+            details={"reason": reason} if reason else {},
+        )
+        self._record(event)
+        return event
+
+    def _record(self, event: StrategicGoalEvent) -> None:
+        self._events.append(event)
+        if len(self._events) > 10_000:
+            del self._events[:1_000]
+        for listener in tuple(self._listeners):
+            listener(event)
+
+
 def normalize_coalition(value: Any) -> str | None:
     """Normalize DCS coalition ids and names."""
 
@@ -319,6 +768,47 @@ def normalize_coalition(value: Any) -> str | None:
     normalized = str(value).strip().lower()
     aliases = {"0": "neutral", "1": "red", "2": "blue", "neutrals": "neutral"}
     return aliases.get(normalized, normalized if normalized in {"neutral", "red", "blue"} else None)
+
+
+def _default_goal_evaluation_mode(action: StrategicGoalAction) -> GoalEvaluationMode:
+    if action in {StrategicGoalAction.DEFEND, StrategicGoalAction.PROTECT}:
+        return GoalEvaluationMode.AT_DEADLINE
+    return GoalEvaluationMode.IMMEDIATE
+
+
+def _default_success_conditions(action: StrategicGoalAction, coalition: str) -> tuple[GoalCondition, ...]:
+    if action is StrategicGoalAction.CAPTURE:
+        return (GoalCondition.owner_is(coalition), GoalCondition.contested_is(False))
+    if action is StrategicGoalAction.DEFEND:
+        return (GoalCondition.owner_is(coalition),)
+    if action is StrategicGoalAction.DESTROY:
+        return (GoalCondition.status_is(ObjectiveStatus.DESTROYED),)
+    if action is StrategicGoalAction.DISABLE:
+        return (GoalCondition.status_in(ObjectiveStatus.DISABLED, ObjectiveStatus.DESTROYED),)
+    if action is StrategicGoalAction.PROTECT:
+        return (GoalCondition.health_at_least(0.85),)
+    if action is StrategicGoalAction.INTERDICT:
+        return (GoalCondition.health_at_most(0.85),)
+    return ()
+
+
+def _default_failure_conditions(action: StrategicGoalAction, coalition: str) -> tuple[GoalCondition, ...]:
+    if action is StrategicGoalAction.DEFEND:
+        return (GoalCondition.owner_is_not(coalition),)
+    if action is StrategicGoalAction.PROTECT:
+        return (GoalCondition.status_is(ObjectiveStatus.DESTROYED),)
+    return ()
+
+
+def _conditions_match(
+    conditions: tuple[GoalCondition, ...],
+    match: GoalConditionMatch,
+    objective: StrategicObjective,
+) -> bool:
+    if not conditions:
+        return False
+    matches = (condition.matches(objective) for condition in conditions)
+    return all(matches) if match is GoalConditionMatch.ALL else any(matches)
 
 
 def capture_actions(event: ObjectiveEvent, objective: StrategicObjective) -> tuple[ObjectiveComponent, ...]:

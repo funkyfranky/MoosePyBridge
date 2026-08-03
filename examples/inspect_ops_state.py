@@ -169,6 +169,7 @@ def print_cohorts(client: MooseBridgeClient, text_filter: str | None) -> None:
             f"category={cohort.category} "
             f"unit_type={cohort.unit_type} "
             f"stock={cohort.stock_asset_count} "
+            f"available={cohort.available_asset_count} "
             f"spawned={cohort.spawned_asset_count} "
             f"opsgroups=[{opsgroup_text}] "
             f"mission_range_m={fmt_float(cohort.mission_range_m, 0)} "

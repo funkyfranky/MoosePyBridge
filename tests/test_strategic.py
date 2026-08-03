@@ -5,15 +5,21 @@ import json
 
 from moosebridge import (
     CaptureBehavior,
+    GoalCondition,
+    GoalEvaluationMode,
     MooseBridgeClient,
     MooseBridgeServer,
     ObjectiveComponent,
     ObjectiveKind,
     ObjectiveStatus,
     OwnershipPolicy,
+    StrategicGoal,
+    StrategicGoalAction,
+    StrategicGoalStatus,
     StrategicObjective,
     StrategicObjectiveRegistry,
     capture_actions,
+    format_strategic_goal,
 )
 from moosebridge.state import MooseBridgeState
 
@@ -393,3 +399,219 @@ def test_fixed_objective_rejects_external_event_wait() -> None:
             raise AssertionError("Expected fixed objective wait to fail")
 
     asyncio.run(scenario())
+
+
+def test_strategic_goal_rejects_neutral_or_shared_ownership() -> None:
+    for coalition in ("neutral", "all", ""):
+        try:
+            StrategicGoal(
+                goal_id="GOAL:Invalid",
+                name="Invalid",
+                coalition=coalition,
+                action=StrategicGoalAction.CAPTURE,
+                objective_id="OBJECTIVE:Target",
+            )
+        except ValueError as exc:
+            assert "blue or red" in str(exc)
+        else:
+            raise AssertionError(f"Coalition {coalition!r} should be rejected")
+
+
+def test_capture_goal_is_achieved_by_airbase_event_and_stays_completed() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Tutow",
+                name="Tutow",
+                kind=ObjectiveKind.AIRBASE,
+                control_object_id="AIRBASE:Tutow",
+                ownership_policy=OwnershipPolicy.DCS_MANAGED,
+            )
+        )
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "snapshot",
+                    "kind": "airbases",
+                    "mission_time": 100,
+                    "payload": {"airbases": [{"object_id": "AIRBASE:Tutow", "coalition": "red"}]},
+                }
+            )
+        )
+        goal = bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Capture Tutow",
+                name="Capture Tutow",
+                coalition="blue",
+                action=StrategicGoalAction.CAPTURE,
+                objective_id="OBJECTIVE:Tutow",
+                priority=90,
+            ),
+            activate=True,
+        )
+        assert goal.status is StrategicGoalStatus.ACTIVE
+
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "event",
+                    "event": "airbase.coalition_changed",
+                    "mission_time": 150,
+                    "payload": {"airbase": {"object_id": "AIRBASE:Tutow", "coalition": "blue"}},
+                }
+            )
+        )
+
+        assert goal.status is StrategicGoalStatus.ACHIEVED
+        assert goal.completed_mission_time == 150
+        assert bridge.goals.events[-1].event == "goal.achieved"
+        assert bridge.strategic_goals(coalition="blue", status="achieved") == (goal,)
+
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "event",
+                    "event": "airbase.coalition_changed",
+                    "mission_time": 200,
+                    "payload": {"airbase": {"object_id": "AIRBASE:Tutow", "coalition": "red"}},
+                }
+            )
+        )
+        assert goal.status is StrategicGoalStatus.ACHIEVED
+
+    asyncio.run(scenario())
+
+
+def test_defend_goal_is_evaluated_at_deadline_from_heartbeat() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        objective = bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Depot",
+                name="Depot",
+                kind=ObjectiveKind.DEPOT,
+                control_object_id=None,
+                ownership_policy=OwnershipPolicy.FIXED,
+                owner="blue",
+            )
+        )
+        objective.status = ObjectiveStatus.OPERATIONAL
+        goal = bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Defend Depot",
+                name="Defend Depot",
+                coalition="blue",
+                action=StrategicGoalAction.DEFEND,
+                objective_id=objective.objective_id,
+                deadline_mission_time=600,
+            ),
+            activate=True,
+        )
+        assert goal.evaluation_mode is GoalEvaluationMode.AT_DEADLINE
+        assert goal.status is StrategicGoalStatus.ACTIVE
+
+        waiter = asyncio.create_task(
+            bridge.wait_for_strategic_goal_event(goal.goal_id, timeout=1.0)
+        )
+        await asyncio.sleep(0)
+        await server._handle_line(json.dumps({"type": "heartbeat", "source": "dcs", "mission_time": 599}))
+        assert goal.status is StrategicGoalStatus.ACTIVE
+        await server._handle_line(json.dumps({"type": "heartbeat", "source": "dcs", "mission_time": 600}))
+        event = await waiter
+        assert goal.status is StrategicGoalStatus.ACHIEVED
+        assert event.event == "goal.achieved"
+
+    asyncio.run(scenario())
+
+
+def test_destroy_goal_follows_object_destroyed_event_without_polling() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Armor",
+                name="Armor",
+                kind=ObjectiveKind.FORCE,
+                control_object_id=None,
+                ownership_policy=OwnershipPolicy.FIXED,
+                owner="red",
+                components=(ObjectiveComponent("UNIT:Armor-1"),),
+            )
+        )
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "snapshot",
+                    "kind": "units",
+                    "payload": {"units": [{"object_id": "UNIT:Armor-1", "alive": True}]},
+                }
+            )
+        )
+        goal = bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Destroy Armor",
+                name="Destroy Armor",
+                coalition="blue",
+                action=StrategicGoalAction.DESTROY,
+                objective_id="OBJECTIVE:Armor",
+            ),
+            activate=True,
+        )
+
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "event",
+                    "event": "object.destroyed",
+                    "mission_time": 75,
+                    "payload": {
+                        "object_id": "UNIT:Armor-1",
+                        "object_type": "UNIT",
+                        "object": {"object_id": "UNIT:Armor-1", "object_type": "UNIT", "alive": False},
+                    },
+                }
+            )
+        )
+
+        assert bridge.strategic_objective("OBJECTIVE:Armor").status is ObjectiveStatus.DESTROYED  # type: ignore[union-attr]
+        assert goal.status is StrategicGoalStatus.ACHIEVED
+
+    asyncio.run(scenario())
+
+
+def test_custom_goal_conditions_and_manual_completion_are_supported() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Custom",
+            name="Custom",
+            kind=ObjectiveKind.CUSTOM,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+        )
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Manual",
+            name="Manual decision",
+            coalition="blue",
+            action=StrategicGoalAction.INTERDICT,
+            objective_id="OBJECTIVE:Custom",
+            evaluation_mode=GoalEvaluationMode.MANUAL,
+            success_conditions=(GoalCondition.owner_is("blue"),),
+        ),
+        activate=True,
+    )
+
+    bridge.complete_strategic_goal(goal, achieved=False, reason="commander_decision")
+
+    assert goal.status is StrategicGoalStatus.FAILED
+    assert goal.failure_reason == "commander_decision"
+    rendered = format_strategic_goal(goal)
+    assert "action=interdict coalition=blue status=failed" in rendered
+    assert "success: owner_is=blue" in rendered

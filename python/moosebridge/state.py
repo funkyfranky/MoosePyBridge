@@ -69,6 +69,7 @@ class MooseBridgeState:
     intels: dict[str, dict[str, Any]] = field(default_factory=dict)
     intel_contacts: dict[str, dict[str, Any]] = field(default_factory=dict)
     intel_clusters: dict[str, dict[str, Any]] = field(default_factory=dict)
+    loss_reports: dict[str, dict[str, Any]] = field(default_factory=dict)
     opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
     territory_objects: dict[str, Territory] = field(default_factory=dict)
     opsgroup_objects: dict[str, OpsGroup] = field(default_factory=dict)
@@ -103,6 +104,7 @@ class MooseBridgeState:
                 self.ammunition_tracker.reset()
                 self.ammunition.clear()
                 self.ammunition_objects.clear()
+                self.loss_reports.clear()
             self.clock = next_clock
 
         if message_type == "heartbeat":
@@ -293,17 +295,17 @@ class MooseBridgeState:
             if platform_categories_match(cohort.performer_categories, spec.performer_categories)
         ]
 
-    def cohorts_with_stock_for_mission_type(self, mission_type: str) -> list[Cohort]:
-        """Return mission-capable COHORTs with at least one stocked asset.
+    def available_cohorts_for_mission_type(self, mission_type: str) -> list[Cohort]:
+        """Return mission-capable COHORTs with at least one currently available asset.
 
         :param mission_type: Mission type such as ``BAI`` or ``Orbit``.
-        :returns: Mission-capable COHORT objects with ``stock_asset_count > 0``.
+        :returns: Mission-capable COHORT objects with ``available_asset_count > 0``.
         """
 
         return [
             cohort
             for cohort in self.cohorts_capable_of(mission_type)
-            if cohort.stock_asset_count is not None and cohort.stock_asset_count > 0
+            if cohort.available_asset_count is not None and cohort.available_asset_count > 0
         ]
 
     def _apply_snapshot(self, message: dict[str, Any]) -> None:
@@ -372,6 +374,8 @@ class MooseBridgeState:
             items = payload.get("intel_clusters", [])
             self.intel_clusters = self._index_objects(items)
             self.intel_cluster_objects = self._index_typed_objects(items, IntelCluster.from_payload)
+        elif kind == "loss_reports":
+            self.loss_reports = self._index_objects(payload.get("loss_reports", []))
 
     def _apply_event(self, message: dict[str, Any]) -> None:
         """Apply an incoming event to derived state indexes."""
@@ -392,6 +396,35 @@ class MooseBridgeState:
                 if object_type == "UNIT":
                     self.ammunition.pop(object_id, None)
                     self.ammunition_objects.pop(object_id, None)
+                event_id = str(message.get("id") or f"{object_id}:{message.get('mission_time', '')}")
+                report_id = f"LOSS:{event_id}"
+                self.loss_reports[report_id] = {
+                    "object_id": report_id,
+                    "dcs_name": str(updated.get("dcs_name") or object_id.partition(":")[2]),
+                    "object_type": "LOSS_REPORT",
+                    "target_object_id": object_id,
+                    "target_object_type": object_type,
+                    "group_id": payload.get("group_id") or updated.get("group_id"),
+                    "victim_coalition": updated.get("coalition"),
+                    "coalition": updated.get("coalition"),
+                    "visible_to": ["blue", "red"],
+                    "status": "destroyed",
+                    "alive": False,
+                    "confidence": "confirmed",
+                    "source": payload.get("dcs_event_name") or "DCS_DESTRUCTION_EVENT",
+                    "mission_time": message.get("mission_time"),
+                    "dcs_event_time": payload.get("dcs_event_time"),
+                    "category": updated.get("category"),
+                    "dcs_type": updated.get("dcs_type"),
+                    "x": updated.get("x"),
+                    "y": updated.get("y"),
+                    "z": updated.get("z"),
+                    "latitude": updated.get("latitude"),
+                    "longitude": updated.get("longitude"),
+                }
+                if len(self.loss_reports) > 10_000:
+                    for oldest_report_id in tuple(self.loss_reports)[:1_000]:
+                        del self.loss_reports[oldest_report_id]
             group_payload = payload.get("group") if isinstance(payload.get("group"), dict) else None
             if group_payload:
                 group_id = str(group_payload.get("object_id") or payload.get("group_id") or "")

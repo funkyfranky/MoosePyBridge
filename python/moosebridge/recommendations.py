@@ -81,18 +81,18 @@ def candidate_sort_key(candidate: Any, mission_type: str) -> tuple[float, float,
 
     :param candidate: Advisory candidate.
     :param mission_type: Requested mission type.
-    :returns: Sort key using mission performance, payload performance, distance and stock.
+    :returns: Sort key using mission performance, payload performance, distance and availability.
     """
 
     mission_performance = candidate.cohort.mission_performance_for(mission_type)
     payload_performance = candidate.cohort.payload_performance_for(mission_type)
     distance_m = candidate.distance_m if candidate.distance_m is not None else float("inf")
-    stock = candidate.cohort.stock_asset_count or 0
+    available = candidate.cohort.available_asset_count or 0
     return (
         -(mission_performance if mission_performance is not None else -1.0),
         -(payload_performance if payload_performance is not None else -1.0),
         distance_m,
-        -float(stock),
+        -float(available),
     )
 
 
@@ -210,6 +210,7 @@ def recommend_auftrag(result: Any) -> AuftragRecommendation | None:
             "mission_range_nm": _meters_to_nm(mission_range_m),
             "range_margin_m": range_margin_m,
             "range_margin_nm": _meters_to_nm(range_margin_m),
+            "available_asset_count": candidate.cohort.available_asset_count,
             "stock_asset_count": candidate.cohort.stock_asset_count,
         },
     )

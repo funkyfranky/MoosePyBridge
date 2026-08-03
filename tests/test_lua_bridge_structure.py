@@ -11,6 +11,14 @@ def test_bridge_constructor_preserves_moose_base_inheritance() -> None:
     assert "if not BASE then setmetatable(self, { __index = MOOSE_BRIDGE }) end" in source
 
 
+def test_ops_snapshots_use_moose_available_asset_counts() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert source.count('available_asset_count=self:_NumberOrNil(self:_SafeCall(') == 2
+    assert 'self:_SafeCall(legion, "CountAvailableAssets")' in source
+    assert 'self:_SafeCall(cohort, "CountAvailableAssets")' in source
+
+
 def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridgeDcsEventsExtension.lua").read_text(encoding="utf-8")
 

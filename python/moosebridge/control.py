@@ -41,6 +41,7 @@ STATE_KINDS = (
     "intels",
     "intel_contacts",
     "intel_clusters",
+    "loss_reports",
 )
 
 

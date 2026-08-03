@@ -281,6 +281,7 @@ class TacticalPicture:
     legions: list[Legion] = field(default_factory=list)
     cohorts: list[Cohort] = field(default_factory=list)
     missions: list[Auftrag] = field(default_factory=list)
+    loss_reports: list[dict[str, Any]] = field(default_factory=list)
 
     def to_geojson(self) -> GeoJsonFeatureCollection:
         """Return a GeoJSON FeatureCollection suitable for a tactical map."""
@@ -290,6 +291,7 @@ class TacticalPicture:
         features.extend(self._asset_features())
         features.extend(self._contact_features())
         features.extend(self._cluster_features())
+        features.extend(self._loss_report_features())
         features.extend(self._mission_features())
         return _feature_collection(
             features,
@@ -378,6 +380,14 @@ class TacticalPicture:
             for cluster in self.clusters
         ]
 
+    def _loss_report_features(self) -> list[GeoJsonFeature | None]:
+        features: list[GeoJsonFeature | None] = []
+        for report in self.loss_reports:
+            victim_coalition = str(report.get("victim_coalition") or "").lower()
+            perspective = "friendly_loss" if victim_coalition == self.coalition.lower() else "enemy_loss"
+            features.append(_raw_point_feature(report, "loss_reports", {"perspective": perspective}))
+        return features
+
     def _mission_features(self) -> list[GeoJsonFeature | None]:
         features: list[GeoJsonFeature | None] = []
         for mission in self.missions:
@@ -426,6 +436,7 @@ class GlobalPicture:
     intels: list[Intel] = field(default_factory=list)
     intel_contacts: list[IntelContact] = field(default_factory=list)
     intel_clusters: list[IntelCluster] = field(default_factory=list)
+    loss_reports: list[dict[str, Any]] = field(default_factory=list)
 
     def counts(self) -> dict[str, int]:
         """Return object counts by global-picture layer."""
@@ -445,6 +456,7 @@ class GlobalPicture:
             "intels": len(self.intels),
             "intel_contacts": len(self.intel_contacts),
             "intel_clusters": len(self.intel_clusters),
+            "loss_reports": len(self.loss_reports),
         }
 
     def validate(self) -> list[PictureValidationIssue]:
@@ -457,6 +469,7 @@ class GlobalPicture:
             "statics": self.statics,
             "airbases": self.airbases,
             "zones": self.zones,
+            "loss_reports": self.loss_reports,
         }
         seen_ids: dict[str, str] = {}
 
@@ -628,6 +641,7 @@ class GlobalPicture:
         features.extend(_point_feature(item, "legions", {"coalition": item.coalition or item.coalition_name, "state": item.state}) for item in self.legions)  # type: ignore[arg-type]
         features.extend(_point_feature(item, "intel_contacts", {"intel_id": item.intel_id, "threat_level": item.threat_level}) for item in self.intel_contacts)
         features.extend(_point_feature(item, "intel_clusters", {"intel_id": item.intel_id, "size": item.size}) for item in self.intel_clusters)
+        features.extend(_raw_point_feature(item, "loss_reports", {"perspective": "global_truth"}) for item in self.loss_reports)
         features.extend(self._mission_features())
         return _feature_collection(features, scope="global", metadata=self.clock.to_dict() if self.clock else {})
 
