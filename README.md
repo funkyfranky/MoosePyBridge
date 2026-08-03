@@ -118,6 +118,17 @@ Bridge = MOOSE_BRIDGE:New("127.0.0.1", 42000)
 Bridge:Start()
 ```
 
+Register each MOOSE `COMMANDER` that Python should observe or task. This is a
+one-time reference registration and does not add a polling loop:
+
+```lua
+BlueCommander = COMMANDER:New(coalition.side.BLUE, "Blue Command")
+BlueCommander:AddLegion(WingParchim)
+BlueCommander:AddLegion(BrigadeLaage)
+
+Bridge:RegisterCommander(BlueCommander)
+```
+
 Passive strategic territories can be defined from Mission Editor zones:
 
 ```lua
@@ -426,16 +437,20 @@ nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", aliv
 Typed OPS state convenience helpers:
 
 ```python
-from moosebridge import format_legion_status
+from moosebridge import format_commander_status, format_legion_status
 
 await bridge.refresh_legion_state()
 
 legion = bridge.legion("LEGION:Wing Parchim")
+commander = bridge.commander("COMMANDER:Blue Command")
+command_legions = bridge.legions_of_commander("COMMANDER:Blue Command")
+command_missions = bridge.missions_of_commander("COMMANDER:Blue Command")
 cohorts = bridge.cohorts_of_legion("LEGION:Wing Parchim")
 missions = bridge.missions_of_legion("LEGION:Wing Parchim")
 ready = bridge.ready_cohorts_of_legion("LEGION:Wing Parchim", mission_type="BAI")
 
 print(format_legion_status(bridge, "LEGION:Wing Parchim"))
+print(format_commander_status(bridge, "COMMANDER:Blue Command"))
 ```
 
 Situation pictures and GeoJSON export:
@@ -753,7 +768,15 @@ MOOSE-like AUFTRAG helper objects:
 from moosebridge import Auftrag_AIRDEFENSE, Auftrag_AMMOSUPPLY, Auftrag_ANTISHIP, Auftrag_ARTY, Auftrag_AWACS, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAPTUREZONE, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_EWR, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_INTERCEPT, Auftrag_NAVALENGAGEMENT, Auftrag_NOTHING, Auftrag_ONGUARD, Auftrag_ORBIT, Auftrag_PATROLZONE, Auftrag_REARMING, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRAFING, Auftrag_STRIKE, Auftrag_TANKER, Auftrag_TROOPTRANSPORT, GroupSet
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
-ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
+ack = await bridge.add_auftrag(auftrag=auftrag_bai, commander="COMMANDER:Blue Command")
+
+# Optional Python constraints. Without them, COMMANDER selects suitable LEGIONs.
+ack = await bridge.add_auftrag(
+    auftrag=Auftrag_BAI(target="UNIT:Ground-1-1"),
+    commander="COMMANDER:Blue Command",
+    allowed_legions=["LEGION:Wing Parchim"],
+    allowed_cohorts=["COHORT:F-4E Parchim Alpha"],
+)
 
 summary = await bridge.get_auftrag_summary(auftrag_bai, on_status=print)
 if summary.success is True:

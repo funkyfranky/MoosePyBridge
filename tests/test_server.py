@@ -52,8 +52,9 @@ def test_new_snapshot_helpers_use_registered_lua_actions() -> None:
 
     asyncio.run(server.snapshot_cohorts())
     asyncio.run(server.snapshot_legions())
+    asyncio.run(server.snapshot_commanders())
 
-    assert [command.action for command in sent] == ["snapshot.cohorts", "snapshot.legions"]
+    assert [command.action for command in sent] == ["snapshot.cohorts", "snapshot.legions", "snapshot.commanders"]
 
 
 def test_dcs_connection_reset_during_close_is_handled() -> None:

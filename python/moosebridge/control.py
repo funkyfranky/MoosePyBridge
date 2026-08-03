@@ -38,6 +38,7 @@ STATE_KINDS = (
     "auftraege",
     "cohorts",
     "legions",
+    "commanders",
     "intels",
     "intel_contacts",
     "intel_clusters",

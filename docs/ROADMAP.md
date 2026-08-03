@@ -251,7 +251,7 @@ Next work items:
 1. Expand and harden AUFTRAG snapshot details, especially timing, target, summary,
    and outcome fields.
 2. Add AIRWING/BRIGADE/FLEET snapshots.
-3. Add COMMANDER/CHIEF snapshots.
+3. Add CHIEF snapshots after COMMANDER tasking has been validated in DCS.
 4. Add replayable event snapshots or event streams for state changes.
 5. Add tests for additional AUFTRAG advisory edge
    cases.
@@ -273,8 +273,9 @@ Typed model priorities:
 - TargetSnapshot
 - Cohort
 - Legion
+- Commander
 - AuftragOutcome
-- later Airwing, Brigade, Fleet, Commander, Chief
+- later Airwing, Brigade, Fleet, Chief
 
 Example target API:
 

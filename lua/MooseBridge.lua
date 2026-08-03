@@ -66,6 +66,7 @@ function MOOSE_BRIDGE:New(host, port)
   self.RegisteredZones = {}
   self.RegisteredOpsZones = {}
   self.RegisteredOpsGroups = {}
+  self.RegisteredCommanders = {}
   self.ConnectRetryDelay = 5
   self.TickInterval = 0.2
   self.HeartbeatInterval = 5
@@ -332,6 +333,19 @@ end
 function MOOSE_BRIDGE:RegisterOpsGroups(opsgroups)
   if type(opsgroups) ~= "table" then return self end
   for name, opsgroup in pairs(opsgroups) do self:RegisterOpsGroup(opsgroup, name) end
+  return self
+end
+
+function MOOSE_BRIDGE:RegisterCommander(commander, name)
+  if not commander then return self end
+  local commander_name = name or commander.alias or self:_SafeCall(commander, "GetName")
+  if commander_name then self.RegisteredCommanders[safe_tostring(commander_name)] = commander end
+  return self
+end
+
+function MOOSE_BRIDGE:RegisterCommanders(commanders)
+  if type(commanders) ~= "table" then return self end
+  for name, commander in pairs(commanders) do self:RegisterCommander(commander, name) end
   return self
 end
 
@@ -1392,6 +1406,61 @@ function MOOSE_BRIDGE:_BuildCohortSummaries(cohorts)
   return result
 end
 
+function MOOSE_BRIDGE:_CommanderName(commander, fallback)
+  if not commander then return fallback end
+  return commander.alias or self:_SafeCall(commander, "GetName") or fallback
+end
+
+function MOOSE_BRIDGE:_CollectLegionIds(legions)
+  local result = {}; local seen = {}
+  if type(legions) ~= "table" then return result end
+  for index, legion in pairs(legions) do
+    local fallback = type(index) == "string" and index or nil
+    local name = self:_LegionName(legion, fallback)
+    append_unique(result, seen, name and ("LEGION:" .. safe_tostring(name)) or nil)
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_BuildCommanderSnapshotItem(commander_name, commander, source)
+  local name = self:_CommanderName(commander, commander_name)
+  if not name then return nil end
+  return {
+    object_id="COMMANDER:" .. safe_tostring(name),
+    dcs_name=safe_tostring(name),
+    object_type="COMMANDER",
+    category="COMMANDER",
+    class_name=self:_OpsClassName(commander, "COMMANDER"),
+    source=source,
+    name=safe_tostring(name),
+    alias=string_or_nil(commander and commander.alias),
+    state=string_or_nil(self:_SafeCall(commander, "GetState")),
+    coalition=self:_CoalitionToName(self:_SafeCall(commander, "GetCoalition") or (commander and commander.coalition)),
+    legion_ids=self:_CollectLegionIds(commander and commander.legions),
+    n_legions=self:_CountTable((commander and commander.legions) or {}),
+    available_asset_count=self:_NumberOrNil(self:_SafeCall(commander, "CountAvailableAssets")),
+    auftrag_queue_ids=self:_CollectAuftragIdsFromQueue(commander and commander.missionqueue),
+  }
+end
+
+function MOOSE_BRIDGE:BuildCommanderSnapshot()
+  local result = {}; local seen = {}
+  local function add(name, commander, source)
+    local ok, item = pcall(function() return self:_BuildCommanderSnapshotItem(name, commander, source) end)
+    if ok and item and item.object_id and not seen[item.object_id] then
+      result[#result + 1] = item
+      seen[item.object_id] = true
+    elseif not ok then
+      self:_Log("Failed to snapshot commander " .. safe_tostring(name) .. ": " .. safe_tostring(item))
+    end
+  end
+  for name, commander in pairs(self.RegisteredCommanders or {}) do add(name, commander, "registered") end
+  if _DATABASE and type(_DATABASE.COMMANDERS) == "table" then
+    for name, commander in pairs(_DATABASE.COMMANDERS) do add(name, commander, "database.COMMANDERS") end
+  end
+  return result
+end
+
 function MOOSE_BRIDGE:_BuildLegionSnapshotItem(legion_name, legion, source)
   local name = self:_LegionName(legion, legion_name)
   if not name then return nil end
@@ -1814,6 +1883,10 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     local legions = self:BuildLegionSnapshot(); self:SendSnapshot("legions", {legions=legions}); return {kind="legions", count=#legions}
   end)
 
+  self:RegisterCommand("snapshot.commanders", function(cmd)
+    local commanders = self:BuildCommanderSnapshot(); self:SendSnapshot("commanders", {commanders=commanders}); return {kind="commanders", count=#commanders}
+  end)
+
   self:RegisterCommand("snapshot.cohorts", function(cmd)
     local cohorts = self:BuildCohortSnapshot(); self:SendSnapshot("cohorts", {cohorts=cohorts}); return {kind="cohorts", count=#cohorts}
   end)
@@ -1830,6 +1903,7 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     local auftraege = self:BuildAuftragSnapshot()
     local legions = self:BuildLegionSnapshot()
     local cohorts = self:BuildCohortSnapshot()
+    local commanders = self:BuildCommanderSnapshot()
     self:SendSnapshot("groups", {groups=groups})
     self:SendSnapshot("units", {units=units})
     self:SendSnapshot("statics", {statics=statics})
@@ -1841,7 +1915,8 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     self:SendSnapshot("auftraege", {auftraege=auftraege})
     self:SendSnapshot("legions", {legions=legions})
     self:SendSnapshot("cohorts", {cohorts=cohorts})
-    return {groups=#groups, units=#units, statics=#statics, airbases=#airbases, zones=#zones, territories=#territories, opszones=#opszones, opsgroups=#opsgroups, auftraege=#auftraege, legions=#legions, cohorts=#cohorts}
+    self:SendSnapshot("commanders", {commanders=commanders})
+    return {groups=#groups, units=#units, statics=#statics, airbases=#airbases, zones=#zones, territories=#territories, opszones=#opszones, opsgroups=#opsgroups, auftraege=#auftraege, legions=#legions, cohorts=#cohorts, commanders=#commanders}
   end)
 end
 

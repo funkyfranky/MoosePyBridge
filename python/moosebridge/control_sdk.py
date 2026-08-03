@@ -108,6 +108,11 @@ class ControlSdkAdapter:
 
         return await self._snapshot("legions")
 
+    async def snapshot_commanders(self) -> dict[str, Any]:
+        """Request a COMMANDER snapshot through the control API."""
+
+        return await self._snapshot("commanders")
+
     async def snapshot_intels(self) -> dict[str, Any]:
         """Request an INTEL snapshot through the control API."""
 

@@ -249,28 +249,31 @@ The SDK currently exposes helpers for:
 - AUFTRAG: `add_auftrag`, `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
   `get_auftrag_summary`, `wait_for_auftrag_outcome`, `pause_mission`,
   `resume_mission`, `cancel_mission`, `assign_mission`
-- typed OPS state: `legion`, `cohort`, `cohorts_of_legion`,
+- typed OPS state: `commander`, `commanders`, `commander_for_coalition`,
+  `legions_of_commander`, `missions_of_commander`, `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,
   `available_missions_of_cohort`, `refresh_legion_state`, `refresh_ops_state`
 - typed territory state: `territory`, `territories`,
   `refresh_territory_state`, `set_territory_coalition`
-- diagnostics: `format_legion_status`, `format_cohort_assets`,
+- diagnostics: `format_commander_status`, `format_legion_status`, `format_cohort_assets`,
   `format_mission_summary`
 
 Typed OPS state can be read from the SDK state mirror after requesting the
 relevant snapshots:
 
 ```python
-from moosebridge import format_legion_status
+from moosebridge import format_commander_status, format_legion_status
 
 await bridge.refresh_legion_state()
 
 legion = bridge.legion("LEGION:Wing Parchim")
+commander = bridge.commander("COMMANDER:Blue Command")
 cohorts = bridge.cohorts_of_legion("LEGION:Wing Parchim")
 missions = bridge.missions_of_legion("LEGION:Wing Parchim")
 ready = bridge.ready_cohorts_of_legion("LEGION:Wing Parchim", mission_type="BAI")
 
 print(format_legion_status(bridge, "LEGION:Wing Parchim"))
+print(format_commander_status(bridge, "COMMANDER:Blue Command"))
 ```
 
 For code that should read closer to the MOOSE AUFTRAG API, use the lightweight
@@ -280,7 +283,7 @@ Python AUFTRAG descriptions and let the SDK convert them to bridge commands:
 from moosebridge import Auftrag_AIRDEFENSE, Auftrag_AMMOSUPPLY, Auftrag_ANTISHIP, Auftrag_ARTY, Auftrag_AWACS, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAPTUREZONE, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_EWR, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_INTERCEPT, Auftrag_NAVALENGAGEMENT, Auftrag_NOTHING, Auftrag_ONGUARD, Auftrag_ORBIT, Auftrag_PATROLZONE, Auftrag_REARMING, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRAFING, Auftrag_STRIKE, Auftrag_TANKER, Auftrag_TROOPTRANSPORT, GroupSet
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
-ack = await bridge.add_auftrag(auftrag=auftrag_bai, legion="LEGION:Wing Parchim")
+ack = await bridge.add_auftrag(auftrag=auftrag_bai, commander="COMMANDER:Blue Command")
 summary = await bridge.get_auftrag_summary(auftrag_bai, on_status=print)
 if summary.success is True:
     print("BAI succeeded")

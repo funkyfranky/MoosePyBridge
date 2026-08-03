@@ -46,6 +46,7 @@ from moosebridge.diagnostics import (
     format_global_picture_status,
     format_intel_status,
     format_legion_status,
+    format_commander_status,
     format_mission_summary,
 )
 from moosebridge.models import OpsZone, Territory
@@ -228,6 +229,9 @@ class FakeSdkServer:
 
     async def snapshot_legions(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.legions", params={}))
+
+    async def snapshot_commanders(self) -> dict[str, Any]:
+        return await self.send_command(BridgeCommand(action="snapshot.commanders", params={}))
 
     async def snapshot_intels(self) -> dict[str, Any]:
         return await self.send_command(BridgeCommand(action="snapshot.intels", params={}))
@@ -551,6 +555,51 @@ def test_sdk_legion_convenience_methods_return_typed_state() -> None:
     assert client.available_missions_of_cohort("COHORT:F-4E Parchim Alpha", require_payload=True) == ["BAI"]
 
 
+def test_sdk_commander_convenience_and_diagnostics() -> None:
+    server = FakeSdkServer()
+    client = MooseBridgeClient(server)  # type: ignore[arg-type]
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "commanders",
+            "payload": {
+                "commanders": [
+                    {
+                        "object_id": "COMMANDER:Blue Command",
+                        "dcs_name": "Blue Command",
+                        "object_type": "COMMANDER",
+                        "coalition": "blue",
+                        "state": "Running",
+                        "legion_ids": ["LEGION:Wing Parchim"],
+                        "available_asset_count": 7,
+                        "auftrag_queue_ids": ["AUFTRAG:1"],
+                    }
+                ]
+            },
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {"legions": [{"object_id": "LEGION:Wing Parchim", "object_type": "LEGION"}]},
+        }
+    )
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "auftraege",
+            "payload": {"auftraege": [{"object_id": "AUFTRAG:1", "object_type": "AUFTRAG", "type": "BAI"}]},
+        }
+    )
+
+    commander = client.commander_for_coalition("blue")
+    assert commander.object_id == "COMMANDER:Blue Command"
+    assert [item.object_id for item in client.legions_of_commander(commander.object_id)] == ["LEGION:Wing Parchim"]
+    assert [item.object_id for item in client.missions_of_commander(commander.object_id)] == ["AUFTRAG:1"]
+    assert "available=7" in format_commander_status(client, commander.object_id, timestamp=False)
+
+
 def test_sdk_refresh_helpers_request_expected_snapshots() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -558,6 +607,7 @@ def test_sdk_refresh_helpers_request_expected_snapshots() -> None:
 
         assert await client.refresh_legion_state() is server.state
         assert [command.action for command, _ in server.commands] == [
+            "snapshot.commanders",
             "snapshot.legions",
             "snapshot.cohorts",
             "snapshot.auftraege",
@@ -570,6 +620,7 @@ def test_sdk_refresh_helpers_request_expected_snapshots() -> None:
             "snapshot.opszones",
             "snapshot.opsgroups",
             "snapshot.auftraege",
+            "snapshot.commanders",
             "snapshot.legions",
             "snapshot.cohorts",
         ]
@@ -1189,6 +1240,50 @@ def test_sdk_assign_mission_targets_existing_mission() -> None:
             "legion_id": "LEGION:Wing Parchim",
             "cohort_id": "COHORT:F-4E Parchim Alpha",
         }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_auftrag_uses_commander_with_optional_constraints() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        mission = Auftrag_BAI(target="UNIT:Ground-1-1")
+
+        await client.add_auftrag(
+            mission,
+            commander="COMMANDER:Blue Command",
+            allowed_legions=["LEGION:Wing Parchim"],
+            allowed_cohorts=["COHORT:F-4E Parchim Alpha"],
+        )
+
+        command = server.commands[0][0]
+        assert command.params["commander_id"] == "COMMANDER:Blue Command"
+        assert command.params["allowed_legion_ids"] == ["LEGION:Wing Parchim"]
+        assert command.params["allowed_cohort_ids"] == ["COHORT:F-4E Parchim Alpha"]
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_auftrag_can_select_unique_coalition_commander() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        server.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "commanders",
+                "payload": {
+                    "commanders": [
+                        {"object_id": "COMMANDER:Blue Command", "object_type": "COMMANDER", "coalition": "blue"}
+                    ]
+                },
+            }
+        )
+
+        await client.add_auftrag(Auftrag_BAI(target="UNIT:Ground-1-1"), coalition="blue")
+
+        assert server.commands[0][0].params["commander_id"] == "COMMANDER:Blue Command"
 
     asyncio.run(scenario())
 

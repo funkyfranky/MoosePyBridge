@@ -24,7 +24,7 @@ from .capabilities import (
     build_unit_influence,
 )
 from .intents import auftrag_command_params_from_recommendation
-from .legions import Cohort, Legion
+from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
 from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
@@ -75,6 +75,7 @@ SNAPSHOT_KINDS = {
     "opsgroups",
     "auftraege",
     "legions",
+    "commanders",
     "cohorts",
     "intels",
     "intel_contacts",
@@ -891,6 +892,34 @@ class MooseBridgeClient:
 
         return self.state.legion(object_id)
 
+    def commander(self, object_id: str) -> Commander | None:
+        """Return a typed COMMANDER by stable object id."""
+
+        return self.state.commander(object_id)
+
+    def commanders(self, coalition: str | None = None) -> list[Commander]:
+        """Return mirrored COMMANDER objects, optionally for one coalition."""
+
+        items = list(self.state.commander_objects.values())
+        if coalition is not None:
+            normalized = coalition.strip().lower()
+            items = [item for item in items if (item.coalition or "").strip().lower() == normalized]
+        return sorted(items, key=lambda item: item.object_id)
+
+    def commander_for_coalition(self, coalition: str) -> Commander:
+        """Return the unique COMMANDER for a coalition.
+
+        :raises ValueError: If no COMMANDER or more than one COMMANDER matches.
+        """
+
+        matches = self.commanders(coalition)
+        if not matches:
+            raise ValueError(f"No COMMANDER snapshot is available for coalition {coalition!r}")
+        if len(matches) > 1:
+            ids = ", ".join(item.object_id for item in matches)
+            raise ValueError(f"Multiple COMMANDER objects exist for coalition {coalition!r}: {ids}")
+        return matches[0]
+
     def cohort(self, object_id: str) -> Cohort | None:
         """Return a typed COHORT by object id.
 
@@ -939,6 +968,16 @@ class MooseBridgeClient:
         """
 
         return self.state.queued_auftraege_for_legion(legion_id)
+
+    def legions_of_commander(self, commander_id: str) -> list[Legion]:
+        """Return mirrored LEGION objects assigned to a COMMANDER."""
+
+        return self.state.legions_for_commander(commander_id)
+
+    def missions_of_commander(self, commander_id: str) -> list[Auftrag]:
+        """Return queued mission objects for a COMMANDER."""
+
+        return self.state.queued_auftraege_for_commander(commander_id)
 
     def missions_of_group(self, opsgroup_id: str) -> list[Auftrag]:
         """Return queued mission objects for an OPSGROUP.
@@ -1107,6 +1146,7 @@ class MooseBridgeClient:
         :returns: Updated local state mirror.
         """
 
+        await self.snapshot_commanders()
         await self.snapshot_legions()
         await self.snapshot_cohorts()
         await self.snapshot_auftraege()
@@ -1121,6 +1161,7 @@ class MooseBridgeClient:
         await self.snapshot_opszones()
         await self.snapshot_opsgroups()
         await self.snapshot_auftraege()
+        await self.snapshot_commanders()
         await self.snapshot_legions()
         await self.snapshot_cohorts()
         return self.state
@@ -1244,6 +1285,11 @@ class MooseBridgeClient:
 
         return require_ok(await self.server.snapshot_legions())
 
+    async def snapshot_commanders(self) -> dict[str, Any]:
+        """Request a COMMANDER snapshot through the SDK."""
+
+        return require_ok(await self.server.snapshot_commanders())
+
     async def snapshot_intels(self) -> dict[str, Any]:
         """Request an INTEL snapshot through the SDK."""
 
@@ -1337,44 +1383,92 @@ class MooseBridgeClient:
         clean_params = {key: value for key, value in params.items() if value is not None}
         return require_ok(await self.server.send_command(BridgeCommand(action=action, params=clean_params), timeout=timeout))
 
+    def _auftrag_assignment_params(
+        self,
+        *,
+        commander: str | None,
+        legion: str | None,
+        opsgroup: str | None,
+        cohort: str | None,
+        coalition: str | None,
+        allowed_legions: Iterable[str] | None,
+        allowed_cohorts: Iterable[str] | None,
+    ) -> dict[str, Any]:
+        """Validate and normalize one AUFTRAG assignment target."""
+
+        if coalition is not None:
+            if any(value is not None for value in (commander, legion, opsgroup)):
+                raise ValueError("coalition cannot be combined with an explicit assignment target")
+            commander = self.commander_for_coalition(coalition).object_id
+
+        targets = [value for value in (commander, legion, opsgroup) if value is not None]
+        if len(targets) != 1:
+            raise ValueError("Specify exactly one of commander, legion or opsgroup")
+
+        legion_constraints = list(dict.fromkeys(allowed_legions or ()))
+        cohort_constraints = [item for item in dict.fromkeys(allowed_cohorts or ()) if item != cohort]
+        if legion_constraints and commander is None:
+            raise ValueError("allowed_legions requires commander tasking")
+        if (cohort is not None or cohort_constraints) and opsgroup is not None:
+            raise ValueError("COHORT constraints cannot be used with OPSGROUP tasking")
+
+        return clean_params(
+            {
+                "commander_id": commander,
+                "legion_id": legion,
+                "opsgroup_id": opsgroup,
+                "cohort_id": cohort,
+                "allowed_legion_ids": legion_constraints or None,
+                "allowed_cohort_ids": cohort_constraints or None,
+            }
+        )
+
     async def add_auftrag(
         self,
         auftrag: AuftragCommand,
         *,
+        commander: str | None = None,
         legion: str | None = None,
         opsgroup: str | None = None,
         cohort: str | None = None,
+        coalition: str | None = None,
+        allowed_legions: Iterable[str] | None = None,
+        allowed_cohorts: Iterable[str] | None = None,
         selected_payload_uid: int | str | None = None,
         timeout: float = 10.0,
     ) -> dict[str, Any]:
-        """Create an AUFTRAG in DCS and add it to a LEGION or OPSGROUP.
+        """Create an AUFTRAG and add it to a COMMANDER, LEGION or OPSGROUP.
 
         :param auftrag: Python-side AUFTRAG description, e.g. ``Auftrag_BAI``.
+        :param commander: Target COMMANDER object id. It chooses suitable LEGIONs by default.
         :param legion: Target LEGION object id.
         :param opsgroup: Target OPSGROUP object id.
-        :param cohort: Optional COHORT object id for LEGION-based tasking.
+        :param cohort: Optional single COHORT constraint kept for concise tasking.
+        :param coalition: Select the coalition's unique mirrored COMMANDER when no target is explicit.
+        :param allowed_legions: Optional LEGION constraints for COMMANDER recruitment.
+        :param allowed_cohorts: Optional COHORT constraints for COMMANDER or LEGION recruitment.
         :param selected_payload_uid: Optional selected payload UID.
         :param timeout: Maximum ACK wait time in seconds.
         :returns: Successful ACK payload.
-        :raises ValueError: If neither or both ``legion`` and ``opsgroup`` are set.
+        :raises ValueError: If assignment targets or constraints are inconsistent.
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
-
-        if (legion is None) == (opsgroup is None):
-            raise ValueError("Specify exactly one of legion or opsgroup")
 
         params = auftrag.to_params()
         params.update(auftrag.timing_params())
         params.update(
-            clean_params(
-                {
-                    "legion_id": legion,
-                    "opsgroup_id": opsgroup,
-                    "cohort_id": cohort,
-                    "selected_payload_uid": selected_payload_uid,
-                }
+            self._auftrag_assignment_params(
+                commander=commander,
+                legion=legion,
+                opsgroup=opsgroup,
+                cohort=cohort,
+                coalition=coalition,
+                allowed_legions=allowed_legions,
+                allowed_cohorts=allowed_cohorts,
             )
         )
+        if selected_payload_uid is not None:
+            params["selected_payload_uid"] = selected_payload_uid
         ack = await self.apply_auftrag(auftrag.mission_type, params, timeout=timeout)
         auftrag_id = auftrag_id_from_ack(ack)
         if auftrag_id:
@@ -1431,27 +1525,33 @@ class MooseBridgeClient:
         self,
         mission: AuftragCommand | Auftrag | str,
         *,
+        commander: str | None = None,
         legion: str | None = None,
         opsgroup: str | None = None,
         cohort: str | None = None,
+        coalition: str | None = None,
+        allowed_legions: Iterable[str] | None = None,
+        allowed_cohorts: Iterable[str] | None = None,
         timeout: float = 10.0,
     ) -> dict[str, Any]:
-        """Assign an existing tracked MOOSE AUFTRAG mission to a LEGION or OPSGROUP."""
+        """Assign an existing mission to a COMMANDER, LEGION or OPSGROUP."""
 
-        if (legion is None) == (opsgroup is None):
-            raise ValueError("Specify exactly one of legion or opsgroup")
         return require_ok(
             await self.server.send_command(
                 BridgeCommand(
                     action="auftrag.assign",
-                    params=clean_params(
-                        {
-                            "object_id": self.mission_id(mission),
-                            "legion_id": legion,
-                            "opsgroup_id": opsgroup,
-                            "cohort_id": cohort,
-                        }
-                    ),
+                    params={
+                        "object_id": self.mission_id(mission),
+                        **self._auftrag_assignment_params(
+                            commander=commander,
+                            legion=legion,
+                            opsgroup=opsgroup,
+                            cohort=cohort,
+                            coalition=coalition,
+                            allowed_legions=allowed_legions,
+                            allowed_cohorts=allowed_cohorts,
+                        ),
+                    },
                 ),
                 timeout=timeout,
             )

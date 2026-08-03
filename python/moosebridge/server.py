@@ -519,6 +519,11 @@ class MooseBridgeServer:
 
         return await self.send_command(BridgeCommand(action="snapshot.legions", params={}))
 
+    async def snapshot_commanders(self) -> dict[str, Any]:
+        """Request a COMMANDER snapshot from DCS/MOOSE."""
+
+        return await self.send_command(BridgeCommand(action="snapshot.commanders", params={}))
+
     async def snapshot_intels(self) -> dict[str, Any]:
         """Request an INTEL snapshot from DCS/MOOSE."""
 
@@ -562,6 +567,7 @@ Interactive commands:
   auftraege               Request and print an AUFTRAG snapshot.
   cohorts                 Request and print a COHORT snapshot.
   legions                 Request and print a LEGION snapshot.
+  commanders              Request and print a COMMANDER snapshot.
   smoke <object_id> [color]       Smoke an object position.
   smokepoint <x> <z> [color]      Smoke a DCS world point.
   mark <object_id> <text>         Mark an object position.
@@ -870,6 +876,21 @@ def _print_legion_snapshot(legions: dict[str, dict[str, Any]], limit: int = 60) 
         print(f"  ... {len(items) - limit} more LEGION objects not shown")
 
 
+def _print_commander_snapshot(commanders: dict[str, dict[str, Any]], limit: int = 60) -> None:
+    """Print a compact COMMANDER snapshot summary."""
+
+    items = list(commanders.values())
+    print(f"commanders={len(items)}")
+    for item in items[:limit]:
+        print(
+            f"  {item.get('object_id', '')} coalition={item.get('coalition', '')} "
+            f"state={item.get('state', '')} available={item.get('available_asset_count', '')} "
+            f"legions={len(item.get('legion_ids', []))} queue={len(item.get('auftrag_queue_ids', []))}"
+        )
+    if len(items) > limit:
+        print(f"  ... {len(items) - limit} more COMMANDER objects not shown")
+
+
 async def run_interactive_console(server: MooseBridgeServer) -> None:
     """Run an interactive command console backed by a bridge server.
 
@@ -964,6 +985,11 @@ async def run_interactive_console(server: MooseBridgeServer) -> None:
                 ack = await server.snapshot_legions()
                 print(f"ACK: {ack}")
                 _print_legion_snapshot(server.state.legions)
+                continue
+            if command == "commanders":
+                ack = await server.snapshot_commanders()
+                print(f"ACK: {ack}")
+                _print_commander_snapshot(server.state.commanders)
                 continue
             if command == "smoke":
                 object_id, _, color = argument.partition(" ")

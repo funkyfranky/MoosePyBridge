@@ -162,6 +162,11 @@ function MOOSE_BRIDGE:_ResolveTrackedAuftragById(auftrag_id)
     end
   end
 
+  for _, commander in pairs(self.RegisteredCommanders or {}) do
+    local found = self:_FindAuftragInQueueById(commander.missionqueue, id)
+    if found then self:_TrackAuftragReference(found); return found, nil end
+  end
+
   if _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
     for _, opsgroup in pairs(_DATABASE.FLIGHTGROUPS) do
       local found = self:_FindAuftragInQueueById(opsgroup.missionqueue, id)
@@ -199,6 +204,35 @@ function MOOSE_BRIDGE:_ResolveLegionById(legion_id)
   end
 
   return nil, "LEGION not found: " .. name
+end
+
+function MOOSE_BRIDGE:_ResolveCommanderById(commander_id)
+  local prefix, name = bridge_split_object_id(commander_id)
+  if prefix ~= "COMMANDER" or not name then return nil, "Invalid COMMANDER id " .. bridge_safe_tostring(commander_id) end
+
+  for key, commander in pairs(self.RegisteredCommanders or {}) do
+    local commander_name = self:_CommanderName(commander, type(key) == "string" and key or nil)
+    if commander_name == name then return commander, nil end
+  end
+  if _DATABASE and type(_DATABASE.COMMANDERS) == "table" then
+    for key, commander in pairs(_DATABASE.COMMANDERS) do
+      local commander_name = self:_CommanderName(commander, type(key) == "string" and key or nil)
+      if commander_name == name then return commander, nil end
+    end
+  end
+  return nil, "COMMANDER not found: " .. name
+end
+
+function MOOSE_BRIDGE:_ResolveCohortById(cohort_id)
+  local prefix, name = bridge_split_object_id(cohort_id)
+  if prefix ~= "COHORT" or not name then return nil, "Invalid COHORT id " .. bridge_safe_tostring(cohort_id) end
+  if _DATABASE and type(_DATABASE.COHORTS) == "table" then
+    for key, cohort in pairs(_DATABASE.COHORTS) do
+      local cohort_name = self:_CohortName(cohort, type(key) == "string" and key or nil)
+      if cohort_name == name then return cohort, nil end
+    end
+  end
+  return nil, "COHORT not found: " .. name
 end
 
 function MOOSE_BRIDGE:_ResolveOpsGroupById(opsgroup_id)
@@ -355,9 +389,12 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   local legacy_params = type(p.params) == "table" and p.params or {}
   local inputs = {
     params=p,
+    commander_id=bridge_optional_string_param(p.commander_id) or bridge_optional_string_param(legacy_params.commander_id),
     legion_id=bridge_optional_string_param(p.legion_id) or bridge_optional_string_param(legacy_params.legion_id),
     opsgroup_id=bridge_optional_string_param(p.opsgroup_id) or bridge_optional_string_param(legacy_params.opsgroup_id),
     cohort_id=bridge_optional_string_param(p.cohort_id) or bridge_optional_string_param(legacy_params.cohort_id),
+    allowed_legion_ids=p.allowed_legion_ids or legacy_params.allowed_legion_ids,
+    allowed_cohort_ids=p.allowed_cohort_ids or legacy_params.allowed_cohort_ids,
     clock_start=bridge_time_param(p.clock_start) or bridge_time_param(p.ClockStart) or bridge_time_param(legacy_params.clock_start) or bridge_time_param(legacy_params.ClockStart),
     clock_stop=bridge_time_param(p.clock_stop) or bridge_time_param(p.ClockStop) or bridge_time_param(legacy_params.clock_stop) or bridge_time_param(legacy_params.ClockStop),
     duration=bridge_number_param(p.duration) or bridge_number_param(p.Duration) or bridge_number_param(legacy_params.duration) or bridge_number_param(legacy_params.Duration),
@@ -416,8 +453,24 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   if inputs.data_link == nil then inputs.data_link = legacy_params.datalink end
   if inputs.data_link == nil then inputs.data_link = legacy_params.DataLink end
 
-  if inputs.legion_id and inputs.opsgroup_id then error("Specify only one of legion_id or opsgroup_id; " .. bridge_param_debug(cmd, p)) end
-  if not inputs.legion_id and not inputs.opsgroup_id then error("Missing legion_id or opsgroup_id; " .. bridge_param_debug(cmd, p)) end
+  local target_count = (inputs.commander_id and 1 or 0) + (inputs.legion_id and 1 or 0) + (inputs.opsgroup_id and 1 or 0)
+  if target_count ~= 1 then error("Specify exactly one of commander_id, legion_id or opsgroup_id; " .. bridge_param_debug(cmd, p)) end
+
+  inputs.allowed_legion_ids = self:_NormalizeStringList(inputs.allowed_legion_ids) or {}
+  inputs.allowed_cohort_ids = self:_NormalizeStringList(inputs.allowed_cohort_ids) or {}
+  if inputs.cohort_id then inputs.allowed_cohort_ids[#inputs.allowed_cohort_ids + 1] = inputs.cohort_id end
+  if inputs.opsgroup_id and (#inputs.allowed_legion_ids > 0 or #inputs.allowed_cohort_ids > 0) then
+    error("LEGION or COHORT constraints cannot be used with opsgroup_id")
+  end
+  if inputs.legion_id and #inputs.allowed_legion_ids > 0 then
+    error("allowed_legion_ids requires commander_id")
+  end
+
+  if inputs.commander_id then
+    local commander, commander_err = self:_ResolveCommanderById(inputs.commander_id)
+    if not commander then error(commander_err) end
+    inputs.commander = commander
+  end
 
   if inputs.legion_id then
     local legion, legion_err = self:_ResolveLegionById(inputs.legion_id)
@@ -429,6 +482,19 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     local opsgroup, opsgroup_err = self:_ResolveOpsGroupById(inputs.opsgroup_id)
     if not opsgroup then error(opsgroup_err) end
     inputs.opsgroup = opsgroup
+  end
+
+  inputs.allowed_legions = {}
+  for _, legion_id in ipairs(inputs.allowed_legion_ids) do
+    local legion, legion_err = self:_ResolveLegionById(legion_id)
+    if not legion then error(legion_err) end
+    inputs.allowed_legions[#inputs.allowed_legions + 1] = legion
+  end
+  inputs.allowed_cohorts = {}
+  for _, cohort_id in ipairs(inputs.allowed_cohort_ids) do
+    local cohort, cohort_err = self:_ResolveCohortById(cohort_id)
+    if not cohort then error(cohort_err) end
+    inputs.allowed_cohorts[#inputs.allowed_cohorts + 1] = cohort
   end
 
   return inputs
@@ -676,11 +742,25 @@ end
 
 function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
   if not auftrag then error("AUFTRAG constructor returned nil") end
+  self:_ApplyAuftragAssignments(auftrag, inputs)
   self:_ApplyAuftragTiming(auftrag, inputs)
   self:_RegisterAuftragEvents(auftrag, inputs)
   self:_SendAuftragStatusEvent(auftrag, inputs, "Planned")
   local add_ok, add_result = pcall(function() return inputs.legion:AddMission(auftrag) end)
   if not add_ok then error("LEGION:AddMission failed: " .. bridge_safe_tostring(add_result)) end
+  self:_TrackAuftragReference(auftrag)
+  return auftrag
+end
+
+function MOOSE_BRIDGE:_AddAuftragToCommander(auftrag, inputs)
+  if not auftrag then error("AUFTRAG constructor returned nil") end
+  if type(inputs.commander.AddMission) ~= "function" then error("COMMANDER:AddMission is not available") end
+  self:_ApplyAuftragAssignments(auftrag, inputs)
+  self:_ApplyAuftragTiming(auftrag, inputs)
+  self:_RegisterAuftragEvents(auftrag, inputs)
+  self:_SendAuftragStatusEvent(auftrag, inputs, "Planned")
+  local add_ok, add_result = pcall(function() return inputs.commander:AddMission(auftrag) end)
+  if not add_ok then error("COMMANDER:AddMission failed: " .. bridge_safe_tostring(add_result)) end
   self:_TrackAuftragReference(auftrag)
   return auftrag
 end
@@ -694,6 +774,21 @@ function MOOSE_BRIDGE:_AddAuftragToOpsGroup(auftrag, inputs)
   local add_ok, add_result = pcall(function() return inputs.opsgroup:AddMission(auftrag) end)
   if not add_ok then error("OPSGROUP:AddMission failed: " .. bridge_safe_tostring(add_result)) end
   self:_TrackAuftragReference(auftrag)
+  return auftrag
+end
+
+function MOOSE_BRIDGE:_ApplyAuftragAssignments(auftrag, inputs)
+  if not auftrag or not inputs then return auftrag end
+  for _, legion in ipairs(inputs.allowed_legions or {}) do
+    if type(auftrag.AssignLegion) ~= "function" then error("AUFTRAG:AssignLegion is not available") end
+    local ok, err = pcall(function() return auftrag:AssignLegion(legion) end)
+    if not ok then error("AUFTRAG:AssignLegion failed: " .. bridge_safe_tostring(err)) end
+  end
+  for _, cohort in ipairs(inputs.allowed_cohorts or {}) do
+    if type(auftrag.AssignCohort) ~= "function" then error("AUFTRAG:AssignCohort is not available") end
+    local ok, err = pcall(function() return auftrag:AssignCohort(cohort) end)
+    if not ok then error("AUFTRAG:AssignCohort failed: " .. bridge_safe_tostring(err)) end
+  end
   return auftrag
 end
 
@@ -736,6 +831,7 @@ function MOOSE_BRIDGE:_SendAuftragStatusEvent(auftrag, inputs, fsm_event, From, 
       from=From,
       fsm_event_name=Event,
       to=To,
+      commander_id=inputs and inputs.commander_id or nil,
       legion_id=inputs and inputs.legion_id or nil,
       opsgroup_id=inputs and inputs.opsgroup_id or nil,
       cohort_id=inputs and inputs.cohort_id or nil,
@@ -759,6 +855,7 @@ function MOOSE_BRIDGE:_SendAuftragEvaluatedEvent(auftrag, inputs, From, Event, T
       from=From,
       fsm_event_name=Event,
       to=To,
+      commander_id=inputs and inputs.commander_id or nil,
       legion_id=inputs and inputs.legion_id or nil,
       opsgroup_id=inputs and inputs.opsgroup_id or nil,
       cohort_id=inputs and inputs.cohort_id or nil,
@@ -818,15 +915,19 @@ end
 
 function MOOSE_BRIDGE:_AddAuftragToTarget(auftrag, inputs)
   if inputs.opsgroup then return self:_AddAuftragToOpsGroup(auftrag, inputs) end
+  if inputs.commander then return self:_AddAuftragToCommander(auftrag, inputs) end
   return self:_AddAuftragToLegion(auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
   return {
     action=action,
+    commander_id=inputs.commander_id,
     legion_id=inputs.legion_id,
     opsgroup_id=inputs.opsgroup_id,
     cohort_id=inputs.cohort_id,
+    allowed_legion_ids=inputs.allowed_legion_ids,
+    allowed_cohort_ids=inputs.allowed_cohort_ids,
     clock_start=inputs.clock_start,
     clock_stop=inputs.clock_stop,
     duration=inputs.duration,
@@ -1501,6 +1602,16 @@ function MOOSE_BRIDGE:_CollectAuftragCandidatesFromTracked(result, seen)
   end
 end
 
+function MOOSE_BRIDGE:_CollectAuftragCandidatesFromCommanders(result, seen)
+  for _, commander in pairs(self.RegisteredCommanders or {}) do
+    if type(commander) == "table" and type(commander.missionqueue) == "table" then
+      for _, auftrag in pairs(commander.missionqueue) do
+        self:_AddAuftragCandidate(result, seen, auftrag, "commander.missionqueue")
+      end
+    end
+  end
+end
+
 local _moose_bridge_base_build_auftrag_snapshot = MOOSE_BRIDGE.BuildAuftragSnapshot
 
 function MOOSE_BRIDGE:BuildAuftragSnapshot()
@@ -1516,6 +1627,7 @@ function MOOSE_BRIDGE:BuildAuftragSnapshot()
     end
   end
 
+  self:_CollectAuftragCandidatesFromCommanders(result, seen)
   self:_CollectAuftragCandidatesFromTracked(result, seen)
 
   return result

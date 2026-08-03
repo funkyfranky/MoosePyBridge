@@ -14,9 +14,18 @@ def test_bridge_constructor_preserves_moose_base_inheritance() -> None:
 def test_ops_snapshots_use_moose_available_asset_counts() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
 
-    assert source.count('available_asset_count=self:_NumberOrNil(self:_SafeCall(') == 2
+    assert source.count('available_asset_count=self:_NumberOrNil(self:_SafeCall(') == 3
     assert 'self:_SafeCall(legion, "CountAvailableAssets")' in source
     assert 'self:_SafeCall(cohort, "CountAvailableAssets")' in source
+    assert 'self:_SafeCall(commander, "CountAvailableAssets")' in source
+
+
+def test_commander_tasking_uses_moose_recruitment_and_constraints() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
+
+    assert "inputs.commander:AddMission(auftrag)" in source
+    assert "auftrag:AssignLegion(legion)" in source
+    assert "auftrag:AssignCohort(cohort)" in source
 
 
 def test_dcs_event_extension_uses_moose_dispatcher() -> None:

@@ -13,7 +13,7 @@ from .capabilities import (
     UnitCapabilities,
     UnitInfluence,
 )
-from .legions import Cohort, Legion
+from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .operational import OperationalPlan, OperationalPlanAssessment
 from .pictures import GlobalPicture, PictureValidationIssue
@@ -321,6 +321,45 @@ def format_legion_status(bridge: MooseBridgeClient, legion_id: str | None = None
     return "\n".join(lines)
 
 
+def format_commander_summary(commander: Commander, legions: list[Legion], missions: list[Auftrag]) -> str:
+    """Return a compact COMMANDER summary."""
+
+    return (
+        f"{commander.object_id} state={_text(commander.state)} coalition={_text(commander.coalition)}\n"
+        f"  legions={len(legions)} available={_text(commander.available_asset_count)} missions={len(missions)}"
+    )
+
+
+def format_commander_status(
+    bridge: MooseBridgeClient,
+    commander_id: str | None = None,
+    timestamp: bool = True,
+) -> str:
+    """Return a readable COMMANDER status report from the SDK state mirror."""
+
+    commanders = [bridge.commander(commander_id)] if commander_id else bridge.commanders()
+    resolved = [commander for commander in commanders if commander is not None]
+    title = "COMMANDER status"
+    if timestamp:
+        title = f"[{datetime.now().strftime('%H:%M:%S')}] {title}"
+    lines = [title, "-" * 90]
+    if not resolved:
+        lines.append("No matching COMMANDER objects in the current state mirror.")
+        return "\n".join(lines)
+    for commander in resolved:
+        legions = bridge.legions_of_commander(commander.object_id)
+        missions = bridge.missions_of_commander(commander.object_id)
+        lines.append(format_commander_summary(commander, legions, missions))
+        for legion in legions:
+            lines.append(
+                f"    {legion.object_id} category={_text(legion.category)} "
+                f"available={_text(legion.available_asset_count)}"
+            )
+        for mission in missions:
+            lines.append(f"    {format_mission_summary(mission)}")
+    return "\n".join(lines)
+
+
 def format_intel_contact(contact: IntelContact) -> str:
     """Return a compact one-line INTEL contact summary."""
 
@@ -443,6 +482,8 @@ __all__ = [
     "format_intel_summary",
     "format_legion_status",
     "format_legion_summary",
+    "format_commander_status",
+    "format_commander_summary",
     "format_mission_summary",
     "format_picture_issue",
     "format_operational_plan_assessment",

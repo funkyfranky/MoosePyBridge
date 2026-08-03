@@ -402,3 +402,46 @@ class Legion:
             longitude=_optional_float(payload.get("longitude")),
             raw=payload,
         )
+
+
+@dataclass(slots=True, frozen=True)
+class Commander:
+    """Typed COMMANDER snapshot managing one coalition's LEGION objects."""
+
+    object_id: str
+    dcs_name: str
+    object_type: str
+    category: str | None = None
+    class_name: str | None = None
+    source: str | None = None
+    name: str | None = None
+    alias: str | None = None
+    state: str | None = None
+    coalition: str | None = None
+    legion_ids: list[str] = field(default_factory=list)
+    n_legions: int | None = None
+    available_asset_count: int | None = None
+    auftrag_queue_ids: list[str] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "Commander":
+        """Create a COMMANDER model from a raw payload."""
+
+        return cls(
+            object_id=str(payload.get("object_id", "")),
+            dcs_name=str(payload.get("dcs_name", "")),
+            object_type=str(payload.get("object_type", "COMMANDER")),
+            category=_optional_str(payload.get("category")),
+            class_name=_optional_str(payload.get("class_name")),
+            source=_optional_str(payload.get("source")),
+            name=_optional_str(payload.get("name")),
+            alias=_optional_str(payload.get("alias")),
+            state=_optional_str(payload.get("state")),
+            coalition=_optional_str(payload.get("coalition")),
+            legion_ids=_string_list(payload.get("legion_ids")),
+            n_legions=_optional_int(payload.get("n_legions")),
+            available_asset_count=_optional_int(payload.get("available_asset_count")),
+            auftrag_queue_ids=_string_list(payload.get("auftrag_queue_ids")),
+            raw=payload,
+        )

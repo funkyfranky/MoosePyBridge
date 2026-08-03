@@ -8,7 +8,7 @@ from typing import Any, Callable, TypeVar
 from .ammunition import AmmunitionTracker, UnitAmmunition
 from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
 from .clock import DcsTime
-from .legions import Cohort, Legion
+from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
 
@@ -66,6 +66,7 @@ class MooseBridgeState:
     auftraege: dict[str, dict[str, Any]] = field(default_factory=dict)
     cohorts: dict[str, dict[str, Any]] = field(default_factory=dict)
     legions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    commanders: dict[str, dict[str, Any]] = field(default_factory=dict)
     intels: dict[str, dict[str, Any]] = field(default_factory=dict)
     intel_contacts: dict[str, dict[str, Any]] = field(default_factory=dict)
     intel_clusters: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -76,6 +77,7 @@ class MooseBridgeState:
     auftrag_objects: dict[str, Auftrag] = field(default_factory=dict)
     cohort_objects: dict[str, Cohort] = field(default_factory=dict)
     legion_objects: dict[str, Legion] = field(default_factory=dict)
+    commander_objects: dict[str, Commander] = field(default_factory=dict)
     intel_objects: dict[str, Intel] = field(default_factory=dict)
     intel_contact_objects: dict[str, IntelContact] = field(default_factory=dict)
     intel_cluster_objects: dict[str, IntelCluster] = field(default_factory=dict)
@@ -209,6 +211,11 @@ class MooseBridgeState:
 
         return self.legion_objects.get(object_id)
 
+    def commander(self, object_id: str) -> Commander | None:
+        """Return a typed COMMANDER by stable object id."""
+
+        return self.commander_objects.get(object_id)
+
     def current_auftrag_for_group(self, opsgroup_id: str) -> Auftrag | None:
         """Return the current AUFTRAG assigned to an OPSGROUP.
 
@@ -244,6 +251,22 @@ class MooseBridgeState:
         if not legion:
             return []
         return [auftrag for auftrag_id in legion.auftrag_queue_ids if (auftrag := self.auftrag(auftrag_id))]
+
+    def queued_auftraege_for_commander(self, commander_id: str) -> list[Auftrag]:
+        """Return queued AUFTRAG objects for a COMMANDER."""
+
+        commander = self.commander(commander_id)
+        if not commander:
+            return []
+        return [auftrag for auftrag_id in commander.auftrag_queue_ids if (auftrag := self.auftrag(auftrag_id))]
+
+    def legions_for_commander(self, commander_id: str) -> list[Legion]:
+        """Return mirrored LEGION objects assigned to a COMMANDER."""
+
+        commander = self.commander(commander_id)
+        if not commander:
+            return []
+        return [legion for legion_id in commander.legion_ids if (legion := self.legion(legion_id))]
 
     def cohorts_for_legion(self, legion_id: str) -> list[Cohort]:
         """Return typed COHORT objects belonging to a LEGION.
@@ -362,6 +385,10 @@ class MooseBridgeState:
             items = payload.get("legions", [])
             self.legions = self._index_objects(items)
             self.legion_objects = self._index_typed_objects(items, Legion.from_payload)
+        elif kind == "commanders":
+            items = payload.get("commanders", [])
+            self.commanders = self._index_objects(items)
+            self.commander_objects = self._index_typed_objects(items, Commander.from_payload)
         elif kind == "intels":
             items = payload.get("intels", [])
             self.intels = self._index_objects(items)

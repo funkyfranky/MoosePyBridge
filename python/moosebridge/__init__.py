@@ -133,7 +133,7 @@ from .intents import (
     command_action_for_auftrag_recommendation,
     tactical_recommendation_from_auftrag,
 )
-from .legions import Cohort, CohortSummary, Legion
+from .legions import Cohort, CohortSummary, Commander, Legion
 from .models import (
     Auftrag,
     Intel,
@@ -190,6 +190,8 @@ from .diagnostics import (
     format_intel_status,
     format_intel_summary,
     format_legion_status,
+    format_commander_status,
+    format_commander_summary,
     format_legion_summary,
     format_mission_summary,
     format_operational_plan_assessment,
@@ -330,6 +332,7 @@ __all__ = [
     "CapabilityReadiness",
     "CaptureBehavior",
     "Cohort",
+    "Commander",
     "CohortAllocation",
     "CohortSummary",
     "CommandPayload",
@@ -451,6 +454,8 @@ __all__ = [
     "format_intel_status",
     "format_intel_summary",
     "format_legion_status",
+    "format_commander_status",
+    "format_commander_summary",
     "format_legion_summary",
     "format_mission_summary",
     "format_operational_plan_assessment",
