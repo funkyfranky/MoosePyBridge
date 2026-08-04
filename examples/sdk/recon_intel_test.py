@@ -48,12 +48,31 @@ def contact_description(contact: object) -> str:
     return f"{object_id} target={target} threat={threat} recce={recce} {position}"
 
 
-async def observe_intel(bridge: MooseBridgeClient, known_contacts: set[str]) -> None:
-    """Print changing agent/contact counts and newly detected contacts."""
+def assigned_agent_description(bridge: MooseBridgeClient, opsgroup_id: str, agent_ids: set[str]) -> str:
+    """Describe whether one assigned OPSGROUP is represented in INTEL."""
+
+    opsgroup = bridge.opsgroup(opsgroup_id)
+    group_name = opsgroup.group_name if opsgroup and opsgroup.group_name else opsgroup_id.removeprefix("OPSGROUP:")
+    group_id = f"GROUP:{group_name}"
+    state = opsgroup.state if opsgroup and opsgroup.state else "unknown"
+    alive = opsgroup.alive if opsgroup else False
+    return (
+        f"RECON ASSET: {opsgroup_id} group={group_id} state={state} "
+        f"alive={alive} intel_agent={group_id in agent_ids}"
+    )
+
+
+async def observe_intel(bridge: MooseBridgeClient, auftrag_id: str, known_contacts: set[str]) -> None:
+    """Print changing agents, assigned assets, contacts, and lost contacts."""
 
     previous_counts: tuple[int | None, int | None, int] | None = None
+    previous_agent_ids: set[str] | None = None
+    previous_assigned_status: tuple[str, ...] = ()
+    previous_contact_ids: set[str] = set(known_contacts)
     while True:
         await bridge.refresh_intel_state()
+        await bridge.snapshot_auftraege()
+        await bridge.snapshot_opsgroups()
         intel = bridge.intel(INTEL_ID)
         if intel is None:
             raise RuntimeError(f"INTEL is not available: {INTEL_ID}")
@@ -68,10 +87,32 @@ async def observe_intel(bridge: MooseBridgeClient, known_contacts: set[str]) -> 
             )
             previous_counts = counts
 
+        agent_ids = set(intel.agent_ids)
+        if previous_agent_ids is not None:
+            for agent_id in sorted(agent_ids - previous_agent_ids):
+                print(f"INTEL AGENT ADDED: {agent_id}", flush=True)
+            for agent_id in sorted(previous_agent_ids - agent_ids):
+                print(f"INTEL AGENT REMOVED: {agent_id}", flush=True)
+        previous_agent_ids = agent_ids
+
+        mission = bridge.auftrag(auftrag_id)
+        assigned_ids = tuple(sorted(mission.assigned_group_ids)) if mission else ()
+        assigned_status = tuple(assigned_agent_description(bridge, opsgroup_id, agent_ids) for opsgroup_id in assigned_ids)
+        if assigned_status != previous_assigned_status:
+            for description in assigned_status:
+                print(description, flush=True)
+            previous_assigned_status = assigned_status
+
+        contact_ids = {contact.object_id for contact in contacts}
+        for contact_id in sorted(previous_contact_ids - contact_ids):
+            print(f"CONTACT LOST: {contact_id}", flush=True)
         for contact in contacts:
             if contact.object_id not in known_contacts:
                 known_contacts.add(contact.object_id)
                 print(f"NEW CONTACT: {contact_description(contact)}", flush=True)
+            elif contact.object_id not in previous_contact_ids:
+                print(f"CONTACT REACQUIRED: {contact_description(contact)}", flush=True)
+        previous_contact_ids = contact_ids
 
         await asyncio.sleep(OBSERVATION_INTERVAL_SECONDS)
 
@@ -110,9 +151,10 @@ async def run() -> int:
 
     ack = await bridge.add_auftrag(auftrag=auftrag, commander=COMMANDER_ID)
     result = ack.get("result", {})
-    print(f"RECON created: {result.get('auftrag_id')} commander={result.get('commander_id')}")
+    auftrag_id = str(result.get("auftrag_id") or "")
+    print(f"RECON created: {auftrag_id} commander={result.get('commander_id')}")
 
-    observer = asyncio.create_task(observe_intel(bridge, known_contacts))
+    observer = asyncio.create_task(observe_intel(bridge, auftrag_id, known_contacts))
     try:
         summary = await bridge.get_auftrag_summary(auftrag, on_status=print)
     finally:

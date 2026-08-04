@@ -66,7 +66,7 @@ function MOOSE_BRIDGE:RegisterIntel(intel, name)
   self:_EnsureIntelRegistry()[intel_name] = intel
   self:_AttachIntelEventForwarders(intel, intel_name)
   if type(intel.SetAgentAuto) ~= "function" then error("INTEL:SetAgentAuto is not available") end
-  intel:SetAgentAuto(true)
+  intel:SetAgentAuto()
   return self
 end
 
@@ -151,6 +151,9 @@ end
 function MOOSE_BRIDGE:_BuildIntelContactSnapshotItem(intel_name, contact, source)
   if type(contact) ~= "table" then return nil end
   local point = bridge_intel_point(self, contact.position)
+  local recce_name = bridge_intel_safe_tostring(contact.recce)
+  local recce_unit = recce_name and UNIT and UNIT.FindByName and UNIT:FindByName(recce_name) or nil
+  local recce_group_name = recce_unit and self:_SafeCall(recce_unit, "GetGroupName") or nil
   local item = {
     object_id=self:_IntelContactId(intel_name, contact),
     dcs_name=bridge_intel_safe_tostring(contact.groupname),
@@ -165,7 +168,9 @@ function MOOSE_BRIDGE:_BuildIntelContactSnapshotItem(intel_name, contact, source
     category_name=bridge_intel_safe_tostring(contact.categoryname),
     threat_level=contact.threatlevel,
     detected_time=contact.Tdetected,
-    recce=bridge_intel_safe_tostring(contact.recce),
+    recce=recce_name,
+    recce_unit_id=recce_name and "UNIT:" .. recce_name or nil,
+    recce_group_id=recce_group_name and "GROUP:" .. tostring(recce_group_name) or nil,
     contact_type=bridge_intel_safe_tostring(contact.ctype),
     speed_mps=contact.speed,
     velocity=bridge_intel_velocity(contact.velocity),

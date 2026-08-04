@@ -27,6 +27,7 @@ from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
+from .recon import ReconOutcome, build_recon_outcome
 from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
 from .operational_execution import (
     OperationalPlanAbortResult,
@@ -41,6 +42,13 @@ from .operational_audit import RestoredOperationalPlan
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
+from .sensor_ranges import (
+    DEFAULT_SENSOR_RANGE_REGISTRY,
+    SensorDetectionType,
+    SensorRangeProfile,
+    SensorRangeRegistry,
+    SensorTargetDomain,
+)
 from .state import MooseBridgeState
 from .strategic import (
     ObjectiveEvent,
@@ -403,6 +411,8 @@ def auftrag_outcome_from_event(event: dict[str, Any]) -> AuftragOutcome:
     snapshot.setdefault("type", payload.get("auftrag_type"))
     snapshot.setdefault("status", payload.get("status"))
     snapshot.setdefault("summary", payload.get("summary"))
+    snapshot["_event_id"] = event.get("id")
+    snapshot["_event_mission_time"] = event.get("mission_time")
     return AuftragOutcome.from_snapshot(snapshot)
 
 
@@ -454,9 +464,16 @@ class MooseBridgeClient:
     :param server: Running bridge server instance.
     """
 
-    def __init__(self, server: MooseBridgeServer, *, weapon_ranges: WeaponRangeRegistry | None = None) -> None:
+    def __init__(
+        self,
+        server: MooseBridgeServer,
+        *,
+        weapon_ranges: WeaponRangeRegistry | None = None,
+        sensor_ranges: SensorRangeRegistry | None = None,
+    ) -> None:
         self.server = server
         self.weapon_range_registry = weapon_ranges or DEFAULT_WEAPON_RANGE_REGISTRY
+        self.sensor_range_registry = sensor_ranges or DEFAULT_SENSOR_RANGE_REGISTRY
         self.objectives = StrategicObjectiveRegistry()
         self.goals = StrategicGoalRegistry(self.objectives)
         self.plans = OperationalPlanRegistry(self.goals)
@@ -1086,6 +1103,110 @@ class MooseBridgeClient:
                 key = (profile.dcs_type, profile.weapon_flag, profile.minimum_m, profile.maximum_m, profile.source)
                 profiles[key] = profile
         return tuple(sorted(profiles.values(), key=lambda item: (item.dcs_type.casefold(), item.minimum_m, item.maximum_m)))
+
+    def sensor_ranges_for_type(
+        self,
+        dcs_type: str,
+        *,
+        target_domain: SensorTargetDomain | str | None = None,
+    ) -> tuple[SensorRangeProfile, ...]:
+        """Return known optimistic sensor bounds for one DCS unit type."""
+
+        return self.sensor_range_registry.profiles_for(dcs_type, target_domain=target_domain)
+
+    def unit_sensor_ranges(
+        self,
+        unit_id: str,
+        *,
+        target_domain: SensorTargetDomain | str | None = None,
+    ) -> tuple[SensorRangeProfile, ...]:
+        """Return known optimistic sensor bounds for one mirrored unit."""
+
+        dcs_type = self._unit_dcs_type(unit_id)
+        return self.sensor_ranges_for_type(str(dcs_type), target_domain=target_domain) if dcs_type else ()
+
+    def _unit_dcs_type(self, unit_id: str) -> str | None:
+        normalized = unit_id if unit_id.startswith("UNIT:") else f"UNIT:{unit_id}"
+        payload = self.state.units.get(normalized)
+        dcs_type = payload.get("dcs_type") if payload else None
+        if not dcs_type:
+            ammunition = self.unit_ammunition(normalized)
+            dcs_type = ammunition.dcs_type if ammunition else None
+        return str(dcs_type) if dcs_type else None
+
+    def group_sensor_ranges(
+        self,
+        group_id: str,
+        *,
+        target_domain: SensorTargetDomain | str | None = None,
+    ) -> tuple[SensorRangeProfile, ...]:
+        """Return distinct sensor bounds for all currently mirrored units in a group."""
+
+        normalized = group_id if group_id.startswith("GROUP:") else f"GROUP:{group_id}"
+        group_name = normalized.removeprefix("GROUP:")
+        unit_ids = {
+            object_id
+            for object_id, payload in self.state.units.items()
+            if payload.get("group_id") == normalized or payload.get("group_name") == group_name
+        }
+        unit_ids.update(item.unit_id for item in self.group_ammunition(normalized))
+        profiles = {
+            profile
+            for unit_id in unit_ids
+            for profile in self.unit_sensor_ranges(unit_id, target_domain=target_domain)
+        }
+        return tuple(
+            sorted(
+                profiles,
+                key=lambda item: (
+                    item.dcs_type.casefold(),
+                    item.detection_type.value,
+                    item.target_domain.value,
+                    item.mode or "",
+                ),
+            )
+        )
+
+    def unit_detection_excluded(
+        self,
+        unit_id: str,
+        distance_m: float,
+        *,
+        target_domain: SensorTargetDomain | str | None = None,
+    ) -> bool | None:
+        """Return whether known organic bounds rule out detection by a unit.
+
+        ``None`` means that no applicable bound is known. ``False`` only means
+        that detection is possible; terrain, aspect and DCS sensor logic still
+        decide whether it actually happens.
+        """
+
+        dcs_type = self._unit_dcs_type(unit_id)
+        if dcs_type is None:
+            return None
+        return self.sensor_range_registry.excludes(dcs_type, distance_m, target_domain=target_domain)
+
+    def unit_sensor_detection_excluded(
+        self,
+        unit_id: str,
+        detection_type: SensorDetectionType | str,
+        distance_m: float,
+        *,
+        target_domain: SensorTargetDomain | str | None = None,
+        mode: str | None = None,
+    ) -> bool | None:
+        """Return whether one sensor mechanism safely excludes detection."""
+
+        dcs_type = self._unit_dcs_type(unit_id)
+        if dcs_type is None:
+            return None
+        return self.sensor_range_registry.sensor_excludes(
+            dcs_type,
+            detection_type,
+            distance_m,
+            target_domain=target_domain,
+            mode=mode,
+        )
 
     def unit_capabilities(self, unit_id: str) -> UnitCapabilities | None:
         """Build current combat capability readiness for one unit."""
@@ -1720,6 +1841,75 @@ class MooseBridgeClient:
         if auftrag_id:
             self._auftrag_ids_by_object[id(auftrag)] = auftrag_id
         return ack
+
+    async def execute_recon(
+        self,
+        auftrag: AuftragCommand,
+        *,
+        intel: str,
+        commander: str | None = None,
+        legion: str | None = None,
+        opsgroup: str | None = None,
+        cohort: str | None = None,
+        coalition: str | None = None,
+        allowed_legions: Iterable[str] | None = None,
+        allowed_cohorts: Iterable[str] | None = None,
+        selected_payload_uid: int | str | None = None,
+        relevant_target_ids: Iterable[str] = (),
+        timeout_s: float = 600.0,
+        command_timeout: float = 10.0,
+        on_status: Callable[[AuftragEvent], Any | Awaitable[Any]] | None = None,
+    ) -> ReconOutcome:
+        """Submit RECON and assess intelligence contributed by its assets.
+
+        MOOSE ``summary.success`` remains authoritative for mission execution.
+        The returned tactical assessment separately reports contacts observed by
+        groups assigned to this RECON mission.
+        """
+
+        if str(auftrag.mission_type).upper() != "RECON":
+            raise ValueError("execute_recon requires an Auftrag_RECON command")
+        await self.refresh_intel_state()
+        if self.intel(intel) is None:
+            raise ValueError(f"INTEL is not registered: {intel}")
+        baseline_contact_ids = tuple(contact.object_id for contact in self.contacts_of_intel(intel))
+        cursor = await self.server.event_cursor()
+        ack = await self.add_auftrag(
+            auftrag,
+            commander=commander,
+            legion=legion,
+            opsgroup=opsgroup,
+            cohort=cohort,
+            coalition=coalition,
+            allowed_legions=allowed_legions,
+            allowed_cohorts=allowed_cohorts,
+            selected_payload_uid=selected_payload_uid,
+            timeout=command_timeout,
+        )
+        outcome = await self.get_auftrag_summary(auftrag, timeout_s=timeout_s, on_status=on_status)
+        await self.snapshot_auftraege()
+        await self.snapshot_opsgroups()
+        mission = self.auftrag(outcome.auftrag_id)
+        assigned_opsgroup_ids = tuple(mission.assigned_group_ids) if mission else ()
+        assigned_group_ids: list[str] = []
+        for opsgroup_id in assigned_opsgroup_ids:
+            assigned = self.opsgroup(opsgroup_id)
+            group_name = assigned.group_name if assigned and assigned.group_name else opsgroup_id.removeprefix("OPSGROUP:")
+            assigned_group_ids.append(f"GROUP:{group_name}")
+        history = await self.server.query_events("*", after_id=cursor)
+        events = history.get("events") if isinstance(history.get("events"), list) else []
+        return build_recon_outcome(
+            auftrag_id=outcome.auftrag_id,
+            intel_id=intel,
+            mission_outcome=outcome,
+            events=(event for event in events if isinstance(event, dict)),
+            baseline_contact_ids=baseline_contact_ids,
+            assigned_opsgroup_ids=assigned_opsgroup_ids,
+            assigned_group_ids=assigned_group_ids,
+            relevant_target_ids=relevant_target_ids,
+            command_ack=ack,
+            event_history_complete=bool(history.get("history_complete")),
+        )
 
     def mission_id(self, mission: AuftragCommand | Auftrag | str) -> str:
         """Return the stable ``AUFTRAG:id`` for an SDK mission reference.

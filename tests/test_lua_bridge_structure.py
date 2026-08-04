@@ -35,7 +35,7 @@ def test_recon_auftrag_builds_zone_set_and_moose_maintains_intel_agents() -> Non
     assert 'self:RegisterCommand("auftrag.create_recon"' in source
     assert 'AUFTRAG:NewRECON(' in source
     assert 'self:_BuildZoneSet(inputs.zones, "RECON", true)' in source
-    assert 'intel:SetAgentAuto(true)' in intel_source
+    assert 'intel:SetAgentAuto()' in intel_source
     assert '_RegisterAuftragIntelAgents' not in source
 
 

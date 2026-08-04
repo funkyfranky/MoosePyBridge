@@ -306,6 +306,13 @@ class MooseBridgeControlServer:
             after_id = str(request.params.get("after_id") or "") or None
             event = await self.bridge_server.wait_for_event(event_name, filters=filters, timeout=request.timeout, after_id=after_id)
             return {"event": event}
+        if action == "control.event.cursor":
+            return {"event_id": await self.bridge_server.event_cursor()}
+        if action == "control.events.query":
+            event_name = str(request.params.get("event") or "*").strip() or "*"
+            filters = request.params.get("filters") if isinstance(request.params.get("filters"), dict) else {}
+            after_id = str(request.params.get("after_id") or "") or None
+            return await self.bridge_server.query_events(event_name, filters=filters, after_id=after_id)
         if action == "control.audit.append":
             record_type = str(request.params.get("record_type") or "").strip()
             payload = request.params.get("payload")
@@ -506,3 +513,29 @@ class MooseBridgeControlClient:
             raise RuntimeError("Control server returned no event")
         self.state.apply_message(event)
         return event
+
+    async def event_cursor(self, timeout: float = 10.0) -> str | None:
+        """Return the id of the latest event retained by the daemon."""
+
+        result = await self.request("control.event.cursor", timeout=timeout)
+        return str(result.get("event_id") or "") or None
+
+    async def query_events(
+        self,
+        event_name: str = "*",
+        filters: dict[str, Any] | None = None,
+        after_id: str | None = None,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Query retained daemon events in chronological order."""
+
+        result = await self.request(
+            "control.events.query",
+            params={"event": event_name, "filters": filters or {}, "after_id": after_id},
+            timeout=timeout,
+        )
+        events = result.get("events") if isinstance(result.get("events"), list) else []
+        for event in events:
+            if isinstance(event, dict):
+                self.state.apply_message(event)
+        return result

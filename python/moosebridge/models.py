@@ -271,6 +271,8 @@ class IntelContact(MooseSnapshotObject):
     threat_level: float | None = None
     detected_time: float | None = None
     recce: str | None = None
+    recce_unit_id: str | None = None
+    recce_group_id: str | None = None
     contact_type: str | None = None
     speed_mps: float | None = None
     velocity: dict[str, Any] | None = None
@@ -310,6 +312,8 @@ class IntelContact(MooseSnapshotObject):
             threat_level=_optional_float(payload.get("threat_level")),
             detected_time=_optional_float(payload.get("detected_time")),
             recce=_optional_str(payload.get("recce")),
+            recce_unit_id=_optional_str(payload.get("recce_unit_id")),
+            recce_group_id=_optional_str(payload.get("recce_group_id")),
             contact_type=_optional_str(payload.get("contact_type")),
             speed_mps=_optional_float(payload.get("speed_mps")),
             velocity=velocity,

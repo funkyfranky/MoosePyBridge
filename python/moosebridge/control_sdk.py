@@ -9,6 +9,7 @@ from .protocol import BridgeCommand
 from .state import MooseBridgeState
 
 if TYPE_CHECKING:
+    from .sensor_ranges import SensorRangeRegistry
     from .sdk import MooseBridgeClient
     from .weapon_ranges import WeaponRangeRegistry
 
@@ -47,6 +48,26 @@ class ControlSdkAdapter:
         """Wait for one daemon event through the control API."""
 
         return await self.client.wait_for_event(event_name, filters=filters, timeout=timeout, after_id=after_id)
+
+    async def event_cursor(self) -> str | None:
+        """Return the latest daemon event id."""
+
+        return await self.client.event_cursor(timeout=self.timeout)
+
+    async def query_events(
+        self,
+        event_name: str = "*",
+        filters: dict[str, Any] | None = None,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Query retained daemon events through the control API."""
+
+        return await self.client.query_events(
+            event_name,
+            filters=filters,
+            after_id=after_id,
+            timeout=self.timeout,
+        )
 
     async def append_audit_record(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Append one SDK audit record through the control API."""
@@ -163,6 +184,7 @@ def sdk_from_control_client(
     timeout: float = 10.0,
     *,
     weapon_ranges: "WeaponRangeRegistry | None" = None,
+    sensor_ranges: "SensorRangeRegistry | None" = None,
 ) -> "MooseBridgeClient":
     """Return a high-level SDK client backed by a control client."""
 
@@ -171,4 +193,5 @@ def sdk_from_control_client(
     return MooseBridgeClient(  # type: ignore[arg-type]
         ControlSdkAdapter(client, timeout=timeout),
         weapon_ranges=weapon_ranges,
+        sensor_ranges=sensor_ranges,
     )

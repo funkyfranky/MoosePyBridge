@@ -52,6 +52,9 @@ from moosebridge.diagnostics import (
     format_mission_summary,
 )
 from moosebridge.models import OpsZone, Territory
+from moosebridge.datamine_ranges import DatamineMetadata
+from moosebridge.datamine_sensors import DatamineSensorData, DatamineSensorProfile
+from moosebridge.sensor_ranges import SensorRangeRegistry
 from moosebridge.sdk import (
     CoordinateResult,
     DistanceResult,
@@ -335,6 +338,55 @@ def test_sdk_refreshes_and_queries_typed_ammunition() -> None:
         assert server.commands[-1][0].action == "snapshot.ammunition"
 
     asyncio.run(scenario())
+
+
+def test_sdk_resolves_sensor_bounds_for_units_and_groups() -> None:
+    server = FakeSdkServer()
+    server.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "units",
+            "payload": {
+                "units": [
+                    {
+                        "object_id": "UNIT:Scout-1",
+                        "group_name": "Scouts",
+                        "dcs_type": "Scout Vehicle",
+                        "alive": True,
+                    }
+                ]
+            },
+        }
+    )
+    registry = SensorRangeRegistry(
+        datamine=DatamineSensorData(
+            DatamineMetadata(dcs_build="test"),
+            (
+                DatamineSensorProfile(
+                    "Scout Vehicle",
+                    "ground",
+                    "organic",
+                    "any",
+                    6_000,
+                    range_scope="unit",
+                    exclusion_safe=True,
+                    basis="maxTargetDetectionRange",
+                ),
+                DatamineSensorProfile(
+                    "Scout Vehicle", "ground", "radar", "air", 12_000,
+                    exclusion_safe=True,
+                ),
+            ),
+        )
+    )
+    client = MooseBridgeClient(server, sensor_ranges=registry)  # type: ignore[arg-type]
+
+    assert len(client.unit_sensor_ranges("Scout-1")) == 2
+    assert len(client.group_sensor_ranges("Scouts", target_domain="surface")) == 1
+    assert client.unit_detection_excluded("Scout-1", 6_001, target_domain="surface") is True
+    assert client.unit_detection_excluded("Scout-1", 12_000, target_domain="air") is True
+    assert client.unit_sensor_detection_excluded("Scout-1", "radar", 12_001, target_domain="air") is True
+    assert client.unit_detection_excluded("Unknown", 1_000) is None
 
 
 def test_sdk_converts_multiple_points_in_one_command() -> None:

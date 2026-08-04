@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate compact ground-unit weapon ranges from Quaggles' DCS datamine."""
+"""Generate compact ground-unit weapon and sensor ranges from the DCS datamine."""
 
 from __future__ import annotations
 
@@ -153,6 +153,35 @@ def _float(value: Any) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _field_values(value: Any, field_name: str) -> list[Any]:
+    """Return recursively nested values for an exact Lua table field name."""
+
+    if not isinstance(value, LuaTable):
+        return []
+    result = [value.fields[field_name]] if field_name in value.fields else []
+    for child in (*value.values, *value.fields.values()):
+        result.extend(_field_values(child, field_name))
+    return result
+
+
+def _numeric_values(value: Any) -> list[float]:
+    if isinstance(value, bool):
+        return []
+    if isinstance(value, (int, float)):
+        return [float(value)]
+    if not isinstance(value, LuaTable):
+        return []
+    result: list[float] = []
+    for child in (*value.values, *value.fields.values()):
+        result.extend(_numeric_values(child))
+    return result
+
+
+def _bounds(value: Any) -> list[float] | None:
+    values = _numeric_values(value)
+    return [min(values), max(values)] if values else None
+
+
 def _attributes(unit: LuaTable) -> set[str]:
     return {value.casefold() for value in _strings(unit.fields.get("attribute")) + _strings(unit.fields.get("tags"))}
 
@@ -249,6 +278,287 @@ def descriptor_record(unit: LuaTable, source_path: str) -> tuple[dict[str, Any],
     return envelope, ranges
 
 
+_SENSOR_TYPES = {0: "optic", 1: "radar", 2: "irst", 3: "rwr"}
+
+
+def _sensor_type(value: Any, fallback: str | None = None) -> str | None:
+    numeric = int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    if numeric in _SENSOR_TYPES:
+        return _SENSOR_TYPES[numeric]
+    if fallback:
+        normalized = fallback.strip().casefold()
+        if normalized in {"optic", "radar", "irst", "rwr", "visual"}:
+            return normalized
+    return None
+
+
+def sensor_descriptor_profiles(sensor: LuaTable, source_path: str) -> tuple[str, list[dict[str, Any]]]:
+    """Extract optimistic air/surface bounds from one sensor descriptor."""
+
+    name = sensor.fields.get("Name") or sensor.fields.get("DisplayName")
+    if not isinstance(name, str) or not name:
+        raise ValueError("Sensor descriptor has no name")
+    detection_type = _sensor_type(sensor.fields.get("SensorType"))
+    if detection_type is None:
+        raise ValueError(f"Sensor descriptor has unsupported SensorType: {sensor.fields.get('SensorType')!r}")
+
+    measuring_values = _numeric_values(sensor.fields.get("max_measuring_distance"))
+    measuring_max = max((value for value in measuring_values if value > 0), default=None)
+    scan_period = _float(sensor.fields.get("scan_period"))
+    scan_volume = sensor.fields.get("scan_volume")
+    scan_azimuth = _bounds(scan_volume.fields.get("azimuth")) if isinstance(scan_volume, LuaTable) else None
+    scan_elevation = _bounds(scan_volume.fields.get("elevation")) if isinstance(scan_volume, LuaTable) else None
+    profiles: list[dict[str, Any]] = []
+
+    air_values = _numeric_values(sensor.fields.get("detection_distance"))
+    air_search = sensor.fields.get("air_search")
+    if isinstance(air_search, LuaTable):
+        air_values.extend(_numeric_values(air_search.fields.get("detection_distance")))
+    air_max = max((value for value in air_values if value > 0), default=None)
+    if air_max is not None:
+        profiles.append(
+            {
+                "detection_type": detection_type,
+                "target_domain": "air",
+                "maximum_m": min(air_max, measuring_max) if measuring_max else air_max,
+                "hard_limit_m": measuring_max,
+                "reference_rcs_m2": None,
+                "scan_period_s": scan_period,
+                "scan_azimuth_deg": scan_azimuth,
+                "scan_elevation_deg": scan_elevation,
+                "mode": "air_search",
+                "exclusion_safe": True,
+                "basis": "sensor.detection_distance",
+                "source_path": source_path,
+            }
+        )
+
+    surface_search = sensor.fields.get("surface_search")
+    surface_fields = surface_search.fields if isinstance(surface_search, LuaTable) else sensor.fields
+    surface_rcs = _float(surface_fields.get("RCS"))
+    for key, value in surface_fields.items():
+        normalized_key = str(key).casefold()
+        if "detection_distance" not in normalized_key:
+            continue
+        if not isinstance(surface_search, LuaTable) and not normalized_key.startswith(("gmti_", "hrm_", "rbm_")):
+            continue
+        surface_values = _numeric_values(value)
+        surface_max = max((item for item in surface_values if item > 0), default=None)
+        if surface_max is None:
+            continue
+        mode = normalized_key.replace("_detection_distance", "")
+        profiles.append(
+            {
+                "detection_type": detection_type,
+                "target_domain": "surface",
+                "maximum_m": min(surface_max, measuring_max) if measuring_max else surface_max,
+                "hard_limit_m": measuring_max,
+                "reference_rcs_m2": surface_rcs,
+                "scan_period_s": scan_period,
+                "scan_azimuth_deg": scan_azimuth,
+                "scan_elevation_deg": scan_elevation,
+                "mode": mode,
+                "exclusion_safe": True,
+                "basis": "sensor.surface_search",
+                "source_path": source_path,
+            }
+        )
+
+    if detection_type == "irst":
+        irst_values: list[float] = []
+        for key, value in sensor.fields.items():
+            if "detectiondistance" in str(key).replace("_", "").casefold():
+                irst_values.extend(_numeric_values(value))
+        irst_max = max((value for value in irst_values if value > 0), default=None)
+        if irst_max is not None and not profiles:
+            profiles.append(
+                {
+                    "detection_type": detection_type,
+                    "target_domain": "air",
+                    "maximum_m": irst_max,
+                    "hard_limit_m": measuring_max,
+                    "reference_rcs_m2": None,
+                    "scan_period_s": scan_period,
+                    "scan_azimuth_deg": scan_azimuth,
+                    "scan_elevation_deg": scan_elevation,
+                    "mode": "tail_on",
+                    "exclusion_safe": True,
+                    "basis": "sensor.irst_detection_distance",
+                    "source_path": source_path,
+                }
+            )
+            head_coeff = _float(sensor.fields.get("head_on_distance_coeff"))
+            if head_coeff is not None and head_coeff > 0:
+                profiles.append(
+                    {
+                        "detection_type": detection_type,
+                        "target_domain": "air",
+                        "maximum_m": irst_max * head_coeff,
+                        "hard_limit_m": measuring_max,
+                        "reference_rcs_m2": None,
+                        "scan_period_s": scan_period,
+                        "scan_azimuth_deg": scan_azimuth,
+                        "scan_elevation_deg": scan_elevation,
+                        "mode": "head_on",
+                        "exclusion_safe": True,
+                        "basis": "sensor.irst_detection_distance",
+                        "source_path": source_path,
+                    }
+                )
+
+    if not profiles:
+        profiles.append(
+            {
+                "detection_type": detection_type,
+                "target_domain": "any",
+                "maximum_m": None,
+                "hard_limit_m": measuring_max,
+                "reference_rcs_m2": None,
+                "scan_period_s": scan_period,
+                "scan_azimuth_deg": scan_azimuth,
+                "scan_elevation_deg": scan_elevation,
+                "mode": None,
+                "exclusion_safe": False,
+                "basis": "sensor_present_range_unknown",
+                "source_path": source_path,
+            }
+        )
+
+    return name, profiles
+
+
+def unit_sensor_profiles(
+    unit: LuaTable,
+    source_path: str,
+    sensors: dict[str, tuple[str, list[dict[str, Any]]]],
+    platform_category: str = "ground",
+) -> list[dict[str, Any]]:
+    """Build organic and sensor-specific upper bounds for one ground unit."""
+
+    dcs_type = unit.fields.get("type")
+    if not isinstance(dcs_type, str) or not dcs_type:
+        raise ValueError("Descriptor has no DCS type")
+    overall_values = [
+        number
+        for value in _field_values(unit, "maxTargetDetectionRange")
+        for number in _numeric_values(value)
+        if number > 0
+    ]
+    overall_max = max(overall_values, default=None)
+    result: list[dict[str, Any]] = []
+    if overall_max is not None:
+        result.append(
+            {
+                "dcs_type": dcs_type,
+                "platform_category": platform_category,
+                "detection_type": "organic",
+                "target_domain": "any",
+                "maximum_m": overall_max,
+                "mode": None,
+                "hard_limit_m": overall_max,
+                "reference_rcs_m2": None,
+                "scan_period_s": None,
+                "scan_azimuth_deg": None,
+                "scan_elevation_deg": None,
+                "range_scope": "unit",
+                "exclusion_safe": True,
+                "emitter_only": False,
+                "sensor_names": [],
+                "source_paths": [source_path],
+                "basis": "maxTargetDetectionRange",
+            }
+        )
+
+    unit_sensors = unit.fields.get("Sensors")
+    if not isinstance(unit_sensors, LuaTable):
+        return result
+    for category, value in unit_sensors.fields.items():
+        detection_type = _sensor_type(None, str(category))
+        if detection_type is None:
+            continue
+        for sensor_name in _strings(value):
+            descriptor = sensors.get(sensor_name)
+            descriptor_profiles = descriptor[1] if descriptor else []
+            if descriptor_profiles:
+                for profile in descriptor_profiles:
+                    maximum = float(profile["maximum_m"]) if profile["maximum_m"] is not None else None
+                    inherited_unit_bound = (
+                        maximum is None
+                        and overall_max is not None
+                        and detection_type in {"optic", "visual", "radar", "irst"}
+                    )
+                    if inherited_unit_bound:
+                        maximum = overall_max
+                    elif maximum is not None and overall_max is not None:
+                        maximum = min(maximum, overall_max)
+                    result.append(
+                        {
+                            "dcs_type": dcs_type,
+                            "platform_category": platform_category,
+                            "detection_type": detection_type,
+                            "target_domain": profile["target_domain"],
+                            "maximum_m": maximum,
+                            "mode": profile["mode"],
+                            "hard_limit_m": overall_max if inherited_unit_bound else profile["hard_limit_m"],
+                            "reference_rcs_m2": profile["reference_rcs_m2"],
+                            "scan_period_s": profile["scan_period_s"],
+                            "scan_azimuth_deg": profile["scan_azimuth_deg"],
+                            "scan_elevation_deg": profile["scan_elevation_deg"],
+                            "range_scope": "sensor",
+                            "exclusion_safe": profile["exclusion_safe"] or inherited_unit_bound,
+                            "emitter_only": detection_type == "rwr",
+                            "sensor_names": [sensor_name],
+                            "source_paths": [source_path, profile["source_path"]],
+                            "basis": "maxTargetDetectionRange" if inherited_unit_bound else profile["basis"],
+                        }
+                    )
+            elif overall_max is not None:
+                result.append(
+                    {
+                        "dcs_type": dcs_type,
+                        "platform_category": platform_category,
+                        "detection_type": detection_type,
+                        "target_domain": "any",
+                        "maximum_m": overall_max,
+                        "mode": None,
+                        "hard_limit_m": overall_max,
+                        "reference_rcs_m2": None,
+                        "scan_period_s": None,
+                        "scan_azimuth_deg": None,
+                        "scan_elevation_deg": None,
+                        "range_scope": "sensor",
+                        "exclusion_safe": True,
+                        "emitter_only": detection_type == "rwr",
+                        "sensor_names": [sensor_name],
+                        "source_paths": [source_path] + ([descriptor[0]] if descriptor else []),
+                        "basis": "maxTargetDetectionRange",
+                    }
+                )
+            else:
+                result.append(
+                    {
+                        "dcs_type": dcs_type,
+                        "platform_category": platform_category,
+                        "detection_type": detection_type,
+                        "target_domain": "any",
+                        "maximum_m": None,
+                        "mode": None,
+                        "hard_limit_m": None,
+                        "reference_rcs_m2": None,
+                        "scan_period_s": None,
+                        "scan_azimuth_deg": None,
+                        "scan_elevation_deg": None,
+                        "range_scope": "sensor",
+                        "exclusion_safe": False,
+                        "emitter_only": detection_type == "rwr",
+                        "sensor_names": [sensor_name],
+                        "source_paths": [source_path] + ([descriptor[0]] if descriptor else []),
+                        "basis": "sensor_present_range_unknown",
+                    }
+                )
+    return result
+
+
 def _git_value(root: Path, *args: str) -> str | None:
     try:
         result = subprocess.run(
@@ -295,6 +605,98 @@ def build_artifact(source_root: Path, *, dcs_build: str | None = None) -> dict[s
     }
 
 
+def build_sensor_artifact(source_root: Path, *, dcs_build: str | None = None) -> dict[str, Any]:
+    """Build compact ground and airborne sensor data from DCS descriptors."""
+
+    unit_directories = (
+        ("ground", source_root / "_G" / "db" / "Units" / "Cars" / "Car"),
+        ("airplane", source_root / "_G" / "db" / "Units" / "Planes" / "Plane"),
+        ("helicopter", source_root / "_G" / "db" / "Units" / "Helicopters" / "Helicopter"),
+    )
+    sensor_directory = source_root / "_G" / "db" / "Sensors" / "Sensor"
+    for _, unit_directory in unit_directories:
+        if not unit_directory.is_dir():
+            raise ValueError(f"Unit descriptor directory not found: {unit_directory}")
+    if not sensor_directory.is_dir():
+        raise ValueError(f"Sensor descriptor directory not found: {sensor_directory}")
+
+    sensors: dict[str, tuple[str, list[dict[str, Any]]]] = {}
+    sensor_errors: list[str] = []
+    for path in sorted(sensor_directory.glob("*.lua"), key=lambda item: item.name.casefold()):
+        relative = path.relative_to(source_root).as_posix()
+        try:
+            table = LuaLiteralParser(path.read_text(encoding="utf-8-sig")).parse_assignment()
+            name, profiles = sensor_descriptor_profiles(table, relative)
+            sensors[name] = (relative, profiles)
+        except (OSError, UnicodeError, ValueError) as exc:
+            sensor_errors.append(f"{relative}: {exc}")
+
+    profiles: list[dict[str, Any]] = []
+    unit_errors: list[str] = []
+    unit_count = 0
+    platform_counts: dict[str, int] = {}
+    for platform_category, unit_directory in unit_directories:
+        platform_counts[platform_category] = 0
+        for path in sorted(unit_directory.glob("*.lua"), key=lambda item: item.name.casefold()):
+            relative = path.relative_to(source_root).as_posix()
+            try:
+                unit = LuaLiteralParser(path.read_text(encoding="utf-8-sig")).parse_assignment()
+                profiles.extend(unit_sensor_profiles(unit, relative, sensors, platform_category))
+                unit_count += 1
+                platform_counts[platform_category] += 1
+            except (OSError, UnicodeError, ValueError) as exc:
+                unit_errors.append(f"{relative}: {exc}")
+    if unit_errors:
+        preview = "\n".join(unit_errors[:10])
+        raise ValueError(f"Could not import {len(unit_errors)} unit descriptor(s):\n{preview}")
+
+    combined: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for profile in profiles:
+        key = (
+            profile["dcs_type"].casefold(),
+            profile["detection_type"],
+            profile["target_domain"],
+            profile["mode"] or "",
+        )
+        previous = combined.get(key)
+        if previous is None:
+            combined[key] = profile
+            continue
+        previous_max = previous["maximum_m"] or 0
+        profile_max = profile["maximum_m"] or 0
+        if profile_max > previous_max:
+            sensor_names = previous["sensor_names"]
+            source_paths = previous["source_paths"]
+            combined[key] = profile
+            previous = combined[key]
+            previous["sensor_names"] = sensor_names
+            previous["source_paths"] = source_paths
+        previous["sensor_names"] = sorted(set(previous["sensor_names"] + profile["sensor_names"]))
+        previous["source_paths"] = sorted(set(previous["source_paths"] + profile["source_paths"]))
+        if previous["basis"] != profile["basis"]:
+            previous["basis"] = "combined"
+
+    commit = _git_value(source_root, "rev-parse", "HEAD")
+    detected_build = dcs_build or _git_value(source_root, "describe", "--tags", "--exact-match")
+    return {
+        "schema_version": 2,
+        "source": {"url": SOURCE_URL, "commit": commit, "dcs_build": detected_build},
+        "unit_descriptor_count": unit_count,
+        "platform_descriptor_counts": platform_counts,
+        "sensor_descriptor_count": len(sensors),
+        "sensor_parse_error_count": len(sensor_errors),
+        "sensor_profiles": sorted(
+            combined.values(),
+            key=lambda item: (
+                item["dcs_type"].casefold(),
+                item["detection_type"],
+                item["target_domain"],
+                item["mode"] or "",
+            ),
+        ),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, help="Local dcs-lua-datamine checkout")
@@ -305,14 +707,26 @@ def main() -> None:
         help="Generated JSON artifact",
     )
     parser.add_argument("--dcs-build", help="Override the DCS build metadata")
+    parser.add_argument(
+        "--sensor-output",
+        type=Path,
+        default=Path("python/moosebridge/data/dcs_sensor_ranges.json"),
+        help="Generated sensor-range JSON artifact",
+    )
     args = parser.parse_args()
 
     artifact = build_artifact(args.source.resolve(), dcs_build=args.dcs_build)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(artifact, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+    sensor_artifact = build_sensor_artifact(args.source.resolve(), dcs_build=args.dcs_build)
+    args.sensor_output.parent.mkdir(parents=True, exist_ok=True)
+    args.sensor_output.write_text(json.dumps(sensor_artifact, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
     print(
         f"Imported {artifact['descriptor_count']} descriptors and "
         f"{len(artifact['weapon_ranges'])} exact ranges into {args.output}"
+    )
+    print(
+        f"Imported {len(sensor_artifact['sensor_profiles'])} sensor profiles into {args.sensor_output}"
     )
 
 

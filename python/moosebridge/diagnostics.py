@@ -18,6 +18,8 @@ from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .operational import OperationalPlan, OperationalPlanAssessment
 from .operational_execution import OperationalPlanAbortResult, OperationalPlanExecution, OperationalPlanReconciliation
 from .pictures import GlobalPicture, PictureValidationIssue
+from .recon import ReconOutcome
+from .sensor_ranges import SensorRangeProfile
 from .strategic import GoalCondition, StrategicGoal
 from .weapon_ranges import WeaponRangeProfile
 
@@ -103,6 +105,39 @@ def format_weapon_range(profile: WeaponRangeProfile | None) -> str:
         f"{profile.dcs_type} {profile.weapon_flag.name} "
         f"range={profile.minimum_m / 1000:.3f}-{profile.maximum_m / 1000:.3f}km "
         f"source={profile.source.value} weapons={weapon_ids}"
+    )
+
+
+def format_sensor_range(profile: SensorRangeProfile | None) -> str:
+    """Return a readable optimistic sensor detection bound."""
+
+    if profile is None:
+        return "Sensor range: unknown"
+    sensors = ", ".join(profile.sensor_names) or "organic"
+    maximum = f"{profile.maximum_m / 1000:.3f}km" if profile.maximum_m is not None else "unknown"
+    mode = f" mode={profile.mode}" if profile.mode else ""
+    flags = []
+    if profile.emitter_only:
+        flags.append("emitter-only")
+    if profile.exclusion_safe:
+        flags.append(f"safe-{profile.range_scope.value}-bound")
+    flag_text = f" flags={','.join(flags)}" if flags else ""
+    details = []
+    if profile.hard_limit_m is not None and profile.hard_limit_m != profile.maximum_m:
+        details.append(f"hard-limit={profile.hard_limit_m / 1000:.3f}km")
+    if profile.reference_rcs_m2 is not None:
+        details.append(f"reference-rcs={profile.reference_rcs_m2:g}m2")
+    if profile.scan_period_s is not None:
+        details.append(f"scan-period={profile.scan_period_s:g}s")
+    if profile.scan_azimuth_deg is not None:
+        details.append(f"azimuth={profile.scan_azimuth_deg[0]:g}..{profile.scan_azimuth_deg[1]:g}deg")
+    if profile.scan_elevation_deg is not None:
+        details.append(f"elevation={profile.scan_elevation_deg[0]:g}..{profile.scan_elevation_deg[1]:g}deg")
+    detail_text = f" {' '.join(details)}" if details else ""
+    return (
+        f"{profile.dcs_type} {profile.detection_type.value}/{profile.target_domain.value} "
+        f"maximum={maximum}{mode} "
+        f"source={profile.source.value} sensors={sensors}{flag_text}{detail_text}"
     )
 
 
@@ -576,6 +611,7 @@ def format_intel_status(
 
 
 __all__ = [
+    "format_sensor_range",
     "format_cohort_assets",
     "format_global_picture_status",
     "format_intel_cluster",

@@ -252,8 +252,8 @@ class MooseBridgeServer:
         """Store and publish one DCS event message."""
 
         self._event_history.append(message)
-        if len(self._event_history) > 1_000:
-            del self._event_history[:100]
+        if len(self._event_history) > 10_000:
+            del self._event_history[:1_000]
 
         remaining: list[tuple[str, dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
         for event_name, filters, future in self._event_waiters:
@@ -283,7 +283,8 @@ class MooseBridgeServer:
                 if str(event.get("id") or "") == after_id:
                     history = full_history[index + 1 :]
                     break
-        for event in reversed(history):
+        ordered_history = history if after_id else reversed(history)
+        for event in ordered_history:
             if event_matches(event, event_name, event_filters):
                 return event
 
@@ -295,6 +296,43 @@ class MooseBridgeServer:
             return await asyncio.wait_for(future, timeout=timeout)
         finally:
             self._event_waiters = [item for item in self._event_waiters if item is not waiter]
+
+    async def event_cursor(self) -> str | None:
+        """Return the id of the most recently retained DCS event."""
+
+        if not self._event_history:
+            return None
+        return str(self._event_history[-1].get("id") or "") or None
+
+    async def query_events(
+        self,
+        event_name: str = "*",
+        filters: dict[str, Any] | None = None,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return retained matching events in chronological order.
+
+        ``history_complete`` is false when the requested cursor is no longer in
+        the bounded history. Retained events are still returned so callers can
+        produce an explicitly partial assessment.
+        """
+
+        history = self._event_history
+        history_complete = after_id is None
+        start = 0
+        if after_id:
+            for index, event in enumerate(history):
+                if str(event.get("id") or "") == after_id:
+                    start = index + 1
+                    history_complete = True
+                    break
+        event_filters = filters or {}
+        events = [event for event in history[start:] if event_matches(event, event_name, event_filters)]
+        return {
+            "events": events,
+            "history_complete": history_complete,
+            "latest_event_id": str(history[-1].get("id") or "") or None if history else None,
+        }
 
     def _resolve_ack(self, message: dict[str, Any]) -> None:
         """Resolve a pending command future from an ACK message.

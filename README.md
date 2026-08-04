@@ -816,6 +816,60 @@ The generated JSON records the source commit and DCS build. It contains every
 ground-unit descriptor, including non-combat units and ambiguous descriptors,
 while the registry activates only defensible task-selector mappings.
 
+The same import also generates versioned sensor data for ground units,
+airplanes, and helicopters from `maxTargetDetectionRange` and referenced DCS
+sensor descriptors. Profiles retain the platform category, sensor type,
+target domain, radar/IRST mode, published detection bound, hard measuring
+limit, reference RCS, scan period, and whether the range is safe for exclusion.
+Sensors such as optics and RWR are retained even when DCS publishes no numeric
+range for them.
+
+Numeric values are optimistic upper bounds, not promises that DCS will detect
+a target. Inside a bound, terrain, line of sight, aspect, weather, target RCS,
+radial velocity, sensor mode, and DCS sensor logic still determine the result.
+
+```python
+from moosebridge import SensorTargetDomain, format_sensor_range
+
+profiles = bridge.group_sensor_ranges(
+    "GROUP:Recon",
+    target_domain=SensorTargetDomain.SURFACE,
+)
+for profile in profiles:
+    print(format_sensor_range(profile))
+
+excluded = bridge.unit_detection_excluded(
+    "UNIT:Recon-1",
+    distance_m=12_000,
+    target_domain="surface",
+)
+if excluded is True:
+    print("Organic detection is outside the known sensor envelope")
+elif excluded is None:
+    print("No complete unit-level sensor envelope is known")
+
+radar_excluded = bridge.unit_sensor_detection_excluded(
+    "UNIT:Hornet-1",
+    "radar",
+    distance_m=200_000,
+    target_domain="surface",
+    mode="rbm",
+)
+```
+
+`unit_detection_excluded()` only uses a complete `unit`-scope envelope. The
+datamine provides this for ground units through `maxTargetDetectionRange`, but
+not for aircraft. Aircraft and helicopter callers can use
+`unit_sensor_detection_excluded()` for a specific bounded sensor or mode.
+That function returns `None` when any matching sensor has an unknown or unsafe
+range. RWR profiles are marked `emitter_only` and are never treated as general
+target detection.
+
+`False` from either exclusion method means only that detection remains
+possible. It must never be interpreted as a confirmed contact. Manual profiles
+can be supplied through `SensorRangeRegistry` and passed to
+`sdk_from_control_client(..., sensor_ranges=registry)`.
+
 For a broad selector, the profile describes the envelope in which at least one
 matching weapon can fire. `weapon_ids` records the observed or manually known
 ammunition behind that envelope; it does not claim that DCS can select one
