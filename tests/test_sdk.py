@@ -43,7 +43,7 @@ from moosebridge.auftraege import (
     ZoneSet,
 )
 from moosebridge.protocol import BridgeCommand
-from moosebridge.recon import ReconRequirement
+from moosebridge.recon import ReconRequirement, ReconSpatialCoverage, ReconTrackSample
 from moosebridge.diagnostics import (
     format_cohort_assets,
     format_global_picture_status,
@@ -2149,11 +2149,33 @@ def test_sdk_execute_recon_returns_event_based_tactical_outcome() -> None:
 
         client.snapshot_auftraege = snapshot_auftraege  # type: ignore[method-assign]
         client.snapshot_opsgroups = snapshot_opsgroups  # type: ignore[method-assign]
+        async def sample_recon_tracking(session: Any) -> None:
+            session.assigned_opsgroup_ids = ("OPSGROUP:MQ-9",)
+            session.assigned_group_ids = ("GROUP:MQ-9",)
+            session.tracks = {"GROUP:MQ-9": [ReconTrackSample("GROUP:MQ-9", 25, 0, 0)]}
+
+        async def assess_recon_tracking(requirement: ReconRequirement, session: Any) -> ReconSpatialCoverage:
+            assert requirement.area_object_id == "ZONE:Recon"
+            assert session.assigned_group_ids == ("GROUP:MQ-9",)
+            return ReconSpatialCoverage(
+                True, "ZONE:Recon", 100, 100, 1, None, (), (), ("GROUP:MQ-9",), (), 1, True,
+                {"GROUP:MQ-9": 10_000},
+            )
+
+        client.sample_recon_tracking = sample_recon_tracking  # type: ignore[method-assign]
+        client.assess_recon_tracking = assess_recon_tracking  # type: ignore[method-assign]
+        manual = ReconRequirement.manual("ZONE:Recon", "GROUP:Ground-1")
         result = await client.execute_recon(
             Auftrag_RECON(zones=ZoneSet("ZONE:Recon")),
             intel="INTEL:Blue Intel",
             commander="COMMANDER:Blue Commander",
-            requirement=ReconRequirement.manual("ZONE:Recon", "GROUP:Ground-1"),
+            requirement=ReconRequirement(
+                "ZONE:Recon",
+                relevant_targets=manual.relevant_targets,
+                derive_targets=False,
+                minimum_area_coverage=0.8,
+                minimum_component_coverage=0,
+            ),
         )
 
         assert result.mission_outcome.success is True
@@ -2161,7 +2183,9 @@ def test_sdk_execute_recon_returns_event_based_tactical_outcome() -> None:
         assert result.new_contact_count == 1
         assert result.observed_relevant_target_ids == ("GROUP:Ground-1",)
         assert result.requirement_satisfied is True
-        assert result.first_intelligence_delay == 5
+        assert result.first_intelligence_delay == 10
+        assert result.spatial_coverage is not None
+        assert result.spatial_coverage.area_coverage_ratio == 1
 
     asyncio.run(scenario())
 

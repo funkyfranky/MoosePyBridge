@@ -24,10 +24,26 @@ from .capabilities import (
     build_unit_influence,
 )
 from .intents import auftrag_command_params_from_recommendation
+from .intelligence import (
+    InformationRequirement,
+    InformationRequirementEvent,
+    InformationRequirementRegistry,
+    InformationRequirementStatus,
+)
 from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
-from .recon import ReconOutcome, ReconRequirement, build_recon_outcome, derive_recon_requirement
+from .recon import (
+    ReconArea,
+    ReconOutcome,
+    ReconRequirement,
+    ReconSpatialCoverage,
+    ReconTrackSample,
+    ReconTrackingSession,
+    assess_recon_spatial_coverage,
+    build_recon_outcome,
+    derive_recon_requirement,
+)
 from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
 from .operational_execution import (
     OperationalPlanAbortResult,
@@ -477,6 +493,7 @@ class MooseBridgeClient:
         self.objectives = StrategicObjectiveRegistry()
         self.goals = StrategicGoalRegistry(self.objectives)
         self.plans = OperationalPlanRegistry(self.goals)
+        self.information_requirement_registry = InformationRequirementRegistry()
         self.plan_executor = OperationalPlanExecutor(self)
         self._auftrag_ids_by_object: dict[int, str] = {}
         add_listener = getattr(server, "add_message_listener", None)
@@ -505,6 +522,107 @@ class MooseBridgeClient:
         """Return a typed TERRITORY by object id."""
 
         return self.state.territory(object_id)
+
+    def add_information_requirement(
+        self,
+        requirement: InformationRequirement,
+        *,
+        replace: bool = False,
+    ) -> InformationRequirement:
+        """Register a passive coalition-private information requirement."""
+
+        return self.information_requirement_registry.add(
+            requirement,
+            replace=replace,
+            state=self.state,
+        )
+
+    def remove_information_requirement(
+        self,
+        requirement: InformationRequirement | str,
+    ) -> InformationRequirement:
+        """Remove an information requirement without affecting any AUFTRAG."""
+
+        return self.information_requirement_registry.remove(requirement)
+
+    def information_requirement(self, requirement_id: str) -> InformationRequirement | None:
+        """Return one registered information requirement."""
+
+        return self.information_requirement_registry.get(requirement_id)
+
+    def information_requirements(
+        self,
+        *,
+        intel_id: str | None = None,
+        status: InformationRequirementStatus | str | None = None,
+    ) -> tuple[InformationRequirement, ...]:
+        """Return registered requirements, optionally filtered by source and status."""
+
+        return self.information_requirement_registry.filter(intel_id=intel_id, status=status)
+
+    def sync_information_requirements(
+        self,
+        *,
+        source: str = "manual",
+    ) -> tuple[InformationRequirementEvent, ...]:
+        """Evaluate requirements from the current general INTEL state."""
+
+        return self.information_requirement_registry.sync(self.state, source=source)
+
+    async def monitor_information_requirements(
+        self,
+        on_event: Callable[[InformationRequirementEvent], Any | Awaitable[Any]],
+        *,
+        after_id: str | None = None,
+    ) -> None:
+        """Continuously evaluate requirements from INTEL events without polling."""
+
+        cursor = after_id if after_id is not None else await self.server.event_cursor()
+        await self.refresh_intel_state()
+        self.sync_information_requirements(source="snapshot.intel_contacts")
+        history_index = len(self.information_requirement_registry.events)
+        while True:
+            try:
+                message = await self.server.wait_for_event("intel.*", timeout=3600.0, after_id=cursor)
+            except TimeoutError:
+                continue
+            cursor = str(message.get("id") or "") or cursor
+            self.sync_information_requirements(source=str(message.get("event") or "intel.event"))
+            events = self.information_requirement_registry.events
+            for event in events[history_index:]:
+                result = on_event(event)
+                if isinstance(result, Awaitable):
+                    await result
+            history_index = len(events)
+
+    async def wait_for_information_requirement_event(
+        self,
+        requirement_id: str,
+        event: str = "information_requirement.satisfied",
+        *,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> InformationRequirementEvent:
+        """Wait for one knowledge-state transition without changing tasking."""
+
+        if self.information_requirement_registry.get(requirement_id) is None:
+            raise ValueError(f"Unknown information requirement: {requirement_id}")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        cursor = after_id if after_id is not None else await self.server.event_cursor()
+        history_index = len(self.information_requirement_registry.events)
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"Timed out waiting for {event}: {requirement_id}")
+            message = await self.server.wait_for_event("intel.*", timeout=remaining, after_id=cursor)
+            cursor = str(message.get("id") or "") or cursor
+            self.sync_information_requirements(source=str(message.get("event") or "intel.event"))
+            events = self.information_requirement_registry.events
+            for requirement_event in events[history_index:]:
+                if requirement_event.requirement_id == requirement_id and requirement_event.event == event:
+                    return requirement_event
+            history_index = len(events)
 
     def add_strategic_objective(
         self,
@@ -1003,6 +1121,14 @@ class MooseBridgeClient:
         message_type = str(message.get("type") or "")
         kind = str(message.get("kind") or "")
         event_name = str(message.get("event") or "")
+        if (
+            message_type == "event" and event_name.startswith("intel.")
+            or message_type == "snapshot" and kind == "intel_contacts"
+        ):
+            self.information_requirement_registry.sync(
+                self.state,
+                source=event_name or "snapshot.intel_contacts",
+            )
         if message_type == "heartbeat":
             self.goals.sync(mission_time=self._current_mission_time(), source="heartbeat")
             return
@@ -1842,6 +1968,145 @@ class MooseBridgeClient:
             self._auftrag_ids_by_object[id(auftrag)] = auftrag_id
         return ack
 
+    @staticmethod
+    def _recon_requires_spatial_tracking(requirement: ReconRequirement | None) -> bool:
+        return requirement is not None and (
+            requirement.minimum_area_coverage > 0
+            or requirement.minimum_component_coverage > 0 and bool(requirement.coverage_points)
+        )
+
+    async def sample_recon_tracking(self, session: ReconTrackingSession) -> None:
+        """Sample groups assigned to a RECON without owning INTEL detection."""
+
+        if not session.assigned_group_ids:
+            await self.snapshot_auftraege()
+            await self.snapshot_opsgroups()
+            snapshot = self.auftrag(session.auftrag_id)
+            if snapshot is not None:
+                session.assigned_opsgroup_ids = tuple(snapshot.assigned_group_ids)
+                group_ids: list[str] = []
+                for opsgroup_id in session.assigned_opsgroup_ids:
+                    opsgroup = self.opsgroup(opsgroup_id)
+                    group_name = opsgroup.group_name if opsgroup and opsgroup.group_name else opsgroup_id.removeprefix("OPSGROUP:")
+                    group_ids.append(f"GROUP:{group_name}")
+                session.assigned_group_ids = tuple(group_ids)
+        await self.snapshot_groups()
+        mission_time = self.state.clock.mission_time if self.state.clock else None
+        if mission_time is None:
+            return
+        for group_id in session.assigned_group_ids:
+            payload = self.state.groups.get(group_id)
+            if not payload or payload.get("alive") is False:
+                continue
+            try:
+                sample = ReconTrackSample(group_id, mission_time, float(payload["x"]), float(payload["z"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            samples = session.tracks.setdefault(group_id, [])
+            if not samples or (samples[-1].mission_time, samples[-1].x, samples[-1].z) != (
+                sample.mission_time,
+                sample.x,
+                sample.z,
+            ):
+                samples.append(sample)
+
+    async def monitor_recon_tracking(
+        self,
+        session: ReconTrackingSession,
+        stop: asyncio.Event,
+        *,
+        interval_s: float = 10.0,
+    ) -> None:
+        """Periodically sample a spatial RECON route until explicitly stopped."""
+
+        while not stop.is_set():
+            await self.sample_recon_tracking(session)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval_s)
+            except TimeoutError:
+                pass
+
+    async def assess_recon_tracking(
+        self,
+        requirement: ReconRequirement,
+        session: ReconTrackingSession,
+    ) -> ReconSpatialCoverage:
+        """Assess one sampled route with the same logic for every RECON caller."""
+
+        await self.snapshot_zones()
+        await self.snapshot_opszones()
+        await self.snapshot_statics()
+        await self.snapshot_airbases()
+        await self.snapshot_groups()
+        await self.snapshot_units()
+        sensor_ranges = {
+            group_id: max(
+                (
+                    profile.maximum_m
+                    for profile in self.group_sensor_ranges(group_id, target_domain="surface")
+                    if profile.maximum_m is not None
+                ),
+                default=None,
+            )
+            for group_id in session.tracks
+        }
+        return assess_recon_spatial_coverage(
+            requirement,
+            self._resolve_recon_area(requirement.area_object_id),
+            {group_id: tuple(samples) for group_id, samples in session.tracks.items()},
+            sensor_ranges,
+            self._resolve_recon_coverage_point_positions(requirement),
+        )
+
+    def _resolve_recon_area(self, object_id: str) -> ReconArea | None:
+        payload: dict[str, Any] | None = None
+        if object_id.startswith("ZONE:"):
+            payload = self.state.zones.get(object_id)
+        elif object_id.startswith("OPSZONE:"):
+            zone = self.state.opszone_objects.get(object_id)
+            if zone and zone.zone_name:
+                payload = self.state.zones.get(f"ZONE:{zone.zone_name}")
+            if payload is None and zone is not None:
+                return ReconArea(object_id, zone.x, zone.z, zone.zone_radius)
+        if payload is None:
+            return None
+        vertices = tuple(
+            (float(item["x"]), float(item["z"]))
+            for item in payload.get("vertices", ())
+            if isinstance(item, dict) and item.get("x") is not None and item.get("z") is not None
+        )
+        return ReconArea(
+            object_id,
+            float(payload["x"]) if payload.get("x") is not None else None,
+            float(payload["z"]) if payload.get("z") is not None else None,
+            float(payload["radius"]) if payload.get("radius") is not None else None,
+            vertices,
+        )
+
+    def _resolve_recon_coverage_point_positions(
+        self,
+        requirement: ReconRequirement,
+    ) -> dict[str, tuple[float, float]]:
+        collections = (
+            self.state.airbases,
+            self.state.statics,
+            self.state.zones,
+            self.state.groups,
+            self.state.units,
+            self.state.opszones,
+            self.state.territories,
+        )
+        positions: dict[str, tuple[float, float]] = {}
+        for point in requirement.coverage_points:
+            payload = next((items.get(point.object_id) for items in collections if point.object_id in items), None)
+            if not payload:
+                continue
+            try:
+                positions[point.object_id] = (float(payload["x"]), float(payload["z"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return positions
+
     async def execute_recon(
         self,
         auftrag: AuftragCommand,
@@ -1888,11 +2153,11 @@ class MooseBridgeClient:
                 manual_target_ids=relevant_target_ids,
             )
             relevant_target_ids = ()
+        cursor = await self.server.event_cursor()
         await self.refresh_intel_state()
         if self.intel(intel) is None:
             raise ValueError(f"INTEL is not registered: {intel}")
         baseline_contact_ids = tuple(contact.object_id for contact in self.contacts_of_intel(intel))
-        cursor = await self.server.event_cursor()
         ack = await self.add_auftrag(
             auftrag,
             commander=commander,
@@ -1905,21 +2170,43 @@ class MooseBridgeClient:
             selected_payload_uid=selected_payload_uid,
             timeout=command_timeout,
         )
-        outcome = await self.get_auftrag_summary(
-            auftrag,
-            timeout_s=timeout_s,
-            on_status=on_status,
-            after_event_id=cursor,
+        tracking = ReconTrackingSession(self.mission_id(auftrag))
+        tracking_stop = asyncio.Event()
+        tracking_task = (
+            asyncio.create_task(self.monitor_recon_tracking(tracking, tracking_stop), name=f"recon-track-{tracking.auftrag_id}")
+            if self._recon_requires_spatial_tracking(requirement)
+            else None
         )
+        try:
+            outcome = await self.get_auftrag_summary(
+                auftrag,
+                timeout_s=timeout_s,
+                on_status=on_status,
+                after_event_id=cursor,
+            )
+        finally:
+            if tracking_task is not None:
+                tracking_stop.set()
+                await tracking_task
+        if tracking_task is not None:
+            await self.sample_recon_tracking(tracking)
         await self.snapshot_auftraege()
         await self.snapshot_opsgroups()
         mission = self.auftrag(outcome.auftrag_id)
-        assigned_opsgroup_ids = tuple(mission.assigned_group_ids) if mission else ()
+        assigned_opsgroup_ids = tracking.assigned_opsgroup_ids or (tuple(mission.assigned_group_ids) if mission else ())
         assigned_group_ids: list[str] = []
-        for opsgroup_id in assigned_opsgroup_ids:
-            assigned = self.opsgroup(opsgroup_id)
-            group_name = assigned.group_name if assigned and assigned.group_name else opsgroup_id.removeprefix("OPSGROUP:")
-            assigned_group_ids.append(f"GROUP:{group_name}")
+        if tracking.assigned_group_ids:
+            assigned_group_ids.extend(tracking.assigned_group_ids)
+        else:
+            for opsgroup_id in assigned_opsgroup_ids:
+                assigned = self.opsgroup(opsgroup_id)
+                group_name = assigned.group_name if assigned and assigned.group_name else opsgroup_id.removeprefix("OPSGROUP:")
+                assigned_group_ids.append(f"GROUP:{group_name}")
+        spatial_coverage = (
+            await self.assess_recon_tracking(requirement, tracking)
+            if requirement is not None and tracking_task is not None
+            else None
+        )
         history = await self.server.query_events("*", after_id=cursor)
         events = history.get("events") if isinstance(history.get("events"), list) else []
         return build_recon_outcome(
@@ -1932,6 +2219,7 @@ class MooseBridgeClient:
             assigned_group_ids=assigned_group_ids,
             relevant_target_ids=relevant_target_ids,
             requirement=requirement,
+            spatial_coverage=spatial_coverage,
             command_ack=ack,
             event_history_complete=bool(history.get("history_complete")),
         )

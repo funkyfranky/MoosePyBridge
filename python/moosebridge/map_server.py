@@ -31,6 +31,8 @@ from .frontlines import (
     territory_control_regions,
 )
 from .pictures import GlobalPicture
+from .operational_audit import execution_from_dict
+from .recon import ReconArea, build_recon_coverage_footprints
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_MAP_HOST = "127.0.0.1"
@@ -151,6 +153,9 @@ class GlobalMapRuntime:
     _incursion_features: list[dict[str, Any]] = field(default_factory=list)
     _frontline_diagnostics: dict[str, Any] = field(default_factory=dict)
     _frontline_error: str | None = None
+    _recon_features: list[dict[str, Any]] = field(default_factory=list)
+    _recon_audit_signature: tuple[tuple[str, str], ...] = ()
+    _recon_error: str | None = None
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
 
@@ -193,6 +198,8 @@ class GlobalMapRuntime:
             "frontline_updated_mission_time": self._frontline_mission_time,
             "influence_updated_mission_time": self._influence_mission_time,
             "frontline_error": self._frontline_error,
+            "recon_coverage_count": len(self._recon_features),
+            "recon_coverage_error": self._recon_error,
         }
 
     def update_picture(self, picture: dict[str, Any]) -> dict[str, Any]:
@@ -382,6 +389,197 @@ class GlobalMapRuntime:
         properties["frontline_updated_mission_time"] = self._frontline_mission_time
         properties["frontline_diagnostics"] = self._frontline_diagnostics
         return geojson
+
+    async def update_recon_coverage(
+        self,
+        picture: GlobalPicture,
+        geojson: dict[str, Any],
+        bridge: Any,
+    ) -> dict[str, Any]:
+        """Append persisted potential RECON sensor coverage to the map."""
+
+        queried_records = await bridge.server.query_audit_records(
+            record_type="operational_plan.execution",
+            latest_attempts=True,
+        )
+        latest_by_plan: dict[str, dict[str, Any]] = {}
+        for record in queried_records:
+            payload = record.get("payload") if isinstance(record, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            plan_id = str(payload.get("plan_id") or "")
+            previous = latest_by_plan.get(plan_id)
+            previous_payload = previous.get("payload", {}) if previous else {}
+            if previous is None or (
+                int(payload.get("attempt_number") or 0),
+                str(record.get("recorded_at") or ""),
+            ) >= (
+                int(previous_payload.get("attempt_number") or 0),
+                str(previous.get("recorded_at") or ""),
+            ):
+                latest_by_plan[plan_id] = record
+        records = tuple(latest_by_plan.values())
+        signature = tuple(
+            (str(record.get("recorded_at") or ""), str((record.get("payload") or {}).get("attempt_id") or ""))
+            for record in records
+            if isinstance(record, dict) and isinstance(record.get("payload"), dict)
+        )
+        if signature != self._recon_audit_signature:
+            features: list[dict[str, Any]] = []
+            source_by_id = {
+                str(feature.get("properties", {}).get("object_id") or ""): feature
+                for feature in geojson.get("features", [])
+                if isinstance(feature, dict)
+            }
+            for record in records:
+                payload = record.get("payload") if isinstance(record, dict) else None
+                if not isinstance(payload, dict):
+                    continue
+                execution = execution_from_dict(payload)
+                coalition = str(execution.plan_snapshot.get("coalition") or "unknown").lower()
+                for mission in execution.missions:
+                    outcome = mission.recon_outcome
+                    spatial = outcome.spatial_coverage if outcome else None
+                    if outcome is None or spatial is None or not spatial.available or not mission.recon_tracks:
+                        continue
+                    area = self._recon_area(picture, spatial.area_object_id)
+                    if area is None or not spatial.sensor_ranges_m:
+                        continue
+                    footprints = build_recon_coverage_footprints(
+                        area,
+                        {group_id: tuple(samples) for group_id, samples in mission.recon_tracks.items()},
+                        spatial.sensor_ranges_m,
+                    )
+                    common = {
+                        "layer": "recon_coverage",
+                        "plan_id": execution.plan_id,
+                        "attempt_id": execution.attempt_id,
+                        "auftrag_id": outcome.auftrag_id,
+                        "coalition": coalition,
+                        "area_object_id": spatial.area_object_id,
+                        "area_coverage_ratio": spatial.area_coverage_ratio,
+                        "component_coverage_ratio": spatial.component_coverage_ratio,
+                        "sufficient": spatial.sufficient,
+                        "interpretation": "Potential sensor access, not confirmed detection",
+                    }
+                    aggregate = await self._coverage_polygon_features(
+                        bridge,
+                        footprints.aggregate,
+                        {
+                            **common,
+                            "map_category": "aggregate",
+                            "object_id": f"RECON_COVERAGE:{execution.attempt_id}:{outcome.auftrag_id}",
+                            "name": f"{outcome.auftrag_id} search coverage",
+                            "object_type": "RECON_COVERAGE",
+                            "category": "Aggregate search footprint",
+                            "sample_count": spatial.sample_count,
+                        },
+                    )
+                    features.extend(aggregate)
+                    for group_id, polygons in footprints.by_group.items():
+                        features.extend(await self._coverage_polygon_features(
+                            bridge,
+                            polygons,
+                            {
+                                **common,
+                                "map_category": "assets",
+                                "object_id": f"RECON_ASSET_COVERAGE:{execution.attempt_id}:{outcome.auftrag_id}:{group_id}",
+                                "name": f"{group_id} sensor access",
+                                "object_type": "RECON_ASSET_COVERAGE",
+                                "category": "Asset search footprint",
+                                "group_id": group_id,
+                                "sensor_range_m": spatial.sensor_ranges_m.get(group_id),
+                                "track_sample_count": len(mission.recon_tracks.get(group_id, ())),
+                            },
+                        ))
+                    for covered, object_ids in (
+                        (True, spatial.covered_component_ids),
+                        (False, spatial.uncovered_component_ids),
+                    ):
+                        for object_id in object_ids:
+                            source = source_by_id.get(object_id)
+                            if not source or source.get("geometry", {}).get("type") != "Point":
+                                continue
+                            features.append({
+                                "type": "Feature",
+                                "geometry": source["geometry"],
+                                "properties": {
+                                    **common,
+                                    "map_category": "covered" if covered else "uncovered",
+                                    "object_id": f"RECON_COMPONENT:{execution.attempt_id}:{outcome.auftrag_id}:{object_id}",
+                                    "name": str(source.get("properties", {}).get("name") or object_id),
+                                    "object_type": "RECON_COVERAGE_POINT",
+                                    "category": "Covered objective component" if covered else "Uncovered objective component",
+                                    "component_object_id": object_id,
+                                    "covered": covered,
+                                },
+                            })
+            self._recon_features = features
+            self._recon_audit_signature = signature
+            self._recon_error = None
+        geojson.setdefault("features", []).extend(self._recon_features)
+        geojson.setdefault("properties", {})["recon_coverage_count"] = len(self._recon_features)
+        return geojson
+
+    @staticmethod
+    def _recon_area(picture: GlobalPicture, object_id: str) -> ReconArea | None:
+        zone_payload: dict[str, Any] | None = None
+        if object_id.startswith("ZONE:"):
+            zone_payload = next((zone for zone in picture.zones if zone.get("object_id") == object_id), None)
+        elif object_id.startswith("OPSZONE:"):
+            opszone = next((zone for zone in picture.opszones if zone.object_id == object_id), None)
+            if opszone and opszone.zone_name:
+                zone_payload = next(
+                    (zone for zone in picture.zones if zone.get("object_id") == f"ZONE:{opszone.zone_name}"),
+                    None,
+                )
+            if zone_payload is None and opszone is not None:
+                return ReconArea(object_id, opszone.x, opszone.z, opszone.zone_radius)
+        if zone_payload is None:
+            return None
+        vertices = tuple(
+            (float(vertex["x"]), float(vertex["z"]))
+            for vertex in zone_payload.get("vertices", ())
+            if isinstance(vertex, dict) and vertex.get("x") is not None and vertex.get("z") is not None
+        )
+        return ReconArea(
+            object_id,
+            _number(zone_payload.get("x")),
+            _number(zone_payload.get("z")),
+            _number(zone_payload.get("radius")),
+            vertices,
+        )
+
+    @staticmethod
+    async def _coverage_polygon_features(
+        bridge: Any,
+        polygons: tuple[tuple[tuple[float, float], ...], ...],
+        properties: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        if not polygons:
+            return []
+        flat = [point for polygon in polygons for point in polygon]
+        converted = []
+        for offset in range(0, len(flat), 5000):
+            converted.extend(await bridge.convert_points(flat[offset:offset + 5000]))
+        result: list[dict[str, Any]] = []
+        cursor = 0
+        for index, polygon in enumerate(polygons, start=1):
+            count = len(polygon)
+            ring = [[point.longitude, point.latitude] for point in converted[cursor:cursor + count]]
+            cursor += count
+            if len(ring) < 4:
+                continue
+            feature_properties = dict(properties)
+            if len(polygons) > 1:
+                feature_properties["object_id"] = f"{properties['object_id']}:{index}"
+                feature_properties["polygon_part"] = index
+            result.append({
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [ring]},
+                "properties": feature_properties,
+            })
+        return result
 
     @staticmethod
     def _add_influence_properties(
@@ -607,6 +805,17 @@ class GlobalMapRuntime:
                     geojson["properties"]["pressure_line_count"] = 0
                     geojson["properties"]["incursion_count"] = 0
                     geojson["properties"]["frontline_error"] = self._frontline_error
+                try:
+                    geojson = await self.update_recon_coverage(picture, geojson, bridge)
+                except Exception as exc:
+                    recon_error = str(exc)
+                    if recon_error != self._recon_error:
+                        LOGGER.warning("RECON coverage update failed: %s", exc)
+                    else:
+                        LOGGER.debug("RECON coverage still unavailable: %s", exc)
+                    self._recon_error = recon_error
+                    geojson["properties"]["recon_coverage_count"] = 0
+                    geojson["properties"]["recon_coverage_error"] = recon_error
                 self.update_picture(geojson)
                 if not self.connected:
                     LOGGER.info("Global map connected to DCS")

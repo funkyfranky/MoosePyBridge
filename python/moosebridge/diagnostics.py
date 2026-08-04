@@ -14,6 +14,7 @@ from .capabilities import (
     UnitInfluence,
 )
 from .legions import Cohort, Commander, Legion
+from .intelligence import InformationRequirement
 from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .operational import OperationalPlan, OperationalPlanAssessment
 from .operational_execution import OperationalPlanAbortResult, OperationalPlanExecution, OperationalPlanReconciliation
@@ -39,6 +40,7 @@ def format_recon_outcome(outcome: ReconOutcome) -> str:
         f"{outcome.auftrag_id} RECON outcome intel={outcome.intel_id}",
         (
             f"  MOOSE success={outcome.mission_outcome.success} contacts={len(outcome.observations)} "
+            f"assigned_contacts={outcome.assigned_asset_contact_count} "
             f"new={outcome.new_contact_count} reacquired={outcome.reacquired_contact_count} "
             f"lost={outcome.lost_contact_count} first_delay={first_delay}"
         ),
@@ -75,7 +77,8 @@ def format_recon_outcome(outcome: ReconOutcome) -> str:
         lines.append(
             f"  {item.contact_id} target={_text(item.target_object_id)} "
             f"recce={_text(item.recce_unit_id)} threat={item.threat_level:.1f} "
-            f"detections={item.detection_count} flags={','.join(flags) or '-'}"
+            f"detections={item.detection_count} source={'assigned' if item.assigned_asset else 'coalition'} "
+            f"flags={','.join(flags) or '-'}"
         )
     if outcome.unknown_relevant_target_ids:
         lines.append(f"  relevant unknown: {', '.join(outcome.unknown_relevant_target_ids)}")
@@ -83,6 +86,26 @@ def format_recon_outcome(outcome: ReconOutcome) -> str:
         lines.append(f"  relevant lost: {', '.join(outcome.lost_relevant_target_ids)}")
     if not outcome.event_history_complete:
         lines.append("  WARNING: daemon event history was incomplete; assessment is partial")
+    return "\n".join(lines)
+
+
+def format_information_requirement(requirement: InformationRequirement) -> str:
+    """Return a compact readable coalition information requirement."""
+
+    lines = [
+        (
+            f"{requirement.requirement_id} intel={requirement.intel_id} "
+            f"status={requirement.status.value} match={requirement.match.value} "
+            f"priority={requirement.priority:g}"
+        ),
+        f"  targets: {', '.join(requirement.target_object_ids)}",
+    ]
+    if requirement.observed_target_ids:
+        lines.append(f"  observed: {', '.join(requirement.observed_target_ids)}")
+    if requirement.missing_target_ids:
+        lines.append(f"  missing: {', '.join(requirement.missing_target_ids)}")
+    if requirement.lost_target_ids:
+        lines.append(f"  lost: {', '.join(requirement.lost_target_ids)}")
     return "\n".join(lines)
 
 

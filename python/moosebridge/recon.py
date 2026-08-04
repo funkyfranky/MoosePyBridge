@@ -322,6 +322,16 @@ class ReconTrackSample:
         return cls(str(data.get("group_id") or ""), float(data.get("mission_time") or 0.0), float(data["x"]), float(data["z"]))
 
 
+@dataclass(slots=True)
+class ReconTrackingSession:
+    """Mutable route observations shared by direct and operational RECON."""
+
+    auftrag_id: str
+    assigned_opsgroup_ids: tuple[str, ...] = ()
+    assigned_group_ids: tuple[str, ...] = ()
+    tracks: dict[str, list[ReconTrackSample]] = field(default_factory=dict)
+
+
 @dataclass(slots=True, frozen=True)
 class ReconArea:
     """DCS-local circular or polygonal area used for coverage calculation."""
@@ -349,6 +359,7 @@ class ReconSpatialCoverage:
     unknown_sensor_group_ids: tuple[str, ...]
     sample_count: int
     sufficient: bool | None
+    sensor_ranges_m: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -364,6 +375,7 @@ class ReconSpatialCoverage:
             "unknown_sensor_group_ids": list(self.unknown_sensor_group_ids),
             "sample_count": self.sample_count,
             "sufficient": self.sufficient,
+            "sensor_ranges_m": dict(self.sensor_ranges_m),
             "interpretation": "potential_sensor_access_not_confirmed_detection",
         }
 
@@ -382,7 +394,99 @@ class ReconSpatialCoverage:
             unknown_sensor_group_ids=tuple(str(item) for item in data.get("unknown_sensor_group_ids", ())),
             sample_count=int(data.get("sample_count") or 0),
             sufficient=data.get("sufficient") if isinstance(data.get("sufficient"), bool) else None,
+            sensor_ranges_m={
+                str(group_id): float(value)
+                for group_id, value in (data.get("sensor_ranges_m") or {}).items()
+                if value is not None
+            } if isinstance(data.get("sensor_ranges_m"), dict) else {},
         )
+
+
+@dataclass(slots=True, frozen=True)
+class ReconCoverageFootprints:
+    """DCS-local searched polygons shared by assessment and map rendering."""
+
+    aggregate: tuple[tuple[tuple[float, float], ...], ...]
+    by_group: dict[str, tuple[tuple[tuple[float, float], ...], ...]]
+
+
+def _recon_area_geometry(area: ReconArea) -> Any | None:
+    try:
+        from shapely.geometry import Point, Polygon
+    except ImportError:
+        return None
+    if len(area.vertices) >= 3:
+        geometry = Polygon(area.vertices)
+    elif area.center_x is not None and area.center_z is not None and area.radius_m and area.radius_m > 0:
+        geometry = Point(area.center_x, area.center_z).buffer(area.radius_m)
+    else:
+        return None
+    return geometry if not geometry.is_empty and geometry.is_valid and geometry.area > 0 else None
+
+
+def _recon_group_footprints(
+    tracks: dict[str, tuple[ReconTrackSample, ...]],
+    sensor_ranges_m: dict[str, float | None],
+) -> dict[str, Any]:
+    try:
+        from shapely.geometry import LineString, Point
+    except ImportError:
+        return {}
+    footprints: dict[str, Any] = {}
+    for group_id, samples in tracks.items():
+        sensor_range = sensor_ranges_m.get(group_id)
+        if sensor_range is None or sensor_range <= 0:
+            continue
+        coordinates = list(dict.fromkeys((sample.x, sample.z) for sample in samples))
+        if not coordinates:
+            continue
+        route = Point(coordinates[0]) if len(coordinates) == 1 else LineString(coordinates)
+        footprints[group_id] = route.buffer(sensor_range)
+    return footprints
+
+
+def _polygon_exteriors(geometry: Any, *, simplify_m: float = 100.0) -> tuple[tuple[tuple[float, float], ...], ...]:
+    if geometry.is_empty:
+        return ()
+    simplified = geometry.simplify(simplify_m, preserve_topology=True) if simplify_m > 0 else geometry
+    polygons = [simplified] if simplified.geom_type == "Polygon" else list(simplified.geoms)
+    return tuple(
+        tuple((float(x), float(z)) for x, z in polygon.exterior.coords)
+        for polygon in polygons
+        if polygon.geom_type == "Polygon" and not polygon.is_empty
+    )
+
+
+def build_recon_coverage_footprints(
+    area: ReconArea,
+    tracks: dict[str, tuple[ReconTrackSample, ...]],
+    sensor_ranges_m: dict[str, float | None],
+    *,
+    simplify_m: float = 100.0,
+) -> ReconCoverageFootprints:
+    """Build aggregate and per-asset potential sensor-access polygons."""
+
+    try:
+        from shapely.ops import unary_union
+    except ImportError:
+        return ReconCoverageFootprints((), {})
+    area_geometry = _recon_area_geometry(area)
+    if area_geometry is None:
+        return ReconCoverageFootprints((), {})
+    group_geometries = _recon_group_footprints(tracks, sensor_ranges_m)
+    clipped = {
+        group_id: geometry.intersection(area_geometry)
+        for group_id, geometry in group_geometries.items()
+    }
+    aggregate = unary_union(tuple(clipped.values())) if clipped else None
+    return ReconCoverageFootprints(
+        _polygon_exteriors(aggregate, simplify_m=simplify_m) if aggregate is not None else (),
+        {
+            group_id: _polygon_exteriors(geometry, simplify_m=simplify_m)
+            for group_id, geometry in clipped.items()
+            if not geometry.is_empty
+        },
+    )
 
 
 def assess_recon_spatial_coverage(
@@ -417,38 +521,20 @@ def assess_recon_spatial_coverage(
     if area is None:
         return unavailable(requirement.area_object_id)
     try:
-        from shapely.geometry import LineString, Point, Polygon
+        from shapely.geometry import Point
         from shapely.ops import unary_union
     except ImportError:
         return unavailable(area.object_id)
 
-    if len(area.vertices) >= 3:
-        area_geometry = Polygon(area.vertices)
-    elif area.center_x is not None and area.center_z is not None and area.radius_m and area.radius_m > 0:
-        area_geometry = Point(area.center_x, area.center_z).buffer(area.radius_m)
-    else:
-        return unavailable(area.object_id)
-    if area_geometry.is_empty or not area_geometry.is_valid or area_geometry.area <= 0:
+    area_geometry = _recon_area_geometry(area)
+    if area_geometry is None:
         return unavailable(area.object_id)
 
-    footprints = []
-    tracked: list[str] = []
-    unknown: list[str] = []
-    for group_id, samples in tracks.items():
-        sensor_range = sensor_ranges_m.get(group_id)
-        if sensor_range is None or sensor_range <= 0:
-            unknown.append(group_id)
-            continue
-        coordinates = list(dict.fromkeys((sample.x, sample.z) for sample in samples))
-        if not coordinates:
-            continue
-        route = Point(coordinates[0]) if len(coordinates) == 1 else LineString(coordinates)
-        footprints.append(route.buffer(sensor_range))
-        tracked.append(group_id)
-    if not footprints:
+    group_footprints = _recon_group_footprints(tracks, sensor_ranges_m)
+    if not group_footprints:
         return unavailable(area.object_id, area_geometry.area, 0.0)
 
-    footprint = unary_union(footprints)
+    footprint = unary_union(tuple(group_footprints.values()))
     searched_area = area_geometry.intersection(footprint).area
     area_ratio = min(1.0, max(0.0, searched_area / area_geometry.area))
     point_weights = {item.object_id: item.weight for item in requirement.coverage_points}
@@ -468,10 +554,15 @@ def assess_recon_spatial_coverage(
         component_ratio,
         covered,
         uncovered,
-        tuple(sorted(tracked)),
-        tuple(sorted(unknown)),
+        tuple(sorted(group_footprints)),
+        tuple(sorted(unknown_groups)),
         sample_count,
         sufficient,
+        {
+            group_id: float(sensor_ranges_m[group_id])
+            for group_id in group_footprints
+            if sensor_ranges_m.get(group_id) is not None
+        },
     )
 
 
@@ -500,6 +591,7 @@ class ReconContactObservation:
     reacquired: bool
     detected_during_executing: bool
     lost_at_end: bool
+    assigned_asset: bool
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable representation."""
@@ -518,6 +610,7 @@ class ReconContactObservation:
             "reacquired": self.reacquired,
             "detected_during_executing": self.detected_during_executing,
             "lost_at_end": self.lost_at_end,
+            "assigned_asset": self.assigned_asset,
         }
 
     @classmethod
@@ -536,6 +629,7 @@ class ReconContactObservation:
             reacquired=bool(data.get("reacquired", False)),
             detected_during_executing=bool(data.get("detected_during_executing", False)),
             lost_at_end=bool(data.get("lost_at_end", False)),
+            assigned_asset=bool(data.get("assigned_asset", False)),
         )
 
 
@@ -575,6 +669,12 @@ class ReconOutcome:
         return sum(item.lost_at_end for item in self.observations)
 
     @property
+    def assigned_asset_contact_count(self) -> int:
+        """Return observations reported by assets assigned to this RECON."""
+
+        return sum(item.assigned_asset for item in self.observations)
+
+    @property
     def maximum_threat(self) -> float:
         return max((item.threat_level for item in self.observations), default=0.0)
 
@@ -590,7 +690,7 @@ class ReconOutcome:
     @property
     def first_intelligence_delay(self) -> float | None:
         first = self.first_intelligence_time
-        origin = self.executing_time if self.executing_time is not None else self.started_time
+        origin = self.started_time if self.started_time is not None else self.executing_time
         return first - origin if first is not None and origin is not None else None
 
     @property
@@ -635,6 +735,7 @@ class ReconOutcome:
             "new_contact_count": self.new_contact_count,
             "reacquired_contact_count": self.reacquired_contact_count,
             "lost_contact_count": self.lost_contact_count,
+            "assigned_asset_contact_count": self.assigned_asset_contact_count,
             "maximum_threat": self.maximum_threat,
             "total_threat": self.total_threat,
             "first_intelligence_time": self.first_intelligence_time,
@@ -759,7 +860,8 @@ def build_recon_outcome(
         was_lost = contact_id in lost_ids
         known_ids.add(contact_id)
         lost_ids.discard(contact_id)
-        if contact.recce_group_id not in assigned_group_set:
+        assigned_asset = contact.recce_group_id in assigned_group_set
+        if not assigned_asset and contact.target_object_id not in relevant_set:
             continue
         state = states.get(contact_id)
         detected_time = event_time if event_time is not None else contact.detected_time
@@ -778,6 +880,7 @@ def build_recon_outcome(
                 "reacquired": was_lost,
                 "detected_during_executing": executing_time is not None and event_time is not None and event_time >= executing_time,
                 "lost_at_end": False,
+                "assigned_asset": assigned_asset,
             }
             states[contact_id] = state
         else:
@@ -790,6 +893,7 @@ def build_recon_outcome(
                 executing_time is not None and event_time is not None and event_time >= executing_time
             )
             state["lost_at_end"] = False
+            state["assigned_asset"] = state["assigned_asset"] or assigned_asset
 
     observations = tuple(ReconContactObservation(**state) for state in states.values())
     observed_relevant = tuple(sorted({item.target_object_id for item in observations if item.target_object_id in relevant_set}))
@@ -837,14 +941,17 @@ def build_recon_outcome(
 __all__ = [
     "ReconArea",
     "ReconContactObservation",
+    "ReconCoverageFootprints",
     "ReconCoveragePoint",
     "ReconOutcome",
     "ReconRelevantTarget",
     "ReconRequirement",
     "ReconTargetSource",
     "ReconTrackSample",
+    "ReconTrackingSession",
     "ReconSpatialCoverage",
     "assess_recon_spatial_coverage",
+    "build_recon_coverage_footprints",
     "build_recon_outcome",
     "derive_recon_requirement",
 ]

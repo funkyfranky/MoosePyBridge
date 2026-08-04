@@ -39,10 +39,7 @@ RECON_ZONES = ZoneSet("ZONE:Town Fight")
 SPEED_KTS = 250
 ALTITUDE_FT = 12_000
 
-RECON_REQUIREMENT = ReconRequirement.manual(
-    "ZONE:Town Fight",
-    "GROUP:Ground-3",
-)
+RECON_REQUIREMENT = ReconRequirement("ZONE:Town Fight")
 
 
 async def run() -> int:
@@ -55,6 +52,21 @@ async def run() -> int:
         return 3
 
     bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    await bridge.snapshot_groups()
+    unavailable_targets = []
+    for target_id in RECON_REQUIREMENT.relevant_target_ids:
+        if not target_id.startswith("GROUP:"):
+            continue
+        target = bridge.state.groups.get(target_id)
+        if target is None or target.get("alive") is not True or target.get("active") is not True:
+            unavailable_targets.append(target_id)
+    if unavailable_targets:
+        print("RECON target groups are not active and alive:")
+        for target_id in unavailable_targets:
+            print(f"  {target_id}")
+        print("Restart the mission or select a currently active target group.")
+        return 4
+
     auftrag = Auftrag_RECON(
         zones=RECON_ZONES,
         speed_kts=SPEED_KTS,

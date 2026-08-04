@@ -79,6 +79,8 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "frontline_updated_mission_time": None,
         "influence_updated_mission_time": None,
         "frontline_error": None,
+        "recon_coverage_count": 0,
+        "recon_coverage_error": None,
     }
 
 
@@ -261,6 +263,98 @@ def test_map_runtime_publishes_incursion_without_bending_main_front() -> None:
         assert geojson["properties"]["frontline_diagnostics"]["main_force_count"] == 2
         assert geojson["properties"]["frontline_diagnostics"]["main_control_power_red"] == 1.5
         assert geojson["properties"]["frontline_diagnostics"]["incursion_control_power_red"] == 1.5
+
+    asyncio.run(scenario())
+
+
+def test_map_runtime_publishes_persisted_recon_coverage() -> None:
+    pytest.importorskip("shapely")
+
+    class Server:
+        async def query_audit_records(self, **kwargs: object) -> tuple[dict[str, object], ...]:
+            assert kwargs == {"record_type": "operational_plan.execution", "latest_attempts": True}
+            return ({
+                "recorded_at": "2026-08-04T20:00:00Z",
+                "payload": {
+                    "plan_id": "PLAN:Recon",
+                    "commander_id": "COMMANDER:Blue",
+                    "attempt_id": "ATTEMPT:Recon:1",
+                    "attempt_number": 1,
+                    "status": "blocked",
+                    "plan": {"coalition": "blue"},
+                    "missions": [{
+                        "phase_id": "recon",
+                        "intent_id": "search",
+                        "requirement_id": "REQ:Recon",
+                        "mission_type": "RECON",
+                        "required": True,
+                        "status": "succeeded",
+                        "auftrag_id": "AUFTRAG:1",
+                        "recon_tracks": {
+                            "GROUP:Reaper": [
+                                {"group_id": "GROUP:Reaper", "mission_time": 10, "x": -4_000, "z": 0},
+                                {"group_id": "GROUP:Reaper", "mission_time": 20, "x": 4_000, "z": 0},
+                            ],
+                        },
+                        "recon_outcome": {
+                            "auftrag_id": "AUFTRAG:1",
+                            "intel_id": "INTEL:Blue",
+                            "mission_outcome": {"auftrag_id": "AUFTRAG:1", "status": "done", "evaluated": True, "success": True},
+                            "requirement": {
+                                "area_object_id": "ZONE:Search",
+                                "derive_targets": True,
+                                "coverage_points": [{"object_id": "STATIC:Depot", "weight": 1, "source": "objective_component"}],
+                            },
+                            "spatial_coverage": {
+                                "available": True,
+                                "area_object_id": "ZONE:Search",
+                                "area_m2": 314_000_000,
+                                "searched_area_m2": 100_000_000,
+                                "area_coverage_ratio": 0.32,
+                                "component_coverage_ratio": 1,
+                                "covered_component_ids": ["STATIC:Depot"],
+                                "uncovered_component_ids": [],
+                                "tracked_group_ids": ["GROUP:Reaper"],
+                                "unknown_sensor_group_ids": [],
+                                "sample_count": 2,
+                                "sufficient": False,
+                                "sensor_ranges_m": {"GROUP:Reaper": 5_000},
+                            },
+                            "observations": [],
+                        },
+                    }],
+                },
+            },)
+
+    class Bridge:
+        server = Server()
+
+        async def convert_points(self, points: list[tuple[float, float]]) -> list[GeographicPoint]:
+            return [
+                GeographicPoint(x=x, y=0, z=z, latitude=54 + z / 100_000, longitude=12 + x / 100_000)
+                for x, z in points
+            ]
+
+    async def scenario() -> None:
+        runtime = GlobalMapRuntime()
+        picture = GlobalPicture(
+            clock=DcsTime(mission_time=30),
+            zones=[{
+                "object_id": "ZONE:Search", "dcs_name": "Search", "x": 0, "z": 0, "radius": 10_000,
+                "latitude": 54, "longitude": 12,
+            }],
+            statics=[{
+                "object_id": "STATIC:Depot", "dcs_name": "Depot", "x": 0, "y": 0, "z": 0,
+                "latitude": 54, "longitude": 12, "alive": True,
+            }],
+        )
+        geojson = await runtime.update_recon_coverage(picture, picture.to_geojson(), Bridge())
+        coverage = [feature for feature in geojson["features"] if feature["properties"].get("layer") == "recon_coverage"]
+
+        assert {feature["properties"]["map_category"] for feature in coverage} == {"aggregate", "assets", "covered"}
+        assert sum(feature["geometry"]["type"] == "Polygon" for feature in coverage) == 2
+        assert next(feature for feature in coverage if feature["properties"]["map_category"] == "assets")["properties"]["sensor_range_m"] == 5_000
+        assert geojson["properties"]["recon_coverage_count"] == len(coverage)
 
     asyncio.run(scenario())
 

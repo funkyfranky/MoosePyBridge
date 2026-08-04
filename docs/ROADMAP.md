@@ -386,6 +386,18 @@ Current operational-planning baseline:
   sensor profiles. It reports optimistic potential access over circular or
   polygonal objective areas plus weighted known infrastructure points. Unknown
   sensor bounds remain indeterminate, and coverage never asserts enemy absence.
+- The browser map reads completed RECON assessments from the operational audit.
+  It renders the combined search footprint by default, optional per-asset
+  footprints, and separate covered/uncovered objective-component markers.
+- INTEL acquisition is mission-independent: all coalition agents contribute
+  contacts regardless of AUFTRAG or lifecycle state. Information requirements
+  accept every coalition source, while assigned RECON contribution remains a
+  diagnostic dimension. Direct and operational RECON now share route sampling
+  and spatial assessment code.
+- `InformationRequirementRegistry` continuously tracks coalition-private target
+  knowledge as open, partial, satisfied, or lost from INTEL events. It is a
+  passive observer: satisfying or losing a requirement never cancels or
+  retasks a running AUFTRAG.
 
 ## Phase 4: Command SDK and policies
 

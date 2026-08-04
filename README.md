@@ -959,6 +959,50 @@ Movement history is derived from periodic DCS positions because DCS does not
 emit position-change events. Tracks are removed when an object dies or
 disappears and are reset when mission time restarts.
 
+Completed structured RECON assessments from each plan's latest execution
+attempt are loaded from the persistent operational audit and shown under
+`RECON coverage`. The combined search
+footprint is visible by default; individual asset footprints can be enabled
+separately. Covered and uncovered known objective components use distinct map
+markers. These polygons represent optimistic potential sensor access along the
+sampled asset routes, clipped to the tasked area. They do not assert confirmed
+detection or the absence of enemy units.
+
+INTEL collection itself is independent of AUFTRAG lifecycle. Every group in
+the coalition's automatic MOOSE INTEL agent set can create or update contacts
+while executing any mission or no mission at all. A `ReconOutcome` therefore
+uses observations from every coalition source to evaluate its information
+requirement. It marks observations from explicitly assigned RECON assets only
+for contribution diagnostics. `execute_recon()` and the operational executor
+share the same route sampler and spatial coverage calculation.
+
+Continuous target-knowledge needs are represented separately from RECON
+tasking:
+
+```python
+from moosebridge import InformationRequirement, format_information_requirement
+
+requirement = bridge.add_information_requirement(
+    InformationRequirement(
+        "ISR:Town defenders",
+        "INTEL:Blue Intel",
+        ("GROUP:Ground-1", "GROUP:Ground-7"),
+    )
+)
+
+async def report(event):
+    print(event.event, event.requirement_id, event.status.value)
+    print(format_information_requirement(requirement))
+
+await bridge.monitor_information_requirements(report)
+```
+
+The registry transitions through `open`, `partial`, `satisfied`, and `lost`
+from general `intel.new_contact` and `intel.lost_contact` events. These states
+never submit, cancel, or otherwise modify an AUFTRAG. A running RECON continues
+to its normal MOOSE completion even when another coalition unit satisfies the
+requirement.
+
 The map server also calculates a live operational frontline every 15 mission
 seconds by default:
 

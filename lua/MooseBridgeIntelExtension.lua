@@ -153,7 +153,8 @@ function MOOSE_BRIDGE:_BuildIntelContactSnapshotItem(intel_name, contact, source
   local point = bridge_intel_point(self, contact.position)
   local recce_name = bridge_intel_safe_tostring(contact.recce)
   local recce_unit = recce_name and UNIT and UNIT.FindByName and UNIT:FindByName(recce_name) or nil
-  local recce_group_name = recce_unit and self:_SafeCall(recce_unit, "GetGroupName") or nil
+  local recce_group = recce_unit and self:_SafeCall(recce_unit, "GetGroup") or nil
+  local recce_group_name = recce_group and self:_SafeCall(recce_group, "GetName") or nil
   local item = {
     object_id=self:_IntelContactId(intel_name, contact),
     dcs_name=bridge_intel_safe_tostring(contact.groupname),

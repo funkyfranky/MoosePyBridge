@@ -26,6 +26,15 @@
     { key: "intel_contacts", label: "INTEL contacts", color: "#c44343", icon: "crosshair", size: 0.95, default: true },
     { key: "intel_clusters", label: "INTEL clusters", color: "#d06f27", icon: "radar", size: 1.05, default: true },
     { key: "loss_reports", label: "Loss reports", color: "#8f3434", icon: "shield-x", size: 1.0, default: true },
+    {
+      key: "recon_coverage", label: "RECON coverage", color: "#167c73", icon: "scan-search", default: true,
+      children: [
+        { key: "aggregate", label: "Combined footprint", icon: "scan", color: "#167c73", default: true },
+        { key: "assets", label: "Asset footprints", icon: "route", color: "#397f96", default: false },
+        { key: "covered", label: "Covered components", icon: "circle-check", color: "#25865f", default: true },
+        { key: "uncovered", label: "Uncovered components", icon: "circle-alert", color: "#c45b32", default: true },
+      ],
+    },
     { key: "missions", label: "Missions", color: "#ad3c76", icon: "target", size: 1.05, default: true },
   ];
   const coalitionColors = { blue: "#2776b9", red: "#c44343", neutral: "#858d88", unknown: "#59635e" };
@@ -187,7 +196,7 @@
         properties: {
           ...feature.properties,
           map_symbol: mapSymbol(feature.properties || {}),
-          map_category: feature.properties?.layer === "airbases" ? airbaseCategory(feature.properties || {}) : undefined,
+          map_category: feature.properties?.map_category || (feature.properties?.layer === "airbases" ? airbaseCategory(feature.properties || {}) : undefined),
           map_coalition: coalitionFilterCategory(feature.properties || {}),
           map_status: statusFilterCategory(feature.properties || {}),
         },
@@ -361,6 +370,38 @@
             "text-color": spec.key === "zones" ? "#68500f" : "#28302d",
             "text-halo-color": "rgba(255,255,255,0.9)",
             "text-halo-width": 1.4,
+          },
+        });
+        continue;
+      }
+      if (spec.key === "recon_coverage") {
+        addMapLayer(spec, {
+          type: "fill",
+          filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["get", "map_category"], ["literal", ["aggregate", "assets"]]]],
+          paint: {
+            "fill-color": ["match", ["get", "map_category"], "assets", "#397f96", "#167c73"],
+            "fill-opacity": ["match", ["get", "map_category"], "assets", 0.08, 0.2],
+          },
+        });
+        addMapLayer(spec, {
+          type: "line",
+          filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["get", "map_category"], ["literal", ["aggregate", "assets"]]]],
+          paint: {
+            "line-color": ["match", ["get", "map_category"], "assets", "#397f96", "#12665f"],
+            "line-width": ["match", ["get", "map_category"], "assets", 1.4, 2.4],
+            "line-dasharray": ["match", ["get", "map_category"], "assets", ["literal", [2, 1.5]], ["literal", [1, 0]]],
+            "line-opacity": 0.9,
+          },
+        });
+        addMapLayer(spec, {
+          type: "circle",
+          filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["get", "map_category"], ["literal", ["covered", "uncovered"]]]],
+          paint: {
+            "circle-radius": 7,
+            "circle-color": ["match", ["get", "map_category"], "covered", "#25865f", "#c45b32"],
+            "circle-stroke-color": "rgba(255,255,255,0.96)",
+            "circle-stroke-width": 2.2,
+            "circle-opacity": 0.96,
           },
         });
         continue;
@@ -637,8 +678,9 @@
         if (!map.getLayer(id)) continue;
         map.setLayoutProperty(id, "visibility", visibility);
         const filters = [mapLayerBaseFilters.get(id), coalitionFilter, statusFilter].filter(Boolean);
-        if (checkbox.dataset.layer === "airbases") {
-          const categories = [...document.querySelectorAll('[data-parent-layer="airbases"]:checked')].map((child) => child.dataset.category);
+        const children = [...document.querySelectorAll(`[data-parent-layer="${checkbox.dataset.layer}"]:checked`)];
+        if (children.length || document.querySelector(`[data-parent-layer="${checkbox.dataset.layer}"]`)) {
+          const categories = children.map((child) => child.dataset.category);
           filters.push(["in", ["get", "map_category"], ["literal", categories]]);
         }
         map.setFilter(id, ["all", ...filters]);

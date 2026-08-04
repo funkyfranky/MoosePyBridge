@@ -33,11 +33,10 @@ from .operational import (
 )
 from .outcomes import AuftragOutcome
 from .recon import (
-    ReconArea,
     ReconOutcome,
     ReconRequirement,
     ReconTrackSample,
-    assess_recon_spatial_coverage,
+    ReconTrackingSession,
     build_recon_outcome,
 )
 from .strategic import StrategicGoalAction, StrategicGoalStatus
@@ -884,12 +883,12 @@ class OperationalPlanExecutor:
                             mission.recon_intel_id = str(phase.metadata.get("intel_id") or "") or None
                             if mission.recon_intel_id is None:
                                 raise ValueError("structured RECON phase requires metadata.intel_id")
+                            mission.event_cursor = await self.client.server.event_cursor()
                             await self.client.refresh_intel_state()
                             mission.baseline_intel_contact_ids = tuple(
                                 contact.object_id
                                 for contact in self.client.contacts_of_intel(mission.recon_intel_id)
                             )
-                            mission.event_cursor = await self.client.server.event_cursor()
                         ack = await self.client.add_auftrag(
                             command,
                             commander=commander.object_id,
@@ -1030,20 +1029,13 @@ class OperationalPlanExecutor:
                 group_name = opsgroup.group_name if opsgroup and opsgroup.group_name else opsgroup_id.removeprefix("OPSGROUP:")
                 assigned_group_ids.append(f"GROUP:{group_name}")
             assert mission.outcome is not None
-            sensor_ranges = {
-                group_id: max(
-                    (profile.maximum_m for profile in self.client.group_sensor_ranges(group_id, target_domain="surface") if profile.maximum_m is not None),
-                    default=None,
-                )
-                for group_id in mission.recon_tracks
-            }
-            spatial_coverage = assess_recon_spatial_coverage(
-                requirement,
-                self._resolve_recon_area(requirement.area_object_id),
-                {group_id: tuple(samples) for group_id, samples in mission.recon_tracks.items()},
-                sensor_ranges,
-                self._resolve_coverage_point_positions(requirement),
+            tracking = ReconTrackingSession(
+                mission.auftrag_id or "",
+                assigned_opsgroup_ids,
+                tuple(assigned_group_ids),
+                mission.recon_tracks,
             )
+            spatial_coverage = await self.client.assess_recon_tracking(requirement, tracking)
             mission.recon_outcome = build_recon_outcome(
                 auftrag_id=mission.auftrag_id or "",
                 intel_id=mission.recon_intel_id,
@@ -1085,84 +1077,13 @@ class OperationalPlanExecutor:
     async def _sample_recon_positions(self, mission: PlanMissionExecution) -> None:
         """Sample assigned RECON groups when no movement event exists in DCS."""
 
-        if not mission.recon_assigned_group_ids:
-            await self.client.snapshot_auftraege()
-            await self.client.snapshot_opsgroups()
-            snapshot = self.client.auftrag(mission.auftrag_id or "")
-            if snapshot is not None:
-                group_ids: list[str] = []
-                for opsgroup_id in snapshot.assigned_group_ids:
-                    opsgroup = self.client.opsgroup(opsgroup_id)
-                    group_name = opsgroup.group_name if opsgroup and opsgroup.group_name else opsgroup_id.removeprefix("OPSGROUP:")
-                    group_ids.append(f"GROUP:{group_name}")
-                mission.recon_assigned_group_ids = tuple(group_ids)
-        await self.client.snapshot_groups()
-        if not mission.recon_assigned_group_ids:
-            return
-        if not any(mission.recon_tracks.get(group_id) for group_id in mission.recon_assigned_group_ids):
-            await self.client.snapshot_units()
-        mission_time = self.client.state.clock.mission_time if self.client.state.clock else None
-        if mission_time is None:
-            return
-        for group_id in mission.recon_assigned_group_ids:
-            payload = self.client.state.groups.get(group_id)
-            if not payload or payload.get("alive") is False:
-                continue
-            try:
-                x = float(payload["x"])
-                z = float(payload["z"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            samples = mission.recon_tracks.setdefault(group_id, [])
-            sample = ReconTrackSample(group_id, mission_time, x, z)
-            if not samples or (samples[-1].mission_time, samples[-1].x, samples[-1].z) != (mission_time, x, z):
-                samples.append(sample)
-
-    def _resolve_recon_area(self, object_id: str) -> ReconArea | None:
-        payload: dict[str, Any] | None = None
-        if object_id.startswith("ZONE:"):
-            payload = self.client.state.zones.get(object_id)
-        elif object_id.startswith("OPSZONE:"):
-            zone = self.client.state.opszone_objects.get(object_id)
-            if zone and zone.zone_name:
-                payload = self.client.state.zones.get(f"ZONE:{zone.zone_name}")
-            if payload is None and zone is not None:
-                return ReconArea(object_id, zone.x, zone.z, zone.zone_radius)
-        if payload is None:
-            return None
-        vertices = tuple(
-            (float(item["x"]), float(item["z"]))
-            for item in payload.get("vertices", ())
-            if isinstance(item, dict) and item.get("x") is not None and item.get("z") is not None
+        session = ReconTrackingSession(
+            mission.auftrag_id or "",
+            assigned_group_ids=mission.recon_assigned_group_ids,
+            tracks=mission.recon_tracks,
         )
-        return ReconArea(
-            object_id,
-            float(payload["x"]) if payload.get("x") is not None else None,
-            float(payload["z"]) if payload.get("z") is not None else None,
-            float(payload["radius"]) if payload.get("radius") is not None else None,
-            vertices,
-        )
-
-    def _resolve_coverage_point_positions(self, requirement: ReconRequirement) -> dict[str, tuple[float, float]]:
-        collections = (
-            self.client.state.airbases,
-            self.client.state.statics,
-            self.client.state.zones,
-            self.client.state.groups,
-            self.client.state.units,
-            self.client.state.opszones,
-            self.client.state.territories,
-        )
-        positions: dict[str, tuple[float, float]] = {}
-        for point in requirement.coverage_points:
-            payload = next((items.get(point.object_id) for items in collections if point.object_id in items), None)
-            if not payload:
-                continue
-            try:
-                positions[point.object_id] = (float(payload["x"]), float(payload["z"]))
-            except (KeyError, TypeError, ValueError):
-                continue
-        return positions
+        await self.client.sample_recon_tracking(session)
+        mission.recon_assigned_group_ids = session.assigned_group_ids
 
     async def _wait_for_required_missions(
         self,

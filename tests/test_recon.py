@@ -73,26 +73,29 @@ def test_build_recon_outcome_correlates_assigned_assets_and_contact_lifecycle() 
         baseline_contact_ids=("CONTACT:Old",),
         assigned_opsgroup_ids=("OPSGROUP:MQ-9",),
         assigned_group_ids=("GROUP:MQ-9",),
-        relevant_target_ids=("GROUP:Old", "GROUP:New", "GROUP:Unknown"),
+        relevant_target_ids=("GROUP:Old", "GROUP:New", "GROUP:Ignored", "GROUP:Unknown"),
     )
 
     assert outcome.mission_outcome.success is True
     assert outcome.started_time == 20
     assert outcome.executing_time == 25
     assert outcome.completed_time == 40
-    assert outcome.new_contact_count == 1
+    assert outcome.new_contact_count == 2
     assert outcome.reacquired_contact_count == 1
     assert outcome.lost_contact_count == 1
-    assert outcome.maximum_threat == 6
-    assert outcome.total_threat == 10
-    assert outcome.first_intelligence_delay == 5
-    assert outcome.observed_relevant_target_ids == ("GROUP:New", "GROUP:Old")
+    assert outcome.assigned_asset_contact_count == 2
+    assert outcome.maximum_threat == 10
+    assert outcome.total_threat == 20
+    assert outcome.first_intelligence_delay == 10
+    assert outcome.observed_relevant_target_ids == ("GROUP:Ignored", "GROUP:New", "GROUP:Old")
     assert outcome.lost_relevant_target_ids == ("GROUP:New",)
     assert outcome.unknown_relevant_target_ids == ("GROUP:Unknown",)
-    assert {item.contact_id for item in outcome.observations} == {"CONTACT:Old", "CONTACT:New"}
+    assert {item.contact_id for item in outcome.observations} == {"CONTACT:Ignored", "CONTACT:Old", "CONTACT:New"}
+    assert next(item for item in outcome.observations if item.contact_id == "CONTACT:Ignored").assigned_asset is False
 
     text = format_recon_outcome(outcome)
-    assert "MOOSE success=True contacts=2 new=1 reacquired=1 lost=1" in text
+    assert "MOOSE success=True contacts=3 assigned_contacts=2 new=2 reacquired=1 lost=1" in text
+    assert "source=coalition" in text
     assert "relevant unknown: GROUP:Unknown" in text
     assert ReconOutcome.from_dict(outcome.to_dict()).to_dict() == outcome.to_dict()
 
@@ -110,6 +113,29 @@ def test_recon_outcome_reports_partial_event_history() -> None:
     )
     assert outcome.to_dict()["event_history_complete"] is False
     assert "assessment is partial" in format_recon_outcome(outcome)
+
+
+def test_recon_first_intelligence_delay_uses_started_before_executing() -> None:
+    outcome = build_recon_outcome(
+        auftrag_id="AUFTRAG:1",
+        intel_id="INTEL:Blue Intel",
+        mission_outcome=_outcome(),
+        events=(
+            _event("auftrag.status", 20, {"auftrag_id": "AUFTRAG:1", "fsm_event": "Started"}),
+            _event("intel.new_contact", 22, {
+                "intel_id": "INTEL:Blue Intel",
+                "contact": _contact("CONTACT:Early", "GROUP:Early", "GROUP:MQ-9", 2),
+            }),
+            _event("auftrag.status", 30, {"auftrag_id": "AUFTRAG:1", "fsm_event": "Executing"}),
+            _event("auftrag.status", 40, {"auftrag_id": "AUFTRAG:1", "fsm_event": "Done"}),
+        ),
+        baseline_contact_ids=(),
+        assigned_opsgroup_ids=("OPSGROUP:MQ-9",),
+        assigned_group_ids=("GROUP:MQ-9",),
+    )
+
+    assert outcome.first_intelligence_delay == 2
+    assert outcome.observations[0].detected_during_executing is False
 
 
 def test_recon_requirement_derives_targets_with_provenance_from_private_picture() -> None:
