@@ -368,10 +368,16 @@ Current operational-planning baseline:
   and `lost` information states derived from MOOSE `Tdetected`. LostContact
   events feed a coalition-private last-known-contact memory. Important recent
   losses near an objective create an executable RECON phase. MOOSE
-  `INTEL:SetAgentAuto(true)` maintains all living coalition groups as agents,
+  `INTEL:SetAgentAuto()` maintains all living coalition groups as agents,
   independent of mission type. Successful recon survival
   triggers an INTEL refresh and mandatory tactical replanning before later
   combat or capture phases may proceed.
+- RECON tasking can carry a typed, audit-safe `ReconRequirement`. Automatic
+  derivation combines goal metadata, objective components, phase targets, and
+  coalition-private current/lost INTEL contacts while retaining provenance.
+  `ReconOutcome` keeps authoritative MOOSE mission success separate from
+  contact contribution and target-based information completion. Strict manual
+  requirements remain available for deterministic mission tests.
 
 ## Phase 4: Command SDK and policies
 

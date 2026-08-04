@@ -430,7 +430,7 @@ static contact near the objective requests reconnaissance only when its threat
 level reaches the configurable importance threshold. The draft then contains a
 `reconnaissance_required` proposal issue, structured last-known-position
 metadata, and an executable RECON phase. INTEL agent membership is independent
-of mission type. `RegisterIntel()` enables MOOSE `INTEL:SetAgentAuto(true)`, so
+of mission type. `RegisterIntel()` enables MOOSE `INTEL:SetAgentAuto()`, so
 MOOSE periodically maintains all living groups of the INTEL coalition in its
 detection set. The bridge does not duplicate this lifecycle logic.
 When the route is complete and the recon group survived, MOOSE reports mission
@@ -683,7 +683,7 @@ print(format_global_picture_status(global_picture))
 ```
 
 `add_intel_agent` remains available for explicit mission setup. Normally MOOSE
-maintains all living same-coalition groups through `INTEL:SetAgentAuto(true)`.
+maintains all living same-coalition groups through `INTEL:SetAgentAuto()`.
 
 `TacticalPicture` uses INTEL contacts and clusters for enemy knowledge.
 `GlobalPicture` uses global truth snapshots and is intended for admin/debug
@@ -1035,7 +1035,7 @@ python examples/sdk/monitor_global_picture.py
 MOOSE-like AUFTRAG helper objects:
 
 ```python
-from moosebridge import Auftrag_AIRDEFENSE, Auftrag_AMMOSUPPLY, Auftrag_ANTISHIP, Auftrag_ARTY, Auftrag_AWACS, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAPTUREZONE, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_EWR, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_INTERCEPT, Auftrag_NAVALENGAGEMENT, Auftrag_NOTHING, Auftrag_ONGUARD, Auftrag_ORBIT, Auftrag_PATROLZONE, Auftrag_REARMING, Auftrag_RECON, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRAFING, Auftrag_STRIKE, Auftrag_TANKER, Auftrag_TROOPTRANSPORT, GroupSet, ZoneSet
+from moosebridge import Auftrag_AIRDEFENSE, Auftrag_AMMOSUPPLY, Auftrag_ANTISHIP, Auftrag_ARTY, Auftrag_AWACS, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAPTUREZONE, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_EWR, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_INTERCEPT, Auftrag_NAVALENGAGEMENT, Auftrag_NOTHING, Auftrag_ONGUARD, Auftrag_ORBIT, Auftrag_PATROLZONE, Auftrag_REARMING, Auftrag_RECON, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRAFING, Auftrag_STRIKE, Auftrag_TANKER, Auftrag_TROOPTRANSPORT, GroupSet, ZoneSet, format_recon_outcome
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bai, commander="COMMANDER:Blue Command")
@@ -1123,6 +1123,19 @@ auftrag_recon = Auftrag_RECON(
     randomly=True,
 )
 ack = await bridge.add_auftrag(auftrag=auftrag_recon, commander="COMMANDER:Blue Commander")
+
+# Event-based tactical assessment, separate from MOOSE mission success.
+recon_outcome = await bridge.execute_recon(
+    auftrag_recon,
+    intel="INTEL:Blue Intel",
+    commander="COMMANDER:Blue Commander",
+    goal=goal,
+    objective=objective,
+    tactical_picture=tactical_picture,
+    operational_plan=plan,
+    on_status=print,
+)
+print(format_recon_outcome(recon_outcome))
 
 auftrag_capture = Auftrag_CAPTUREZONE(opszone="OPSZONE:Town Fight", capture_coalition="blue", speed_kts=20)
 ack = await bridge.add_auftrag(auftrag=auftrag_capture, legion="LEGION:Ground Brigade")

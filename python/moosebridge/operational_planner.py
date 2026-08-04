@@ -19,6 +19,7 @@ from .operational import (
     PlanSourceType,
 )
 from .pictures import TacticalPicture
+from .recon import derive_recon_requirement
 from .strategic import StrategicGoal, StrategicGoalAction, StrategicGoalStatus, StrategicObjective
 
 
@@ -82,6 +83,20 @@ class RuleBasedOperationalPlanner:
         defender = self._select_defender(zone, picture)
         lost_recon_contact = self._select_lost_recon_contact(zone, picture)
         proposal_issues = self._intel_issues(picture, defender, lost_recon_contact)
+        recon_requirement = (
+            derive_recon_requirement(
+                goal,
+                objective,
+                picture,
+                manual_target_ids=(lost_recon_contact.contact.target_object_id,)
+                if lost_recon_contact and lost_recon_contact.contact.target_object_id
+                else (),
+                maximum_contact_age_s=self.config.lost_contact_recon_window_s,
+                area_buffer_m=self.config.isolation_distance_from_zone_m,
+            )
+            if lost_recon_contact is not None
+            else None
+        )
         phases: list[PlanPhase] = []
         previous_phase: str | None = None
         if lost_recon_contact is not None:
@@ -89,7 +104,11 @@ class RuleBasedOperationalPlanner:
                 PlanPhase(
                     phase_id="recon",
                     name="Reacquire important lost contacts",
-                    metadata={"requires_tactical_replanning": True, "intel_id": picture.intel_id},
+                    metadata={
+                        "requires_tactical_replanning": True,
+                        "intel_id": picture.intel_id,
+                        "reconnaissance_requirement": recon_requirement.to_dict() if recon_requirement else None,
+                    },
                     intents=(
                         MissionIntent(
                             intent_id="recon-objective",
@@ -111,6 +130,7 @@ class RuleBasedOperationalPlanner:
                                     "randomly": False,
                                 },
                                 "lost_contact_id": lost_recon_contact.contact.object_id,
+                                "reconnaissance_requirement": recon_requirement.to_dict() if recon_requirement else None,
                             },
                         ),
                     ),
@@ -217,20 +237,22 @@ class RuleBasedOperationalPlanner:
             if defender is not None
             else "No coalition-visible ground defender near the objective; no isolation strike was proposed."
         )
-        recon_metadata = None
-        if lost_recon_contact is not None:
+        recon_metadata = recon_requirement.to_dict() if recon_requirement else None
+        if recon_metadata is not None:
             contact = lost_recon_contact.contact
-            recon_metadata = {
-                "status": "required",
-                "reason": "important_lost_contact",
-                "contact_id": contact.object_id,
-                "target_object_id": contact.target_object_id,
-                "last_detected_time": contact.detected_time,
-                "lost_time": lost_recon_contact.lost_time,
-                "last_known_x": contact.x,
-                "last_known_z": contact.z,
-                "threat_level": contact.threat_level,
-            }
+            recon_metadata.update(
+                {
+                    "status": "required",
+                    "reason": "important_lost_contact",
+                    "contact_id": contact.object_id,
+                    "target_object_id": contact.target_object_id,
+                    "last_detected_time": contact.detected_time,
+                    "lost_time": lost_recon_contact.lost_time,
+                    "last_known_x": contact.x,
+                    "last_known_z": contact.z,
+                    "threat_level": contact.threat_level,
+                }
+            )
         proposal_id = plan_id or f"PLAN:{goal.goal_id.removeprefix('GOAL:')}"
         return OperationalPlan(
             plan_id=proposal_id,

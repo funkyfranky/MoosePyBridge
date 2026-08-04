@@ -534,8 +534,4 @@ class MooseBridgeControlClient:
             params={"event": event_name, "filters": filters or {}, "after_id": after_id},
             timeout=timeout,
         )
-        events = result.get("events") if isinstance(result.get("events"), list) else []
-        for event in events:
-            if isinstance(event, dict):
-                self.state.apply_message(event)
         return result

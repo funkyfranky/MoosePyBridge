@@ -224,6 +224,8 @@ def test_intel_models_from_payload() -> None:
             "contact_type": "Ground",
             "threat_level": 7,
             "recce": "EWR-1",
+            "recce_unit_id": "UNIT:EWR-1",
+            "recce_group_id": "GROUP:EWR",
             "x": 10,
             "z": 20,
             "latitude": 54.1,
@@ -249,6 +251,8 @@ def test_intel_models_from_payload() -> None:
     assert intel.alive_agent_count == 2
     assert intel.agent_ids == ["GROUP:EWR-1", "GROUP:AWACS-1", "GROUP:Dead-1"]
     assert contact.target_object_id == "GROUP:Ground-1"
+    assert contact.recce_unit_id == "UNIT:EWR-1"
+    assert contact.recce_group_id == "GROUP:EWR"
     assert contact.threat_level == 7
     assert contact.latitude == 54.1
     assert contact.longitude == 12.2

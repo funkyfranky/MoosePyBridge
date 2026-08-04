@@ -328,10 +328,11 @@ class MooseBridgeServer:
                     break
         event_filters = filters or {}
         events = [event for event in history[start:] if event_matches(event, event_name, event_filters)]
+        latest_event_id = (str(history[-1].get("id") or "") or None) if history else None
         return {
             "events": events,
             "history_complete": history_complete,
-            "latest_event_id": str(history[-1].get("id") or "") or None if history else None,
+            "latest_event_id": latest_event_id,
         }
 
     def _resolve_ack(self, message: dict[str, Any]) -> None:

@@ -27,7 +27,7 @@ from .intents import auftrag_command_params_from_recommendation
 from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
-from .recon import ReconOutcome, build_recon_outcome
+from .recon import ReconOutcome, ReconRequirement, build_recon_outcome, derive_recon_requirement
 from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
 from .operational_execution import (
     OperationalPlanAbortResult,
@@ -1856,6 +1856,11 @@ class MooseBridgeClient:
         allowed_cohorts: Iterable[str] | None = None,
         selected_payload_uid: int | str | None = None,
         relevant_target_ids: Iterable[str] = (),
+        requirement: ReconRequirement | None = None,
+        goal: StrategicGoal | None = None,
+        objective: StrategicObjective | None = None,
+        tactical_picture: TacticalPicture | None = None,
+        operational_plan: OperationalPlan | None = None,
         timeout_s: float = 600.0,
         command_timeout: float = 10.0,
         on_status: Callable[[AuftragEvent], Any | Awaitable[Any]] | None = None,
@@ -1869,6 +1874,20 @@ class MooseBridgeClient:
 
         if str(auftrag.mission_type).upper() != "RECON":
             raise ValueError("execute_recon requires an Auftrag_RECON command")
+        context_values = (goal, objective, tactical_picture)
+        if requirement is not None and any(value is not None for value in context_values):
+            raise ValueError("pass either requirement or goal/objective/tactical_picture context")
+        if requirement is None and any(value is not None for value in context_values):
+            if goal is None or objective is None or tactical_picture is None:
+                raise ValueError("automatic RECON derivation requires goal, objective and tactical_picture")
+            requirement = derive_recon_requirement(
+                goal,
+                objective,
+                tactical_picture,
+                plan=operational_plan,
+                manual_target_ids=relevant_target_ids,
+            )
+            relevant_target_ids = ()
         await self.refresh_intel_state()
         if self.intel(intel) is None:
             raise ValueError(f"INTEL is not registered: {intel}")
@@ -1886,7 +1905,12 @@ class MooseBridgeClient:
             selected_payload_uid=selected_payload_uid,
             timeout=command_timeout,
         )
-        outcome = await self.get_auftrag_summary(auftrag, timeout_s=timeout_s, on_status=on_status)
+        outcome = await self.get_auftrag_summary(
+            auftrag,
+            timeout_s=timeout_s,
+            on_status=on_status,
+            after_event_id=cursor,
+        )
         await self.snapshot_auftraege()
         await self.snapshot_opsgroups()
         mission = self.auftrag(outcome.auftrag_id)
@@ -1907,6 +1931,7 @@ class MooseBridgeClient:
             assigned_opsgroup_ids=assigned_opsgroup_ids,
             assigned_group_ids=assigned_group_ids,
             relevant_target_ids=relevant_target_ids,
+            requirement=requirement,
             command_ack=ack,
             event_history_complete=bool(history.get("history_complete")),
         )
@@ -2000,6 +2025,7 @@ class MooseBridgeClient:
         timeout_s: float = 600.0,
         interval_s: float = 5.0,
         on_status: Callable[[AuftragEvent], Any | Awaitable[Any]] | None = None,
+        after_event_id: str | None = None,
     ) -> AuftragOutcome:
         """Wait until an AUFTRAG evaluated event arrives and return its outcome.
 
@@ -2010,12 +2036,19 @@ class MooseBridgeClient:
         :param timeout_s: Maximum monitoring time in seconds.
         :param interval_s: Backward-compatible no-op; event waiting does not poll.
         :param on_status: Optional callback called for intermediate AUFTRAG events.
+        :param after_event_id: Optional daemon cursor excluding older events.
         :returns: Stable evaluated AUFTRAG outcome.
         :raises ValueError: If the Python object was not created through this client.
         """
 
         auftrag_id = self.mission_id(auftrag)
-        return await self.wait_for_auftrag_outcome(auftrag_id, timeout_s=timeout_s, interval_s=interval_s, on_status=on_status)
+        return await self.wait_for_auftrag_outcome(
+            auftrag_id,
+            timeout_s=timeout_s,
+            interval_s=interval_s,
+            on_status=on_status,
+            after_event_id=after_event_id,
+        )
 
     async def apply_recommended_auftrag(self, recommendation: Any, timeout: float = 10.0) -> dict[str, Any]:
         """Apply an AUFTRAG recommendation produced by the advisory layer.
@@ -2038,6 +2071,7 @@ class MooseBridgeClient:
         timeout_s: float = 600.0,
         interval_s: float = 5.0,
         on_status: Callable[[AuftragEvent], Any | Awaitable[Any]] | None = None,
+        after_event_id: str | None = None,
     ) -> AuftragOutcome:
         """Wait until an AUFTRAG evaluated event arrives and return its outcome.
 
@@ -2049,6 +2083,7 @@ class MooseBridgeClient:
         :param timeout_s: Maximum monitoring time in seconds.
         :param interval_s: Backward-compatible no-op; event waiting does not poll.
         :param on_status: Optional callback called for intermediate AUFTRAG events.
+        :param after_event_id: Optional daemon cursor excluding older events.
         :returns: Stable AUFTRAG outcome model.
         :raises MooseBridgeAuftragNotFoundError: If the AUFTRAG is never observed.
         :raises MooseBridgeAuftragTimeoutError: If no summary appears before timeout.
@@ -2056,7 +2091,7 @@ class MooseBridgeClient:
 
         deadline = asyncio.get_running_loop().time() + timeout_s
         seen = False
-        last_event_id: str | None = None
+        last_event_id: str | None = after_event_id
         seen_status_keys: set[tuple[str, str | None, str | None, str | None, str | None]] = set()
 
         while True:

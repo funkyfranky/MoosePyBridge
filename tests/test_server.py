@@ -188,3 +188,32 @@ def test_wait_for_event_after_unknown_id_does_not_replay_history() -> None:
         assert event["id"] == "event-started"
 
     asyncio.run(scenario())
+
+
+def test_event_query_returns_chronological_events_after_cursor() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        await server._handle_line('{"type":"event","id":"event-1","event":"intel.new_contact","payload":{"intel_id":"INTEL:Blue"}}')
+        cursor = await server.event_cursor()
+        await server._handle_line('{"type":"event","id":"event-2","event":"intel.lost_contact","payload":{"intel_id":"INTEL:Blue"}}')
+        await server._handle_line('{"type":"event","id":"event-3","event":"intel.new_contact","payload":{"intel_id":"INTEL:Red"}}')
+
+        result = await server.query_events("intel.*", filters={"intel_id": "INTEL:Blue"}, after_id=cursor)
+        assert result["history_complete"] is True
+        assert [event["id"] for event in result["events"]] == ["event-2"]
+        assert result["latest_event_id"] == "event-3"
+
+    asyncio.run(scenario())
+
+
+def test_wait_for_event_after_cursor_returns_earliest_matching_event() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        await server._handle_line('{"type":"event","id":"event-1","event":"auftrag.status","payload":{"auftrag_id":"AUFTRAG:1"}}')
+        await server._handle_line('{"type":"event","id":"event-2","event":"auftrag.status","payload":{"auftrag_id":"AUFTRAG:1","fsm_event":"Queued"}}')
+        await server._handle_line('{"type":"event","id":"event-3","event":"auftrag.status","payload":{"auftrag_id":"AUFTRAG:1","fsm_event":"Started"}}')
+
+        event = await server.wait_for_event("auftrag.*", filters={"auftrag_id": "AUFTRAG:1"}, after_id="event-1")
+        assert event["id"] == "event-2"
+
+    asyncio.run(scenario())

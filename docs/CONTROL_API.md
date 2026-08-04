@@ -302,11 +302,32 @@ produce a structured `reconnaissance_required` proposal issue and metadata;
 the rule-based planner adds an executable RECON phase. `Auftrag_RECON` accepts a
 `ZoneSet`, speed, altitude, route repetition/randomization, and formation.
 INTEL agent membership is mission-independent. Registering an INTEL enables
-MOOSE `INTEL:SetAgentAuto(true)`, which periodically maintains all living groups
+MOOSE `INTEL:SetAgentAuto()`, which periodically maintains all living groups
 of that coalition in the detection set. Successful route completion means the
 recon asset survived; it does not assert that enemies were found or that the area is clear.
 Execution therefore stops at a `plan.replanning_required` boundary after INTEL
 has been refreshed.
+
+`MooseBridgeClient.execute_recon()` captures a daemon event cursor before
+submission and returns a typed `ReconOutcome` after MOOSE evaluation. It
+correlates `intel.new_contact` and `intel.lost_contact` events with the DCS
+groups assigned to that AUFTRAG. MOOSE success remains authoritative in
+`outcome.mission_outcome`; contact gain, reacquisition, final losses, threat
+totals, relevant unknown targets, and timing are separate tactical observations.
+The control API exposes `control.event.cursor` and `control.events.query` for
+the same chronological event-history mechanism.
+
+`derive_recon_requirement(goal, objective, tactical_picture, plan=...)` uses
+objective components, goal metadata, operational phase targets, and current or
+recently lost coalition-private INTEL contacts near the objective. Every
+`ReconRelevantTarget` retains its sources and information quality. Manual IDs
+augment automatic targets; `derive_targets=False`, or the concise
+`ReconRequirement.manual(area_id, *target_ids)` factory, creates a strictly
+manual requirement for deterministic tests. Passing goal, objective, and
+tactical picture directly to `execute_recon()` performs the derivation by
+default. A target-based result is intentionally reported as unknown when no
+relevant targets exist; proving complete spatial coverage is a separate future
+capability.
 - typed OPS state: `commander`, `commanders`, `commander_for_coalition`,
   `legions_of_commander`, `missions_of_commander`, `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,

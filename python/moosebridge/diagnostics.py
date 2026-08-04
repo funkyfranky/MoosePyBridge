@@ -31,6 +31,49 @@ def _text(value: object, default: str = "-") -> str:
     return str(value) if value not in (None, "") else default
 
 
+def format_recon_outcome(outcome: ReconOutcome) -> str:
+    """Return a compact readable RECON assessment."""
+
+    first_delay = f"{outcome.first_intelligence_delay:.1f}s" if outcome.first_intelligence_delay is not None else "-"
+    lines = [
+        f"{outcome.auftrag_id} RECON outcome intel={outcome.intel_id}",
+        (
+            f"  MOOSE success={outcome.mission_outcome.success} contacts={len(outcome.observations)} "
+            f"new={outcome.new_contact_count} reacquired={outcome.reacquired_contact_count} "
+            f"lost={outcome.lost_contact_count} first_delay={first_delay}"
+        ),
+        (
+            f"  threat max={outcome.maximum_threat:.1f} total={outcome.total_threat:.1f} "
+            f"assets={len(outcome.assigned_group_ids)} requirement_satisfied={outcome.requirement_satisfied} "
+            f"history_complete={outcome.event_history_complete}"
+        ),
+    ]
+    if outcome.assigned_group_ids:
+        lines.append(f"  assigned: {', '.join(outcome.assigned_group_ids)}")
+    for item in outcome.observations:
+        flags = []
+        if item.new_contact:
+            flags.append("new")
+        if item.reacquired:
+            flags.append("reacquired")
+        if item.lost_at_end:
+            flags.append("lost")
+        if item.detected_during_executing:
+            flags.append("executing")
+        lines.append(
+            f"  {item.contact_id} target={_text(item.target_object_id)} "
+            f"recce={_text(item.recce_unit_id)} threat={item.threat_level:.1f} "
+            f"detections={item.detection_count} flags={','.join(flags) or '-'}"
+        )
+    if outcome.unknown_relevant_target_ids:
+        lines.append(f"  relevant unknown: {', '.join(outcome.unknown_relevant_target_ids)}")
+    if outcome.lost_relevant_target_ids:
+        lines.append(f"  relevant lost: {', '.join(outcome.lost_relevant_target_ids)}")
+    if not outcome.event_history_complete:
+        lines.append("  WARNING: daemon event history was incomplete; assessment is partial")
+    return "\n".join(lines)
+
+
 def format_capability_readiness(capability: CapabilityReadiness) -> str:
     """Return one readable capability readiness line."""
 

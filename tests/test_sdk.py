@@ -43,6 +43,7 @@ from moosebridge.auftraege import (
     ZoneSet,
 )
 from moosebridge.protocol import BridgeCommand
+from moosebridge.recon import ReconRequirement
 from moosebridge.diagnostics import (
     format_cohort_assets,
     format_global_picture_status,
@@ -2052,6 +2053,115 @@ def test_sdk_add_recon_auftrag_to_commander_uses_zone_set() -> None:
             "formation": "Vee",
             "commander_id": "COMMANDER:Blue Commander",
         }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_execute_recon_returns_event_based_tactical_outcome() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        server.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "intels",
+                "payload": {"intels": [{"object_id": "INTEL:Blue Intel", "object_type": "INTEL"}]},
+            }
+        )
+        server.events_to_emit = [
+            {
+                "type": "event",
+                "id": "event-started",
+                "event": "auftrag.status",
+                "mission_time": 20,
+                "payload": {"auftrag_id": "AUFTRAG:1", "fsm_event": "Started"},
+            },
+            {
+                "type": "event",
+                "id": "event-evaluated",
+                "event": "auftrag.evaluated",
+                "mission_time": 40,
+                "payload": {
+                    "auftrag_id": "AUFTRAG:1",
+                    "auftrag_type": "Recon",
+                    "status": "done",
+                    "summary": {"success": True},
+                },
+            },
+        ]
+        history = [
+            server.events_to_emit[0],
+            {
+                "type": "event",
+                "id": "event-executing",
+                "event": "auftrag.status",
+                "mission_time": 25,
+                "payload": {"auftrag_id": "AUFTRAG:1", "fsm_event": "Executing"},
+            },
+            {
+                "type": "event",
+                "id": "event-contact",
+                "event": "intel.new_contact",
+                "mission_time": 30,
+                "payload": {
+                    "intel_id": "INTEL:Blue Intel",
+                    "contact": {
+                        "object_id": "INTELCONTACT:Blue Intel:Ground-1",
+                        "target_object_id": "GROUP:Ground-1",
+                        "recce_unit_id": "UNIT:MQ-9-1",
+                        "recce_group_id": "GROUP:MQ-9",
+                        "threat_level": 4,
+                    },
+                },
+            },
+            server.events_to_emit[1],
+        ]
+
+        async def event_cursor() -> str:
+            return "event-before"
+
+        async def query_events(event_name: str = "*", filters: dict[str, Any] | None = None, after_id: str | None = None) -> dict[str, Any]:
+            assert after_id == "event-before"
+            return {"events": history, "history_complete": True, "latest_event_id": "event-evaluated"}
+
+        server.event_cursor = event_cursor  # type: ignore[attr-defined]
+        server.query_events = query_events  # type: ignore[attr-defined]
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        async def snapshot_auftraege() -> dict[str, Any]:
+            server.state.apply_message(
+                {
+                    "type": "snapshot",
+                    "kind": "auftraege",
+                    "payload": {"auftraege": [{"object_id": "AUFTRAG:1", "assigned_group_ids": ["OPSGROUP:MQ-9"]}]},
+                }
+            )
+            return {"ok": True}
+
+        async def snapshot_opsgroups() -> dict[str, Any]:
+            server.state.apply_message(
+                {
+                    "type": "snapshot",
+                    "kind": "opsgroups",
+                    "payload": {"opsgroups": [{"object_id": "OPSGROUP:MQ-9", "group_name": "MQ-9"}]},
+                }
+            )
+            return {"ok": True}
+
+        client.snapshot_auftraege = snapshot_auftraege  # type: ignore[method-assign]
+        client.snapshot_opsgroups = snapshot_opsgroups  # type: ignore[method-assign]
+        result = await client.execute_recon(
+            Auftrag_RECON(zones=ZoneSet("ZONE:Recon")),
+            intel="INTEL:Blue Intel",
+            commander="COMMANDER:Blue Commander",
+            requirement=ReconRequirement.manual("ZONE:Recon", "GROUP:Ground-1"),
+        )
+
+        assert result.mission_outcome.success is True
+        assert result.assigned_group_ids == ("GROUP:MQ-9",)
+        assert result.new_contact_count == 1
+        assert result.observed_relevant_target_ids == ("GROUP:Ground-1",)
+        assert result.requirement_satisfied is True
+        assert result.first_intelligence_delay == 5
 
     asyncio.run(scenario())
 

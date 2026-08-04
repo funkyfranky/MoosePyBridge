@@ -157,6 +157,15 @@ from .intelligence import (
     assess_intel_contact,
 )
 from .outcomes import AuftragOutcome
+from .recon import (
+    ReconContactObservation,
+    ReconOutcome,
+    ReconRelevantTarget,
+    ReconRequirement,
+    ReconTargetSource,
+    build_recon_outcome,
+    derive_recon_requirement,
+)
 from .operational import (
     AssetRequirement,
     AssetRole,
@@ -229,6 +238,7 @@ from .diagnostics import (
     format_operational_plan_execution,
     format_operational_plan_reconciliation,
     format_picture_issue,
+    format_recon_outcome,
     format_sensor_range,
     format_strategic_goal,
     format_unit_capabilities,
@@ -470,6 +480,11 @@ __all__ = [
     "PlanReconciliationStatus",
     "PlanValidationIssue",
     "RangeSource",
+    "ReconContactObservation",
+    "ReconOutcome",
+    "ReconRelevantTarget",
+    "ReconRequirement",
+    "ReconTargetSource",
     "RequirementAssessment",
     "RestoredOperationalPlan",
     "RuleBasedOperationalPlanner",
@@ -525,6 +540,8 @@ __all__ = [
     "build_group_influence",
     "build_unit_capabilities",
     "build_unit_influence",
+    "build_recon_outcome",
+    "derive_recon_requirement",
     "canonical_auftrag_type",
     "canonical_mission_type",
     "capture_actions",
@@ -553,6 +570,7 @@ __all__ = [
     "format_operational_plan_execution",
     "format_operational_plan_reconciliation",
     "format_picture_issue",
+    "format_recon_outcome",
     "format_sensor_range",
     "format_strategic_goal",
     "format_unit_capabilities",
