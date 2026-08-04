@@ -378,6 +378,14 @@ Current operational-planning baseline:
   `ReconOutcome` keeps authoritative MOOSE mission success separate from
   contact contribution and target-based information completion. Strict manual
   requirements remain available for deterministic mission tests.
+- The operational executor captures RECON event cursors and INTEL baselines,
+  persists each mission's `ReconOutcome`, emits a structured `recon.assessed`
+  boundary, and gives replanning an explicit satisfied/incomplete/indeterminate
+  reason. Later phases are never resumed from the stale pre-recon plan.
+- Spatial RECON coverage uses sampled assigned-group trajectories and bounded
+  sensor profiles. It reports optimistic potential access over circular or
+  polygonal objective areas plus weighted known infrastructure points. Unknown
+  sensor bounds remain indeterminate, and coverage never asserts enemy absence.
 
 ## Phase 4: Command SDK and policies
 

@@ -23,6 +23,7 @@ from moosebridge import (
     PlanMissionStatus,
     PlanReconciliationStatus,
     PlanSourceType,
+    ReconRequirement,
     StrategicGoal,
     StrategicGoalAction,
     StrategicGoalStatus,
@@ -35,6 +36,7 @@ from moosebridge.audit import AuditStore, latest_attempt_records
 from moosebridge.control import ControlClientIdentity
 from moosebridge.protocol import BridgeCommand
 from moosebridge.operational_execution import build_plan_auftrag
+from moosebridge.operational_audit import execution_from_dict, execution_to_dict
 from moosebridge.state import MooseBridgeState
 
 
@@ -399,6 +401,7 @@ class _ExecutionServer:
         self._mission_number = 0
         self._mission_types: dict[int, str] = {}
         self._event_number = 0
+        self.event_history: list[dict[str, Any]] = []
 
     async def append_audit_record(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self.audit_store.append(record_type, payload)
@@ -450,7 +453,7 @@ class _ExecutionServer:
         success = self.success[mission_number - 1] if isinstance(self.success, list) else self.success
         if success and mission_type == "CAPTUREZONE":
             self._objective_updated = True
-        return {
+        event = {
             "type": "event",
             "id": f"event-{self._event_number}",
             "event": "auftrag.evaluated",
@@ -461,6 +464,25 @@ class _ExecutionServer:
                 "summary": {"success": success, "Ntargets0": 1, "Ntargets": 0},
             },
         }
+        self.event_history.append(event)
+        return event
+
+    async def event_cursor(self) -> str | None:
+        return str(self.event_history[-1].get("id")) if self.event_history else None
+
+    async def query_events(
+        self,
+        event_name: str = "*",
+        filters: dict[str, Any] | None = None,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        events = self.event_history
+        if after_id:
+            events = next(
+                (self.event_history[index + 1 :] for index, event in enumerate(self.event_history) if event.get("id") == after_id),
+                self.event_history,
+            )
+        return {"events": events, "history_complete": True, "latest_event_id": self.event_history[-1]["id"] if self.event_history else None}
 
     async def snapshot_opszones(self) -> dict[str, Any]:
         self.state.apply_message(
@@ -501,6 +523,15 @@ class _ExecutionServer:
         )
         return {"ok": True, "result": {"kind": "groups", "count": len(self.group_ids)}}
 
+    async def snapshot_units(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "units", "count": len(self.state.units)}}
+
+    async def snapshot_zones(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "zones", "count": len(self.state.zones)}}
+
+    async def snapshot_statics(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "statics", "count": len(self.state.statics)}}
+
     async def snapshot_auftraege(self) -> dict[str, Any]:
         self.state.apply_message(
             {
@@ -510,6 +541,9 @@ class _ExecutionServer:
             }
         )
         return {"ok": True, "result": {"kind": "auftraege", "count": len(self.auftrag_snapshots)}}
+
+    async def snapshot_opsgroups(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "opsgroups", "count": len(self.state.opsgroup_objects)}}
 
     async def snapshot_commanders(self) -> dict[str, Any]:
         return {"ok": True, "result": {"kind": "commanders", "count": len(self.state.commander_objects)}}
@@ -753,7 +787,14 @@ def test_successful_recon_requires_fresh_intel_replanning_before_capture() -> No
                                 target_object_id="OPSZONE:Town",
                             ),
                         ),
-                        metadata={"requires_tactical_replanning": True},
+                        metadata={
+                            "requires_tactical_replanning": True,
+                            "intel_id": "INTEL:Blue",
+                            "reconnaissance_requirement": ReconRequirement.manual(
+                                "OPSZONE:Town",
+                                "GROUP:Lost armor",
+                            ).to_dict(),
+                        },
                     ),
                     PlanPhase(
                         "seize",
@@ -783,8 +824,14 @@ def test_successful_recon_requires_fresh_intel_replanning_before_capture() -> No
         assert plan.phases[1].status is PlanPhaseStatus.BLOCKED
         assert [command.action for command in bridge.server.commands] == ["auftrag.create_recon"]  # type: ignore[attr-defined]
         assert execution.missions[0].status is PlanMissionStatus.SUCCEEDED
+        assert execution.missions[0].recon_outcome is not None
+        assert execution.missions[0].recon_outcome.requirement_satisfied is False
+        restored = execution_from_dict(execution_to_dict(execution))
+        assert restored.missions[0].recon_outcome is not None
+        assert restored.missions[0].recon_outcome.requirement_satisfied is False
+        assert "recon.assessed" in observed
         assert "plan.replanning_required" in observed
-        assert "refresh the tactical picture" in (execution.blocked_reason or "")
+        assert "relevant targets remain unknown" in (execution.blocked_reason or "")
 
     asyncio.run(scenario())
 

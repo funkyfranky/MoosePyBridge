@@ -32,6 +32,14 @@ from .operational import (
     RequirementAssessment,
 )
 from .outcomes import AuftragOutcome
+from .recon import (
+    ReconArea,
+    ReconOutcome,
+    ReconRequirement,
+    ReconTrackSample,
+    assess_recon_spatial_coverage,
+    build_recon_outcome,
+)
 from .strategic import StrategicGoalAction, StrategicGoalStatus
 
 if TYPE_CHECKING:
@@ -39,6 +47,7 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 PLAN_EXECUTION_AUDIT_TYPE = "operational_plan.execution"
+RECON_POSITION_SAMPLE_INTERVAL_S = 10.0
 
 
 class PlanMissionStatus(str, Enum):
@@ -167,6 +176,12 @@ class PlanMissionExecution:
     status: PlanMissionStatus = PlanMissionStatus.PENDING
     auftrag_id: str | None = None
     outcome: AuftragOutcome | None = None
+    recon_outcome: ReconOutcome | None = None
+    event_cursor: str | None = field(default=None, repr=False)
+    recon_intel_id: str | None = field(default=None, repr=False)
+    baseline_intel_contact_ids: tuple[str, ...] = field(default=(), repr=False)
+    recon_assigned_group_ids: tuple[str, ...] = field(default=(), repr=False)
+    recon_tracks: dict[str, list[ReconTrackSample]] = field(default_factory=dict, repr=False)
     error: str | None = None
 
 @dataclass(slots=True)
@@ -864,6 +879,17 @@ class OperationalPlanExecutor:
                     )
                     execution.missions.append(mission)
                     try:
+                        recon_requirement_data = self._recon_requirement_data(phase, intent)
+                        if command.mission_type == "RECON" and recon_requirement_data is not None:
+                            mission.recon_intel_id = str(phase.metadata.get("intel_id") or "") or None
+                            if mission.recon_intel_id is None:
+                                raise ValueError("structured RECON phase requires metadata.intel_id")
+                            await self.client.refresh_intel_state()
+                            mission.baseline_intel_contact_ids = tuple(
+                                contact.object_id
+                                for contact in self.client.contacts_of_intel(mission.recon_intel_id)
+                            )
+                            mission.event_cursor = await self.client.server.event_cursor()
                         ack = await self.client.add_auftrag(
                             command,
                             commander=commander.object_id,
@@ -905,13 +931,33 @@ class OperationalPlanExecutor:
                 PlanExecutionEvent("phase.completed", plan.plan_id, phase_id=phase.phase_id, status=phase.status.value),
                 on_event,
             )
+            try:
+                recon_outcomes = await self._assess_recon_phase(plan, phase, execution, on_event)
+            except Exception as exc:
+                reason = f"RECON assessment failed: {exc}"
+                await self._emit(
+                    execution,
+                    PlanExecutionEvent(
+                        "recon.assessment_failed",
+                        plan.plan_id,
+                        phase_id=phase.phase_id,
+                        status="failed",
+                        message=reason,
+                    ),
+                    on_event,
+                )
+                next_phase = next(
+                    (item for item in plan.phases if item.status is not PlanPhaseStatus.COMPLETED),
+                    None,
+                )
+                return await self._block(plan, next_phase, execution, reason, on_event)
             if phase.metadata.get("requires_tactical_replanning"):
                 await self.client.refresh_intel_state()
                 next_phase = next(
                     (item for item in plan.phases if item.status is not PlanPhaseStatus.COMPLETED),
                     None,
                 )
-                reason = "reconnaissance completed; refresh the tactical picture and replan from current INTEL contacts"
+                reason = self._replanning_reason(recon_outcomes)
                 await self._emit(
                     execution,
                     PlanExecutionEvent(
@@ -937,6 +983,186 @@ class OperationalPlanExecutor:
         execution.completed_mission_time = self.client._current_mission_time()
         await self._emit(execution, PlanExecutionEvent("plan.completed", plan.plan_id, status=plan.status.value), on_event)
         return execution
+
+    @staticmethod
+    def _recon_requirement_data(phase: PlanPhase, intent: MissionIntent) -> dict[str, Any] | None:
+        value = intent.metadata.get("reconnaissance_requirement")
+        if not isinstance(value, dict):
+            value = phase.metadata.get("reconnaissance_requirement")
+        return value if isinstance(value, dict) else None
+
+    async def _assess_recon_phase(
+        self,
+        plan: OperationalPlan,
+        phase: PlanPhase,
+        execution: OperationalPlanExecution,
+        on_event: PlanExecutionCallback | None,
+    ) -> tuple[ReconOutcome, ...]:
+        """Build and persist tactical outcomes for structured RECON missions."""
+
+        results: list[ReconOutcome] = []
+        phase_missions = [
+            mission
+            for mission in execution.missions
+            if mission.phase_id == phase.phase_id
+            and mission.mission_type == "RECON"
+            and mission.status is PlanMissionStatus.SUCCEEDED
+        ]
+        for mission in phase_missions:
+            intent = next((item for item in phase.intents if item.intent_id == mission.intent_id), None)
+            requirement_data = self._recon_requirement_data(phase, intent) if intent else None
+            if requirement_data is None or mission.recon_intel_id is None:
+                continue
+            requirement = ReconRequirement.from_dict(requirement_data)
+            history = await self.client.server.query_events("*", after_id=mission.event_cursor)
+            events = history.get("events") if isinstance(history.get("events"), list) else []
+            await self.client.snapshot_auftraege()
+            await self.client.snapshot_opsgroups()
+            await self.client.snapshot_zones()
+            await self.client.snapshot_opszones()
+            await self.client.snapshot_statics()
+            await self.client.snapshot_airbases()
+            snapshot = self.client.auftrag(mission.auftrag_id or "")
+            assigned_opsgroup_ids = tuple(snapshot.assigned_group_ids) if snapshot else ()
+            assigned_group_ids: list[str] = []
+            for opsgroup_id in assigned_opsgroup_ids:
+                opsgroup = self.client.opsgroup(opsgroup_id)
+                group_name = opsgroup.group_name if opsgroup and opsgroup.group_name else opsgroup_id.removeprefix("OPSGROUP:")
+                assigned_group_ids.append(f"GROUP:{group_name}")
+            assert mission.outcome is not None
+            sensor_ranges = {
+                group_id: max(
+                    (profile.maximum_m for profile in self.client.group_sensor_ranges(group_id, target_domain="surface") if profile.maximum_m is not None),
+                    default=None,
+                )
+                for group_id in mission.recon_tracks
+            }
+            spatial_coverage = assess_recon_spatial_coverage(
+                requirement,
+                self._resolve_recon_area(requirement.area_object_id),
+                {group_id: tuple(samples) for group_id, samples in mission.recon_tracks.items()},
+                sensor_ranges,
+                self._resolve_coverage_point_positions(requirement),
+            )
+            mission.recon_outcome = build_recon_outcome(
+                auftrag_id=mission.auftrag_id or "",
+                intel_id=mission.recon_intel_id,
+                mission_outcome=mission.outcome,
+                events=(event for event in events if isinstance(event, dict)),
+                baseline_contact_ids=mission.baseline_intel_contact_ids,
+                assigned_opsgroup_ids=assigned_opsgroup_ids,
+                assigned_group_ids=assigned_group_ids,
+                requirement=requirement,
+                spatial_coverage=spatial_coverage,
+                event_history_complete=bool(history.get("history_complete")),
+            )
+            results.append(mission.recon_outcome)
+            status = (
+                "satisfied"
+                if mission.recon_outcome.requirement_satisfied is True
+                else "incomplete"
+                if mission.recon_outcome.requirement_satisfied is False
+                else "indeterminate"
+            )
+            message = (
+                f"contacts={len(mission.recon_outcome.observations)} "
+                f"unknown={len(mission.recon_outcome.unknown_relevant_target_ids)} "
+                f"lost={len(mission.recon_outcome.lost_relevant_target_ids)}"
+            )
+            await self._mission_event(execution, mission, "recon.assessed", on_event, message=message, status=status)
+        return tuple(results)
+
+    @staticmethod
+    def _replanning_reason(outcomes: tuple[ReconOutcome, ...]) -> str:
+        if not outcomes:
+            return "reconnaissance completed; refresh the tactical picture and replan from current INTEL contacts"
+        if any(outcome.requirement_satisfied is False for outcome in outcomes):
+            return "reconnaissance incomplete; relevant targets remain unknown or lost, refresh INTEL and replan"
+        if any(outcome.requirement_satisfied is None for outcome in outcomes):
+            return "reconnaissance completed but target coverage is indeterminate; refresh INTEL and replan"
+        return "reconnaissance requirement satisfied; refresh INTEL and replan before continuing"
+
+    async def _sample_recon_positions(self, mission: PlanMissionExecution) -> None:
+        """Sample assigned RECON groups when no movement event exists in DCS."""
+
+        if not mission.recon_assigned_group_ids:
+            await self.client.snapshot_auftraege()
+            await self.client.snapshot_opsgroups()
+            snapshot = self.client.auftrag(mission.auftrag_id or "")
+            if snapshot is not None:
+                group_ids: list[str] = []
+                for opsgroup_id in snapshot.assigned_group_ids:
+                    opsgroup = self.client.opsgroup(opsgroup_id)
+                    group_name = opsgroup.group_name if opsgroup and opsgroup.group_name else opsgroup_id.removeprefix("OPSGROUP:")
+                    group_ids.append(f"GROUP:{group_name}")
+                mission.recon_assigned_group_ids = tuple(group_ids)
+        await self.client.snapshot_groups()
+        if not mission.recon_assigned_group_ids:
+            return
+        if not any(mission.recon_tracks.get(group_id) for group_id in mission.recon_assigned_group_ids):
+            await self.client.snapshot_units()
+        mission_time = self.client.state.clock.mission_time if self.client.state.clock else None
+        if mission_time is None:
+            return
+        for group_id in mission.recon_assigned_group_ids:
+            payload = self.client.state.groups.get(group_id)
+            if not payload or payload.get("alive") is False:
+                continue
+            try:
+                x = float(payload["x"])
+                z = float(payload["z"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            samples = mission.recon_tracks.setdefault(group_id, [])
+            sample = ReconTrackSample(group_id, mission_time, x, z)
+            if not samples or (samples[-1].mission_time, samples[-1].x, samples[-1].z) != (mission_time, x, z):
+                samples.append(sample)
+
+    def _resolve_recon_area(self, object_id: str) -> ReconArea | None:
+        payload: dict[str, Any] | None = None
+        if object_id.startswith("ZONE:"):
+            payload = self.client.state.zones.get(object_id)
+        elif object_id.startswith("OPSZONE:"):
+            zone = self.client.state.opszone_objects.get(object_id)
+            if zone and zone.zone_name:
+                payload = self.client.state.zones.get(f"ZONE:{zone.zone_name}")
+            if payload is None and zone is not None:
+                return ReconArea(object_id, zone.x, zone.z, zone.zone_radius)
+        if payload is None:
+            return None
+        vertices = tuple(
+            (float(item["x"]), float(item["z"]))
+            for item in payload.get("vertices", ())
+            if isinstance(item, dict) and item.get("x") is not None and item.get("z") is not None
+        )
+        return ReconArea(
+            object_id,
+            float(payload["x"]) if payload.get("x") is not None else None,
+            float(payload["z"]) if payload.get("z") is not None else None,
+            float(payload["radius"]) if payload.get("radius") is not None else None,
+            vertices,
+        )
+
+    def _resolve_coverage_point_positions(self, requirement: ReconRequirement) -> dict[str, tuple[float, float]]:
+        collections = (
+            self.client.state.airbases,
+            self.client.state.statics,
+            self.client.state.zones,
+            self.client.state.groups,
+            self.client.state.units,
+            self.client.state.opszones,
+            self.client.state.territories,
+        )
+        positions: dict[str, tuple[float, float]] = {}
+        for point in requirement.coverage_points:
+            payload = next((items.get(point.object_id) for items in collections if point.object_id in items), None)
+            if not payload:
+                continue
+            try:
+                positions[point.object_id] = (float(payload["x"]), float(payload["z"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return positions
 
     async def _wait_for_required_missions(
         self,
@@ -981,7 +1207,7 @@ class OperationalPlanExecutor:
         assert mission.auftrag_id is not None
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
-        after_id: str | None = None
+        after_id: str | None = mission.event_cursor
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -989,14 +1215,23 @@ class OperationalPlanExecutor:
                 mission.error = f"timed out waiting for {mission.auftrag_id}"
                 await self._mission_event(execution, mission, "mission.failed", on_event)
                 return False
-            message = await self.client.server.wait_for_event(
-                "auftrag.*",
-                filters={"auftrag_id": mission.auftrag_id},
-                timeout=remaining,
-                after_id=after_id,
-            )
+            wait_timeout = min(remaining, RECON_POSITION_SAMPLE_INTERVAL_S) if mission.recon_intel_id else remaining
+            try:
+                message = await self.client.server.wait_for_event(
+                    "auftrag.*",
+                    filters={"auftrag_id": mission.auftrag_id},
+                    timeout=wait_timeout,
+                    after_id=after_id,
+                )
+            except TimeoutError:
+                if mission.recon_intel_id:
+                    await self._sample_recon_positions(mission)
+                    continue
+                raise
             after_id = str(message.get("id") or "") or after_id
             self.client.state.apply_message(message)
+            if mission.recon_intel_id:
+                await self._sample_recon_positions(mission)
             event = AuftragEvent.from_message(message)
             if event.event == "auftrag.evaluated":
                 payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
@@ -1184,6 +1419,7 @@ class OperationalPlanExecutor:
         callback: PlanExecutionCallback | None,
         *,
         message: str | None = None,
+        status: str | None = None,
     ) -> None:
         await self._emit(
             execution,
@@ -1194,7 +1430,7 @@ class OperationalPlanExecutor:
                 intent_id=mission.intent_id,
                 requirement_id=mission.requirement_id,
                 auftrag_id=mission.auftrag_id,
-                status=mission.status.value,
+                status=status or mission.status.value,
                 message=message or mission.error,
             ),
             callback,

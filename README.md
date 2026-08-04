@@ -438,6 +438,14 @@ success. The executor then refreshes INTEL and emits `plan.replanning_required`
 instead of automatically starting the capture phases: successful survival does
 not prove that the objective is clear.
 
+Structured RECON requirements additionally assess spatial search coverage.
+Assigned group positions are sampled every 10 seconds and combined with known
+optimistic sensor bounds. The result reports potentially searchable area and
+weighted coverage of known stationary objective components. Airfields, roads,
+cities, static infrastructure, and other stationary map information are
+treated as known; only their surrounding search coverage is assessed. Spatial
+coverage does not prove that an area is free of enemy forces.
+
 Normal plan execution also revalidates only the immediately upcoming phase.
 Before any AUFTRAG for that phase is created, the executor refreshes COMMANDER,
 LEGION, COHORT, and objective-control state, reassesses current asset

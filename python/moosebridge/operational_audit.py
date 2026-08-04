@@ -28,6 +28,7 @@ from .operational_execution import (
     PlanMissionStatus,
 )
 from .outcomes import AuftragOutcome
+from .recon import ReconOutcome, ReconTrackSample
 from .strategic import (
     CaptureBehavior,
     GoalCondition,
@@ -433,12 +434,22 @@ def _mission_to_dict(mission: PlanMissionExecution) -> dict[str, Any]:
         "status": mission.status.value,
         "auftrag_id": mission.auftrag_id,
         "outcome": mission.outcome.to_dict() if mission.outcome else None,
+        "recon_outcome": mission.recon_outcome.to_dict() if mission.recon_outcome else None,
+        "event_cursor": mission.event_cursor,
+        "recon_intel_id": mission.recon_intel_id,
+        "baseline_intel_contact_ids": list(mission.baseline_intel_contact_ids),
+        "recon_assigned_group_ids": list(mission.recon_assigned_group_ids),
+        "recon_tracks": {
+            group_id: [sample.to_dict() for sample in samples]
+            for group_id, samples in mission.recon_tracks.items()
+        },
         "error": mission.error,
     }
 
 
 def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
     outcome_data = data.get("outcome") if isinstance(data.get("outcome"), dict) else None
+    recon_outcome_data = data.get("recon_outcome") if isinstance(data.get("recon_outcome"), dict) else None
     ack_data = data.get("command_ack") if isinstance(data.get("command_ack"), dict) else None
     return PlanMissionExecution(
         phase_id=str(data.get("phase_id") or ""),
@@ -460,6 +471,16 @@ def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
         status=PlanMissionStatus(data.get("status") or PlanMissionStatus.PENDING.value),
         auftrag_id=_text(data.get("auftrag_id")),
         outcome=_outcome_from_dict(outcome_data) if outcome_data else None,
+        recon_outcome=ReconOutcome.from_dict(recon_outcome_data) if recon_outcome_data else None,
+        event_cursor=_text(data.get("event_cursor")),
+        recon_intel_id=_text(data.get("recon_intel_id")),
+        baseline_intel_contact_ids=tuple(str(item) for item in data.get("baseline_intel_contact_ids", ())),
+        recon_assigned_group_ids=tuple(str(item) for item in data.get("recon_assigned_group_ids", ())),
+        recon_tracks={
+            str(group_id): [ReconTrackSample.from_dict(item) for item in samples if isinstance(item, dict)]
+            for group_id, samples in (data.get("recon_tracks") or {}).items()
+            if isinstance(samples, list)
+        } if isinstance(data.get("recon_tracks"), dict) else {},
         error=_text(data.get("error")),
     )
 

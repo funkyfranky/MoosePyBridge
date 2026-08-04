@@ -50,6 +50,18 @@ def format_recon_outcome(outcome: ReconOutcome) -> str:
     ]
     if outcome.assigned_group_ids:
         lines.append(f"  assigned: {', '.join(outcome.assigned_group_ids)}")
+    if outcome.spatial_coverage:
+        spatial = outcome.spatial_coverage
+        area = f"{spatial.area_coverage_ratio:.1%}" if spatial.area_coverage_ratio is not None else "-"
+        components = (
+            f"{spatial.component_coverage_ratio:.1%}"
+            if spatial.component_coverage_ratio is not None
+            else "-"
+        )
+        lines.append(
+            f"  spatial potential_area={area} components={components} "
+            f"samples={spatial.sample_count} sufficient={spatial.sufficient}"
+        )
     for item in outcome.observations:
         flags = []
         if item.new_contact:
@@ -300,6 +312,23 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
                 f"correlation={_text(mission.command_ack.correlation_id)} "
                 f"sequence={_text(mission.command_ack.sequence)}"
             )
+        if mission.recon_outcome:
+            recon = mission.recon_outcome
+            lines.append(
+                f"    recon requirement_satisfied={recon.requirement_satisfied} "
+                f"contacts={len(recon.observations)} new={recon.new_contact_count} "
+                f"reacquired={recon.reacquired_contact_count} "
+                f"unknown={len(recon.unknown_relevant_target_ids)} "
+                f"lost={len(recon.lost_relevant_target_ids)}"
+            )
+            if recon.spatial_coverage:
+                spatial = recon.spatial_coverage
+                area = f"{spatial.area_coverage_ratio:.1%}" if spatial.area_coverage_ratio is not None else "-"
+                components = f"{spatial.component_coverage_ratio:.1%}" if spatial.component_coverage_ratio is not None else "-"
+                lines.append(
+                    f"    spatial potential_area={area} components={components} "
+                    f"samples={spatial.sample_count} sufficient={spatial.sufficient}"
+                )
         if mission.error:
             lines.append(f"    error={mission.error}")
     return "\n".join(lines)

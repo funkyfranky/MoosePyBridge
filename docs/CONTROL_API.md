@@ -328,6 +328,33 @@ tactical picture directly to `execute_recon()` performs the derivation by
 default. A target-based result is intentionally reported as unknown when no
 relevant targets exist; proving complete spatial coverage is a separate future
 capability.
+
+The operational executor records this assessment on
+`PlanMissionExecution.recon_outcome` and persists it with the execution audit.
+It emits `recon.assessed` with status `satisfied`, `incomplete`, or
+`indeterminate`. Every structured RECON phase still ends at
+`plan.replanning_required`: satisfying the old information requirement does
+not authorize later phases from a stale plan. The replanning reason now states
+whether relevant targets remain unknown/lost or whether target coverage cannot
+yet be determined.
+
+Automatic requirements also define spatial search quality. The default
+thresholds are 80% potentially searched objective area and 100% weighted
+coverage of known objective components. Components are `ReconCoveragePoint`s,
+not enemy contacts: airfields, static infrastructure, roads, cities, and other
+stationary map features are assumed known. Additional known points can be
+listed in `goal.metadata["recon_coverage_point_ids"]`; objective-component
+weights determine their relative contribution.
+
+While a structured RECON AUFTRAG is active, the executor samples only its
+MOOSE-assigned DCS groups every 10 seconds because DCS has no movement event.
+It buffers the actual route with the largest applicable surface-sensor bound
+from `SensorRangeRegistry`, intersects that optimistic footprint with the
+circle or polygon zone, and stores `ReconSpatialCoverage`. The reported area
+means `potential_sensor_access_not_confirmed_detection`: coverage can show
+where detection was possible and where it was impossible, but never proves an
+apparently empty area is free of opponents. Unknown sensor ranges make spatial
+completion indeterminate rather than silently assuming a fallback range.
 - typed OPS state: `commander`, `commanders`, `commander_for_coalition`,
   `legions_of_commander`, `missions_of_commander`, `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,

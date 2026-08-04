@@ -5,9 +5,14 @@ from moosebridge.models import IntelContact, OpsZone
 from moosebridge.outcomes import AuftragOutcome
 from moosebridge.pictures import TacticalPicture
 from moosebridge.recon import (
+    ReconArea,
+    ReconCoveragePoint,
     ReconRelevantTarget,
+    ReconOutcome,
     ReconRequirement,
     ReconTargetSource,
+    ReconTrackSample,
+    assess_recon_spatial_coverage,
     build_recon_outcome,
     derive_recon_requirement,
 )
@@ -89,6 +94,7 @@ def test_build_recon_outcome_correlates_assigned_assets_and_contact_lifecycle() 
     text = format_recon_outcome(outcome)
     assert "MOOSE success=True contacts=2 new=1 reacquired=1 lost=1" in text
     assert "relevant unknown: GROUP:Unknown" in text
+    assert ReconOutcome.from_dict(outcome.to_dict()).to_dict() == outcome.to_dict()
 
 
 def test_recon_outcome_reports_partial_event_history() -> None:
@@ -121,7 +127,10 @@ def test_recon_requirement_derives_targets_with_provenance_from_private_picture(
         coalition="blue",
         action=StrategicGoalAction.CAPTURE,
         objective_id=objective.objective_id,
-        metadata={"relevant_target_ids": ("GROUP:Goal Target",)},
+        metadata={
+            "relevant_target_ids": ("GROUP:Goal Target",),
+            "recon_coverage_point_ids": ("AIRBASE:Known",),
+        },
     )
     nearby = IntelContact.from_payload(
         {
@@ -158,7 +167,10 @@ def test_recon_requirement_derives_targets_with_provenance_from_private_picture(
         "GROUP:Nearby",
         "GROUP:Manual",
         "GROUP:Goal Target",
-        "STATIC:Depot",
+    )
+    assert requirement.coverage_points == (
+        ReconCoveragePoint("STATIC:Depot", 1.0, ReconTargetSource.OBJECTIVE_COMPONENT),
+        ReconCoveragePoint("AIRBASE:Known", 1.0, ReconTargetSource.GOAL),
     )
     nearby_target = next(item for item in requirement.relevant_targets if item.object_id == "GROUP:Nearby")
     assert nearby_target.sources == (ReconTargetSource.MANUAL, ReconTargetSource.INTEL_CONTACT)
@@ -197,6 +209,7 @@ def test_recon_requirement_can_be_strictly_manual() -> None:
 def test_recon_requirement_accepts_fresh_baseline_contact_without_claiming_mission_detection() -> None:
     requirement = ReconRequirement(
         area_object_id="ZONE:Recon",
+        minimum_area_coverage=0,
         relevant_targets=(
             ReconRelevantTarget(
                 "GROUP:Known",
@@ -219,3 +232,41 @@ def test_recon_requirement_accepts_fresh_baseline_contact_without_claiming_missi
     assert outcome.observed_relevant_target_ids == ()
     assert outcome.satisfied_relevant_target_ids == ("GROUP:Known",)
     assert outcome.requirement_satisfied is True
+
+
+def test_spatial_coverage_combines_area_and_weighted_known_components() -> None:
+    requirement = ReconRequirement(
+        area_object_id="ZONE:Recon",
+        coverage_points=(
+            ReconCoveragePoint("AIRBASE:Known", weight=2),
+            ReconCoveragePoint("STATIC:Known", weight=1),
+        ),
+        minimum_area_coverage=0.75,
+        minimum_component_coverage=0.65,
+    )
+    coverage = assess_recon_spatial_coverage(
+        requirement,
+        ReconArea("ZONE:Recon", center_x=0, center_z=0, radius_m=1_000),
+        {"GROUP:Recon": (ReconTrackSample("GROUP:Recon", 10, 0, 0),)},
+        {"GROUP:Recon": 1_000},
+        {"AIRBASE:Known": (100, 0), "STATIC:Known": (2_000, 0)},
+    )
+    assert coverage.available is True
+    assert coverage.area_coverage_ratio is not None and coverage.area_coverage_ratio > 0.99
+    assert coverage.component_coverage_ratio == 2 / 3
+    assert coverage.covered_component_ids == ("AIRBASE:Known",)
+    assert coverage.sufficient is True
+
+
+def test_spatial_coverage_is_unknown_without_a_bounded_sensor_profile() -> None:
+    requirement = ReconRequirement(area_object_id="ZONE:Recon")
+    coverage = assess_recon_spatial_coverage(
+        requirement,
+        ReconArea("ZONE:Recon", center_x=0, center_z=0, radius_m=1_000),
+        {"GROUP:Recon": (ReconTrackSample("GROUP:Recon", 10, 0, 0),)},
+        {"GROUP:Recon": None},
+        {},
+    )
+    assert coverage.available is False
+    assert coverage.sufficient is None
+    assert coverage.unknown_sensor_group_ids == ("GROUP:Recon",)
