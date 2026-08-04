@@ -155,15 +155,18 @@ from .operational import (
     MissionIntent,
     OperationalPlan,
     OperationalPlanAssessment,
+    OperationalPlanProvenance,
     OperationalPlanRegistry,
     OperationalPlanStatus,
     OperationalPosture,
     PlanPhase,
     PlanPhaseStatus,
+    PlanSourceType,
     PlanValidationIssue,
     RequirementAssessment,
 )
 from .operational_execution import (
+    CommandAckReference,
     OperationalPlanAbortResult,
     OperationalPlanExecution,
     OperationalPlanExecutor,
@@ -179,6 +182,7 @@ from .operational_execution import (
     build_plan_auftrag,
 )
 from .operational_audit import RestoredOperationalPlan
+from .operational_planner import RuleBasedOperationalPlanner, RuleBasedPlannerConfig
 from .pictures import GlobalPicture, PictureValidationIssue, TacticalPicture
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
@@ -352,6 +356,7 @@ __all__ = [
     "CaptureBehavior",
     "Cohort",
     "Commander",
+    "CommandAckReference",
     "CohortAllocation",
     "CohortSummary",
     "CommandPayload",
@@ -405,6 +410,7 @@ __all__ = [
     "OpsZone",
     "OperationalPlan",
     "OperationalPlanAssessment",
+    "OperationalPlanProvenance",
     "OperationalPlanRegistry",
     "OperationalPlanStatus",
     "OperationalPlanExecution",
@@ -415,6 +421,7 @@ __all__ = [
     "PictureValidationIssue",
     "PlanPhase",
     "PlanPhaseStatus",
+    "PlanSourceType",
     "PlanAbortScope",
     "PlanExecutionCallback",
     "PlanExecutionEvent",
@@ -427,6 +434,8 @@ __all__ = [
     "RangeSource",
     "RequirementAssessment",
     "RestoredOperationalPlan",
+    "RuleBasedOperationalPlanner",
+    "RuleBasedPlannerConfig",
     "build_plan_auftrag",
     "DatamineMetadata",
     "DatamineRange",

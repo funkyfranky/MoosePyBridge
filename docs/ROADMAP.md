@@ -346,6 +346,21 @@ Current operational-planning baseline:
   identifies live MOOSE missions, the default scope cancels the complete
   attempt, and partial cancellation failures leave the plan blocked and
   auditable instead of reporting a false successful abort.
+- Every immediate phase now has an execution-boundary revalidation. Current
+  COMMANDER, LEGION, COHORT, strategic-control, allocation, constraint, and
+  target state is refreshed before any phase AUFTRAG is submitted; completed
+  and later phases are not unnecessarily reassessed.
+- Plan snapshots retain explicit operator attribution and approval reasons.
+  Submitted missions retain compact ACK ids, correlation ids, sequence numbers,
+  and relevant results across daemon audit persistence and SDK restore.
+- Operational plans can carry optional typed recommendation provenance for an
+  operator, rule engine, LLM, or imported source, including source id, tactical
+  picture mission time, and rationale. Provenance is preserved through audit
+  persistence and restore independently of the approving client.
+- A first conservative rule-based planner creates unregistered CAPTURE drafts
+  for OPSZONE objectives from coalition-specific tactical pictures. It uses
+  visible INTEL contacts for optional isolation and never reads global truth;
+  registration, validation, approval, and execution remain explicit SDK steps.
 
 ## Phase 4: Command SDK and policies
 
@@ -381,7 +396,8 @@ Work items:
   `control.status`, `control.state`, `control.snapshots`, and
   `control.command` baseline
 - add structured errors
-- add session and client identity fields
+- carry declared control `client_id` and `display_name` through every request
+  and daemon audit envelope (implemented; authentication remains future work)
 - add audit log records
 - add remote access and authentication options
 - keep dedicated-server performance and blocking behavior under control
@@ -417,12 +433,12 @@ The next milestone is controlled plan execution:
    AUFTRAG/LEGION state and events.
 3. Drive phase transitions from AUFTRAG FSM events and strategic objective
    events rather than status polling.
-4. Add automatic pre-phase revalidation and explicit abort. Explicit replan,
-   operator reapproval, target changes, recruitment changes, and resume from
-   the first incomplete phase are implemented.
-5. Expand the implemented operational execution audit history to recommendations,
-   explicit operator approvals, raw ACK references, and authenticated client
-   identities.
+4. Automatic immediate-phase revalidation and explicit abort are implemented.
+   Explicit replan, operator reapproval, target changes, recruitment changes,
+   and resume from the first incomplete phase are implemented.
+5. Explicit operator approvals, compact command ACK references, declared
+   control-client identities, and recommendation provenance are now in the
+   operational audit. Authenticated client identities remain future work.
 6. Explicit cancellation of still-running MOOSE AUFTRAGs is implemented for
    complete attempts and, optionally, only the current phase.
 

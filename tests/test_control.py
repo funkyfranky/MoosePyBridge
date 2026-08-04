@@ -136,7 +136,12 @@ def test_control_audit_records_survive_daemon_restart(tmp_path) -> None:
         first_bridge = MooseBridgeServer(audit_path=path)
         first_control = MooseBridgeControlServer(first_bridge, host="127.0.0.1", port=0)
         await first_control.start()
-        first_client = MooseBridgeControlClient("127.0.0.1", _control_port(first_control))
+        first_client = MooseBridgeControlClient(
+            "127.0.0.1",
+            _control_port(first_control),
+            client_id="planning-console-1",
+            display_name="Planning Console",
+        )
         try:
             await first_client.append_audit_record(
                 "operational_plan.execution",
@@ -163,9 +168,36 @@ def test_control_audit_records_survive_daemon_restart(tmp_path) -> None:
             )
             assert len(records) == 1
             assert records[0]["payload"]["status"] == "completed"
+            assert records[0]["client"] == {
+                "client_id": "planning-console-1",
+                "display_name": "Planning Console",
+            }
         finally:
             await second_control.stop()
             await second_bridge.stop()
+
+    asyncio.run(scenario())
+
+
+def test_control_status_echoes_declared_client_identity() -> None:
+    async def scenario() -> None:
+        bridge = FakeBridgeServer()
+        server = MooseBridgeControlServer(bridge, host="127.0.0.1", port=0)
+        await server.start()
+        client = MooseBridgeControlClient(
+            "127.0.0.1",
+            _control_port(server),
+            client_id="sdk-test",
+            display_name="SDK Test Client",
+        )
+        try:
+            status = await client.status()
+            assert status["client"] == {
+                "client_id": "sdk-test",
+                "display_name": "SDK Test Client",
+            }
+        finally:
+            await server.stop()
 
     asyncio.run(scenario())
 

@@ -577,7 +577,12 @@ class GlobalMapRuntime:
         self._task = None
 
     async def _run(self) -> None:
-        control = MooseBridgeControlClient(self.control_host, self.control_port)
+        control = MooseBridgeControlClient(
+            self.control_host,
+            self.control_port,
+            client_id="moosebridge-map-server",
+            display_name="MooseBridge Map Server",
+        )
         bridge = sdk_from_control_client(control, timeout=self.timeout)
         while True:
             try:

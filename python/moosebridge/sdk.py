@@ -36,6 +36,7 @@ from .operational_execution import (
     PlanAbortScope,
     PlanExecutionCallback,
 )
+from .operational_planner import RuleBasedOperationalPlanner
 from .operational_audit import RestoredOperationalPlan
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
@@ -666,6 +667,31 @@ class MooseBridgeClient:
 
         return self.plans.all()
 
+    def propose_capture_plan(
+        self,
+        goal: StrategicGoal | str,
+        picture: TacticalPicture,
+        *,
+        plan_id: str | None = None,
+        name: str | None = None,
+        planner: RuleBasedOperationalPlanner | None = None,
+    ) -> OperationalPlan:
+        """Create an unregistered rule-based CAPTURE draft from tactical state."""
+
+        item = goal if isinstance(goal, StrategicGoal) else self.strategic_goal(goal)
+        if item is None:
+            raise KeyError(f"Unknown strategic goal: {goal}")
+        objective = self.strategic_objective(item.objective_id)
+        if objective is None:
+            raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        return (planner or RuleBasedOperationalPlanner()).propose_capture(
+            item,
+            objective,
+            picture,
+            plan_id=plan_id,
+            name=name,
+        )
+
     def validate_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlanAssessment:
         """Validate a plan against currently mirrored LEGION and COHORT stock."""
 
@@ -683,10 +709,25 @@ class MooseBridgeClient:
         await self.snapshot_cohorts()
         return self.validate_operational_plan(plan)
 
-    def approve_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlan:
-        """Approve a feasible plan without executing AUFTRAG missions."""
+    def approve_operational_plan(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        approved_by: str | None = None,
+        reason: str | None = None,
+    ) -> OperationalPlan:
+        """Approve a feasible plan and retain explicit operator attribution."""
 
-        return self.plans.approve(plan, mission_time=self._current_mission_time())
+        identity = getattr(self.server, "client_identity", None)
+        identity_name = getattr(identity, "display_name", None)
+        identity_id = getattr(identity, "client_id", None)
+        return self.plans.approve(
+            plan,
+            mission_time=self._current_mission_time(),
+            approved_by=approved_by or identity_name or "operator",
+            approved_client_id=identity_id,
+            reason=reason,
+        )
 
     def operational_plan_execution(self, plan: OperationalPlan | str) -> OperationalPlanExecution | None:
         """Return the latest runtime execution record for an operational plan."""

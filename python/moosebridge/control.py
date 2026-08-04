@@ -47,6 +47,34 @@ STATE_KINDS = (
 
 
 @dataclass(slots=True)
+class ControlClientIdentity:
+    """Unauthenticated identity declared by one control client instance."""
+
+    client_id: str
+    display_name: str
+
+    def __post_init__(self) -> None:
+        self.client_id = self.client_id.strip()
+        self.display_name = self.display_name.strip()
+        if not self.client_id or not self.display_name:
+            raise ValueError("control client identity requires client_id and display_name")
+        if len(self.client_id) > 128 or len(self.display_name) > 128:
+            raise ValueError("control client identity fields must not exceed 128 characters")
+
+    def to_dict(self) -> dict[str, str]:
+        return {"client_id": self.client_id, "display_name": self.display_name}
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "ControlClientIdentity":
+        if not isinstance(data, dict):
+            return cls("legacy-control-client", "Legacy control client")
+        return cls(
+            str(data.get("client_id") or "legacy-control-client"),
+            str(data.get("display_name") or "Legacy control client"),
+        )
+
+
+@dataclass(slots=True)
 class ControlRequest:
     """Decoded control request.
 
@@ -60,6 +88,7 @@ class ControlRequest:
     action: str
     params: dict[str, Any]
     timeout: float
+    client: ControlClientIdentity
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ControlRequest":
@@ -79,6 +108,7 @@ class ControlRequest:
             action=action,
             params=params,
             timeout=float(data.get("timeout") or params.get("timeout") or 10.0),
+            client=ControlClientIdentity.from_dict(data.get("client")),
         )
 
 
@@ -240,7 +270,7 @@ class MooseBridgeControlServer:
 
         action = request.action
         if action == "control.status":
-            return state_payload(self.bridge_server.state, kinds=())
+            return {**state_payload(self.bridge_server.state, kinds=()), "client": request.client.to_dict()}
         if action == "control.state":
             kinds = request.params.get("kinds")
             if isinstance(kinds, str):
@@ -278,7 +308,11 @@ class MooseBridgeControlServer:
             payload = request.params.get("payload")
             if not record_type or not isinstance(payload, dict):
                 raise ValueError("control.audit.append requires record_type and payload object")
-            record = await self.bridge_server.append_audit_record(record_type, payload)
+            record = await self.bridge_server.append_audit_record(
+                record_type,
+                payload,
+                client_identity=request.client.to_dict(),
+            )
             return {"record": record}
         if action == "control.audit.query":
             records = await self.bridge_server.query_audit_records(
@@ -300,10 +334,21 @@ class MooseBridgeControlClient:
     :param port: Control server TCP port.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_CONTROL_PORT) -> None:
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = DEFAULT_CONTROL_PORT,
+        *,
+        client_id: str | None = None,
+        display_name: str = "MooseBridge Python client",
+    ) -> None:
         self.host = host
         self.port = port
         self.state = MooseBridgeState()
+        self.identity = ControlClientIdentity(
+            client_id or f"client-{uuid.uuid4().hex[:12]}",
+            display_name,
+        )
 
     @staticmethod
     def _response_timeout(action: str, params: dict[str, Any], timeout: float) -> float:
@@ -334,6 +379,7 @@ class MooseBridgeControlClient:
                 "action": action,
                 "params": request_params,
                 "timeout": timeout,
+                "client": self.identity.to_dict(),
             }
             writer.write((json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8"))
             await writer.drain()

@@ -180,12 +180,33 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
         f"  current_phase={_text(execution.current_phase_id)} missions={len(execution.missions)} "
         f"resumed_from={_text(execution.resumed_from_phase_id)} blocked_reason={_text(execution.blocked_reason)}",
     ]
+    approved_by = execution.plan_snapshot.get("approved_by")
+    if approved_by:
+        lines.append(
+            f"  approved_by={approved_by} "
+            f"client_id={_text(execution.plan_snapshot.get('approved_client_id'))} "
+            f"approval_reason={_text(execution.plan_snapshot.get('approval_reason'))}"
+        )
+    provenance = execution.plan_snapshot.get("provenance")
+    if isinstance(provenance, dict):
+        lines.append(
+            f"  source={_text(provenance.get('source_type'))}:{_text(provenance.get('source_id'))} "
+            f"picture_mission_time={_text(provenance.get('picture_mission_time'))}"
+        )
+        if provenance.get("rationale"):
+            lines.append(f"    rationale={provenance['rationale']}")
     for mission in execution.missions:
         requirement = f"{mission.phase_id}/{mission.intent_id}/{mission.requirement_id}"
         lines.append(
             f"  {requirement} type={mission.mission_type} required={mission.required} "
             f"status={mission.status.value} auftrag={_text(mission.auftrag_id)}"
         )
+        if mission.command_ack:
+            lines.append(
+                f"    ack={_text(mission.command_ack.ack_id)} "
+                f"correlation={_text(mission.command_ack.correlation_id)} "
+                f"sequence={_text(mission.command_ack.sequence)}"
+            )
         if mission.error:
             lines.append(f"    error={mission.error}")
     return "\n".join(lines)

@@ -158,10 +158,16 @@ class MooseBridgeServer:
             self._raw_log_file = None
         self.audit_store.close()
 
-    async def append_audit_record(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    async def append_audit_record(
+        self,
+        record_type: str,
+        payload: dict[str, Any],
+        *,
+        client_identity: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Persist one semantic audit record in the daemon-owned store."""
 
-        return self.audit_store.append(record_type, payload)
+        return self.audit_store.append(record_type, payload, client_identity=client_identity)
 
     async def query_audit_records(
         self,

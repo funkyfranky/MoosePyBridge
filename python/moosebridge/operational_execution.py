@@ -140,6 +140,17 @@ class PlanExecutionEvent:
             parts.append(self.message)
         return " ".join(parts)
 
+
+@dataclass(slots=True, frozen=True)
+class CommandAckReference:
+    """Compact reference from a submitted plan mission to its bridge ACK."""
+
+    ack_id: str | None = None
+    correlation_id: str | None = None
+    sequence: int | None = None
+    result: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class PlanMissionExecution:
     """Runtime record connecting one requirement to one MOOSE AUFTRAG."""
@@ -151,6 +162,7 @@ class PlanMissionExecution:
     required: bool
     command: AuftragCommand | None = field(default=None, repr=False)
     command_snapshot: dict[str, Any] = field(default_factory=dict)
+    command_ack: CommandAckReference | None = None
     status: PlanMissionStatus = PlanMissionStatus.PENDING
     auftrag_id: str | None = None
     outcome: AuftragOutcome | None = None
@@ -614,6 +626,9 @@ class OperationalPlanExecutor:
         plan.status = OperationalPlanStatus.DRAFT
         plan.validated_mission_time = None
         plan.approved_mission_time = None
+        plan.approved_by = None
+        plan.approved_client_id = None
+        plan.approval_reason = None
         plan.metadata["retry_resume_phase_id"] = (
             plan.phases[resume_index].phase_id if resume_index < len(plan.phases) else None
         )
@@ -664,44 +679,6 @@ class OperationalPlanExecutor:
         if (commander.coalition or "").lower() != plan.coalition:
             raise ValueError("COMMANDER coalition must match the operational plan")
 
-        assessments = {
-            (item.phase_id, item.intent_id, item.requirement_id): item
-            for item in assessment.requirements
-        }
-        prepared: dict[tuple[str, str, str], AuftragCommand] = {}
-        commander_legions = set(commander.legion_ids)
-        for phase in plan.phases:
-            if phase.status is PlanPhaseStatus.COMPLETED:
-                continue
-            for intent in phase.intents:
-                for requirement in intent.asset_requirements:
-                    item = assessments[(phase.phase_id, intent.intent_id, requirement.requirement_id)]
-                    if not item.feasible and not (intent.required and not phase.optional):
-                        continue
-                    invalid_legions = set(requirement.allowed_legion_ids) - commander_legions
-                    if invalid_legions:
-                        raise ValueError(
-                            f"{requirement.requirement_id} constrains LEGIONs outside {commander.object_id}: "
-                            f"{sorted(invalid_legions)}"
-                        )
-                    invalid_cohorts = [
-                        cohort_id
-                        for cohort_id in requirement.allowed_cohort_ids
-                        if not (cohort := self.client.cohort(cohort_id)) or cohort.legion_id not in commander_legions
-                    ]
-                    if invalid_cohorts:
-                        raise ValueError(
-                            f"{requirement.requirement_id} constrains COHORTs outside {commander.object_id}: "
-                            f"{sorted(invalid_cohorts)}"
-                        )
-                    prepared[(phase.phase_id, intent.intent_id, requirement.requirement_id)] = build_plan_auftrag(
-                        plan,
-                        intent,
-                        requirement,
-                    )
-
-        await self._preflight_targets(prepared.values())
-
         history = self._executions.setdefault(plan.plan_id, [])
         if latest is not None:
             await self._persist(latest)
@@ -731,8 +708,123 @@ class OperationalPlanExecutor:
                 continue
             if any(self._phase(plan, dependency).status is not PlanPhaseStatus.COMPLETED for dependency in phase.depends_on):
                 return await self._block(plan, phase, execution, "phase dependency is not completed", on_event)
-            phase.status = PlanPhaseStatus.ACTIVE
             execution.current_phase_id = phase.phase_id
+            await self._emit(
+                execution,
+                PlanExecutionEvent("phase.revalidating", plan.plan_id, phase_id=phase.phase_id, status=phase.status.value),
+                on_event,
+            )
+            try:
+                await self.client.snapshot_commanders()
+                await self.client.snapshot_legions()
+                await self.client.snapshot_cohorts()
+                await self._refresh_goal_control(goal.objective_id)
+                self.client.sync_strategic_objectives(source="plan.phase_revalidation")
+                self.client.sync_strategic_goals(source="plan.phase_revalidation")
+
+                if goal.status is StrategicGoalStatus.ACHIEVED and not any(
+                    item.status is PlanPhaseStatus.COMPLETED for item in plan.phases
+                ):
+                    for remaining_phase in plan.phases:
+                        if remaining_phase.status is PlanPhaseStatus.COMPLETED:
+                            continue
+                        remaining_phase.status = PlanPhaseStatus.SKIPPED
+                        await self._emit(
+                            execution,
+                            PlanExecutionEvent(
+                                "phase.skipped",
+                                plan.plan_id,
+                                phase_id=remaining_phase.phase_id,
+                                status=remaining_phase.status.value,
+                                message="strategic goal already achieved",
+                            ),
+                            on_event,
+                        )
+                    plan.status = OperationalPlanStatus.COMPLETED
+                    execution.status = plan.status
+                    execution.current_phase_id = None
+                    execution.completed_mission_time = self.client._current_mission_time()
+                    await self._emit(
+                        execution,
+                        PlanExecutionEvent(
+                            "plan.completed",
+                            plan.plan_id,
+                            status=plan.status.value,
+                            message="strategic goal already achieved during phase revalidation",
+                        ),
+                        on_event,
+                    )
+                    return execution
+                if goal.status in {StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
+                    raise ValueError(f"strategic goal changed to {goal.status.value}")
+
+                refreshed_commander = self.client.commander(commander.object_id)
+                if refreshed_commander is None:
+                    raise ValueError(f"COMMANDER is no longer available: {commander.object_id}")
+                commander = refreshed_commander
+                if (commander.coalition or "").lower() != plan.coalition:
+                    raise ValueError("COMMANDER coalition no longer matches the operational plan")
+
+                phase_assessment = self.client.plans.assess_phase(
+                    plan,
+                    phase.phase_id,
+                    legions=self.client.state.legion_objects.values(),
+                    cohorts=self.client.state.cohort_objects.values(),
+                    mission_time=self.client._current_mission_time(),
+                )
+                execution.assessment_snapshot = assessment_snapshot(phase_assessment)
+                if not phase_assessment.feasible:
+                    details = "; ".join(
+                        f"{issue.code} {issue.reference_id or '-'}: {issue.message}"
+                        for issue in phase_assessment.errors
+                    )
+                    raise ValueError(details or "phase is no longer feasible")
+
+                assessments = {
+                    (item.phase_id, item.intent_id, item.requirement_id): item
+                    for item in phase_assessment.requirements
+                }
+                prepared: dict[tuple[str, str, str], AuftragCommand] = {}
+                commander_legions = set(commander.legion_ids)
+                for intent in phase.intents:
+                    for requirement in intent.asset_requirements:
+                        key = (phase.phase_id, intent.intent_id, requirement.requirement_id)
+                        item = assessments[key]
+                        if not item.feasible and not (intent.required and not phase.optional):
+                            continue
+                        invalid_legions = set(requirement.allowed_legion_ids) - commander_legions
+                        if invalid_legions:
+                            raise ValueError(
+                                f"{requirement.requirement_id} constrains LEGIONs outside {commander.object_id}: "
+                                f"{sorted(invalid_legions)}"
+                            )
+                        invalid_cohorts = [
+                            cohort_id
+                            for cohort_id in requirement.allowed_cohort_ids
+                            if not (cohort := self.client.cohort(cohort_id))
+                            or cohort.legion_id not in commander_legions
+                        ]
+                        if invalid_cohorts:
+                            raise ValueError(
+                                f"{requirement.requirement_id} constrains COHORTs outside {commander.object_id}: "
+                                f"{sorted(invalid_cohorts)}"
+                            )
+                        prepared[key] = build_plan_auftrag(plan, intent, requirement)
+                await self._preflight_targets(prepared.values())
+            except Exception as exc:
+                return await self._block(plan, phase, execution, f"phase revalidation failed: {exc}", on_event)
+
+            await self._emit(
+                execution,
+                PlanExecutionEvent(
+                    "phase.revalidated",
+                    plan.plan_id,
+                    phase_id=phase.phase_id,
+                    status="feasible",
+                ),
+                on_event,
+            )
+            phase.status = PlanPhaseStatus.ACTIVE
             await self._emit(
                 execution,
                 PlanExecutionEvent("phase.started", plan.plan_id, phase_id=phase.phase_id, status=phase.status.value),
@@ -771,12 +863,13 @@ class OperationalPlanExecutor:
                     )
                     execution.missions.append(mission)
                     try:
-                        await self.client.add_auftrag(
+                        ack = await self.client.add_auftrag(
                             command,
                             commander=commander.object_id,
                             allowed_legions=requirement.allowed_legion_ids,
                             allowed_cohorts=requirement.allowed_cohort_ids,
                         )
+                        mission.command_ack = _command_ack_reference(ack)
                         mission.auftrag_id = self.client.mission_id(command)
                         mission.status = PlanMissionStatus.SUBMITTED
                         await self._mission_event(execution, mission, "mission.submitted", on_event)
@@ -1144,6 +1237,38 @@ def _mission_type(intent: MissionIntent, requirement: AssetRequirement) -> str:
     raise ValueError(f"{intent.intent_id}/{requirement.requirement_id} has no common AUFTRAG type")
 
 
+def _command_ack_reference(ack: Mapping[str, Any]) -> CommandAckReference:
+    result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+    relevant_keys = {
+        "action",
+        "added",
+        "auftrag_id",
+        "auftragsnummer",
+        "auftrag_type",
+        "cohort_id",
+        "commander_id",
+        "legion_id",
+    }
+    compact_result = {
+        str(key): value
+        for key, value in result.items()
+        if key in relevant_keys and isinstance(value, (str, int, float, bool))
+    }
+    sequence = ack.get("sequence")
+    try:
+        sequence_value = int(sequence) if sequence is not None else None
+    except (TypeError, ValueError):
+        sequence_value = None
+    return CommandAckReference(
+        ack_id=str(ack.get("id")) if ack.get("id") not in (None, "") else None,
+        correlation_id=(
+            str(ack.get("correlation_id")) if ack.get("correlation_id") not in (None, "") else None
+        ),
+        sequence=sequence_value,
+        result=compact_result,
+    )
+
+
 def _object_ids(values: Iterable[str]) -> tuple[str, ...]:
     if isinstance(values, str):
         values = (values,)
@@ -1212,6 +1337,7 @@ def build_plan_auftrag(
 
 
 __all__ = [
+    "CommandAckReference",
     "OperationalPlanExecution",
     "OperationalPlanExecutor",
     "OperationalPlanReconciliation",

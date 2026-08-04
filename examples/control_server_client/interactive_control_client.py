@@ -1547,7 +1547,12 @@ async def handle_line(client: MooseBridgeControlClient, line: str, timeout: floa
 async def interactive_main(args: argparse.Namespace) -> int:
     """Run the interactive control shell."""
 
-    client = MooseBridgeControlClient(args.control_host, args.control_port)
+    client = MooseBridgeControlClient(
+        args.control_host,
+        args.control_port,
+        client_id=args.client_id,
+        display_name=args.display_name,
+    )
     print(f"Connected client target: {args.control_host}:{args.control_port}")
     print("Type 'help' for commands.")
 
@@ -1578,6 +1583,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--control-host", default="127.0.0.1")
     parser.add_argument("--control-port", type=int, default=DEFAULT_CONTROL_PORT)
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--client-id", default="moosebridge-interactive-control")
+    parser.add_argument("--display-name", default="MooseBridge Interactive Control")
     parser.add_argument("--debug", action="store_true", help="Print raw ACK/control payloads for command diagnostics.")
     return parser.parse_args()
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .control import MooseBridgeControlClient
+from .control import ControlClientIdentity, MooseBridgeControlClient
 from .protocol import BridgeCommand
 from .state import MooseBridgeState
 
@@ -25,6 +25,12 @@ class ControlSdkAdapter:
         """Return the shared control-client state mirror."""
 
         return self.client.state
+
+    @property
+    def client_identity(self) -> ControlClientIdentity:
+        """Return the declared identity propagated by control requests."""
+
+        return self.client.identity
 
     async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
         """Forward one SDK command through the local control API."""

@@ -35,7 +35,12 @@ async def async_main(args: argparse.Namespace) -> int:
     :returns: Process exit code.
     """
 
-    client = MooseBridgeControlClient(args.control_host, args.control_port)
+    client = MooseBridgeControlClient(
+        args.control_host,
+        args.control_port,
+        client_id=args.client_id,
+        display_name=args.display_name,
+    )
 
     if args.command == "status":
         result = await client.status(timeout=args.timeout)
@@ -64,6 +69,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--control-host", default="127.0.0.1")
     parser.add_argument("--control-port", type=int, default=DEFAULT_CONTROL_PORT)
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--client-id", default="moosebridge-control-cli")
+    parser.add_argument("--display-name", default="MooseBridge Control CLI")
     parser.add_argument("--debug", action="store_true")
 
     sub = parser.add_subparsers(dest="command", required=True)

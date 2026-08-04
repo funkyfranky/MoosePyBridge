@@ -12,12 +12,15 @@ from .operational import (
     MissionIntent,
     OperationalPlan,
     OperationalPlanAssessment,
+    OperationalPlanProvenance,
     OperationalPlanStatus,
     OperationalPosture,
     PlanPhase,
     PlanPhaseStatus,
+    PlanSourceType,
 )
 from .operational_execution import (
+    CommandAckReference,
     OperationalPlanExecution,
     PlanExecutionEvent,
     PlanMissionExecution,
@@ -104,12 +107,26 @@ def plan_snapshot(plan: OperationalPlan) -> dict[str, Any]:
         "created_mission_time": plan.created_mission_time,
         "validated_mission_time": plan.validated_mission_time,
         "approved_mission_time": plan.approved_mission_time,
+        "approved_by": plan.approved_by,
+        "approved_client_id": plan.approved_client_id,
+        "approval_reason": plan.approval_reason,
+        "provenance": (
+            {
+                "source_type": plan.provenance.source_type.value,
+                "source_id": plan.provenance.source_id,
+                "picture_mission_time": plan.provenance.picture_mission_time,
+                "rationale": plan.provenance.rationale,
+            }
+            if plan.provenance
+            else None
+        ),
         "metadata": dict(plan.metadata),
         "phases": [_phase_to_dict(phase) for phase in plan.phases],
     }
 
 
 def plan_from_snapshot(data: Mapping[str, Any]) -> OperationalPlan:
+    provenance_data = data.get("provenance") if isinstance(data.get("provenance"), dict) else None
     phases = []
     for phase_data in data.get("phases", ()):
         if not isinstance(phase_data, dict):
@@ -170,6 +187,19 @@ def plan_from_snapshot(data: Mapping[str, Any]) -> OperationalPlan:
         created_mission_time=_float(data.get("created_mission_time")),
         validated_mission_time=_float(data.get("validated_mission_time")),
         approved_mission_time=_float(data.get("approved_mission_time")),
+        approved_by=_text(data.get("approved_by")),
+        approved_client_id=_text(data.get("approved_client_id")),
+        approval_reason=_text(data.get("approval_reason")),
+        provenance=(
+            OperationalPlanProvenance(
+                source_type=PlanSourceType(provenance_data.get("source_type") or PlanSourceType.OPERATOR.value),
+                source_id=str(provenance_data.get("source_id") or "legacy"),
+                picture_mission_time=_float(provenance_data.get("picture_mission_time")),
+                rationale=_text(provenance_data.get("rationale")),
+            )
+            if provenance_data
+            else None
+        ),
         metadata=dict(data.get("metadata")) if isinstance(data.get("metadata"), dict) else {},
     )
 
@@ -370,6 +400,16 @@ def _mission_to_dict(mission: PlanMissionExecution) -> dict[str, Any]:
         "mission_type": mission.mission_type,
         "required": mission.required,
         "command": command,
+        "command_ack": (
+            {
+                "ack_id": mission.command_ack.ack_id,
+                "correlation_id": mission.command_ack.correlation_id,
+                "sequence": mission.command_ack.sequence,
+                "result": dict(mission.command_ack.result),
+            }
+            if mission.command_ack
+            else None
+        ),
         "status": mission.status.value,
         "auftrag_id": mission.auftrag_id,
         "outcome": mission.outcome.to_dict() if mission.outcome else None,
@@ -379,6 +419,7 @@ def _mission_to_dict(mission: PlanMissionExecution) -> dict[str, Any]:
 
 def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
     outcome_data = data.get("outcome") if isinstance(data.get("outcome"), dict) else None
+    ack_data = data.get("command_ack") if isinstance(data.get("command_ack"), dict) else None
     return PlanMissionExecution(
         phase_id=str(data.get("phase_id") or ""),
         intent_id=str(data.get("intent_id") or ""),
@@ -386,6 +427,16 @@ def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
         mission_type=str(data.get("mission_type") or ""),
         required=bool(data.get("required", False)),
         command_snapshot=dict(data.get("command")) if isinstance(data.get("command"), dict) else {},
+        command_ack=(
+            CommandAckReference(
+                ack_id=_text(ack_data.get("ack_id")),
+                correlation_id=_text(ack_data.get("correlation_id")),
+                sequence=_int(ack_data.get("sequence")),
+                result=dict(ack_data.get("result")) if isinstance(ack_data.get("result"), dict) else {},
+            )
+            if ack_data
+            else None
+        ),
         status=PlanMissionStatus(data.get("status") or PlanMissionStatus.PENDING.value),
         auftrag_id=_text(data.get("auftrag_id")),
         outcome=_outcome_from_dict(outcome_data) if outcome_data else None,

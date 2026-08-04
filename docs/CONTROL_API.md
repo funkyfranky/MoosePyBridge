@@ -190,14 +190,21 @@ requests:
 ```python
 from moosebridge.control import MooseBridgeControlClient
 
-client = MooseBridgeControlClient("127.0.0.1", 42001)
+client = MooseBridgeControlClient(
+    "127.0.0.1",
+    42001,
+    client_id="diagnostics-1",
+    display_name="Diagnostics",
+)
 status = await client.status()
 state = await client.get_state(kinds=("groups", "cohorts", "legions"))
 ack = await client.send_dcs_command("message.to_all", {"text": "hello"})
 ```
 
 The client maintains a local `MooseBridgeState` mirror and updates it whenever a
-response contains a `state` payload.
+response contains a `state` payload. Every request also carries the same
+declared `client_id` and `display_name` for the lifetime of that client object.
+These fields are attribution metadata, not authentication credentials.
 
 For application code, prefer adapting the control client into the high-level
 SDK. This keeps daemon-backed tools on the same validated command path as the
@@ -207,7 +214,12 @@ interactive client and server-backed SDK users:
 from moosebridge.control import MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
 
-control = MooseBridgeControlClient("127.0.0.1", 42001)
+control = MooseBridgeControlClient(
+    "127.0.0.1",
+    42001,
+    client_id="planning-tool-1",
+    display_name="Planning Tool",
+)
 bridge = sdk_from_control_client(control, timeout=10.0)
 
 status = await control.status()
@@ -255,6 +267,30 @@ The SDK currently exposes helpers for:
   `restore_operational_plan`, `reconcile_operational_plan`,
   `monitor_interrupted_operational_plan`, `block_interrupted_operational_plan`,
   `abort_operational_plan`
+
+`execute_plan` refreshes and revalidates only the next immediate phase before
+submitting its AUFTRAGs. Progress callbacks receive `phase.revalidating` and
+`phase.revalidated`; a failed phase-boundary check produces `plan.blocked`
+without creating a mission for that phase.
+
+`approve_operational_plan(plan, approved_by=..., reason=...)` records explicit
+operator attribution in the plan snapshot. A control-backed SDK uses its
+declared display name automatically and stores the stable client id separately;
+the caller may still override the display name. Executed plan missions expose
+`command_ack`, a compact persisted reference with `ack_id`, `correlation_id`,
+`sequence`, and relevant scalar ACK result fields. The execution formatter
+shows both approval attribution and ACK references.
+
+`OperationalPlan.provenance` optionally records where a proposal originated.
+`OperationalPlanProvenance` contains a typed `source_type`, stable `source_id`,
+optional tactical-picture mission time, and rationale. This is intentionally
+separate from the client that later approves or executes the proposal.
+
+`propose_capture_plan(goal, tactical_picture, ...)` returns an unregistered
+rule-based draft for an OPSZONE CAPTURE goal. The initial conservative planner
+selects at most one coalition-visible nearby ground defender for BAI isolation,
+then proposes CAPTUREZONE seizure and optional AIRDEFENSE/AMMOSUPPLY
+consolidation. Call `add_operational_plan`, validation, and approval explicitly.
 - typed OPS state: `commander`, `commanders`, `commander_for_coalition`,
   `legions_of_commander`, `missions_of_commander`, `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,

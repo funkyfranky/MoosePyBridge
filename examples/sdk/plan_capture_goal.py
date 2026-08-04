@@ -15,9 +15,11 @@ from moosebridge import (
     MissionIntent,
     ObjectiveKind,
     OperationalPlan,
+    OperationalPlanProvenance,
     OperationalPosture,
     OwnershipPolicy,
     PlanPhase,
+    PlanSourceType,
     StrategicGoal,
     StrategicGoalAction,
     StrategicObjective,
@@ -31,6 +33,8 @@ from moosebridge.control_sdk import sdk_from_control_client
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 10.0
+CLIENT_ID = "capture-planner-example"
+CLIENT_DISPLAY_NAME = "Capture Planner Example"
 
 COALITION = "blue"
 OPSZONE_ID = "OPSZONE:Town Fight"
@@ -64,7 +68,12 @@ def requirement(
 
 
 async def main() -> int:
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
+    control = MooseBridgeControlClient(
+        CONTROL_HOST,
+        CONTROL_PORT,
+        client_id=CLIENT_ID,
+        display_name=CLIENT_DISPLAY_NAME,
+    )
     status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
     if not status.get("connected"):
         print("DCS is not connected to the MooseBridge daemon.")
@@ -100,6 +109,12 @@ async def main() -> int:
             goal_id=GOAL_ID,
             coalition=COALITION,
             posture=OperationalPosture.BALANCED,
+            provenance=OperationalPlanProvenance(
+                source_type=PlanSourceType.OPERATOR,
+                source_id="examples.sdk.plan_capture_goal",
+                picture_mission_time=bridge.state.clock.mission_time if bridge.state.clock else None,
+                rationale="Demonstrate a phased capture plan through the Python SDK.",
+            ),
             phases=(
                 PlanPhase(
                     phase_id="isolate",

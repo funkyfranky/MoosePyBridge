@@ -36,7 +36,13 @@ class AuditStore:
             self._file.close()
             self._file = None
 
-    def append(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def append(
+        self,
+        record_type: str,
+        payload: dict[str, Any],
+        *,
+        client_identity: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Append one versioned record and return the stored envelope."""
 
         record_type = record_type.strip()
@@ -48,6 +54,8 @@ class AuditStore:
             "recorded_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "payload": payload,
         }
+        if client_identity:
+            record["client"] = dict(client_identity)
         json_line = json.dumps(record, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         self._records.append(record)
         if self.path is not None:

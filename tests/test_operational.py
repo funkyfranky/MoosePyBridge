@@ -12,6 +12,7 @@ from moosebridge import (
     MooseBridgeServer,
     ObjectiveKind,
     OperationalPlan,
+    OperationalPlanProvenance,
     OperationalPlanStatus,
     OperationalPosture,
     OwnershipPolicy,
@@ -20,6 +21,7 @@ from moosebridge import (
     PlanMissionExecution,
     PlanMissionStatus,
     PlanReconciliationStatus,
+    PlanSourceType,
     StrategicGoal,
     StrategicGoalAction,
     StrategicGoalStatus,
@@ -29,6 +31,7 @@ from moosebridge import (
     format_operational_plan_reconciliation,
 )
 from moosebridge.audit import AuditStore, latest_attempt_records
+from moosebridge.control import ControlClientIdentity
 from moosebridge.protocol import BridgeCommand
 from moosebridge.state import MooseBridgeState
 
@@ -247,6 +250,7 @@ def test_plan_validation_reuses_assets_in_later_phases_and_can_be_approved() -> 
         "COHORT:Blue Armor",
     ]
     assert approved.status is OperationalPlanStatus.APPROVED
+    assert approved.approved_by == "operator"
 
 
 def test_plan_registry_rejects_goal_coalition_mismatch() -> None:
@@ -333,6 +337,7 @@ class _ExecutionServer:
         audit_path: Path | None = None,
         auftrag_snapshots: list[dict[str, Any]] | None = None,
         cancel_failures: tuple[str, ...] = (),
+        cohort_available_on_refresh: int | None = None,
     ) -> None:
         self.state = MooseBridgeState(connected=True)
         self.success = success
@@ -342,8 +347,12 @@ class _ExecutionServer:
         self.audit_store = AuditStore(audit_path)
         self.auftrag_snapshots = auftrag_snapshots or []
         self.cancel_failures = set(cancel_failures)
+        self.cohort_available_on_refresh = cohort_available_on_refresh
+        self.cohort_snapshot_count = 0
+        self._objective_updated = False
         self.commands: list[BridgeCommand] = []
         self._mission_number = 0
+        self._mission_types: dict[int, str] = {}
         self._event_number = 0
 
     async def append_audit_record(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -366,11 +375,18 @@ class _ExecutionServer:
             raise RuntimeError(f"cancel rejected for {command.params['object_id']}")
         if command.action.startswith("auftrag.create_"):
             self._mission_number += 1
+            self._mission_types[self._mission_number] = command.action.removeprefix("auftrag.create_").upper()
             return {
                 "ok": True,
+                "id": f"ack-{self._mission_number}",
+                "correlation_id": command.id,
+                "sequence": self._mission_number,
                 "result": {
                     "action": command.action,
                     "auftrag_id": f"AUFTRAG:{self._mission_number}",
+                    "auftrag_type": self._mission_types[self._mission_number],
+                    "commander_id": command.params.get("commander_id"),
+                    "target": command.params.get("opszone"),
                 },
             }
         return {"ok": True, "result": {"action": command.action}}
@@ -385,14 +401,17 @@ class _ExecutionServer:
         self._event_number += 1
         auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
         mission_number = int(auftrag_id.partition(":")[2])
+        mission_type = self._mission_types.get(mission_number, "CAPTUREZONE")
         success = self.success[mission_number - 1] if isinstance(self.success, list) else self.success
+        if success and mission_type == "CAPTUREZONE":
+            self._objective_updated = True
         return {
             "type": "event",
             "id": f"event-{self._event_number}",
             "event": "auftrag.evaluated",
             "payload": {
                 "auftrag_id": auftrag_id,
-                "auftrag_type": "CAPTUREZONE",
+                "auftrag_type": mission_type,
                 "status": "Done",
                 "summary": {"success": success, "Ntargets0": 1, "Ntargets": 0},
             },
@@ -408,7 +427,11 @@ class _ExecutionServer:
                         {
                             "object_id": object_id,
                             "object_type": "OPSZONE",
-                            "owner_current_name": self.final_owner if object_id == "OPSZONE:Town" else "red",
+                            "owner_current_name": (
+                                self.final_owner
+                                if object_id == "OPSZONE:Town" and self._objective_updated
+                                else "red"
+                            ),
                             "is_contested": False,
                         }
                         for object_id in self.opszone_ids
@@ -443,6 +466,29 @@ class _ExecutionServer:
         )
         return {"ok": True, "result": {"kind": "auftraege", "count": len(self.auftrag_snapshots)}}
 
+    async def snapshot_commanders(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "commanders", "count": len(self.state.commander_objects)}}
+
+    async def snapshot_legions(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "legions", "count": len(self.state.legion_objects)}}
+
+    async def snapshot_cohorts(self) -> dict[str, Any]:
+        self.cohort_snapshot_count += 1
+        if self.cohort_available_on_refresh is not None:
+            self.state.apply_message(
+                {
+                    "type": "snapshot",
+                    "kind": "cohorts",
+                    "payload": {
+                        "cohorts": [
+                            {**cohort, "available_asset_count": self.cohort_available_on_refresh}
+                            for cohort in self.state.cohorts.values()
+                        ]
+                    },
+                }
+            )
+        return {"ok": True, "result": {"kind": "cohorts", "count": len(self.state.cohort_objects)}}
+
     async def snapshot_airbases(self) -> dict[str, Any]:
         return {"ok": True, "result": {"kind": "airbases", "count": 0}}
 
@@ -455,10 +501,14 @@ def _executable_capture_plan(
     success: bool = True,
     final_owner: str = "blue",
     audit_path: Path | None = None,
+    approved_by: str | None = None,
+    approval_reason: str | None = None,
+    client_identity: ControlClientIdentity | None = None,
 ) -> tuple[MooseBridgeClient, OperationalPlan]:
-    bridge = MooseBridgeClient(  # type: ignore[arg-type]
-        _ExecutionServer(success=success, final_owner=final_owner, audit_path=audit_path)
-    )
+    server = _ExecutionServer(success=success, final_owner=final_owner, audit_path=audit_path)
+    if client_identity is not None:
+        server.client_identity = client_identity  # type: ignore[attr-defined]
+    bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
     bridge.add_strategic_objective(
         StrategicObjective(
             objective_id="OBJECTIVE:Town",
@@ -550,7 +600,7 @@ def _executable_capture_plan(
         )
     )
     bridge.validate_operational_plan(plan)
-    bridge.approve_operational_plan(plan)
+    bridge.approve_operational_plan(plan, approved_by=approved_by, reason=approval_reason)
     return bridge, plan
 
 
@@ -564,6 +614,15 @@ def test_execute_capture_plan_uses_commander_events_and_confirms_goal() -> None:
         assert execution.status is OperationalPlanStatus.COMPLETED
         assert plan.phases[0].status.value == "completed"
         assert execution.missions[0].status.value == "succeeded"
+        assert execution.missions[0].command_ack is not None
+        assert execution.missions[0].command_ack.ack_id == "ack-1"
+        assert execution.missions[0].command_ack.sequence == 1
+        assert execution.missions[0].command_ack.result == {
+            "action": "auftrag.create_capturezone",
+            "auftrag_id": "AUFTRAG:1",
+            "auftrag_type": "CAPTUREZONE",
+            "commander_id": "COMMANDER:Blue Command",
+        }
         assert bridge.strategic_goal("GOAL:Capture Town").status.value == "achieved"  # type: ignore[union-attr]
         command = bridge.server.commands[0]  # type: ignore[attr-defined]
         assert command.params["commander_id"] == "COMMANDER:Blue Command"
@@ -571,13 +630,42 @@ def test_execute_capture_plan_uses_commander_events_and_confirms_goal() -> None:
         assert command.params["required_assets_max"] == 3
         assert observed == [
             "plan.started",
+            "phase.revalidating",
+            "phase.revalidated",
             "phase.started",
             "mission.submitted",
             "mission.succeeded",
             "phase.completed",
             "plan.completed",
         ]
-        assert "status=completed" in format_operational_plan_execution(execution)
+        rendered = format_operational_plan_execution(execution)
+        assert "status=completed" in rendered
+        assert "approved_by=operator" in rendered
+        assert "ack=ack-1" in rendered
+        assert f"correlation={command.id}" in rendered
+
+    asyncio.run(scenario())
+
+
+def test_phase_revalidation_blocks_before_submission_when_assets_are_no_longer_available() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_capture_plan()
+        server = bridge.server
+        server.cohort_available_on_refresh = 0  # type: ignore[attr-defined]
+        observed: list[str] = []
+
+        execution = await bridge.execute_plan(plan, on_event=lambda event: observed.append(event.event))
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert plan.status is OperationalPlanStatus.BLOCKED
+        assert plan.phases[0].status is PlanPhaseStatus.BLOCKED
+        assert "asset_shortfall" in (execution.blocked_reason or "")
+        assert "REQ:Ground assault" in (execution.blocked_reason or "")
+        assert server.cohort_snapshot_count == 1  # type: ignore[attr-defined]
+        assert not server.commands  # type: ignore[attr-defined]
+        assert observed == ["plan.started", "phase.revalidating", "plan.blocked"]
+        approved_assessment = bridge.plans.assessment(plan.plan_id)
+        assert approved_assessment is not None and approved_assessment.feasible is True
 
     asyncio.run(scenario())
 
@@ -668,12 +756,11 @@ def test_plan_auftrag_rejects_abstract_bai_opszone_target_before_execution() -> 
     bridge.validate_operational_plan(invalid)
     bridge.approve_operational_plan(invalid)
 
-    try:
-        asyncio.run(bridge.execute_plan(invalid))
-    except ValueError as exc:
-        assert "requires a GROUP, UNIT or STATIC target" in str(exc)
-    else:
-        raise AssertionError("Abstract BAI OPSZONE target should be rejected")
+    execution = asyncio.run(bridge.execute_plan(invalid))
+
+    assert execution.status is OperationalPlanStatus.BLOCKED
+    assert "requires a GROUP, UNIT or STATIC target" in (execution.blocked_reason or "")
+    assert not bridge.server.commands  # type: ignore[attr-defined]
 
 
 def test_target_preflight_blocks_before_first_auftrag_when_object_is_missing() -> None:
@@ -713,14 +800,13 @@ def test_target_preflight_blocks_before_first_auftrag_when_object_is_missing() -
     bridge.validate_operational_plan(plan)
     bridge.approve_operational_plan(plan)
 
-    try:
-        asyncio.run(bridge.execute_plan(plan))
-    except ValueError as exc:
-        assert str(exc) == "operational target preflight could not find: GROUP:Missing"
-    else:
-        raise AssertionError("Missing target should fail preflight")
+    execution = asyncio.run(bridge.execute_plan(plan))
 
-    assert plan.status is OperationalPlanStatus.APPROVED
+    assert execution.status is OperationalPlanStatus.BLOCKED
+    assert "operational target preflight could not find: GROUP:Missing" in (execution.blocked_reason or "")
+    assert not bridge.server.commands  # type: ignore[attr-defined]
+
+    assert plan.status is OperationalPlanStatus.BLOCKED
     assert not [command for command in bridge.server.commands if command.action.startswith("auftrag.create_")]  # type: ignore[attr-defined]
 
 
@@ -871,7 +957,8 @@ def test_explicit_retry_can_reopen_completed_phase_after_goal_confirmation_failu
         assert second.status is OperationalPlanStatus.COMPLETED
         assert second.resumed_from_phase_id == "seize"
         assert len(bridge.operational_plan_executions(plan)) == 2
-        assert len(bridge.server.commands) == 2  # type: ignore[attr-defined]
+        assert len(bridge.server.commands) == 1  # type: ignore[attr-defined]
+        assert plan.phases[0].status is PlanPhaseStatus.SKIPPED
 
     asyncio.run(scenario())
 
@@ -879,7 +966,17 @@ def test_explicit_retry_can_reopen_completed_phase_after_goal_confirmation_failu
 def test_execution_history_and_attempt_numbers_survive_sdk_restart(tmp_path) -> None:
     async def scenario() -> None:
         path = tmp_path / "operational-audit.jsonl"
-        first_bridge, first_plan = _executable_capture_plan(audit_path=path)
+        first_bridge, first_plan = _executable_capture_plan(
+            audit_path=path,
+            approval_reason="Capture window confirmed",
+            client_identity=ControlClientIdentity("planning-console-1", "Frank"),
+        )
+        first_plan.provenance = OperationalPlanProvenance(
+            source_type=PlanSourceType.RULE_ENGINE,
+            source_id="capture-planner-v1",
+            picture_mission_time=42.5,
+            rationale="Enemy control is weak and ground assets are available.",
+        )
         first = await first_bridge.execute_plan(first_plan)
         first_bridge.server.audit_store.close()  # type: ignore[attr-defined]
 
@@ -890,6 +987,16 @@ def test_execution_history_and_attempt_numbers_survive_sdk_restart(tmp_path) -> 
         assert restored_context.plan.status is OperationalPlanStatus.COMPLETED
         assert restored_context.plan.phases[0].status is PlanPhaseStatus.COMPLETED
         assert restored_context.plan.phases[0].intents[0].asset_requirements[0].min_count == 2
+        assert restored_context.plan.approved_by == "Frank"
+        assert restored_context.plan.approved_client_id == "planning-console-1"
+        assert restored_context.plan.approval_reason == "Capture window confirmed"
+        assert restored_context.plan.provenance is not None
+        assert restored_context.plan.provenance.source_type is PlanSourceType.RULE_ENGINE
+        assert restored_context.plan.provenance.source_id == "capture-planner-v1"
+        assert restored_context.plan.provenance.picture_mission_time == 42.5
+        assert restored_context.plan.provenance.rationale == (
+            "Enemy control is weak and ground assets are available."
+        )
         assert restored_context.goal.status.value == "achieved"
         assert restored_context.goal.objective_id == restored_context.objective.objective_id
         assert restored_context.objective.owner == "blue"
@@ -919,6 +1026,10 @@ def test_execution_history_and_attempt_numbers_survive_sdk_restart(tmp_path) -> 
         assert restored[0].missions[0].outcome.success is True
         assert restored[0].missions[0].command_snapshot["mission_type"] == "CAPTUREZONE"
         assert restored[0].missions[0].command_snapshot["params"]["opszone"] == "OPSZONE:Town"
+        assert restored[0].missions[0].command_ack is not None
+        assert restored[0].missions[0].command_ack.ack_id == "ack-1"
+        assert restored[0].missions[0].command_ack.sequence == 1
+        assert restored[0].missions[0].command_ack.correlation_id
         assert restored[0].plan_snapshot["goal_id"] == "GOAL:Capture Town"
         assert restored[0].assessment_snapshot["requirements"][0]["allocations"][0]["cohort_id"] == "COHORT:Blue Armor"
 

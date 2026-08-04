@@ -33,6 +33,37 @@ class OperationalPlanStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class PlanSourceType(str, Enum):
+    """Origin of an operational plan proposal."""
+
+    OPERATOR = "operator"
+    RULE_ENGINE = "rule_engine"
+    LLM = "llm"
+    IMPORT = "import"
+
+
+@dataclass(slots=True, frozen=True)
+class OperationalPlanProvenance:
+    """Optional origin and rationale for one operational plan proposal."""
+
+    source_type: PlanSourceType
+    source_id: str
+    picture_mission_time: float | None = None
+    rationale: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_type", PlanSourceType(self.source_type))
+        source_id = self.source_id.strip()
+        if not source_id:
+            raise ValueError("operational plan provenance requires source_id")
+        object.__setattr__(self, "source_id", source_id)
+        if self.picture_mission_time is not None and (
+            not math.isfinite(self.picture_mission_time) or self.picture_mission_time < 0
+        ):
+            raise ValueError("picture_mission_time must be finite and non-negative")
+        object.__setattr__(self, "rationale", self.rationale.strip() if self.rationale else None)
+
+
 class PlanPhaseStatus(str, Enum):
     """Lifecycle state of one operational plan phase."""
 
@@ -172,6 +203,10 @@ class OperationalPlan:
     created_mission_time: float | None = None
     validated_mission_time: float | None = None
     approved_mission_time: float | None = None
+    approved_by: str | None = None
+    approved_client_id: str | None = None
+    approval_reason: str | None = None
+    provenance: OperationalPlanProvenance | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -201,6 +236,9 @@ class OperationalPlan:
             value = getattr(self, field_name)
             if value is not None and (not math.isfinite(value) or value < 0):
                 raise ValueError(f"{field_name} must be finite and non-negative")
+        self.approved_by = self.approved_by.strip() if self.approved_by else None
+        self.approved_client_id = self.approved_client_id.strip() if self.approved_client_id else None
+        self.approval_reason = self.approval_reason.strip() if self.approval_reason else None
 
 
 @dataclass(slots=True, frozen=True)
@@ -297,8 +335,11 @@ class OperationalPlanRegistry:
         legions: Iterable[Legion],
         cohorts: Iterable[Cohort],
         mission_time: float | None = None,
+        phase_ids: Iterable[str] | None = None,
+        update_plan: bool = True,
     ) -> OperationalPlanAssessment:
         item = self._require(plan)
+        selected_phases = set(phase_ids) if phase_ids is not None else None
         goal = self.goals.get(item.goal_id)
         issues: list[PlanValidationIssue] = []
         if goal is None:
@@ -315,7 +356,9 @@ class OperationalPlanRegistry:
         results: list[RequirementAssessment] = []
 
         for phase in item.phases:
-            if phase.status is PlanPhaseStatus.COMPLETED:
+            if phase.status is PlanPhaseStatus.COMPLETED or (
+                selected_phases is not None and phase.phase_id not in selected_phases
+            ):
                 continue
             remaining = {cohort.object_id: max(0, cohort.available_asset_count or 0) for cohort in coalition_cohorts}
             for cohort in coalition_cohorts:
@@ -398,20 +441,58 @@ class OperationalPlanRegistry:
 
         feasible = not any(issue.severity == "error" for issue in issues)
         assessment = OperationalPlanAssessment(item.plan_id, feasible, tuple(results), tuple(issues))
-        self._assessments[item.plan_id] = assessment
-        item.status = OperationalPlanStatus.VALIDATED if feasible else OperationalPlanStatus.DRAFT
-        item.validated_mission_time = mission_time if feasible else None
+        if update_plan:
+            self._assessments[item.plan_id] = assessment
+            item.status = OperationalPlanStatus.VALIDATED if feasible else OperationalPlanStatus.DRAFT
+            item.validated_mission_time = mission_time if feasible else None
         return assessment
 
-    def approve(self, plan: OperationalPlan | str, *, mission_time: float | None = None) -> OperationalPlan:
+    def assess_phase(
+        self,
+        plan: OperationalPlan | str,
+        phase_id: str,
+        *,
+        legions: Iterable[Legion],
+        cohorts: Iterable[Cohort],
+        mission_time: float | None = None,
+    ) -> OperationalPlanAssessment:
+        """Assess one immediate phase without changing plan approval state."""
+
+        item = self._require(plan)
+        if not any(phase.phase_id == phase_id for phase in item.phases):
+            raise ValueError(f"Unknown operational plan phase: {phase_id}")
+        return self.validate(
+            item,
+            legions=legions,
+            cohorts=cohorts,
+            mission_time=mission_time,
+            phase_ids=(phase_id,),
+            update_plan=False,
+        )
+
+    def approve(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        mission_time: float | None = None,
+        approved_by: str = "operator",
+        approved_client_id: str | None = None,
+        reason: str | None = None,
+    ) -> OperationalPlan:
         """Approve a feasible plan without creating or assigning AUFTRAGs."""
 
         item = self._require(plan)
         assessment = self.assessment(item.plan_id)
         if item.status is not OperationalPlanStatus.VALIDATED or assessment is None or not assessment.feasible:
             raise ValueError("only a validated feasible operational plan can be approved")
+        approved_by = approved_by.strip()
+        if not approved_by:
+            raise ValueError("approved_by must not be empty")
         item.status = OperationalPlanStatus.APPROVED
         item.approved_mission_time = mission_time
+        item.approved_by = approved_by
+        item.approved_client_id = approved_client_id.strip() if approved_client_id and approved_client_id.strip() else None
+        item.approval_reason = reason.strip() if reason and reason.strip() else None
         return item
 
     def _require(self, plan: OperationalPlan | str) -> OperationalPlan:

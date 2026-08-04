@@ -335,7 +335,11 @@ if plan.status.value == "blocked":
     bridge.prepare_plan_retry(plan)
     assessment = await bridge.refresh_and_validate_operational_plan(plan)
     if assessment.feasible:
-        bridge.approve_operational_plan(plan)
+        bridge.approve_operational_plan(
+            plan,
+            approved_by="Frank",
+            reason="Capture window confirmed",
+        )
         execution = await bridge.execute_plan(plan, on_event=print)
 ```
 
@@ -365,6 +369,58 @@ authoritative terminal result; an existing non-terminal AUFTRAG remains
 not guessed to have failed. Monitoring then uses AUFTRAG FSM events without
 polling and never submits a replacement mission. After a reconciled phase, any
 remaining phase is blocked for explicit revalidation and approval.
+
+Plan approvals retain `approved_by`, `approved_client_id`, an optional reason,
+and the DCS mission time. A control-backed SDK derives both identity fields
+from its declared client identity; direct in-process SDK use defaults to
+`"operator"`. Each
+submitted plan mission also retains a compact `CommandAckReference` containing
+the bridge `ack_id`, `correlation_id`, `sequence`, and selected scalar result
+fields. Constructor inputs remain in the separate command snapshot, so the
+full ACK payload is not duplicated in every audit record.
+
+Plan origin is a separate optional concept from approval identity:
+
+```python
+provenance=OperationalPlanProvenance(
+    source_type=PlanSourceType.RULE_ENGINE,
+    source_id="capture-planner-v1",
+    picture_mission_time=picture.clock.mission_time,
+    rationale="Enemy control is weak and ground assets are available.",
+)
+```
+
+Supported source types are `operator`, `rule_engine`, `llm`, and `import`.
+Provenance remains optional for manually constructed legacy plans and survives
+the same audit/restore roundtrip as phases and approvals.
+
+The initial rule-based planner proposes conservative CAPTURE drafts from a
+coalition-visible tactical picture:
+
+```python
+picture = await bridge.refresh_tactical_picture("blue", "INTEL:Blue Intel")
+draft = bridge.propose_capture_plan("GOAL:Blue capture Town", picture)
+
+bridge.add_operational_plan(draft)
+assessment = await bridge.refresh_and_validate_operational_plan(draft)
+```
+
+It currently requires an OPSZONE-controlled objective. A visible nearby ground
+contact adds a BAI isolation phase; otherwise the planner starts with ground
+seizure. Local air defense and ammunition supply are optional consolidation
+intents. The result stays `draft`: proposing never registers, validates,
+approves, or executes a plan. Enemy selection uses only `TacticalPicture`
+INTEL contacts, never global truth.
+
+Normal plan execution also revalidates only the immediately upcoming phase.
+Before any AUFTRAG for that phase is created, the executor refreshes COMMANDER,
+LEGION, COHORT, and objective-control state, reassesses current asset
+availability, validates COMMANDER constraints, and preflights that phase's
+targets. The audit stream emits `phase.revalidating` followed by
+`phase.revalidated`; a changed goal, missing target, unavailable COMMANDER, or
+required asset shortfall blocks the plan without submitting a phase mission.
+Completed earlier phases are not reassessed, and later phases wait until their
+own execution boundary.
 
 An executing or blocked attempt can be terminated explicitly. The default
 scope cancels every live MOOSE AUFTRAG from the current attempt; use
@@ -547,7 +603,12 @@ Control-client backed SDK:
 from moosebridge.control import MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
 
-control = MooseBridgeControlClient("127.0.0.1", 42001)
+control = MooseBridgeControlClient(
+    "127.0.0.1",
+    42001,
+    client_id="planning-tool-1",
+    display_name="Planning Tool",
+)
 bridge = sdk_from_control_client(control, timeout=10.0)
 
 await bridge.snapshot_kind("units")
