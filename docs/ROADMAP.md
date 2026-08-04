@@ -324,7 +324,15 @@ Current operational-planning baseline:
 - Feasible plans can be approved and explicitly executed through a coalition
   COMMANDER. The first event-driven executor covers CAPTURE plans, automatic
   phase progression, parallel required AUFTRAG monitoring, optional support
-  missions, and blocked-state handoff without automatic retries.
+  missions, one-shot target existence preflight, and blocked-state handoff
+  without automatic retries.
+- Blocked plans can be returned explicitly to draft state. Completed phases
+  are preserved, remaining targets and allowed LEGION/COHORT constraints can
+  be revised, and a fresh validation plus approval is required before resume.
+  An explicit resume phase may reopen that phase and all following phases when
+  strategic goal confirmation failed after their AUFTRAGs completed.
+- Each execution has a stable attempt id and remains available in chronological
+  runtime history; changing the COMMANDER for a later attempt is supported.
 
 ## Phase 4: Command SDK and policies
 
@@ -396,10 +404,12 @@ The next milestone is controlled plan execution:
    AUFTRAG/LEGION state and events.
 3. Drive phase transitions from AUFTRAG FSM events and strategic objective
    events rather than status polling.
-4. Revalidate before each phase and expose explicit replan, abort, and operator
-   approval decisions when assets or objectives have changed.
-5. Record the plan, allocation decision, generated command, ACK, lifecycle
-   events, and outcome as one traceable execution history.
+4. Add automatic pre-phase revalidation and explicit abort. Explicit replan,
+   operator reapproval, target changes, recruitment changes, and resume from
+   the first incomplete phase are implemented.
+5. Persist the existing in-memory attempt history, including plan, allocation
+   decision, generated command, ACK, lifecycle events, and outcome, in the
+   daemon audit store.
 
 The frontline, ammunition, capability, strategic objective, and strategic goal
 layers are established inputs to this planner. They remain Python-owned

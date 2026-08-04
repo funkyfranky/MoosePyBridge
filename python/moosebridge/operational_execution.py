@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import inspect
 from typing import TYPE_CHECKING, Any
@@ -61,6 +61,7 @@ class PlanExecutionEvent:
     status: str | None = None
     mission_time: float | None = None
     message: str | None = None
+    attempt_id: str | None = None
 
     def __str__(self) -> str:
         """Return a compact progress line suitable for example callbacks."""
@@ -96,6 +97,9 @@ class OperationalPlanExecution:
 
     plan_id: str
     commander_id: str
+    attempt_id: str = ""
+    attempt_number: int = 1
+    resumed_from_phase_id: str | None = None
     status: OperationalPlanStatus = OperationalPlanStatus.APPROVED
     current_phase_id: str | None = None
     started_mission_time: float | None = None
@@ -113,10 +117,108 @@ class OperationalPlanExecutor:
 
     def __init__(self, client: MooseBridgeClient) -> None:
         self.client = client
-        self._executions: dict[str, OperationalPlanExecution] = {}
+        self._executions: dict[str, list[OperationalPlanExecution]] = {}
 
     def get(self, plan_id: str) -> OperationalPlanExecution | None:
-        return self._executions.get(plan_id)
+        history = self._executions.get(plan_id, ())
+        return history[-1] if history else None
+
+    def history(self, plan_id: str) -> tuple[OperationalPlanExecution, ...]:
+        """Return all execution attempts for a plan in chronological order."""
+
+        return tuple(self._executions.get(plan_id, ()))
+
+    def prepare_retry(
+        self,
+        plan: OperationalPlan,
+        *,
+        resume_from: str | None = None,
+        target_overrides: Mapping[tuple[str, str], str] | None = None,
+        allowed_legion_overrides: Mapping[tuple[str, str, str], Iterable[str]] | None = None,
+        allowed_cohort_overrides: Mapping[tuple[str, str, str], Iterable[str]] | None = None,
+    ) -> OperationalPlan:
+        """Return a blocked plan to draft state while preserving completed phases."""
+
+        latest = self.get(plan.plan_id)
+        if plan.status is not OperationalPlanStatus.BLOCKED or latest is None:
+            raise ValueError("only a blocked plan with an execution attempt can be prepared for retry")
+        if latest.status is not OperationalPlanStatus.BLOCKED:
+            raise ValueError("latest operational plan execution is not blocked")
+
+        incomplete = [index for index, phase in enumerate(plan.phases) if phase.status is not PlanPhaseStatus.COMPLETED]
+        if resume_from is None:
+            resume_index = incomplete[0] if incomplete else len(plan.phases)
+        else:
+            try:
+                resume_index = next(index for index, phase in enumerate(plan.phases) if phase.phase_id == resume_from)
+            except StopIteration as exc:
+                raise ValueError(f"Unknown operational plan phase: {resume_from}") from exc
+        unfinished_before = [phase.phase_id for phase in plan.phases[:resume_index] if phase.status is not PlanPhaseStatus.COMPLETED]
+        if unfinished_before:
+            raise ValueError(f"retry cannot skip incomplete phases: {unfinished_before}")
+
+        retryable_phases = plan.phases[resume_index:]
+        targets = dict(target_overrides or {})
+        legion_limits = dict(allowed_legion_overrides or {})
+        cohort_limits = dict(allowed_cohort_overrides or {})
+        known_targets = {
+            (phase.phase_id, intent.intent_id)
+            for phase in retryable_phases
+            for intent in phase.intents
+        }
+        known_requirements = {
+            (phase.phase_id, intent.intent_id, requirement.requirement_id)
+            for phase in retryable_phases
+            for intent in phase.intents
+            for requirement in intent.asset_requirements
+        }
+        unknown_targets = sorted(set(targets) - known_targets)
+        unknown_legion_limits = sorted(set(legion_limits) - known_requirements)
+        unknown_cohort_limits = sorted(set(cohort_limits) - known_requirements)
+        if unknown_targets or unknown_legion_limits or unknown_cohort_limits:
+            raise ValueError(
+                "retry overrides reference unknown or completed plan elements: "
+                f"targets={unknown_targets}, legions={unknown_legion_limits}, cohorts={unknown_cohort_limits}"
+            )
+
+        for phase in retryable_phases:
+            updated_intents: list[MissionIntent] = []
+            for intent in phase.intents:
+                intent_key = (phase.phase_id, intent.intent_id)
+                updated_requirements: list[AssetRequirement] = []
+                for requirement in intent.asset_requirements:
+                    requirement_key = (phase.phase_id, intent.intent_id, requirement.requirement_id)
+                    changes: dict[str, Any] = {}
+                    if requirement_key in legion_limits:
+                        changes["allowed_legion_ids"] = _object_ids(legion_limits[requirement_key])
+                    if requirement_key in cohort_limits:
+                        changes["allowed_cohort_ids"] = _object_ids(cohort_limits[requirement_key])
+                    updated_requirements.append(replace(requirement, **changes) if changes else requirement)
+                changes = {"asset_requirements": tuple(updated_requirements)}
+                if intent_key in targets:
+                    changes["target_object_id"] = targets[intent_key]
+                updated_intents.append(replace(intent, **changes))
+            phase.intents = tuple(updated_intents)
+            phase.status = PlanPhaseStatus.PENDING
+
+        plan.status = OperationalPlanStatus.DRAFT
+        plan.validated_mission_time = None
+        plan.approved_mission_time = None
+        plan.metadata["retry_resume_phase_id"] = (
+            plan.phases[resume_index].phase_id if resume_index < len(plan.phases) else None
+        )
+        self.client.plans.invalidate(plan)
+        latest.events.append(
+            PlanExecutionEvent(
+                "plan.retry_prepared",
+                plan.plan_id,
+                phase_id=plan.metadata["retry_resume_phase_id"],
+                status=plan.status.value,
+                mission_time=self.client._current_mission_time(),
+                attempt_id=latest.attempt_id,
+            )
+        )
+        return plan
 
     async def execute(
         self,
@@ -138,8 +240,11 @@ class OperationalPlanExecutor:
         assessment = self.client.plans.assessment(plan.plan_id)
         if assessment is None or not assessment.feasible:
             raise ValueError("operational plan requires a current feasible assessment")
-        if self.get(plan.plan_id) and self.get(plan.plan_id).status is OperationalPlanStatus.EXECUTING:
+        latest = self.get(plan.plan_id)
+        if latest and latest.status is OperationalPlanStatus.EXECUTING:
             raise ValueError(f"operational plan is already executing: {plan.plan_id}")
+        if goal.status in {StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
+            raise ValueError(f"strategic goal cannot be executed in state {goal.status.value}")
 
         commander = self.client.commander(commander_id) if commander_id else self.client.commander_for_coalition(plan.coalition)
         if commander is None:
@@ -154,6 +259,8 @@ class OperationalPlanExecutor:
         prepared: dict[tuple[str, str, str], AuftragCommand] = {}
         commander_legions = set(commander.legion_ids)
         for phase in plan.phases:
+            if phase.status is PlanPhaseStatus.COMPLETED:
+                continue
             for intent in phase.intents:
                 for requirement in intent.asset_requirements:
                     item = assessments[(phase.phase_id, intent.intent_id, requirement.requirement_id)]
@@ -181,19 +288,28 @@ class OperationalPlanExecutor:
                         requirement,
                     )
 
+        await self._preflight_targets(prepared.values())
+
+        history = self._executions.setdefault(plan.plan_id, [])
+        attempt_number = len(history) + 1
         execution = OperationalPlanExecution(
             plan_id=plan.plan_id,
             commander_id=commander.object_id,
+            attempt_id=f"{plan.plan_id}/ATTEMPT:{attempt_number}",
+            attempt_number=attempt_number,
+            resumed_from_phase_id=plan.metadata.pop("retry_resume_phase_id", None),
             status=OperationalPlanStatus.EXECUTING,
             started_mission_time=self.client._current_mission_time(),
         )
-        self._executions[plan.plan_id] = execution
+        history.append(execution)
         plan.status = OperationalPlanStatus.EXECUTING
         if goal.status is StrategicGoalStatus.PLANNED:
             self.client.activate_strategic_goal(goal)
         await self._emit(execution, PlanExecutionEvent("plan.started", plan.plan_id, status=plan.status.value), on_event)
 
         for phase in plan.phases:
+            if phase.status is PlanPhaseStatus.COMPLETED:
+                continue
             if any(self._phase(plan, dependency).status is not PlanPhaseStatus.COMPLETED for dependency in phase.depends_on):
                 return await self._block(plan, phase, execution, "phase dependency is not completed", on_event)
             phase.status = PlanPhaseStatus.ACTIVE
@@ -383,6 +499,50 @@ class OperationalPlanExecutor:
         elif objective.control_object_id.startswith("TERRITORY:"):
             await self.client.snapshot_territories()
 
+    async def _preflight_targets(self, commands: Iterable[AuftragCommand]) -> None:
+        """Refresh and verify every object id used by executable commands."""
+
+        targets: set[str] = set()
+        for command in commands:
+            params = command.to_params()
+            for key in ("target", "zone", "opszone", "coordinate"):
+                value = params.get(key)
+                if isinstance(value, str) and ":" in value:
+                    targets.add(value)
+
+        snapshot_methods = {
+            "GROUP": "snapshot_groups",
+            "UNIT": "snapshot_units",
+            "STATIC": "snapshot_statics",
+            "ZONE": "snapshot_zones",
+            "OPSZONE": "snapshot_opszones",
+            "AIRBASE": "snapshot_airbases",
+            "TERRITORY": "snapshot_territories",
+        }
+        state_collections = {
+            "GROUP": "groups",
+            "UNIT": "units",
+            "STATIC": "statics",
+            "ZONE": "zones",
+            "OPSZONE": "opszones",
+            "AIRBASE": "airbases",
+            "TERRITORY": "territories",
+        }
+        prefixes = {target.partition(":")[0].upper() for target in targets}
+        unsupported = sorted(prefix for prefix in prefixes if prefix not in snapshot_methods)
+        if unsupported:
+            raise ValueError(f"operational target preflight does not support object types: {unsupported}")
+        for prefix in sorted(prefixes):
+            await getattr(self.client, snapshot_methods[prefix])()
+
+        missing = sorted(
+            target
+            for target in targets
+            if target not in getattr(self.client.state, state_collections[target.partition(":")[0].upper()])
+        )
+        if missing:
+            raise ValueError(f"operational target preflight could not find: {', '.join(missing)}")
+
     async def _block(
         self,
         plan: OperationalPlan,
@@ -452,6 +612,7 @@ class OperationalPlanExecutor:
                 event.status,
                 self.client._current_mission_time(),
                 event.message,
+                execution.attempt_id,
             )
         execution.events.append(event)
         if callback is not None:
@@ -471,6 +632,12 @@ def _mission_type(intent: MissionIntent, requirement: AssetRequirement) -> str:
         if mission_type in allowed:
             return mission_type
     raise ValueError(f"{intent.intent_id}/{requirement.requirement_id} has no common AUFTRAG type")
+
+
+def _object_ids(values: Iterable[str]) -> tuple[str, ...]:
+    if isinstance(values, str):
+        values = (values,)
+    return tuple(dict.fromkeys(value.strip() for value in values if value.strip()))
 
 
 def _auftrag_metadata(intent: MissionIntent, requirement: AssetRequirement) -> tuple[dict[str, Any], dict[str, Any]]:

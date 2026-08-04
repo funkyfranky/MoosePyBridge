@@ -173,9 +173,12 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
     """Return a readable operational plan execution report."""
 
     lines = [
-        f"{execution.plan_id} commander={execution.commander_id} status={execution.status.value}",
+        (
+            f"{execution.plan_id} attempt={execution.attempt_number} "
+            f"id={execution.attempt_id} commander={execution.commander_id} status={execution.status.value}"
+        ),
         f"  current_phase={_text(execution.current_phase_id)} missions={len(execution.missions)} "
-        f"blocked_reason={_text(execution.blocked_reason)}",
+        f"resumed_from={_text(execution.resumed_from_phase_id)} blocked_reason={_text(execution.blocked_reason)}",
     ]
     for mission in execution.missions:
         requirement = f"{mission.phase_id}/{mission.intent_id}/{mission.requirement_id}"

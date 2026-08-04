@@ -250,7 +250,8 @@ The SDK currently exposes helpers for:
   `get_auftrag_summary`, `wait_for_auftrag_outcome`, `pause_mission`,
   `resume_mission`, `cancel_mission`, `assign_mission`
 - operational execution: `execute_plan`, `execute_operational_plan`,
-  `operational_plan_execution`
+  `prepare_plan_retry`, `operational_plan_execution`,
+  `operational_plan_executions`
 - typed OPS state: `commander`, `commanders`, `commander_for_coalition`,
   `legions_of_commander`, `missions_of_commander`, `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,

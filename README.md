@@ -280,6 +280,52 @@ success. Optional intents are submitted but do not gate phase completion.
 A required cancellation, failure, timeout, or an unconfirmed strategic goal
 sets the plan to `blocked`; no automatic retry is performed.
 
+Blocked plans can be revised and resumed explicitly. Completed phases remain
+completed and are excluded from the new feasibility assessment and execution.
+Targets and recruitment constraints can be changed before the operator
+revalidates and approves the plan again:
+
+```python
+bridge.prepare_plan_retry(
+    plan,
+    # Optional; defaults to the first incomplete phase. Naming a completed
+    # phase explicitly reopens that phase and every phase after it.
+    resume_from="seize",
+    target_overrides={
+        ("seize", "capture-zone"): "OPSZONE:Town Fight",
+    },
+    allowed_legion_overrides={
+        ("seize", "capture-zone", "REQ:Ground assault"): ("LEGION:Brigade Laage",),
+    },
+    allowed_cohort_overrides={
+        ("seize", "capture-zone", "REQ:Ground assault"): ("COHORT:Abrams Laage",),
+    },
+)
+assessment = await bridge.refresh_and_validate_operational_plan(plan)
+if assessment.feasible:
+    bridge.approve_operational_plan(plan)
+    execution = await bridge.execute_plan(
+        plan,
+        commander="COMMANDER:Blue Commander",
+        on_event=print,
+    )
+
+for attempt in bridge.operational_plan_executions(plan):
+    print(format_operational_plan_execution(attempt))
+```
+
+Every call to `execute_plan()` creates a numbered attempt record. The complete
+in-memory history preserves generated AUFTRAGs, lifecycle events, outcomes,
+the selected COMMANDER, and the phase at which execution resumed. Changing the
+COMMANDER is therefore an execution decision and does not require modifying
+the plan itself.
+
+Before changing the plan to `executing`, a one-shot target preflight refreshes
+each required object kind and verifies every executable GROUP, UNIT, STATIC,
+ZONE, OPSZONE, AIRBASE, or TERRITORY id. A missing target leaves the plan
+`approved` and prevents all AUFTRAG creation. This is reconciliation at the
+execution boundary, not periodic polling.
+
 The COMMANDER selects suitable LEGIONs by default. `allowed_legion_ids` and
 `allowed_cohort_ids` on `AssetRequirement` constrain that MOOSE recruitment
 when Python needs to make the selection. `OperationalPosture` currently records the planning intent

@@ -40,8 +40,8 @@ GOAL_ID = "GOAL:Blue capture Town Fight"
 PLAN_ID = "PLAN:Blue capture Town Fight"
 
 # Approval records a command decision only. It does not create DCS AUFTRAGs.
-APPROVE_IF_FEASIBLE = False
-EXECUTE_IF_APPROVED = False
+APPROVE_IF_FEASIBLE = True
+EXECUTE_IF_APPROVED = True
 
 
 def requirement(

@@ -283,6 +283,12 @@ class OperationalPlanRegistry:
     def assessment(self, plan_id: str) -> OperationalPlanAssessment | None:
         return self._assessments.get(plan_id)
 
+    def invalidate(self, plan: OperationalPlan | str) -> None:
+        """Discard a stale feasibility assessment after a plan was changed."""
+
+        item = self._require(plan)
+        self._assessments.pop(item.plan_id, None)
+
     def validate(
         self,
         plan: OperationalPlan | str,
@@ -308,6 +314,8 @@ class OperationalPlanRegistry:
         results: list[RequirementAssessment] = []
 
         for phase in item.phases:
+            if phase.status is PlanPhaseStatus.COMPLETED:
+                continue
             remaining = {cohort.object_id: max(0, cohort.available_asset_count or 0) for cohort in coalition_cohorts}
             for cohort in coalition_cohorts:
                 if cohort.available_asset_count is None:

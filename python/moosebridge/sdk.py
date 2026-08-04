@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 import math
 from typing import Any
@@ -689,6 +689,34 @@ class MooseBridgeClient:
 
         plan_id = plan.plan_id if isinstance(plan, OperationalPlan) else plan
         return self.plan_executor.get(plan_id)
+
+    def operational_plan_executions(self, plan: OperationalPlan | str) -> tuple[OperationalPlanExecution, ...]:
+        """Return every execution attempt for an operational plan."""
+
+        plan_id = plan.plan_id if isinstance(plan, OperationalPlan) else plan
+        return self.plan_executor.history(plan_id)
+
+    def prepare_plan_retry(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        resume_from: str | None = None,
+        target_overrides: Mapping[tuple[str, str], str] | None = None,
+        allowed_legion_overrides: Mapping[tuple[str, str, str], Iterable[str]] | None = None,
+        allowed_cohort_overrides: Mapping[tuple[str, str, str], Iterable[str]] | None = None,
+    ) -> OperationalPlan:
+        """Prepare a blocked plan for explicit revalidation and another execution attempt."""
+
+        item = plan if isinstance(plan, OperationalPlan) else self.operational_plan(plan)
+        if item is None:
+            raise KeyError(f"Unknown operational plan: {plan}")
+        return self.plan_executor.prepare_retry(
+            item,
+            resume_from=resume_from,
+            target_overrides=target_overrides,
+            allowed_legion_overrides=allowed_legion_overrides,
+            allowed_cohort_overrides=allowed_cohort_overrides,
+        )
 
     async def execute_plan(
         self,
