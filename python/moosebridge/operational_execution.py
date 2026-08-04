@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from enum import Enum
 import inspect
+import logging
 from typing import TYPE_CHECKING, Any
 
 from .auftraege import (
@@ -35,6 +36,9 @@ from .strategic import StrategicGoalAction, StrategicGoalStatus
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
 
+LOGGER = logging.getLogger(__name__)
+PLAN_EXECUTION_AUDIT_TYPE = "operational_plan.execution"
+
 
 class PlanMissionStatus(str, Enum):
     """Execution state of one concrete AUFTRAG created from a requirement."""
@@ -46,6 +50,38 @@ class PlanMissionStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class PlanReconciliationStatus(str, Enum):
+    """Result of comparing one interrupted attempt with current MOOSE state."""
+
+    RUNNING = "running"
+    INDETERMINATE = "indeterminate"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+
+
+@dataclass(slots=True, frozen=True)
+class PlanMissionReconciliation:
+    """Observed MOOSE state for one previously submitted AUFTRAG."""
+
+    auftrag_id: str | None
+    phase_id: str
+    requirement_id: str
+    status: PlanMissionStatus
+    snapshot_found: bool
+    message: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class OperationalPlanReconciliation:
+    """One-shot reconciliation result without automatic retasking."""
+
+    plan_id: str
+    attempt_id: str
+    status: PlanReconciliationStatus
+    observations: tuple[PlanMissionReconciliation, ...]
+    message: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -74,7 +110,6 @@ class PlanExecutionEvent:
             parts.append(self.message)
         return " ".join(parts)
 
-
 @dataclass(slots=True)
 class PlanMissionExecution:
     """Runtime record connecting one requirement to one MOOSE AUFTRAG."""
@@ -85,11 +120,11 @@ class PlanMissionExecution:
     mission_type: str
     required: bool
     command: AuftragCommand | None = field(default=None, repr=False)
+    command_snapshot: dict[str, Any] = field(default_factory=dict)
     status: PlanMissionStatus = PlanMissionStatus.PENDING
     auftrag_id: str | None = None
     outcome: AuftragOutcome | None = None
     error: str | None = None
-
 
 @dataclass(slots=True)
 class OperationalPlanExecution:
@@ -105,9 +140,13 @@ class OperationalPlanExecution:
     started_mission_time: float | None = None
     completed_mission_time: float | None = None
     blocked_reason: str | None = None
+    plan_snapshot: dict[str, Any] = field(default_factory=dict)
+    goal_snapshot: dict[str, Any] = field(default_factory=dict)
+    objective_snapshot: dict[str, Any] = field(default_factory=dict)
+    assessment_snapshot: dict[str, Any] = field(default_factory=dict)
     missions: list[PlanMissionExecution] = field(default_factory=list)
     events: list[PlanExecutionEvent] = field(default_factory=list)
-
+    plan_ref: OperationalPlan | None = field(default=None, repr=False, compare=False)
 
 PlanExecutionCallback = Callable[[PlanExecutionEvent], Any | Awaitable[Any]]
 
@@ -118,6 +157,7 @@ class OperationalPlanExecutor:
     def __init__(self, client: MooseBridgeClient) -> None:
         self.client = client
         self._executions: dict[str, list[OperationalPlanExecution]] = {}
+        self._loaded_plan_ids: set[str] = set()
 
     def get(self, plan_id: str) -> OperationalPlanExecution | None:
         history = self._executions.get(plan_id, ())
@@ -127,6 +167,225 @@ class OperationalPlanExecutor:
         """Return all execution attempts for a plan in chronological order."""
 
         return tuple(self._executions.get(plan_id, ()))
+
+    async def refresh_history(self, plan_id: str) -> tuple[OperationalPlanExecution, ...]:
+        """Load the latest persistent snapshot of every attempt from the daemon."""
+
+        query = getattr(self.client.server, "query_audit_records", None)
+        if query is None:
+            self._loaded_plan_ids.add(plan_id)
+            return self.history(plan_id)
+        records = await query(
+            record_type=PLAN_EXECUTION_AUDIT_TYPE,
+            plan_id=plan_id,
+            latest_attempts=True,
+        )
+        restored: list[OperationalPlanExecution] = []
+        from .operational_audit import execution_from_dict
+
+        for record in records:
+            payload = record.get("payload") if isinstance(record, dict) else None
+            if isinstance(payload, dict):
+                try:
+                    restored.append(execution_from_dict(payload))
+                except (TypeError, ValueError) as exc:
+                    LOGGER.warning("Ignoring invalid operational audit payload for %s: %s", plan_id, exc)
+        local = {execution.attempt_id: execution for execution in self._executions.get(plan_id, ())}
+        merged = {execution.attempt_id: execution for execution in restored}
+        merged.update(local)
+        self._executions[plan_id] = sorted(merged.values(), key=lambda execution: execution.attempt_number)
+        self._loaded_plan_ids.add(plan_id)
+        return self.history(plan_id)
+
+    async def reconcile(
+        self,
+        plan: OperationalPlan,
+        *,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanReconciliation:
+        """Reconcile an interrupted execution from one current AUFTRAG snapshot."""
+
+        if plan.plan_id not in self._loaded_plan_ids:
+            await self.refresh_history(plan.plan_id)
+        execution = self.get(plan.plan_id)
+        if plan.status is not OperationalPlanStatus.EXECUTING or execution is None:
+            raise ValueError("only a restored executing operational plan can be reconciled")
+        if execution.status is not OperationalPlanStatus.EXECUTING:
+            raise ValueError("latest operational plan attempt is not executing")
+
+        await self.client.snapshot_auftraege()
+        observations: list[PlanMissionReconciliation] = []
+        required = [mission for mission in execution.missions if mission.required]
+        for mission in required:
+            previous = mission.status
+            snapshot = self.client.state.auftraege.get(mission.auftrag_id or "")
+            message: str | None = None
+            if mission.status in {
+                PlanMissionStatus.SUCCEEDED,
+                PlanMissionStatus.FAILED,
+                PlanMissionStatus.CANCELLED,
+            }:
+                pass
+            elif not mission.auftrag_id:
+                message = "required mission has no AUFTRAG id"
+            elif snapshot is None:
+                message = "AUFTRAG is absent from the current MOOSE snapshot"
+            elif isinstance(snapshot.get("summary"), dict):
+                mission.outcome = AuftragOutcome.from_snapshot(snapshot)
+                mission.status = (
+                    PlanMissionStatus.SUCCEEDED if mission.outcome.success is True else PlanMissionStatus.FAILED
+                )
+                mission.error = None if mission.status is PlanMissionStatus.SUCCEEDED else "AUFTRAG evaluated without success"
+            else:
+                status = str(snapshot.get("status") or "").strip().lower()
+                if status in {"cancel", "cancelled", "canceled"}:
+                    mission.status = PlanMissionStatus.CANCELLED
+                    mission.error = "AUFTRAG was cancelled"
+                elif status in {"failed", "failure"}:
+                    mission.status = PlanMissionStatus.FAILED
+                    mission.error = "AUFTRAG snapshot reports failure"
+                elif status in {"planned", "queued", "requested", "scheduled", "started", "executing", "done"}:
+                    mission.status = PlanMissionStatus.RUNNING
+                else:
+                    message = "AUFTRAG snapshot has no recognized lifecycle status"
+
+            if mission.status is not previous:
+                await self._mission_event(execution, mission, "mission.reconciled", on_event, message=message)
+            observations.append(
+                PlanMissionReconciliation(
+                    mission.auftrag_id,
+                    mission.phase_id,
+                    mission.requirement_id,
+                    mission.status,
+                    snapshot is not None,
+                    message or mission.error,
+                )
+            )
+
+        if not required:
+            return OperationalPlanReconciliation(
+                plan.plan_id,
+                execution.attempt_id,
+                PlanReconciliationStatus.INDETERMINATE,
+                tuple(observations),
+                "interrupted attempt has no required submitted missions",
+            )
+        failed = next(
+            (mission for mission in required if mission.status in {PlanMissionStatus.FAILED, PlanMissionStatus.CANCELLED}),
+            None,
+        )
+        if failed is not None:
+            phase = self._phase(plan, failed.phase_id)
+            await self._block(plan, phase, execution, failed.error or f"{failed.auftrag_id} did not succeed", on_event)
+            return OperationalPlanReconciliation(
+                plan.plan_id,
+                execution.attempt_id,
+                PlanReconciliationStatus.BLOCKED,
+                tuple(observations),
+                execution.blocked_reason,
+            )
+        if any(
+            (not observation.snapshot_found or observation.auftrag_id is None)
+            and observation.status not in {
+                PlanMissionStatus.SUCCEEDED,
+                PlanMissionStatus.FAILED,
+                PlanMissionStatus.CANCELLED,
+            }
+            for observation in observations
+        ) or any(
+            observation.message == "AUFTRAG snapshot has no recognized lifecycle status"
+            for observation in observations
+        ):
+            await self._persist(execution)
+            return OperationalPlanReconciliation(
+                plan.plan_id,
+                execution.attempt_id,
+                PlanReconciliationStatus.INDETERMINATE,
+                tuple(observations),
+                "one or more required AUFTRAGs could not be identified",
+            )
+        if any(mission.status is not PlanMissionStatus.SUCCEEDED for mission in required):
+            await self._persist(execution)
+            return OperationalPlanReconciliation(
+                plan.plan_id,
+                execution.attempt_id,
+                PlanReconciliationStatus.RUNNING,
+                tuple(observations),
+                "one or more required AUFTRAGs are still running",
+            )
+        status, message = await self._finish_reconciled_phase(plan, execution, on_event)
+        return OperationalPlanReconciliation(plan.plan_id, execution.attempt_id, status, tuple(observations), message)
+
+    async def monitor_interrupted(
+        self,
+        plan: OperationalPlan,
+        *,
+        mission_timeout_s: float = 3600.0,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanReconciliation:
+        """Reattach to live AUFTRAG events and stop at the next plan boundary."""
+
+        reconciled = await self.reconcile(plan, on_event=on_event)
+        if reconciled.status is not PlanReconciliationStatus.RUNNING:
+            return reconciled
+        execution = self.get(plan.plan_id)
+        assert execution is not None
+        current = self._current_execution_phase(plan, execution)
+        missions = [
+            mission
+            for mission in execution.missions
+            if mission.required
+            and mission.phase_id == current.phase_id
+            and mission.status in {PlanMissionStatus.SUBMITTED, PlanMissionStatus.RUNNING}
+        ]
+        failed = await self._wait_for_required_missions(
+            execution,
+            missions,
+            mission_timeout_s=mission_timeout_s,
+            on_event=on_event,
+        )
+        if failed is not None:
+            await self._block(plan, current, execution, failed.error or f"{failed.auftrag_id} did not succeed", on_event)
+            return OperationalPlanReconciliation(
+                plan.plan_id,
+                execution.attempt_id,
+                PlanReconciliationStatus.BLOCKED,
+                reconciled.observations,
+                execution.blocked_reason,
+            )
+        status, message = await self._finish_reconciled_phase(plan, execution, on_event)
+        return OperationalPlanReconciliation(
+            plan.plan_id,
+            execution.attempt_id,
+            status,
+            reconciled.observations,
+            message,
+        )
+
+    async def block_interrupted(
+        self,
+        plan: OperationalPlan,
+        *,
+        reason: str,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanExecution:
+        """Explicitly block an indeterminate interrupted attempt for replanning."""
+
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("blocking an interrupted plan requires a reason")
+        if plan.plan_id not in self._loaded_plan_ids:
+            await self.refresh_history(plan.plan_id)
+        execution = self.get(plan.plan_id)
+        if plan.status is not OperationalPlanStatus.EXECUTING or execution is None:
+            raise ValueError("only an executing interrupted plan can be blocked")
+        if execution.status is not OperationalPlanStatus.EXECUTING:
+            raise ValueError("latest operational plan attempt is not executing")
+        try:
+            phase = self._current_execution_phase(plan, execution)
+        except ValueError:
+            phase = None
+        return await self._block(plan, phase, execution, reason, on_event)
 
     def prepare_retry(
         self,
@@ -240,6 +499,8 @@ class OperationalPlanExecutor:
         assessment = self.client.plans.assessment(plan.plan_id)
         if assessment is None or not assessment.feasible:
             raise ValueError("operational plan requires a current feasible assessment")
+        if plan.plan_id not in self._loaded_plan_ids:
+            await self.refresh_history(plan.plan_id)
         latest = self.get(plan.plan_id)
         if latest and latest.status is OperationalPlanStatus.EXECUTING:
             raise ValueError(f"operational plan is already executing: {plan.plan_id}")
@@ -291,7 +552,11 @@ class OperationalPlanExecutor:
         await self._preflight_targets(prepared.values())
 
         history = self._executions.setdefault(plan.plan_id, [])
+        if latest is not None:
+            await self._persist(latest)
         attempt_number = len(history) + 1
+        from .operational_audit import assessment_snapshot, plan_snapshot
+
         execution = OperationalPlanExecution(
             plan_id=plan.plan_id,
             commander_id=commander.object_id,
@@ -300,6 +565,9 @@ class OperationalPlanExecutor:
             resumed_from_phase_id=plan.metadata.pop("retry_resume_phase_id", None),
             status=OperationalPlanStatus.EXECUTING,
             started_mission_time=self.client._current_mission_time(),
+            plan_snapshot=plan_snapshot(plan),
+            assessment_snapshot=assessment_snapshot(assessment),
+            plan_ref=plan,
         )
         history.append(execution)
         plan.status = OperationalPlanStatus.EXECUTING
@@ -453,7 +721,9 @@ class OperationalPlanExecutor:
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
+                mission.status = PlanMissionStatus.FAILED
                 mission.error = f"timed out waiting for {mission.auftrag_id}"
+                await self._mission_event(execution, mission, "mission.failed", on_event)
                 return False
             message = await self.client.server.wait_for_event(
                 "auftrag.*",
@@ -498,6 +768,72 @@ class OperationalPlanExecutor:
             await self.client.snapshot_airbases()
         elif objective.control_object_id.startswith("TERRITORY:"):
             await self.client.snapshot_territories()
+
+    async def _finish_reconciled_phase(
+        self,
+        plan: OperationalPlan,
+        execution: OperationalPlanExecution,
+        callback: PlanExecutionCallback | None,
+    ) -> tuple[PlanReconciliationStatus, str | None]:
+        current = self._current_execution_phase(plan, execution)
+        current.status = PlanPhaseStatus.COMPLETED
+        await self._emit(
+            execution,
+            PlanExecutionEvent(
+                "phase.reconciled",
+                plan.plan_id,
+                phase_id=current.phase_id,
+                status=current.status.value,
+            ),
+            callback,
+        )
+        next_phase = next(
+            (phase for phase in plan.phases if phase.status is not PlanPhaseStatus.COMPLETED),
+            None,
+        )
+        if next_phase is not None:
+            reason = "interrupted phase completed; remaining phases require explicit revalidation and approval"
+            await self._block(plan, next_phase, execution, reason, callback)
+            return PlanReconciliationStatus.BLOCKED, reason
+
+        goal = self.client.strategic_goal(plan.goal_id)
+        if goal is None:
+            reason = f"strategic goal is unavailable after reconciliation: {plan.goal_id}"
+            await self._block(plan, None, execution, reason, callback)
+            return PlanReconciliationStatus.BLOCKED, reason
+        await self._refresh_goal_control(goal.objective_id)
+        self.client.sync_strategic_objectives(source="plan.reconciliation")
+        self.client.sync_strategic_goals(source="plan.reconciliation")
+        if goal.status is not StrategicGoalStatus.ACHIEVED:
+            reason = "missions completed but the strategic goal is not achieved"
+            await self._block(plan, None, execution, reason, callback)
+            return PlanReconciliationStatus.BLOCKED, reason
+
+        plan.status = OperationalPlanStatus.COMPLETED
+        execution.status = plan.status
+        execution.current_phase_id = None
+        execution.completed_mission_time = self.client._current_mission_time()
+        await self._emit(
+            execution,
+            PlanExecutionEvent("plan.reconciled", plan.plan_id, status=plan.status.value),
+            callback,
+        )
+        return PlanReconciliationStatus.COMPLETED, None
+
+    @staticmethod
+    def _current_execution_phase(plan: OperationalPlan, execution: OperationalPlanExecution) -> PlanPhase:
+        if execution.current_phase_id:
+            return OperationalPlanExecutor._phase(plan, execution.current_phase_id)
+        active = next((phase for phase in plan.phases if phase.status is PlanPhaseStatus.ACTIVE), None)
+        if active is not None:
+            return active
+        mission_phase_id = next(
+            (mission.phase_id for mission in reversed(execution.missions) if mission.required),
+            None,
+        )
+        if mission_phase_id:
+            return OperationalPlanExecutor._phase(plan, mission_phase_id)
+        raise ValueError("interrupted execution has no identifiable active phase")
 
     async def _preflight_targets(self, commands: Iterable[AuftragCommand]) -> None:
         """Refresh and verify every object id used by executable commands."""
@@ -615,10 +951,31 @@ class OperationalPlanExecutor:
                 execution.attempt_id,
             )
         execution.events.append(event)
+        await self._persist(execution)
         if callback is not None:
             result = callback(event)
             if inspect.isawaitable(result):
                 await result
+
+    async def _persist(self, execution: OperationalPlanExecution) -> None:
+        append = getattr(self.client.server, "append_audit_record", None)
+        if append is None:
+            return
+        try:
+            from .operational_audit import execution_to_dict, goal_snapshot, objective_snapshot, plan_snapshot
+
+            if execution.plan_ref is not None:
+                execution.plan_snapshot = plan_snapshot(execution.plan_ref)
+                goal = self.client.strategic_goal(execution.plan_ref.goal_id)
+                if goal is not None:
+                    execution.goal_snapshot = goal_snapshot(goal)
+                    objective = self.client.strategic_objective(goal.objective_id)
+                    if objective is not None:
+                        execution.objective_snapshot = objective_snapshot(objective)
+
+            await append(PLAN_EXECUTION_AUDIT_TYPE, execution_to_dict(execution))
+        except Exception:
+            LOGGER.warning("Could not persist operational execution %s", execution.attempt_id, exc_info=True)
 
     @staticmethod
     def _phase(plan: OperationalPlan, phase_id: str) -> PlanPhase:
@@ -704,9 +1061,12 @@ def build_plan_auftrag(
 __all__ = [
     "OperationalPlanExecution",
     "OperationalPlanExecutor",
+    "OperationalPlanReconciliation",
     "PlanExecutionCallback",
     "PlanExecutionEvent",
     "PlanMissionExecution",
+    "PlanMissionReconciliation",
     "PlanMissionStatus",
+    "PlanReconciliationStatus",
     "build_plan_auftrag",
 ]

@@ -29,10 +29,12 @@ from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZon
 from .outcomes import AuftragOutcome
 from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
 from .operational_execution import (
+    OperationalPlanReconciliation,
     OperationalPlanExecution,
     OperationalPlanExecutor,
     PlanExecutionCallback,
 )
+from .operational_audit import RestoredOperationalPlan
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .server import MooseBridgeServer
@@ -695,6 +697,106 @@ class MooseBridgeClient:
 
         plan_id = plan.plan_id if isinstance(plan, OperationalPlan) else plan
         return self.plan_executor.history(plan_id)
+
+    async def refresh_operational_plan_executions(
+        self,
+        plan: OperationalPlan | str,
+    ) -> tuple[OperationalPlanExecution, ...]:
+        """Load persistent execution attempts from the daemon audit store."""
+
+        plan_id = plan.plan_id if isinstance(plan, OperationalPlan) else plan
+        return await self.plan_executor.refresh_history(plan_id)
+
+    async def restore_operational_plan(
+        self,
+        plan_id: str,
+        *,
+        replace: bool = False,
+    ) -> RestoredOperationalPlan:
+        """Restore an objective, goal and plan from the daemon audit history."""
+
+        executions = await self.plan_executor.refresh_history(plan_id)
+        if not executions:
+            raise KeyError(f"No operational audit history found: {plan_id}")
+        latest = executions[-1]
+        if not latest.plan_snapshot or not latest.goal_snapshot or not latest.objective_snapshot:
+            raise ValueError(
+                f"Operational audit for {plan_id} predates restorable strategic snapshots"
+            )
+
+        from .operational_audit import goal_from_snapshot, objective_from_snapshot, plan_from_snapshot
+
+        objective = objective_from_snapshot(latest.objective_snapshot)
+        goal = goal_from_snapshot(latest.goal_snapshot)
+        plan = plan_from_snapshot(latest.plan_snapshot)
+        if plan.plan_id != plan_id:
+            raise ValueError(f"Operational audit plan id mismatch: {plan.plan_id}")
+        if goal.objective_id != objective.objective_id or plan.goal_id != goal.goal_id:
+            raise ValueError("Operational audit strategic references are inconsistent")
+        if plan.coalition != goal.coalition:
+            raise ValueError("Operational audit plan and goal coalitions are inconsistent")
+
+        conflicts = [
+            object_id
+            for object_id, existing in (
+                (objective.objective_id, self.objectives.get(objective.objective_id)),
+                (goal.goal_id, self.goals.get(goal.goal_id)),
+                (plan.plan_id, self.plans.get(plan.plan_id)),
+            )
+            if existing is not None
+        ]
+        if conflicts and not replace:
+            raise ValueError(f"Restore would replace existing objects: {', '.join(conflicts)}")
+
+        self.objectives.add(objective, replace=self.objectives.get(objective.objective_id) is not None)
+        self.goals.add(goal, replace=self.goals.get(goal.goal_id) is not None)
+        self.plans.add(plan, replace=self.plans.get(plan.plan_id) is not None)
+        return RestoredOperationalPlan(objective, goal, plan, executions)
+
+    async def reconcile_operational_plan(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanReconciliation:
+        """Reconcile one restored executing plan from a current AUFTRAG snapshot."""
+
+        item = plan if isinstance(plan, OperationalPlan) else self.operational_plan(plan)
+        if item is None:
+            raise KeyError(f"Unknown operational plan: {plan}")
+        return await self.plan_executor.reconcile(item, on_event=on_event)
+
+    async def monitor_interrupted_operational_plan(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        mission_timeout_s: float = 3600.0,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanReconciliation:
+        """Reattach to current AUFTRAG events without submitting new missions."""
+
+        item = plan if isinstance(plan, OperationalPlan) else self.operational_plan(plan)
+        if item is None:
+            raise KeyError(f"Unknown operational plan: {plan}")
+        return await self.plan_executor.monitor_interrupted(
+            item,
+            mission_timeout_s=mission_timeout_s,
+            on_event=on_event,
+        )
+
+    async def block_interrupted_operational_plan(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        reason: str,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanExecution:
+        """Explicitly block an unresolved interrupted plan so it can be replanned."""
+
+        item = plan if isinstance(plan, OperationalPlan) else self.operational_plan(plan)
+        if item is None:
+            raise KeyError(f"Unknown operational plan: {plan}")
+        return await self.plan_executor.block_interrupted(item, reason=reason, on_event=on_event)
 
     def prepare_plan_retry(
         self,

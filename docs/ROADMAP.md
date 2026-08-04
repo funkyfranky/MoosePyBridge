@@ -333,6 +333,15 @@ Current operational-planning baseline:
   strategic goal confirmation failed after their AUFTRAGs completed.
 - Each execution has a stable attempt id and remains available in chronological
   runtime history; changing the COMMANDER for a later attempt is supported.
+- Operational execution snapshots are persisted in the daemon's versioned,
+  append-only JSONL audit store and can be restored by a new SDK process.
+- The SDK can reconstruct and register the audited strategic objective, goal,
+  operational plan, phase states, and execution history without issuing DCS
+  commands. Blocked plans re-enter the normal explicit retry workflow.
+- Interrupted `executing` attempts can be reconciled through one AUFTRAG
+  snapshot and optionally reattached to existing FSM events. Missing missions
+  remain indeterminate until an operator explicitly blocks them; reconciliation
+  never creates a replacement AUFTRAG.
 
 ## Phase 4: Command SDK and policies
 
@@ -407,9 +416,11 @@ The next milestone is controlled plan execution:
 4. Add automatic pre-phase revalidation and explicit abort. Explicit replan,
    operator reapproval, target changes, recruitment changes, and resume from
    the first incomplete phase are implemented.
-5. Persist the existing in-memory attempt history, including plan, allocation
-   decision, generated command, ACK, lifecycle events, and outcome, in the
-   daemon audit store.
+5. Expand the implemented operational execution audit history to recommendations,
+   explicit operator approvals, raw ACK references, and authenticated client
+   identities.
+6. Extend the implemented interrupted-attempt reconciliation with explicit
+   cancellation of still-running MOOSE AUFTRAGs when an operator chooses abort.
 
 The frontline, ammunition, capability, strategic objective, and strategic goal
 layers are established inputs to this planner. They remain Python-owned

@@ -130,6 +130,46 @@ def test_state_payload_roundtrip_applies_requested_kinds() -> None:
     assert target.snapshot_clocks["objects"].sequence == 12
 
 
+def test_control_audit_records_survive_daemon_restart(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "daemon-audit.jsonl"
+        first_bridge = MooseBridgeServer(audit_path=path)
+        first_control = MooseBridgeControlServer(first_bridge, host="127.0.0.1", port=0)
+        await first_control.start()
+        first_client = MooseBridgeControlClient("127.0.0.1", _control_port(first_control))
+        try:
+            await first_client.append_audit_record(
+                "operational_plan.execution",
+                {
+                    "plan_id": "PLAN:Control",
+                    "attempt_id": "PLAN:Control/ATTEMPT:1",
+                    "attempt_number": 1,
+                    "status": "completed",
+                },
+            )
+        finally:
+            await first_control.stop()
+            await first_bridge.stop()
+
+        second_bridge = MooseBridgeServer(audit_path=path)
+        second_control = MooseBridgeControlServer(second_bridge, host="127.0.0.1", port=0)
+        await second_control.start()
+        second_client = MooseBridgeControlClient("127.0.0.1", _control_port(second_control))
+        try:
+            records = await second_client.query_audit_records(
+                record_type="operational_plan.execution",
+                plan_id="PLAN:Control",
+                latest_attempts=True,
+            )
+            assert len(records) == 1
+            assert records[0]["payload"]["status"] == "completed"
+        finally:
+            await second_control.stop()
+            await second_bridge.stop()
+
+    asyncio.run(scenario())
+
+
 def test_state_payload_roundtrip_includes_loss_reports() -> None:
     source = MooseBridgeState(connected=True)
     source.loss_reports["LOSS:event-1"] = {

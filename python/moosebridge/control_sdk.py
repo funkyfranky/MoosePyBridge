@@ -42,6 +42,29 @@ class ControlSdkAdapter:
 
         return await self.client.wait_for_event(event_name, filters=filters, timeout=timeout, after_id=after_id)
 
+    async def append_audit_record(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Append one SDK audit record through the control API."""
+
+        return await self.client.append_audit_record(record_type, payload, timeout=self.timeout)
+
+    async def query_audit_records(
+        self,
+        *,
+        record_type: str | None = None,
+        plan_id: str | None = None,
+        attempt_id: str | None = None,
+        latest_attempts: bool = False,
+    ) -> tuple[dict[str, Any], ...]:
+        """Query SDK audit records through the control API."""
+
+        return await self.client.query_audit_records(
+            record_type=record_type,
+            plan_id=plan_id,
+            attempt_id=attempt_id,
+            latest_attempts=latest_attempts,
+            timeout=self.timeout,
+        )
+
     async def _snapshot(self, kind: str) -> dict[str, Any]:
         action = f"snapshot.{kind}"
         result = await self.client.request("control.snapshots", params={"actions": [action]}, timeout=self.timeout)

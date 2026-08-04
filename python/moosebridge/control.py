@@ -273,6 +273,21 @@ class MooseBridgeControlServer:
             after_id = str(request.params.get("after_id") or "") or None
             event = await self.bridge_server.wait_for_event(event_name, filters=filters, timeout=request.timeout, after_id=after_id)
             return {"event": event}
+        if action == "control.audit.append":
+            record_type = str(request.params.get("record_type") or "").strip()
+            payload = request.params.get("payload")
+            if not record_type or not isinstance(payload, dict):
+                raise ValueError("control.audit.append requires record_type and payload object")
+            record = await self.bridge_server.append_audit_record(record_type, payload)
+            return {"record": record}
+        if action == "control.audit.query":
+            records = await self.bridge_server.query_audit_records(
+                record_type=str(request.params.get("record_type") or "") or None,
+                plan_id=str(request.params.get("plan_id") or "") or None,
+                attempt_id=str(request.params.get("attempt_id") or "") or None,
+                latest_attempts=bool(request.params.get("latest_attempts", False)),
+            )
+            return {"records": list(records)}
 
         ack = await self.bridge_server.send_command(BridgeCommand(action=action, params=request.params), timeout=request.timeout)
         return {"ack": ack, "state": state_payload(self.bridge_server.state)}
@@ -387,6 +402,45 @@ class MooseBridgeControlClient:
         if not ack.get("ok", False):
             raise RuntimeError(str(ack.get("error") or ack))
         return ack
+
+    async def append_audit_record(
+        self,
+        record_type: str,
+        payload: dict[str, Any],
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Append one semantic record to the daemon audit store."""
+
+        result = await self.request(
+            "control.audit.append",
+            params={"record_type": record_type, "payload": payload},
+            timeout=timeout,
+        )
+        return result.get("record") if isinstance(result.get("record"), dict) else {}
+
+    async def query_audit_records(
+        self,
+        *,
+        record_type: str | None = None,
+        plan_id: str | None = None,
+        attempt_id: str | None = None,
+        latest_attempts: bool = False,
+        timeout: float = 10.0,
+    ) -> tuple[dict[str, Any], ...]:
+        """Query semantic audit records from the daemon store."""
+
+        result = await self.request(
+            "control.audit.query",
+            params={
+                "record_type": record_type,
+                "plan_id": plan_id,
+                "attempt_id": attempt_id,
+                "latest_attempts": latest_attempts,
+            },
+            timeout=timeout,
+        )
+        records = result.get("records") if isinstance(result.get("records"), list) else []
+        return tuple(record for record in records if isinstance(record, dict))
 
     async def wait_for_event(
         self,

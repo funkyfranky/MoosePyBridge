@@ -30,6 +30,7 @@ async def _run(args: argparse.Namespace) -> None:
         args.port,
         Path(args.log) if args.log else None,
         reader_limit=args.reader_limit,
+        audit_path=Path(args.audit_log) if args.audit_log else None,
     )
     control_server = None
     if not args.no_control:
@@ -65,6 +66,11 @@ def main() -> None:
     parser.add_argument("--control-port", type=int, default=DEFAULT_CONTROL_PORT, help="Local control TCP port for Python tools.")
     parser.add_argument("--no-control", action="store_true", help="Disable the local control server.")
     parser.add_argument("--log", default="moosebridge_raw.jsonl", help="Optional raw JSONL DCS protocol log path.")
+    parser.add_argument(
+        "--audit-log",
+        default="moosebridge_audit.jsonl",
+        help="Persistent semantic audit JSONL path; pass an empty value to disable file persistence.",
+    )
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--reader-limit", type=int, default=DEFAULT_READER_LIMIT, help="Maximum incoming DCS JSONL line size in bytes.")
     parser.add_argument("--control-reader-limit", type=int, default=DEFAULT_READER_LIMIT, help="Maximum incoming control JSONL line size in bytes.")

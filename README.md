@@ -314,11 +314,57 @@ for attempt in bridge.operational_plan_executions(plan):
     print(format_operational_plan_execution(attempt))
 ```
 
-Every call to `execute_plan()` creates a numbered attempt record. The complete
-in-memory history preserves generated AUFTRAGs, lifecycle events, outcomes,
-the selected COMMANDER, and the phase at which execution resumed. Changing the
-COMMANDER is therefore an execution decision and does not require modifying
-the plan itself.
+Every call to `execute_plan()` creates a numbered attempt record. The daemon
+persists snapshots of the plan, feasibility assessment and provisional COHORT
+allocations, generated AUFTRAGs, lifecycle events, outcomes, selected COMMANDER,
+and resume phase in `moosebridge_audit.jsonl`. A new SDK process can load them
+with `await bridge.refresh_operational_plan_executions(plan)`; `execute_plan()`
+also refreshes them automatically before assigning the next attempt number.
+Changing the COMMANDER is therefore an execution decision and does not require
+modifying the plan itself. Audit write failures are logged but do not interrupt
+a mission already being executed.
+
+After an SDK process restart, the complete typed planning context can be
+restored explicitly without issuing DCS commands:
+
+```python
+restored = await bridge.restore_operational_plan("PLAN:Blue capture Town Fight")
+plan = restored.plan
+
+if plan.status.value == "blocked":
+    bridge.prepare_plan_retry(plan)
+    assessment = await bridge.refresh_and_validate_operational_plan(plan)
+    if assessment.feasible:
+        bridge.approve_operational_plan(plan)
+        execution = await bridge.execute_plan(plan, on_event=print)
+```
+
+The restore registers the audited `StrategicObjective`, `StrategicGoal`, and
+`OperationalPlan` in dependency order and returns all execution attempts in a
+`RestoredOperationalPlan`. Existing registry objects are protected by default;
+pass `replace=True` only for an intentional replacement. An interrupted attempt
+whose last state is `executing` remains `executing` after restore because its
+MOOSE AUFTRAG may still be active. It must be reconciled before any retry:
+
+```python
+result = await bridge.reconcile_operational_plan(plan)
+print(format_operational_plan_reconciliation(result))
+
+if result.status.value == "running":
+    result = await bridge.monitor_interrupted_operational_plan(plan, on_event=print)
+elif result.status.value == "indeterminate":
+    await bridge.block_interrupted_operational_plan(
+        plan,
+        reason="Operator confirmed that the AUFTRAG no longer exists",
+    )
+```
+
+Reconciliation requests one current AUFTRAG snapshot. A MOOSE summary is the
+authoritative terminal result; an existing non-terminal AUFTRAG remains
+`running`, while a missing or unrecognized AUFTRAG is `indeterminate` and is
+not guessed to have failed. Monitoring then uses AUFTRAG FSM events without
+polling and never submits a replacement mission. After a reconciled phase, any
+remaining phase is blocked for explicit revalidation and approval.
 
 Before changing the plan to `executing`, a one-shot target preflight refreshes
 each required object kind and verifies every executable GROUP, UNIT, STATIC,
@@ -389,7 +435,7 @@ From the project root:
 
 ```bash
 pip install -e .
-python -m moosebridge --host 127.0.0.1 --port 42000 --control-port 42001 --log moosebridge_raw.jsonl
+python -m moosebridge --host 127.0.0.1 --port 42000 --control-port 42001 --log moosebridge_raw.jsonl --audit-log moosebridge_audit.jsonl
 ```
 
 On Windows, the included helper scripts set `PYTHONPATH` for local development:
@@ -402,7 +448,7 @@ On Windows, the included helper scripts set `PYTHONPATH` for local development:
 The default console script starts the daemon with the local control API enabled:
 
 ```bash
-moosebridge-server --host 127.0.0.1 --port 42000 --control-port 42001 --log moosebridge_raw.jsonl
+moosebridge-server --host 127.0.0.1 --port 42000 --control-port 42001 --log moosebridge_raw.jsonl --audit-log moosebridge_audit.jsonl
 ```
 
 Additional installed entry points:

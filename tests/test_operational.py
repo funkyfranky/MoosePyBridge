@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from moosebridge import (
@@ -16,12 +17,17 @@ from moosebridge import (
     OwnershipPolicy,
     PlanPhase,
     PlanPhaseStatus,
+    PlanMissionStatus,
+    PlanReconciliationStatus,
     StrategicGoal,
     StrategicGoalAction,
+    StrategicGoalStatus,
     StrategicObjective,
     format_operational_plan_assessment,
     format_operational_plan_execution,
+    format_operational_plan_reconciliation,
 )
+from moosebridge.audit import AuditStore, latest_attempt_records
 from moosebridge.protocol import BridgeCommand
 from moosebridge.state import MooseBridgeState
 
@@ -323,15 +329,33 @@ class _ExecutionServer:
         final_owner: str = "blue",
         group_ids: tuple[str, ...] = (),
         opszone_ids: tuple[str, ...] = ("OPSZONE:Town",),
+        audit_path: Path | None = None,
+        auftrag_snapshots: list[dict[str, Any]] | None = None,
     ) -> None:
         self.state = MooseBridgeState(connected=True)
         self.success = success
         self.final_owner = final_owner
         self.group_ids = group_ids
         self.opszone_ids = opszone_ids
+        self.audit_store = AuditStore(audit_path)
+        self.auftrag_snapshots = auftrag_snapshots or []
         self.commands: list[BridgeCommand] = []
         self._mission_number = 0
         self._event_number = 0
+
+    async def append_audit_record(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.audit_store.append(record_type, payload)
+
+    async def query_audit_records(
+        self,
+        *,
+        record_type: str | None = None,
+        plan_id: str | None = None,
+        attempt_id: str | None = None,
+        latest_attempts: bool = False,
+    ) -> tuple[dict[str, Any], ...]:
+        records = self.audit_store.query(record_type=record_type, plan_id=plan_id, attempt_id=attempt_id)
+        return latest_attempt_records(records) if latest_attempts else records
 
     async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
         self.commands.append(command)
@@ -404,6 +428,16 @@ class _ExecutionServer:
         )
         return {"ok": True, "result": {"kind": "groups", "count": len(self.group_ids)}}
 
+    async def snapshot_auftraege(self) -> dict[str, Any]:
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "auftraege",
+                "payload": {"auftraege": self.auftrag_snapshots},
+            }
+        )
+        return {"ok": True, "result": {"kind": "auftraege", "count": len(self.auftrag_snapshots)}}
+
     async def snapshot_airbases(self) -> dict[str, Any]:
         return {"ok": True, "result": {"kind": "airbases", "count": 0}}
 
@@ -411,8 +445,15 @@ class _ExecutionServer:
         return {"ok": True, "result": {"kind": "territories", "count": 0}}
 
 
-def _executable_capture_plan(*, success: bool = True, final_owner: str = "blue") -> tuple[MooseBridgeClient, OperationalPlan]:
-    bridge = MooseBridgeClient(_ExecutionServer(success=success, final_owner=final_owner))  # type: ignore[arg-type]
+def _executable_capture_plan(
+    *,
+    success: bool = True,
+    final_owner: str = "blue",
+    audit_path: Path | None = None,
+) -> tuple[MooseBridgeClient, OperationalPlan]:
+    bridge = MooseBridgeClient(  # type: ignore[arg-type]
+        _ExecutionServer(success=success, final_owner=final_owner, audit_path=audit_path)
+    )
     bridge.add_strategic_objective(
         StrategicObjective(
             objective_id="OBJECTIVE:Town",
@@ -826,5 +867,246 @@ def test_explicit_retry_can_reopen_completed_phase_after_goal_confirmation_failu
         assert second.resumed_from_phase_id == "seize"
         assert len(bridge.operational_plan_executions(plan)) == 2
         assert len(bridge.server.commands) == 2  # type: ignore[attr-defined]
+
+    asyncio.run(scenario())
+
+
+def test_execution_history_and_attempt_numbers_survive_sdk_restart(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "operational-audit.jsonl"
+        first_bridge, first_plan = _executable_capture_plan(audit_path=path)
+        first = await first_bridge.execute_plan(first_plan)
+        first_bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+        restore_server = _ExecutionServer(audit_path=path)
+        restore_bridge = MooseBridgeClient(restore_server)  # type: ignore[arg-type]
+        restored_context = await restore_bridge.restore_operational_plan("PLAN:Capture Town")
+
+        assert restored_context.plan.status is OperationalPlanStatus.COMPLETED
+        assert restored_context.plan.phases[0].status is PlanPhaseStatus.COMPLETED
+        assert restored_context.plan.phases[0].intents[0].asset_requirements[0].min_count == 2
+        assert restored_context.goal.status.value == "achieved"
+        assert restored_context.goal.objective_id == restored_context.objective.objective_id
+        assert restored_context.objective.owner == "blue"
+        assert restore_bridge.operational_plan("PLAN:Capture Town") is restored_context.plan
+        assert restore_bridge.strategic_goal("GOAL:Capture Town") is restored_context.goal
+        assert restore_bridge.strategic_objective("OBJECTIVE:Town") is restored_context.objective
+        assert restored_context.executions[0].attempt_id == first.attempt_id
+
+        try:
+            await restore_bridge.restore_operational_plan("PLAN:Capture Town")
+        except ValueError as exc:
+            assert "would replace existing objects" in str(exc)
+        else:
+            raise AssertionError("Restore should reject registry conflicts by default")
+
+        replaced_context = await restore_bridge.restore_operational_plan("PLAN:Capture Town", replace=True)
+        assert replaced_context.plan.status is OperationalPlanStatus.COMPLETED
+        restore_server.audit_store.close()
+
+        second_bridge, second_plan = _executable_capture_plan(audit_path=path)
+        restored = await second_bridge.refresh_operational_plan_executions(second_plan)
+
+        assert len(restored) == 1
+        assert restored[0].attempt_id == first.attempt_id
+        assert restored[0].status is OperationalPlanStatus.COMPLETED
+        assert restored[0].missions[0].outcome is not None
+        assert restored[0].missions[0].outcome.success is True
+        assert restored[0].missions[0].command_snapshot["mission_type"] == "CAPTUREZONE"
+        assert restored[0].missions[0].command_snapshot["params"]["opszone"] == "OPSZONE:Town"
+        assert restored[0].plan_snapshot["goal_id"] == "GOAL:Capture Town"
+        assert restored[0].assessment_snapshot["requirements"][0]["allocations"][0]["cohort_id"] == "COHORT:Blue Armor"
+
+        second = await second_bridge.execute_plan(second_plan)
+
+        assert second.attempt_number == 2
+        assert second.attempt_id == "PLAN:Capture Town/ATTEMPT:2"
+        assert [item.attempt_number for item in second_bridge.operational_plan_executions(second_plan)] == [1, 2]
+        second_bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+    asyncio.run(scenario())
+
+
+def test_restore_rejects_audit_records_without_strategic_snapshots(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "legacy-audit.jsonl"
+        store = AuditStore(path)
+        store.append(
+            "operational_plan.execution",
+            {
+                "plan_id": "PLAN:Legacy",
+                "commander_id": "COMMANDER:Blue",
+                "attempt_id": "PLAN:Legacy/ATTEMPT:1",
+                "attempt_number": 1,
+                "status": "blocked",
+                "plan": {"plan_id": "PLAN:Legacy"},
+            },
+        )
+        store.close()
+        server = _ExecutionServer(audit_path=path)
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        try:
+            await bridge.restore_operational_plan("PLAN:Legacy")
+        except ValueError as exc:
+            assert "predates restorable strategic snapshots" in str(exc)
+        else:
+            raise AssertionError("Legacy execution audit should not be partially restored")
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_restored_blocked_plan_can_be_prepared_for_explicit_retry(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "blocked-audit.jsonl"
+        first_bridge, first_plan = _executable_capture_plan(success=False, audit_path=path)
+        first = await first_bridge.execute_plan(first_plan)
+        assert first.status is OperationalPlanStatus.BLOCKED
+        first_bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+        server = _ExecutionServer(audit_path=path)
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await bridge.restore_operational_plan(first_plan.plan_id)
+
+        assert restored.plan.status is OperationalPlanStatus.BLOCKED
+        assert restored.plan.phases[0].status is PlanPhaseStatus.BLOCKED
+        bridge.prepare_plan_retry(restored.plan)
+        assert restored.plan.status is OperationalPlanStatus.DRAFT
+        assert restored.plan.phases[0].status is PlanPhaseStatus.PENDING
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+async def _write_interrupted_capture_audit(path: Path) -> None:
+    bridge, plan = _executable_capture_plan(audit_path=path)
+    execution = await bridge.execute_plan(plan)
+    mission = execution.missions[0]
+    mission.status = PlanMissionStatus.RUNNING
+    mission.outcome = None
+    mission.error = None
+    plan.status = OperationalPlanStatus.EXECUTING
+    plan.phases[0].status = PlanPhaseStatus.ACTIVE
+    execution.status = OperationalPlanStatus.EXECUTING
+    execution.current_phase_id = "seize"
+    execution.completed_mission_time = None
+    goal = bridge.strategic_goal(plan.goal_id)
+    objective = bridge.strategic_objective("OBJECTIVE:Town")
+    assert goal is not None and objective is not None
+    goal.status = StrategicGoalStatus.ACTIVE
+    goal.completed_mission_time = None
+    objective.owner = "red"
+    await bridge.plan_executor._persist(execution)
+    bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+
+def test_reconcile_interrupted_plan_reports_running_and_missing_auftraege(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "interrupted-audit.jsonl"
+        await _write_interrupted_capture_audit(path)
+
+        running_server = _ExecutionServer(
+            audit_path=path,
+            auftrag_snapshots=[{"object_id": "AUFTRAG:1", "status": "Executing", "type": "CAPTUREZONE"}],
+        )
+        running_bridge = MooseBridgeClient(running_server)  # type: ignore[arg-type]
+        running = await running_bridge.restore_operational_plan("PLAN:Capture Town")
+        running_result = await running_bridge.reconcile_operational_plan(running.plan)
+        assert running_result.status is PlanReconciliationStatus.RUNNING
+        assert running.plan.status is OperationalPlanStatus.EXECUTING
+        assert "reconciliation=running" in format_operational_plan_reconciliation(running_result)
+        running_server.audit_store.close()
+
+        missing_server = _ExecutionServer(audit_path=path)
+        missing_bridge = MooseBridgeClient(missing_server)  # type: ignore[arg-type]
+        missing = await missing_bridge.restore_operational_plan("PLAN:Capture Town")
+        missing_result = await missing_bridge.reconcile_operational_plan(missing.plan)
+        assert missing_result.status is PlanReconciliationStatus.INDETERMINATE
+        assert missing_result.observations[0].snapshot_found is False
+        assert missing.plan.status is OperationalPlanStatus.EXECUTING
+        await missing_bridge.block_interrupted_operational_plan(
+            missing.plan,
+            reason="Operator confirmed that the AUFTRAG no longer exists",
+        )
+        assert missing.plan.status is OperationalPlanStatus.BLOCKED
+        missing_bridge.prepare_plan_retry(missing.plan)
+        assert missing.plan.status is OperationalPlanStatus.DRAFT
+        missing_server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_reconcile_interrupted_plan_blocks_on_failed_summary(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "failed-interrupted-audit.jsonl"
+        await _write_interrupted_capture_audit(path)
+        server = _ExecutionServer(
+            audit_path=path,
+            auftrag_snapshots=[
+                {
+                    "object_id": "AUFTRAG:1",
+                    "status": "Done",
+                    "type": "CAPTUREZONE",
+                    "summary": {"success": False, "Ntargets0": 1, "Ntargets": 1},
+                }
+            ],
+        )
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await bridge.restore_operational_plan("PLAN:Capture Town")
+
+        result = await bridge.reconcile_operational_plan(restored.plan)
+
+        assert result.status is PlanReconciliationStatus.BLOCKED
+        assert restored.plan.status is OperationalPlanStatus.BLOCKED
+        assert restored.executions[-1].missions[0].status.value == "failed"
+        bridge.prepare_plan_retry(restored.plan)
+        assert restored.plan.status is OperationalPlanStatus.DRAFT
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_reconcile_interrupted_plan_leaves_unknown_auftrag_state_indeterminate(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "unknown-interrupted-audit.jsonl"
+        await _write_interrupted_capture_audit(path)
+        server = _ExecutionServer(
+            audit_path=path,
+            auftrag_snapshots=[{"object_id": "AUFTRAG:1", "status": "Unexpected", "type": "CAPTUREZONE"}],
+        )
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await bridge.restore_operational_plan("PLAN:Capture Town")
+
+        result = await bridge.reconcile_operational_plan(restored.plan)
+
+        assert result.status is PlanReconciliationStatus.INDETERMINATE
+        assert restored.plan.status is OperationalPlanStatus.EXECUTING
+        assert result.observations[0].message == "AUFTRAG snapshot has no recognized lifecycle status"
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_monitor_interrupted_plan_reattaches_to_events_without_new_auftrag(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "monitored-interrupted-audit.jsonl"
+        await _write_interrupted_capture_audit(path)
+        server = _ExecutionServer(
+            audit_path=path,
+            success=True,
+            final_owner="blue",
+            auftrag_snapshots=[{"object_id": "AUFTRAG:1", "status": "Executing", "type": "CAPTUREZONE"}],
+        )
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await bridge.restore_operational_plan("PLAN:Capture Town")
+
+        result = await bridge.monitor_interrupted_operational_plan(restored.plan, mission_timeout_s=1.0)
+
+        assert result.status is PlanReconciliationStatus.COMPLETED
+        assert restored.plan.status is OperationalPlanStatus.COMPLETED
+        assert restored.executions[-1].missions[0].status.value == "succeeded"
+        assert not [command for command in server.commands if command.action.startswith("auftrag.create_")]
+        server.audit_store.close()
 
     asyncio.run(scenario())

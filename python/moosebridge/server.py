@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable
 
+from .audit import AuditStore, latest_attempt_records
 from .protocol import BridgeCommand, PendingCommand
 from .state import MooseBridgeState
 from .streams import close_stream_writer
@@ -63,6 +64,7 @@ class MooseBridgeServer:
     :param host: Interface to bind.
     :param port: TCP port to listen on.
     :param log_path: Optional raw JSONL log file path.
+    :param audit_path: Optional persistent semantic audit JSONL path.
     :param reader_limit: Maximum incoming JSONL line size in bytes.
     """
 
@@ -72,10 +74,12 @@ class MooseBridgeServer:
         port: int = DEFAULT_PORT,
         log_path: Path | None = None,
         reader_limit: int = DEFAULT_READER_LIMIT,
+        audit_path: Path | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.log_path = log_path
+        self.audit_store = AuditStore(audit_path)
         self.reader_limit = reader_limit
         self.state = MooseBridgeState()
         self._server: asyncio.AbstractServer | None = None
@@ -114,6 +118,7 @@ class MooseBridgeServer:
         if self.log_path is not None:
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             self._raw_log_file = self.log_path.open("a", encoding="utf-8")
+        self.audit_store.open()
 
         self._server = await asyncio.start_server(
             self._handle_dcs_client,
@@ -151,6 +156,25 @@ class MooseBridgeServer:
         if self._raw_log_file is not None:
             self._raw_log_file.close()
             self._raw_log_file = None
+        self.audit_store.close()
+
+    async def append_audit_record(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Persist one semantic audit record in the daemon-owned store."""
+
+        return self.audit_store.append(record_type, payload)
+
+    async def query_audit_records(
+        self,
+        *,
+        record_type: str | None = None,
+        plan_id: str | None = None,
+        attempt_id: str | None = None,
+        latest_attempts: bool = False,
+    ) -> tuple[dict[str, Any], ...]:
+        """Query semantic audit records without involving DCS."""
+
+        records = self.audit_store.query(record_type=record_type, plan_id=plan_id, attempt_id=attempt_id)
+        return latest_attempt_records(records) if latest_attempts else records
 
     async def _handle_dcs_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """Handle the single authoritative DCS connection.
@@ -1052,6 +1076,7 @@ async def _run(args: argparse.Namespace) -> None:
         args.port,
         Path(args.log) if args.log else None,
         reader_limit=args.reader_limit,
+        audit_path=Path(args.audit_log) if args.audit_log else None,
     )
 
     if args.interactive:
@@ -1072,6 +1097,7 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--log", default="moosebridge_raw.jsonl")
+    parser.add_argument("--audit-log", default="moosebridge_audit.jsonl")
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--reader-limit", type=int, default=DEFAULT_READER_LIMIT, help="Maximum incoming JSONL line size in bytes")
     parser.add_argument("--interactive", action="store_true", help="Run an interactive command console after starting the server")
