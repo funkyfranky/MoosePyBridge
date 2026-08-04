@@ -253,7 +253,8 @@ The SDK currently exposes helpers for:
   `prepare_plan_retry`, `operational_plan_execution`,
   `operational_plan_executions`, `refresh_operational_plan_executions`,
   `restore_operational_plan`, `reconcile_operational_plan`,
-  `monitor_interrupted_operational_plan`, `block_interrupted_operational_plan`
+  `monitor_interrupted_operational_plan`, `block_interrupted_operational_plan`,
+  `abort_operational_plan`
 - typed OPS state: `commander`, `commanders`, `commander_for_coalition`,
   `legions_of_commander`, `missions_of_commander`, `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,
@@ -262,7 +263,7 @@ The SDK currently exposes helpers for:
   `refresh_territory_state`, `set_territory_coalition`
 - diagnostics: `format_commander_status`, `format_legion_status`, `format_cohort_assets`,
   `format_mission_summary`, `format_operational_plan_execution`,
-  `format_operational_plan_reconciliation`
+  `format_operational_plan_reconciliation`, `format_operational_plan_abort`
 
 Typed OPS state can be read from the SDK state mirror after requesting the
 relevant snapshots:

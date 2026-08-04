@@ -16,7 +16,7 @@ from .capabilities import (
 from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .operational import OperationalPlan, OperationalPlanAssessment
-from .operational_execution import OperationalPlanExecution, OperationalPlanReconciliation
+from .operational_execution import OperationalPlanAbortResult, OperationalPlanExecution, OperationalPlanReconciliation
 from .pictures import GlobalPicture, PictureValidationIssue
 from .strategic import GoalCondition, StrategicGoal
 from .weapon_ranges import WeaponRangeProfile
@@ -210,6 +210,27 @@ def format_operational_plan_reconciliation(reconciliation: OperationalPlanReconc
         )
         if observation.message:
             lines.append(f"    message={observation.message}")
+    return "\n".join(lines)
+
+
+def format_operational_plan_abort(result: OperationalPlanAbortResult) -> str:
+    """Return a readable operational-plan abort report."""
+
+    lines = [
+        (
+            f"{result.plan_id} attempt={result.attempt_id} "
+            f"abort_scope={result.scope.value} status={result.status.value}"
+        )
+    ]
+    if result.message:
+        lines.append(f"  message={result.message}")
+    for mission in result.missions:
+        lines.append(
+            f"  {mission.phase_id}/{mission.requirement_id} auftrag={mission.auftrag_id} "
+            f"cancelled={mission.cancelled}"
+        )
+        if mission.message:
+            lines.append(f"    message={mission.message}")
     return "\n".join(lines)
 
 
@@ -532,6 +553,7 @@ __all__ = [
     "format_mission_summary",
     "format_picture_issue",
     "format_operational_plan_assessment",
+    "format_operational_plan_abort",
     "format_operational_plan_execution",
     "format_operational_plan_reconciliation",
     "format_strategic_goal",

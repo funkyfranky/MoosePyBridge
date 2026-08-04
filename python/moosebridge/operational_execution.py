@@ -61,6 +61,36 @@ class PlanReconciliationStatus(str, Enum):
     COMPLETED = "completed"
 
 
+class PlanAbortScope(str, Enum):
+    """Which live AUFTRAGs are cancelled when aborting an attempt."""
+
+    ATTEMPT = "attempt"
+    CURRENT_PHASE = "current_phase"
+
+
+@dataclass(slots=True, frozen=True)
+class PlanMissionAbort:
+    """Result of cancelling one live MOOSE AUFTRAG."""
+
+    auftrag_id: str
+    phase_id: str
+    requirement_id: str
+    cancelled: bool
+    message: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class OperationalPlanAbortResult:
+    """Result of an explicit operational-plan abort request."""
+
+    plan_id: str
+    attempt_id: str
+    scope: PlanAbortScope
+    status: OperationalPlanStatus
+    missions: tuple[PlanMissionAbort, ...]
+    message: str | None = None
+
+
 @dataclass(slots=True, frozen=True)
 class PlanMissionReconciliation:
     """Observed MOOSE state for one previously submitted AUFTRAG."""
@@ -386,6 +416,127 @@ class OperationalPlanExecutor:
         except ValueError:
             phase = None
         return await self._block(plan, phase, execution, reason, on_event)
+
+    async def abort(
+        self,
+        plan: OperationalPlan,
+        *,
+        scope: PlanAbortScope | str = PlanAbortScope.ATTEMPT,
+        reason: str = "Operational plan aborted by operator",
+        timeout: float = 10.0,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanAbortResult:
+        """Cancel live MOOSE AUFTRAGs and terminate the current plan attempt."""
+
+        scope = PlanAbortScope(scope)
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("aborting an operational plan requires a reason")
+        if timeout <= 0:
+            raise ValueError("abort timeout must be greater than zero")
+        if plan.plan_id not in self._loaded_plan_ids:
+            await self.refresh_history(plan.plan_id)
+        execution = self.get(plan.plan_id)
+        if execution is None or plan.status not in {
+            OperationalPlanStatus.EXECUTING,
+            OperationalPlanStatus.BLOCKED,
+        }:
+            raise ValueError("only an executing or blocked operational plan can be aborted")
+        if execution.status not in {OperationalPlanStatus.EXECUTING, OperationalPlanStatus.BLOCKED}:
+            raise ValueError("latest operational plan attempt cannot be aborted")
+
+        await self.client.snapshot_auftraege()
+        current_phase: PlanPhase | None = None
+        if scope is PlanAbortScope.CURRENT_PHASE:
+            current_phase = self._current_execution_phase(plan, execution)
+        live_statuses = {"planned", "queued", "requested", "scheduled", "started", "executing", "paused"}
+        active = [
+            mission
+            for mission in execution.missions
+            if mission.auftrag_id
+            and str(
+                self.client.state.auftraege.get(mission.auftrag_id, {}).get("status") or ""
+            ).strip().lower() in live_statuses
+            and (current_phase is None or mission.phase_id == current_phase.phase_id)
+        ]
+        results: list[PlanMissionAbort] = []
+        for mission in active:
+            assert mission.auftrag_id is not None
+            try:
+                await self.client.cancel_mission(mission.auftrag_id, timeout=timeout)
+            except Exception as exc:
+                message = str(exc) or f"could not cancel {mission.auftrag_id}"
+                mission.error = message
+                await self._mission_event(execution, mission, "mission.cancel_failed", on_event, message=message)
+                results.append(
+                    PlanMissionAbort(
+                        mission.auftrag_id,
+                        mission.phase_id,
+                        mission.requirement_id,
+                        False,
+                        message,
+                    )
+                )
+            else:
+                if mission.status is not PlanMissionStatus.CANCELLED:
+                    mission.status = PlanMissionStatus.CANCELLED
+                    mission.error = reason
+                    await self._mission_event(execution, mission, "mission.cancelled", on_event, message=reason)
+                results.append(
+                    PlanMissionAbort(
+                        mission.auftrag_id,
+                        mission.phase_id,
+                        mission.requirement_id,
+                        True,
+                        reason,
+                    )
+                )
+
+        failures = [result for result in results if not result.cancelled]
+        if failures:
+            message = "operational plan abort incomplete: " + ", ".join(result.auftrag_id for result in failures)
+            phase = current_phase
+            if phase is None:
+                try:
+                    phase = self._current_execution_phase(plan, execution)
+                except ValueError:
+                    phase = None
+            await self._block(plan, phase, execution, message, on_event)
+            return OperationalPlanAbortResult(
+                plan.plan_id,
+                execution.attempt_id,
+                scope,
+                execution.status,
+                tuple(results),
+                message,
+            )
+
+        for phase in plan.phases:
+            if phase.status is PlanPhaseStatus.COMPLETED:
+                continue
+            phase.status = (
+                PlanPhaseStatus.CANCELLED
+                if phase.status in {PlanPhaseStatus.ACTIVE, PlanPhaseStatus.BLOCKED}
+                else PlanPhaseStatus.SKIPPED
+            )
+        plan.status = OperationalPlanStatus.CANCELLED
+        execution.status = plan.status
+        execution.current_phase_id = None
+        execution.blocked_reason = None
+        execution.completed_mission_time = self.client._current_mission_time()
+        await self._emit(
+            execution,
+            PlanExecutionEvent("plan.cancelled", plan.plan_id, status=plan.status.value, message=reason),
+            on_event,
+        )
+        return OperationalPlanAbortResult(
+            plan.plan_id,
+            execution.attempt_id,
+            scope,
+            execution.status,
+            tuple(results),
+            reason,
+        )
 
     def prepare_retry(
         self,
@@ -887,6 +1038,8 @@ class OperationalPlanExecutor:
         reason: str,
         callback: PlanExecutionCallback | None,
     ) -> OperationalPlanExecution:
+        if plan.status is OperationalPlanStatus.CANCELLED or execution.status is OperationalPlanStatus.CANCELLED:
+            return execution
         if phase is not None:
             phase.status = PlanPhaseStatus.BLOCKED
         plan.status = OperationalPlanStatus.BLOCKED
@@ -1062,10 +1215,13 @@ __all__ = [
     "OperationalPlanExecution",
     "OperationalPlanExecutor",
     "OperationalPlanReconciliation",
+    "OperationalPlanAbortResult",
+    "PlanAbortScope",
     "PlanExecutionCallback",
     "PlanExecutionEvent",
     "PlanMissionExecution",
     "PlanMissionReconciliation",
+    "PlanMissionAbort",
     "PlanMissionStatus",
     "PlanReconciliationStatus",
     "build_plan_auftrag",

@@ -42,6 +42,7 @@ class PlanPhaseStatus(str, Enum):
     BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     SKIPPED = "skipped"
 
 

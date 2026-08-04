@@ -29,9 +29,11 @@ from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZon
 from .outcomes import AuftragOutcome
 from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
 from .operational_execution import (
+    OperationalPlanAbortResult,
     OperationalPlanReconciliation,
     OperationalPlanExecution,
     OperationalPlanExecutor,
+    PlanAbortScope,
     PlanExecutionCallback,
 )
 from .operational_audit import RestoredOperationalPlan
@@ -797,6 +799,28 @@ class MooseBridgeClient:
         if item is None:
             raise KeyError(f"Unknown operational plan: {plan}")
         return await self.plan_executor.block_interrupted(item, reason=reason, on_event=on_event)
+
+    async def abort_operational_plan(
+        self,
+        plan: OperationalPlan | str,
+        *,
+        scope: PlanAbortScope | str = PlanAbortScope.ATTEMPT,
+        reason: str = "Operational plan aborted by operator",
+        timeout: float = 10.0,
+        on_event: PlanExecutionCallback | None = None,
+    ) -> OperationalPlanAbortResult:
+        """Cancel live AUFTRAGs and terminate the current execution attempt."""
+
+        item = plan if isinstance(plan, OperationalPlan) else self.operational_plan(plan)
+        if item is None:
+            raise KeyError(f"Unknown operational plan: {plan}")
+        return await self.plan_executor.abort(
+            item,
+            scope=scope,
+            reason=reason,
+            timeout=timeout,
+            on_event=on_event,
+        )
 
     def prepare_plan_retry(
         self,

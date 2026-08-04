@@ -17,6 +17,7 @@ from moosebridge import (
     OwnershipPolicy,
     PlanPhase,
     PlanPhaseStatus,
+    PlanMissionExecution,
     PlanMissionStatus,
     PlanReconciliationStatus,
     StrategicGoal,
@@ -331,6 +332,7 @@ class _ExecutionServer:
         opszone_ids: tuple[str, ...] = ("OPSZONE:Town",),
         audit_path: Path | None = None,
         auftrag_snapshots: list[dict[str, Any]] | None = None,
+        cancel_failures: tuple[str, ...] = (),
     ) -> None:
         self.state = MooseBridgeState(connected=True)
         self.success = success
@@ -339,6 +341,7 @@ class _ExecutionServer:
         self.opszone_ids = opszone_ids
         self.audit_store = AuditStore(audit_path)
         self.auftrag_snapshots = auftrag_snapshots or []
+        self.cancel_failures = set(cancel_failures)
         self.commands: list[BridgeCommand] = []
         self._mission_number = 0
         self._event_number = 0
@@ -359,6 +362,8 @@ class _ExecutionServer:
 
     async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
         self.commands.append(command)
+        if command.action == "auftrag.cancel" and command.params.get("object_id") in self.cancel_failures:
+            raise RuntimeError(f"cancel rejected for {command.params['object_id']}")
         if command.action.startswith("auftrag.create_"):
             self._mission_number += 1
             return {
@@ -943,7 +948,10 @@ def test_restore_rejects_audit_records_without_strategic_snapshots(tmp_path) -> 
             },
         )
         store.close()
-        server = _ExecutionServer(audit_path=path)
+        server = _ExecutionServer(
+            audit_path=path,
+            auftrag_snapshots=[{"object_id": "AUFTRAG:1", "status": "Executing"}],
+        )
         bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
 
         try:
@@ -965,7 +973,13 @@ def test_restored_blocked_plan_can_be_prepared_for_explicit_retry(tmp_path) -> N
         assert first.status is OperationalPlanStatus.BLOCKED
         first_bridge.server.audit_store.close()  # type: ignore[attr-defined]
 
-        server = _ExecutionServer(audit_path=path)
+        server = _ExecutionServer(
+            audit_path=path,
+            auftrag_snapshots=[
+                {"object_id": "AUFTRAG:1", "status": "Executing"},
+                {"object_id": "AUFTRAG:99", "status": "Executing"},
+            ],
+        )
         bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
         restored = await bridge.restore_operational_plan(first_plan.plan_id)
 
@@ -1107,6 +1121,94 @@ def test_monitor_interrupted_plan_reattaches_to_events_without_new_auftrag(tmp_p
         assert restored.plan.status is OperationalPlanStatus.COMPLETED
         assert restored.executions[-1].missions[0].status.value == "succeeded"
         assert not [command for command in server.commands if command.action.startswith("auftrag.create_")]
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_abort_operational_plan_cancels_all_live_auftraege_by_default(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "aborted-plan-audit.jsonl"
+        await _write_interrupted_capture_audit(path)
+        server = _ExecutionServer(
+            audit_path=path,
+            auftrag_snapshots=[{"object_id": "AUFTRAG:1", "status": "Executing"}],
+        )
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await bridge.restore_operational_plan("PLAN:Capture Town")
+
+        result = await bridge.abort_operational_plan(restored.plan, reason="Objective is no longer valid")
+
+        assert result.status is OperationalPlanStatus.CANCELLED
+        assert result.scope.value == "attempt"
+        assert [mission.auftrag_id for mission in result.missions] == ["AUFTRAG:1"]
+        assert result.missions[0].cancelled is True
+        assert restored.plan.status is OperationalPlanStatus.CANCELLED
+        assert restored.plan.phases[0].status is PlanPhaseStatus.CANCELLED
+        assert restored.executions[-1].missions[0].status is PlanMissionStatus.CANCELLED
+        assert [command.action for command in server.commands] == ["auftrag.cancel"]
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_abort_operational_plan_can_limit_moose_cancellation_to_current_phase(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "current-phase-abort-audit.jsonl"
+        await _write_interrupted_capture_audit(path)
+        server = _ExecutionServer(
+            audit_path=path,
+            auftrag_snapshots=[
+                {"object_id": "AUFTRAG:1", "status": "Executing"},
+                {"object_id": "AUFTRAG:99", "status": "Executing"},
+            ],
+        )
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await bridge.restore_operational_plan("PLAN:Capture Town")
+        execution = restored.executions[-1]
+        execution.missions.insert(
+            0,
+            PlanMissionExecution(
+                "isolate",
+                "interdict",
+                "REQ:Strike",
+                "BAI",
+                True,
+                status=PlanMissionStatus.RUNNING,
+                auftrag_id="AUFTRAG:99",
+            ),
+        )
+
+        result = await bridge.abort_operational_plan(restored.plan, scope="current_phase")
+
+        assert result.status is OperationalPlanStatus.CANCELLED
+        assert [mission.auftrag_id for mission in result.missions] == ["AUFTRAG:1"]
+        assert execution.missions[0].status is PlanMissionStatus.RUNNING
+        assert [command.params["object_id"] for command in server.commands] == ["AUFTRAG:1"]
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_abort_operational_plan_blocks_when_a_moose_cancel_fails(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "failed-abort-audit.jsonl"
+        await _write_interrupted_capture_audit(path)
+        server = _ExecutionServer(
+            audit_path=path,
+            auftrag_snapshots=[{"object_id": "AUFTRAG:1", "status": "Executing"}],
+            cancel_failures=("AUFTRAG:1",),
+        )
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await bridge.restore_operational_plan("PLAN:Capture Town")
+
+        result = await bridge.abort_operational_plan(restored.plan)
+
+        assert result.status is OperationalPlanStatus.BLOCKED
+        assert result.missions[0].cancelled is False
+        assert restored.plan.status is OperationalPlanStatus.BLOCKED
+        assert restored.executions[-1].missions[0].status is PlanMissionStatus.RUNNING
+        assert "AUFTRAG:1" in (result.message or "")
         server.audit_store.close()
 
     asyncio.run(scenario())

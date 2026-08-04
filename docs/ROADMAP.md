@@ -342,6 +342,10 @@ Current operational-planning baseline:
   snapshot and optionally reattached to existing FSM events. Missing missions
   remain indeterminate until an operator explicitly blocks them; reconciliation
   never creates a replacement AUFTRAG.
+- Operational attempts can be explicitly aborted. One current AUFTRAG snapshot
+  identifies live MOOSE missions, the default scope cancels the complete
+  attempt, and partial cancellation failures leave the plan blocked and
+  auditable instead of reporting a false successful abort.
 
 ## Phase 4: Command SDK and policies
 
@@ -419,8 +423,8 @@ The next milestone is controlled plan execution:
 5. Expand the implemented operational execution audit history to recommendations,
    explicit operator approvals, raw ACK references, and authenticated client
    identities.
-6. Extend the implemented interrupted-attempt reconciliation with explicit
-   cancellation of still-running MOOSE AUFTRAGs when an operator chooses abort.
+6. Explicit cancellation of still-running MOOSE AUFTRAGs is implemented for
+   complete attempts and, optionally, only the current phase.
 
 The frontline, ammunition, capability, strategic objective, and strategic goal
 layers are established inputs to this planner. They remain Python-owned

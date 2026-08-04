@@ -366,6 +366,23 @@ not guessed to have failed. Monitoring then uses AUFTRAG FSM events without
 polling and never submits a replacement mission. After a reconciled phase, any
 remaining phase is blocked for explicit revalidation and approval.
 
+An executing or blocked attempt can be terminated explicitly. The default
+scope cancels every live MOOSE AUFTRAG from the current attempt; use
+`scope="current_phase"` only when earlier-phase AUFTRAGs should continue:
+
+```python
+abort = await bridge.abort_operational_plan(
+    plan,
+    reason="Objective priority changed",
+)
+print(format_operational_plan_abort(abort))
+```
+
+The abort performs one AUFTRAG snapshot so that timed-out but still-running
+MOOSE missions are included. If any `auftrag.cancel` command fails, the plan is
+left `blocked` and the failed mission ids are reported. A plan reaches
+`cancelled` only after every selected live AUFTRAG accepted cancellation.
+
 Before changing the plan to `executing`, a one-shot target preflight refreshes
 each required object kind and verifies every executable GROUP, UNIT, STATIC,
 ZONE, OPSZONE, AIRBASE, or TERRITORY id. A missing target leaves the plan
