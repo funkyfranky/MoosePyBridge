@@ -64,6 +64,29 @@ class OperationalPlanProvenance:
         object.__setattr__(self, "rationale", self.rationale.strip() if self.rationale else None)
 
 
+@dataclass(slots=True, frozen=True)
+class PlanProposalIssue:
+    """Structured uncertainty or limitation attached by a plan proposer."""
+
+    severity: str
+    code: str
+    message: str
+    reference_id: str | None = None
+
+    def __post_init__(self) -> None:
+        severity = self.severity.strip().lower()
+        code = self.code.strip()
+        message = self.message.strip()
+        if severity not in {"warning", "error"}:
+            raise ValueError("plan proposal issue severity must be warning or error")
+        if not code or not message:
+            raise ValueError("plan proposal issue requires code and message")
+        object.__setattr__(self, "severity", severity)
+        object.__setattr__(self, "code", code)
+        object.__setattr__(self, "message", message)
+        object.__setattr__(self, "reference_id", self.reference_id.strip() if self.reference_id else None)
+
+
 class PlanPhaseStatus(str, Enum):
     """Lifecycle state of one operational plan phase."""
 
@@ -207,6 +230,7 @@ class OperationalPlan:
     approved_client_id: str | None = None
     approval_reason: str | None = None
     provenance: OperationalPlanProvenance | None = None
+    proposal_issues: tuple[PlanProposalIssue, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -217,6 +241,7 @@ class OperationalPlan:
         self.phases = tuple(self.phases)
         self.posture = OperationalPosture(self.posture)
         self.status = OperationalPlanStatus(self.status)
+        self.proposal_issues = tuple(self.proposal_issues)
         if not self.plan_id or not self.name or not self.goal_id:
             raise ValueError("plan id, name and goal_id must not be empty")
         if self.coalition not in {"blue", "red"}:

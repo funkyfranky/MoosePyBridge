@@ -17,6 +17,7 @@ from .operational import (
     OperationalPosture,
     PlanPhase,
     PlanPhaseStatus,
+    PlanProposalIssue,
     PlanSourceType,
 )
 from .operational_execution import (
@@ -120,6 +121,15 @@ def plan_snapshot(plan: OperationalPlan) -> dict[str, Any]:
             if plan.provenance
             else None
         ),
+        "proposal_issues": [
+            {
+                "severity": issue.severity,
+                "code": issue.code,
+                "message": issue.message,
+                "reference_id": issue.reference_id,
+            }
+            for issue in plan.proposal_issues
+        ],
         "metadata": dict(plan.metadata),
         "phases": [_phase_to_dict(phase) for phase in plan.phases],
     }
@@ -199,6 +209,16 @@ def plan_from_snapshot(data: Mapping[str, Any]) -> OperationalPlan:
             )
             if provenance_data
             else None
+        ),
+        proposal_issues=tuple(
+            PlanProposalIssue(
+                severity=str(issue.get("severity") or "warning"),
+                code=str(issue.get("code") or "legacy_issue"),
+                message=str(issue.get("message") or "Legacy proposal issue"),
+                reference_id=_text(issue.get("reference_id")),
+            )
+            for issue in data.get("proposal_issues", ())
+            if isinstance(issue, dict)
         ),
         metadata=dict(data.get("metadata")) if isinstance(data.get("metadata"), dict) else {},
     )

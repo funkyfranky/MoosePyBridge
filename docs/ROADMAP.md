@@ -361,6 +361,17 @@ Current operational-planning baseline:
   for OPSZONE objectives from coalition-specific tactical pictures. It uses
   visible INTEL contacts for optional isolation and never reads global truth;
   registration, validation, approval, and execution remain explicit SDK steps.
+- Rule-based proposals retain structured INTEL coverage warnings separately
+  from technical feasibility findings, including the important distinction that
+  no visible defender does not prove an objective is undefended.
+- Tactical contacts have configurable `fresh`, `degraded`, `stale`, `unknown`,
+  and `lost` information states derived from MOOSE `Tdetected`. LostContact
+  events feed a coalition-private last-known-contact memory. Important recent
+  losses near an objective create an executable RECON phase. MOOSE
+  `INTEL:SetAgentAuto(true)` maintains all living coalition groups as agents,
+  independent of mission type. Successful recon survival
+  triggers an INTEL refresh and mandatory tactical replanning before later
+  combat or capture phases may proceed.
 
 ## Phase 4: Command SDK and policies
 
@@ -370,7 +381,7 @@ Work items:
 
 - broaden AUFTRAG creation helpers beyond the current BAI, BOMBING, BOMBRUNWAY,
   BOMBCARPET, ARTY, ORBIT, AWACS, TANKER, CAP, CAS, CASENHANCED, FAC, FACA,
-  SEAD, ANTISHIP, STRIKE, INTERCEPT, STRAFING, PATROLZONE, CAPTUREZONE,
+  SEAD, ANTISHIP, STRIKE, INTERCEPT, STRAFING, PATROLZONE, RECON, CAPTUREZONE,
   GROUNDESCORT, GROUNDATTACK, NAVALENGAGEMENT, AMMOSUPPLY, FUELSUPPLY,
   REARMING, AIRDEFENSE, EWR, ONGUARD, NOTHING, ESCORT, RESCUEHELO, and
   TROOPTRANSPORT baseline

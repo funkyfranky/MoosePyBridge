@@ -28,6 +28,17 @@ def test_commander_tasking_uses_moose_recruitment_and_constraints() -> None:
     assert "auftrag:AssignCohort(cohort)" in source
 
 
+def test_recon_auftrag_builds_zone_set_and_moose_maintains_intel_agents() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
+    intel_source = (REPO_ROOT / "lua" / "MooseBridgeIntelExtension.lua").read_text(encoding="utf-8")
+
+    assert 'self:RegisterCommand("auftrag.create_recon"' in source
+    assert 'AUFTRAG:NewRECON(' in source
+    assert 'self:_BuildZoneSet(inputs.zones, "RECON", true)' in source
+    assert 'intel:SetAgentAuto(true)' in intel_source
+    assert '_RegisterAuftragIntelAgents' not in source
+
+
 def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridgeDcsEventsExtension.lua").read_text(encoding="utf-8")
 

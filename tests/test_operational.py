@@ -18,6 +18,7 @@ from moosebridge import (
     OwnershipPolicy,
     PlanPhase,
     PlanPhaseStatus,
+    PlanProposalIssue,
     PlanMissionExecution,
     PlanMissionStatus,
     PlanReconciliationStatus,
@@ -33,6 +34,7 @@ from moosebridge import (
 from moosebridge.audit import AuditStore, latest_attempt_records
 from moosebridge.control import ControlClientIdentity
 from moosebridge.protocol import BridgeCommand
+from moosebridge.operational_execution import build_plan_auftrag
 from moosebridge.state import MooseBridgeState
 
 
@@ -314,6 +316,14 @@ def test_operational_diagnostics_show_phase_allocations_and_shortfalls() -> None
                     intents=(_intent("isolate", "BAI", AssetRole.COMBAT, category="AIR"),),
                 ),
             ),
+            proposal_issues=(
+                PlanProposalIssue(
+                    "warning",
+                    "intel_no_visible_defenders",
+                    "No visible defender is not evidence that the objective is undefended.",
+                    "INTEL:Blue",
+                ),
+            ),
         )
     )
 
@@ -324,6 +334,41 @@ def test_operational_diagnostics_show_phase_allocations_and_shortfalls() -> None
     assert "phase shape: Shape the battlespace" in rendered
     assert "required=1 available=0 shortfall=1" in rendered
     assert "ERROR asset_shortfall REQ:isolate" in rendered
+    assert "proposal_issues=1" in rendered
+    assert "PROPOSAL WARNING intel_no_visible_defenders INTEL:Blue" in rendered
+
+
+def test_operational_execution_builds_recon_auftrag() -> None:
+    requirement = AssetRequirement(
+        "REQ:Reconnaissance",
+        AssetRole.RECONNAISSANCE,
+        mission_types=("RECON",),
+        performer_categories=("AIR",),
+    )
+    intent = MissionIntent(
+        "recon-objective",
+        "Reconnoitre objective",
+        ("RECON",),
+        (requirement,),
+        target_object_id="OPSZONE:Town",
+        metadata={
+            "auftrag_params": {
+                "ad_infinitum": False,
+                "randomly": False,
+            }
+        },
+    )
+    plan = OperationalPlan("PLAN:Recon", "Recon", "GOAL:Capture Town", "blue", (PlanPhase("recon", "Recon", (intent,)),))
+
+    command = build_plan_auftrag(plan, intent, requirement)
+
+    assert command.mission_type == "RECON"
+    assert command.to_params() == {
+        "zones": ["OPSZONE:Town"],
+        "ad_infinitum": False,
+        "randomly": False,
+    }
+    assert command.required_assets_min == 1
 
 
 class _ExecutionServer:
@@ -495,6 +540,15 @@ class _ExecutionServer:
     async def snapshot_territories(self) -> dict[str, Any]:
         return {"ok": True, "result": {"kind": "territories", "count": 0}}
 
+    async def snapshot_intels(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "intels", "count": len(self.state.intel_objects)}}
+
+    async def snapshot_intel_contacts(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "intel_contacts", "count": len(self.state.intel_contact_objects)}}
+
+    async def snapshot_intel_clusters(self) -> dict[str, Any]:
+        return {"ok": True, "result": {"kind": "intel_clusters", "count": len(self.state.intel_cluster_objects)}}
+
 
 def _executable_capture_plan(
     *,
@@ -643,6 +697,94 @@ def test_execute_capture_plan_uses_commander_events_and_confirms_goal() -> None:
         assert "approved_by=operator" in rendered
         assert "ack=ack-1" in rendered
         assert f"correlation={command.id}" in rendered
+
+    asyncio.run(scenario())
+
+
+def test_successful_recon_requires_fresh_intel_replanning_before_capture() -> None:
+    async def scenario() -> None:
+        bridge, original = _executable_capture_plan()
+        original.status = OperationalPlanStatus.CANCELLED
+        bridge.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "cohorts",
+                "payload": {
+                    "cohorts": [
+                        {
+                            "object_id": "COHORT:Blue Armor",
+                            "legion_id": "LEGION:Blue Brigade",
+                            "is_ground": True,
+                            "available_asset_count": 3,
+                            "mission_types": ["RECON", "CAPTUREZONE"],
+                        }
+                    ]
+                },
+            }
+        )
+        recon_requirement = AssetRequirement(
+            requirement_id="REQ:Reconnaissance",
+            role=AssetRole.RECONNAISSANCE,
+            mission_types=("RECON",),
+            performer_categories=("GROUND",),
+        )
+        capture_requirement = AssetRequirement(
+            requirement_id="REQ:Ground assault",
+            role=AssetRole.COMBAT,
+            mission_types=("CAPTUREZONE",),
+            performer_categories=("GROUND",),
+        )
+        plan = bridge.add_operational_plan(
+            OperationalPlan(
+                plan_id="PLAN:Recon Then Capture",
+                name="Recon then capture",
+                goal_id="GOAL:Capture Town",
+                coalition="blue",
+                phases=(
+                    PlanPhase(
+                        "recon",
+                        "Reacquire objective contacts",
+                        (
+                            MissionIntent(
+                                "recon-objective",
+                                "Reconnoitre objective",
+                                ("RECON",),
+                                (recon_requirement,),
+                                target_object_id="OPSZONE:Town",
+                            ),
+                        ),
+                        metadata={"requires_tactical_replanning": True},
+                    ),
+                    PlanPhase(
+                        "seize",
+                        "Seize objective",
+                        (
+                            MissionIntent(
+                                "capture-zone",
+                                "Capture objective",
+                                ("CAPTUREZONE",),
+                                (capture_requirement,),
+                                target_object_id="OPSZONE:Town",
+                            ),
+                        ),
+                        depends_on=("recon",),
+                    ),
+                ),
+            )
+        )
+        assert bridge.validate_operational_plan(plan).feasible is True
+        bridge.approve_operational_plan(plan)
+        observed: list[str] = []
+
+        execution = await bridge.execute_plan(plan, on_event=lambda event: observed.append(event.event))
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert plan.phases[0].status is PlanPhaseStatus.COMPLETED
+        assert plan.phases[1].status is PlanPhaseStatus.BLOCKED
+        assert [command.action for command in bridge.server.commands] == ["auftrag.create_recon"]  # type: ignore[attr-defined]
+        assert execution.missions[0].status is PlanMissionStatus.SUCCEEDED
+        assert "plan.replanning_required" in observed
+        assert "refresh the tactical picture" in (execution.blocked_reason or "")
 
     asyncio.run(scenario())
 
@@ -977,6 +1119,14 @@ def test_execution_history_and_attempt_numbers_survive_sdk_restart(tmp_path) -> 
             picture_mission_time=42.5,
             rationale="Enemy control is weak and ground assets are available.",
         )
+        first_plan.proposal_issues = (
+            PlanProposalIssue(
+                "warning",
+                "intel_no_visible_defenders",
+                "No visible defender is not proof that the objective is clear.",
+                "INTEL:Blue",
+            ),
+        )
         first = await first_bridge.execute_plan(first_plan)
         first_bridge.server.audit_store.close()  # type: ignore[attr-defined]
 
@@ -997,6 +1147,8 @@ def test_execution_history_and_attempt_numbers_survive_sdk_restart(tmp_path) -> 
         assert restored_context.plan.provenance.rationale == (
             "Enemy control is weak and ground assets are available."
         )
+        assert restored_context.plan.proposal_issues[0].code == "intel_no_visible_defenders"
+        assert restored_context.plan.proposal_issues[0].reference_id == "INTEL:Blue"
         assert restored_context.goal.status.value == "achieved"
         assert restored_context.goal.objective_id == restored_context.objective.objective_id
         assert restored_context.objective.owner == "blue"

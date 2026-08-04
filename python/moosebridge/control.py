@@ -41,6 +41,7 @@ STATE_KINDS = (
     "commanders",
     "intels",
     "intel_contacts",
+    "lost_intel_contacts",
     "intel_clusters",
     "loss_reports",
 )
@@ -157,6 +158,8 @@ def apply_state_payload(state: MooseBridgeState, payload: dict[str, Any]) -> Moo
             state.ammunition_tracker.reset()
             state.ammunition.clear()
             state.ammunition_objects.clear()
+            state.lost_intel_contacts.clear()
+            state.lost_intel_contact_objects.clear()
         state.clock = next_clock
     for kind in STATE_KINDS:
         items = payload.get(kind)

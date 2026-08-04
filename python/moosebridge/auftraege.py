@@ -48,6 +48,12 @@ class GroupSet(GeneralSet):
     object_type = "GROUP"
 
 
+class ZoneSet(GeneralSet):
+    """Serializable SDK value object for a MOOSE SET_ZONE input."""
+
+    object_type = "ZONE"
+
+
 def set_param_value(value: str | Sequence[str] | GeneralSet) -> list[str]:
     """Return a flat bridge value for a set-like SDK field."""
 
@@ -447,6 +453,33 @@ class AuftragPATROLZONE(AuftragCommand):
                 "zone": self.zone,
                 "speed_kts": self.speed_kts,
                 "altitude_ft": self.altitude_ft,
+                "formation": self.formation,
+            }
+        )
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragRECON(AuftragCommand):
+    """Reconnaissance AUFTRAG for air, ground or naval units."""
+
+    zones: str | Sequence[str] | ZoneSet
+    speed_kts: float | None = None
+    altitude_ft: float | None = None
+    ad_infinitum: bool | None = None
+    randomly: bool | None = None
+    formation: str | None = None
+    mission_type = "RECON"
+
+    def to_params(self) -> dict[str, Any]:
+        """Return flat Lua command parameters for this RECON AUFTRAG."""
+
+        return clean_auftrag_params(
+            {
+                "zones": set_param_value(self.zones),
+                "speed_kts": self.speed_kts,
+                "altitude_ft": self.altitude_ft,
+                "ad_infinitum": self.ad_infinitum,
+                "randomly": self.randomly,
                 "formation": self.formation,
             }
         )
@@ -858,6 +891,7 @@ Auftrag_NAVALENGAGEMENT: type[AuftragNAVALENGAGEMENT] = AuftragNAVALENGAGEMENT
 Auftrag_NOTHING: type[AuftragNOTHING] = AuftragNOTHING
 Auftrag_ONGUARD: type[AuftragONGUARD] = AuftragONGUARD
 Auftrag_PATROLZONE: type[AuftragPATROLZONE] = AuftragPATROLZONE
+Auftrag_RECON: type[AuftragRECON] = AuftragRECON
 Auftrag_RESCUEHELO: type[AuftragRESCUEHELO] = AuftragRESCUEHELO
 Auftrag_REARMING: type[AuftragREARMING] = AuftragREARMING
 Auftrag_SEAD: type[AuftragSEAD] = AuftragSEAD
@@ -896,6 +930,7 @@ __all__ = [
     "AuftragONGUARD",
     "AuftragORBIT",
     "AuftragPATROLZONE",
+    "AuftragRECON",
     "AuftragRESCUEHELO",
     "AuftragREARMING",
     "AuftragSEAD",
@@ -929,6 +964,7 @@ __all__ = [
     "Auftrag_ONGUARD",
     "Auftrag_ORBIT",
     "Auftrag_PATROLZONE",
+    "Auftrag_RECON",
     "Auftrag_RESCUEHELO",
     "Auftrag_REARMING",
     "Auftrag_SEAD",
@@ -938,4 +974,5 @@ __all__ = [
     "Auftrag_TROOPTRANSPORT",
     "GeneralSet",
     "GroupSet",
+    "ZoneSet",
 ]

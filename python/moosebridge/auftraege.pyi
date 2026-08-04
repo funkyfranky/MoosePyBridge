@@ -13,6 +13,9 @@ class GeneralSet:
 class GroupSet(GeneralSet): ...
 
 
+class ZoneSet(GeneralSet): ...
+
+
 class AuftragEvent:
     event: str
     auftrag_id: str
@@ -197,6 +200,18 @@ class AuftragPATROLZONE(AuftragCommand):
     ) -> None: ...
 
 
+class AuftragRECON(AuftragCommand):
+    def __init__(
+        self,
+        zones: str | Sequence[str] | ZoneSet,
+        speed_kts: float | None = None,
+        altitude_ft: float | None = None,
+        ad_infinitum: bool | None = None,
+        randomly: bool | None = None,
+        formation: str | None = None,
+    ) -> None: ...
+
+
 class AuftragCAPTUREZONE(AuftragCommand):
     def __init__(
         self,
@@ -371,6 +386,7 @@ Auftrag_NOTHING: type[AuftragNOTHING]
 Auftrag_ONGUARD: type[AuftragONGUARD]
 Auftrag_ORBIT: type[AuftragORBIT]
 Auftrag_PATROLZONE: type[AuftragPATROLZONE]
+Auftrag_RECON: type[AuftragRECON]
 Auftrag_RESCUEHELO: type[AuftragRESCUEHELO]
 Auftrag_REARMING: type[AuftragREARMING]
 Auftrag_SEAD: type[AuftragSEAD]

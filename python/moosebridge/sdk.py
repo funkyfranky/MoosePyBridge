@@ -1308,6 +1308,7 @@ class MooseBridgeClient:
         opsgroup_ids = {group.object_id for group in opsgroups}
         cohorts = [cohort for cohort in self.state.cohort_objects.values() if cohort.legion_id in legion_ids]
         contacts = self.contacts_of_intel(intel)
+        lost_contacts = self.state.lost_contacts_for_intel(intel)
         clusters = self.clusters_of_intel(intel)
 
         mission_ids: set[str] = set()
@@ -1342,6 +1343,7 @@ class MooseBridgeClient:
             clock=self.state.clock,
             intel=self.intel(intel),
             contacts=contacts,
+            lost_contacts=lost_contacts,
             clusters=clusters,
             opszones=list(self.state.opszone_objects.values()),
             opsgroups=opsgroups,

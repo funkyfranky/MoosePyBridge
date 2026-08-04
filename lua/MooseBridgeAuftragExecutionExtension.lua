@@ -405,6 +405,7 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     capture_coalition=bridge_coalition_param(p.capture_coalition) or bridge_coalition_param(p.capture_coalition_id) or bridge_coalition_param(p.CaptureCoalition) or bridge_coalition_param(legacy_params.capture_coalition) or bridge_coalition_param(legacy_params.capture_coalition_id) or bridge_coalition_param(legacy_params.CaptureCoalition),
     stay_in_zone_time_s=bridge_number_param(p.stay_in_zone_time_s) or bridge_number_param(p.stay_in_zone_time) or bridge_number_param(p.StayInZoneTime) or bridge_number_param(legacy_params.stay_in_zone_time_s) or bridge_number_param(legacy_params.stay_in_zone_time) or bridge_number_param(legacy_params.StayInZoneTime),
     zone_id=bridge_optional_string_param(p.zone) or bridge_optional_string_param(p.zone_id) or bridge_optional_string_param(legacy_params.zone) or bridge_optional_string_param(legacy_params.zone_id),
+    zones=p.zones or p.zone_ids or legacy_params.zones or legacy_params.zone_ids,
     coordinate_id=bridge_optional_string_param(p.coordinate) or bridge_optional_string_param(p.coordinate_id) or bridge_optional_string_param(legacy_params.coordinate) or bridge_optional_string_param(legacy_params.coordinate_id),
     dropoff_id=bridge_optional_string_param(p.dropoff) or bridge_optional_string_param(p.dropoff_id) or bridge_optional_string_param(legacy_params.dropoff) or bridge_optional_string_param(legacy_params.dropoff_id),
     pickup_id=bridge_optional_string_param(p.pickup) or bridge_optional_string_param(p.pickup_id) or bridge_optional_string_param(legacy_params.pickup) or bridge_optional_string_param(legacy_params.pickup_id),
@@ -445,6 +446,8 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     modulation=p.modulation or p.Modulation or legacy_params.modulation or legacy_params.Modulation,
     designation=bridge_optional_string_param(p.designation) or bridge_optional_string_param(p.Designation) or bridge_optional_string_param(legacy_params.designation) or bridge_optional_string_param(legacy_params.Designation),
     data_link=p.data_link,
+    ad_infinitum=p.ad_infinitum,
+    randomly=p.randomly,
   }
   if inputs.divebomb == nil then inputs.divebomb = legacy_params.divebomb end
   if inputs.data_link == nil then inputs.data_link = p.datalink end
@@ -452,6 +455,12 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
   if inputs.data_link == nil then inputs.data_link = legacy_params.data_link end
   if inputs.data_link == nil then inputs.data_link = legacy_params.datalink end
   if inputs.data_link == nil then inputs.data_link = legacy_params.DataLink end
+  if inputs.ad_infinitum == nil then inputs.ad_infinitum = p.Adinfinitum end
+  if inputs.ad_infinitum == nil then inputs.ad_infinitum = legacy_params.ad_infinitum end
+  if inputs.ad_infinitum == nil then inputs.ad_infinitum = legacy_params.Adinfinitum end
+  if inputs.randomly == nil then inputs.randomly = p.Randomly end
+  if inputs.randomly == nil then inputs.randomly = legacy_params.randomly end
+  if inputs.randomly == nil then inputs.randomly = legacy_params.Randomly end
 
   local target_count = (inputs.commander_id and 1 or 0) + (inputs.legion_id and 1 or 0) + (inputs.opsgroup_id and 1 or 0)
   if target_count ~= 1 then error("Specify exactly one of commander_id, legion_id or opsgroup_id; " .. bridge_param_debug(cmd, p)) end
@@ -716,15 +725,18 @@ function MOOSE_BRIDGE:_AssignTrackedAuftrag(cmd)
   return self:_BuildAuftragCommandResult("auftrag.assign", auftrag, inputs)
 end
 
-function MOOSE_BRIDGE:_BuildNoEngageZoneSet(value)
+function MOOSE_BRIDGE:_BuildZoneSet(value, label, required)
   local zone_ids = self:_NormalizeStringList(value)
-  if not zone_ids then return nil end
+  if not zone_ids or #zone_ids == 0 then
+    if required then error(label .. " requires at least one ZONE") end
+    return nil, nil
+  end
   if not SET_ZONE or not SET_ZONE.New then error("SET_ZONE:New is not available") end
 
   local set_zone = SET_ZONE:New()
   for _, zone_id in ipairs(zone_ids) do
     local ok_zone, zone = pcall(function() return self:_ZoneForDrawObjectId(zone_id) end)
-    if not ok_zone or not zone then error("NoEngage zone not found: " .. bridge_safe_tostring(zone_id)) end
+    if not ok_zone or not zone then error(label .. " zone not found: " .. bridge_safe_tostring(zone_id)) end
 
     if type(set_zone.AddZone) == "function" then
       set_zone:AddZone(zone)
@@ -737,7 +749,11 @@ function MOOSE_BRIDGE:_BuildNoEngageZoneSet(value)
     end
   end
 
-  return set_zone
+  return set_zone, zone_ids
+end
+
+function MOOSE_BRIDGE:_BuildNoEngageZoneSet(value)
+  return self:_BuildZoneSet(value, "NoEngage", false)
 end
 
 function MOOSE_BRIDGE:_AddAuftragToLegion(auftrag, inputs)
@@ -860,12 +876,14 @@ function MOOSE_BRIDGE:_SendAuftragEvaluatedEvent(auftrag, inputs, From, Event, T
       opsgroup_id=inputs and inputs.opsgroup_id or nil,
       cohort_id=inputs and inputs.cohort_id or nil,
       target=inputs and (inputs.target_id or inputs.zone_id) or nil,
+      zones=inputs and inputs.zones or nil,
       summary=summary,
       auftrag={
         object_id=object_id,
         auftragsnummer=self:_AuftragNumber(auftrag),
         type=self:_SafeCall(auftrag, "GetType") or auftrag.type,
         status=self:_SafeCall(auftrag, "GetState") or self:_SafeCall(auftrag, "GetStatus") or To,
+        zones=inputs and inputs.zones or nil,
         summary_available=summary ~= nil,
         summary=summary,
       },
@@ -938,6 +956,7 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     capture_coalition=inputs.capture_coalition,
     stay_in_zone_time_s=inputs.stay_in_zone_time_s,
     zone=inputs.zone_id,
+    zones=inputs.zones,
     coordinate=inputs.coordinate_id,
     dropoff=inputs.dropoff_id,
     pickup=inputs.pickup_id,
@@ -958,6 +977,8 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     carpet_length_m=inputs.carpet_length_m,
     length_m=inputs.length_m,
     speed_kts=inputs.speed_kts,
+    ad_infinitum=inputs.ad_infinitum,
+    randomly=inputs.randomly,
     formation=inputs.formation,
     depth_m=inputs.depth_m,
     heading_deg=inputs.heading_deg,
@@ -1084,6 +1105,27 @@ function MOOSE_BRIDGE:_CreatePatrolZoneAuftrag(cmd)
 
   self:_AddAuftragToTarget(auftrag, inputs)
   return self:_BuildAuftragCommandResult("auftrag.create_patrolzone", auftrag, inputs)
+end
+
+function MOOSE_BRIDGE:_CreateReconAuftrag(cmd)
+  local inputs = self:_CommonAuftragCommandInputs(cmd)
+  local zone_set, zone_ids = self:_BuildZoneSet(inputs.zones, "RECON", true)
+  inputs.zones = zone_ids
+
+  if not AUFTRAG or not AUFTRAG.NewRECON then error("AUFTRAG:NewRECON is not available") end
+  local speed_kts = inputs.speed_kts and tonumber(inputs.speed_kts) or nil
+  local altitude_ft = inputs.altitude_ft and tonumber(inputs.altitude_ft) or nil
+  local auftrag = AUFTRAG:NewRECON(
+    zone_set,
+    speed_kts,
+    altitude_ft,
+    inputs.ad_infinitum,
+    inputs.randomly,
+    inputs.formation
+  )
+
+  self:_AddAuftragToTarget(auftrag, inputs)
+  return self:_BuildAuftragCommandResult("auftrag.create_recon", auftrag, inputs)
 end
 
 function MOOSE_BRIDGE:_CreateCaptureZoneAuftrag(cmd)
@@ -1435,6 +1477,10 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.create_patrolzone", function(cmd)
     return self:_CreatePatrolZoneAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("auftrag.create_recon", function(cmd)
+    return self:_CreateReconAuftrag(cmd)
   end)
 
   self:RegisterCommand("auftrag.create_capturezone", function(cmd)

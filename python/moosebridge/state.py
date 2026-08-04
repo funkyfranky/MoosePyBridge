@@ -8,6 +8,7 @@ from typing import Any, Callable, TypeVar
 from .ammunition import AmmunitionTracker, UnitAmmunition
 from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
 from .clock import DcsTime
+from .intelligence import IntelContactMemory
 from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .outcomes import AuftragOutcome
@@ -69,6 +70,7 @@ class MooseBridgeState:
     commanders: dict[str, dict[str, Any]] = field(default_factory=dict)
     intels: dict[str, dict[str, Any]] = field(default_factory=dict)
     intel_contacts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    lost_intel_contacts: dict[str, dict[str, Any]] = field(default_factory=dict)
     intel_clusters: dict[str, dict[str, Any]] = field(default_factory=dict)
     loss_reports: dict[str, dict[str, Any]] = field(default_factory=dict)
     opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
@@ -80,6 +82,7 @@ class MooseBridgeState:
     commander_objects: dict[str, Commander] = field(default_factory=dict)
     intel_objects: dict[str, Intel] = field(default_factory=dict)
     intel_contact_objects: dict[str, IntelContact] = field(default_factory=dict)
+    lost_intel_contact_objects: dict[str, IntelContactMemory] = field(default_factory=dict)
     intel_cluster_objects: dict[str, IntelCluster] = field(default_factory=dict)
     ammunition_objects: dict[str, UnitAmmunition] = field(default_factory=dict)
     ammunition_tracker: AmmunitionTracker = field(default_factory=AmmunitionTracker, repr=False)
@@ -107,6 +110,8 @@ class MooseBridgeState:
                 self.ammunition.clear()
                 self.ammunition_objects.clear()
                 self.loss_reports.clear()
+                self.lost_intel_contact_objects.clear()
+                self.lost_intel_contacts.clear()
             self.clock = next_clock
 
         if message_type == "heartbeat":
@@ -282,6 +287,11 @@ class MooseBridgeState:
 
         return [contact for contact in self.intel_contact_objects.values() if contact.intel_id == intel_id]
 
+    def lost_contacts_for_intel(self, intel_id: str) -> list[IntelContactMemory]:
+        """Return last-known contacts removed by MOOSE ``LostContact`` events."""
+
+        return [memory for memory in self.lost_intel_contact_objects.values() if memory.contact.intel_id == intel_id]
+
     def clusters_for_intel(self, intel_id: str) -> list[IntelCluster]:
         """Return typed clusters belonging to an INTEL object."""
 
@@ -397,6 +407,20 @@ class MooseBridgeState:
             items = payload.get("intel_contacts", [])
             self.intel_contacts = self._index_objects(items)
             self.intel_contact_objects = self._index_typed_objects(items, IntelContact.from_payload)
+            for object_id in self.intel_contact_objects:
+                self.lost_intel_contact_objects.pop(object_id, None)
+                self.lost_intel_contacts.pop(object_id, None)
+        elif kind == "lost_intel_contacts":
+            items = payload.get("lost_intel_contacts", [])
+            self.lost_intel_contacts = self._index_objects(items)
+            self.lost_intel_contact_objects = {
+                object_id: IntelContactMemory(
+                    contact=IntelContact.from_payload(item),
+                    lost_time=float(item["lost_time"]) if isinstance(item.get("lost_time"), (int, float)) else None,
+                    event_id=str(item["event_id"]) if item.get("event_id") is not None else None,
+                )
+                for object_id, item in self.lost_intel_contacts.items()
+            }
         elif kind == "intel_clusters":
             items = payload.get("intel_clusters", [])
             self.intel_clusters = self._index_objects(items)
@@ -484,7 +508,7 @@ class MooseBridgeState:
                     self.territory_objects[object_id] = Territory.from_payload(territory_payload)
             return
         if event_name.startswith("intel."):
-            self._apply_intel_event(event_name, payload)
+            self._apply_intel_event(event_name, payload, message)
             return
         if event_name != "auftrag.evaluated":
             return
@@ -497,7 +521,12 @@ class MooseBridgeState:
         snapshot.setdefault("summary", payload.get("summary"))
         self._record_auftrag_outcome(snapshot)
 
-    def _apply_intel_event(self, event_name: str, payload: dict[str, Any]) -> None:
+    def _apply_intel_event(
+        self,
+        event_name: str,
+        payload: dict[str, Any],
+        message: dict[str, Any],
+    ) -> None:
         """Apply INTEL contact and cluster events to the local typed indexes."""
 
         contact_payload = payload.get("contact") if isinstance(payload.get("contact"), dict) else None
@@ -506,11 +535,27 @@ class MooseBridgeState:
             object_id = str(contact_payload.get("object_id") or "")
             if object_id:
                 if event_name == "intel.lost_contact":
+                    previous = self.intel_contacts.get(object_id, {})
+                    merged = {**previous, **contact_payload}
+                    contact = IntelContact.from_payload(merged)
+                    raw_mission_time = message.get("mission_time")
+                    self.lost_intel_contact_objects[object_id] = IntelContactMemory(
+                        contact=contact,
+                        lost_time=float(raw_mission_time) if isinstance(raw_mission_time, (int, float)) else None,
+                        event_id=str(message.get("id")) if message.get("id") is not None else None,
+                    )
+                    self.lost_intel_contacts[object_id] = {
+                        **merged,
+                        "lost_time": float(raw_mission_time) if isinstance(raw_mission_time, (int, float)) else None,
+                        "event_id": str(message.get("id")) if message.get("id") is not None else None,
+                    }
                     self.intel_contacts.pop(object_id, None)
                     self.intel_contact_objects.pop(object_id, None)
                 else:
                     self.intel_contacts[object_id] = contact_payload
                     self.intel_contact_objects[object_id] = IntelContact.from_payload(contact_payload)
+                    self.lost_intel_contact_objects.pop(object_id, None)
+                    self.lost_intel_contacts.pop(object_id, None)
         if cluster_payload:
             object_id = str(cluster_payload.get("object_id") or "")
             if object_id:

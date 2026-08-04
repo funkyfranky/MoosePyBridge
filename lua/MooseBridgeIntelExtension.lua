@@ -65,6 +65,8 @@ function MOOSE_BRIDGE:RegisterIntel(intel, name)
   intel_name = tostring(intel_name)
   self:_EnsureIntelRegistry()[intel_name] = intel
   self:_AttachIntelEventForwarders(intel, intel_name)
+  if type(intel.SetAgentAuto) ~= "function" then error("INTEL:SetAgentAuto is not available") end
+  intel:SetAgentAuto(true)
   return self
 end
 

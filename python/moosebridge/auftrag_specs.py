@@ -341,6 +341,27 @@ CAP_ZONE_PARAMETER = AuftragParameterSpec(
     description="ZONE_RADIUS object used as the circular CAP zone.",
 )
 
+RECON_ZONES_PARAMETER = AuftragParameterSpec(
+    name="zones",
+    optional=False,
+    accepted_objects=("list", "str"),
+    description="ZONE object id or list of ZONE object ids used to build the reconnaissance SET_ZONE.",
+)
+
+AD_INFINITUM_PARAMETER = AuftragParameterSpec(
+    name="ad_infinitum",
+    optional=True,
+    accepted_objects=("bool",),
+    description="Restart the reconnaissance route after reaching its final zone.",
+)
+
+RANDOMLY_PARAMETER = AuftragParameterSpec(
+    name="randomly",
+    optional=True,
+    accepted_objects=("bool",),
+    description="Select reconnaissance zones in random order.",
+)
+
 OPSZONE_PARAMETER = AuftragParameterSpec(
     name="opszone",
     optional=False,
@@ -788,6 +809,20 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             CAP_ZONE_PARAMETER,
             ATTACK_SPEED_KTS_PARAMETER,
             ALTITUDE_PARAMETER,
+            FORMATION_PARAMETER,
+        ),
+    ),
+    AuftragType.RECON.name: AuftragTypeSpec(
+        mission_type=AuftragType.RECON.name,
+        constructor="AUFTRAG:NewRECON",
+        performer_categories=("AIR", "GROUND", "NAVAL"),
+        description="Reconnaissance route through one or more zones; mission success is based on surviving the route.",
+        parameters=(
+            RECON_ZONES_PARAMETER,
+            ATTACK_SPEED_KTS_PARAMETER,
+            ALTITUDE_PARAMETER,
+            AD_INFINITUM_PARAMETER,
+            RANDOMLY_PARAMETER,
             FORMATION_PARAMETER,
         ),
     ),

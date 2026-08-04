@@ -272,7 +272,7 @@ if assessment.feasible:
 
 Approval still records a command decision only. `execute_plan()` is the
 separate, explicit execution step. The initial executor supports `CAPTURE`
-goals and maps `BAI`, `PATROLZONE`, `CAPTUREZONE`, `AIRDEFENSE`,
+goals and maps `BAI`, `PATROLZONE`, `RECON`, `CAPTUREZONE`, `AIRDEFENSE`,
 `AMMOSUPPLY`, `FUELSUPPLY`, and `REARMING` requirements to concrete AUFTRAGs.
 It submits all requirements in a phase before waiting for required outcomes,
 then advances automatically when their `auftrag.evaluated` events report
@@ -410,7 +410,33 @@ contact adds a BAI isolation phase; otherwise the planner starts with ground
 seizure. Local air defense and ammunition supply are optional consolidation
 intents. The result stays `draft`: proposing never registers, validates,
 approves, or executes a plan. Enemy selection uses only `TacticalPicture`
-INTEL contacts, never global truth.
+INTEL contacts, never global truth. In particular, a proposal without a visible
+defender carries the structured `intel_no_visible_defenders` warning; absence
+of a contact is not treated as proof that the objective is undefended. Missing
+INTEL status, stopped INTEL, and absent living detection agents produce their
+own proposal warnings. These remain distinct from feasibility errors, appear in
+diagnostics, and survive audit persistence and restore.
+
+Current INTEL contacts are assessed from MOOSE `Tdetected`, which represents
+the last successful detection in absolute mission seconds. The default planner
+quality bands are `fresh` through 120 seconds, `degraded` until 600 seconds,
+and `stale` afterwards. Stale contacts remain owned by MOOSE and visible in the
+tactical picture, but are not selected as attack targets by the rule-based
+planner. The thresholds are configurable through `RuleBasedPlannerConfig`.
+
+MOOSE `LostContact` events remove a contact from the active mirror and retain
+its last known state in `TacticalPicture.lost_contacts`. A recent lost ground or
+static contact near the objective requests reconnaissance only when its threat
+level reaches the configurable importance threshold. The draft then contains a
+`reconnaissance_required` proposal issue, structured last-known-position
+metadata, and an executable RECON phase. INTEL agent membership is independent
+of mission type. `RegisterIntel()` enables MOOSE `INTEL:SetAgentAuto(true)`, so
+MOOSE periodically maintains all living groups of the INTEL coalition in its
+detection set. The bridge does not duplicate this lifecycle logic.
+When the route is complete and the recon group survived, MOOSE reports mission
+success. The executor then refreshes INTEL and emits `plan.replanning_required`
+instead of automatically starting the capture phases: successful survival does
+not prove that the objective is clear.
 
 Normal plan execution also revalidates only the immediately upcoming phase.
 Before any AUFTRAG for that phase is created, the executor refreshes COMMANDER,
@@ -640,6 +666,12 @@ Situation pictures and GeoJSON export:
 tactical = await bridge.refresh_tactical_picture("blue", "INTEL:BlueIntel")
 tactical_geojson = tactical.to_geojson()
 
+for assessment in tactical.contact_assessments():
+    print(assessment.contact.object_id, assessment.state.value, assessment.age_s, assessment.confidence)
+
+for assessment in tactical.lost_contact_assessments():
+    print("lost", assessment.contact.object_id, assessment.age_s, assessment.confidence)
+
 await bridge.add_intel_agent("INTEL:BlueIntel", "GROUP:Blue EWR")
 
 clock = await bridge.get_time()
@@ -649,6 +681,9 @@ global_picture = await bridge.refresh_global_picture()
 global_geojson = global_picture.to_geojson()
 print(format_global_picture_status(global_picture))
 ```
+
+`add_intel_agent` remains available for explicit mission setup. Normally MOOSE
+maintains all living same-coalition groups through `INTEL:SetAgentAuto(true)`.
 
 `TacticalPicture` uses INTEL contacts and clusters for enemy knowledge.
 `GlobalPicture` uses global truth snapshots and is intended for admin/debug
@@ -946,7 +981,7 @@ python examples/sdk/monitor_global_picture.py
 MOOSE-like AUFTRAG helper objects:
 
 ```python
-from moosebridge import Auftrag_AIRDEFENSE, Auftrag_AMMOSUPPLY, Auftrag_ANTISHIP, Auftrag_ARTY, Auftrag_AWACS, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAPTUREZONE, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_EWR, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_INTERCEPT, Auftrag_NAVALENGAGEMENT, Auftrag_NOTHING, Auftrag_ONGUARD, Auftrag_ORBIT, Auftrag_PATROLZONE, Auftrag_REARMING, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRAFING, Auftrag_STRIKE, Auftrag_TANKER, Auftrag_TROOPTRANSPORT, GroupSet
+from moosebridge import Auftrag_AIRDEFENSE, Auftrag_AMMOSUPPLY, Auftrag_ANTISHIP, Auftrag_ARTY, Auftrag_AWACS, Auftrag_BAI, Auftrag_BOMBCARPET, Auftrag_BOMBRUNWAY, Auftrag_CAP, Auftrag_CAPTUREZONE, Auftrag_CAS, Auftrag_CASENHANCED, Auftrag_ESCORT, Auftrag_EWR, Auftrag_FAC, Auftrag_FACA, Auftrag_FUELSUPPLY, Auftrag_GROUNDATTACK, Auftrag_GROUNDESCORT, Auftrag_INTERCEPT, Auftrag_NAVALENGAGEMENT, Auftrag_NOTHING, Auftrag_ONGUARD, Auftrag_ORBIT, Auftrag_PATROLZONE, Auftrag_REARMING, Auftrag_RECON, Auftrag_RESCUEHELO, Auftrag_SEAD, Auftrag_STRAFING, Auftrag_STRIKE, Auftrag_TANKER, Auftrag_TROOPTRANSPORT, GroupSet, ZoneSet
 
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 ack = await bridge.add_auftrag(auftrag=auftrag_bai, commander="COMMANDER:Blue Command")
@@ -1025,6 +1060,15 @@ ack = await bridge.add_auftrag(auftrag=auftrag_fac, legion="LEGION:Ground Brigad
 
 auftrag_patrol = Auftrag_PATROLZONE(zone="ZONE:Patrol Area", speed_kts=20, altitude_ft=2000, formation="Off Road")
 ack = await bridge.add_auftrag(auftrag=auftrag_patrol, legion="LEGION:Ground Brigade")
+
+auftrag_recon = Auftrag_RECON(
+    zones=ZoneSet("ZONE:Recon Alpha", "ZONE:Recon Bravo"),
+    speed_kts=250,
+    altitude_ft=12000,
+    ad_infinitum=False,
+    randomly=True,
+)
+ack = await bridge.add_auftrag(auftrag=auftrag_recon, commander="COMMANDER:Blue Commander")
 
 auftrag_capture = Auftrag_CAPTUREZONE(opszone="OPSZONE:Town Fight", capture_coalition="blue", speed_kts=20)
 ack = await bridge.add_auftrag(auftrag=auftrag_capture, legion="LEGION:Ground Brigade")

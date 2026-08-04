@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
+from .intelligence import ContactInformationState, IntelContactMemory, assess_intel_contact
 from .models import IntelContact, OpsZone
 from .operational import (
     AssetRequirement,
@@ -14,6 +15,7 @@ from .operational import (
     OperationalPlanProvenance,
     OperationalPosture,
     PlanPhase,
+    PlanProposalIssue,
     PlanSourceType,
 )
 from .pictures import TacticalPicture
@@ -27,6 +29,10 @@ class RuleBasedPlannerConfig:
     source_id: str = "moosebridge.rule_based_capture.v1"
     isolation_distance_from_zone_m: float = 30_000.0
     ground_assault_groups: int = 2
+    contact_fresh_for_s: float = 120.0
+    contact_stale_after_s: float = 600.0
+    lost_contact_recon_window_s: float = 900.0
+    lost_contact_recon_threat_min: float = 3.0
 
     def __post_init__(self) -> None:
         source_id = self.source_id.strip()
@@ -37,6 +43,17 @@ class RuleBasedPlannerConfig:
             raise ValueError("isolation distance must be finite and non-negative")
         if self.ground_assault_groups < 1:
             raise ValueError("ground assault groups must be at least one")
+        if not math.isfinite(self.contact_fresh_for_s) or self.contact_fresh_for_s < 0:
+            raise ValueError("contact fresh duration must be finite and non-negative")
+        if not math.isfinite(self.contact_stale_after_s) or self.contact_stale_after_s <= self.contact_fresh_for_s:
+            raise ValueError("contact stale threshold must be greater than the fresh duration")
+        if (
+            not math.isfinite(self.lost_contact_recon_window_s)
+            or self.lost_contact_recon_window_s <= self.contact_fresh_for_s
+        ):
+            raise ValueError("lost-contact recon window must be greater than the contact fresh duration")
+        if not math.isfinite(self.lost_contact_recon_threat_min) or self.lost_contact_recon_threat_min < 0:
+            raise ValueError("lost-contact recon threat threshold must be finite and non-negative")
 
 
 class RuleBasedOperationalPlanner:
@@ -62,9 +79,44 @@ class RuleBasedOperationalPlanner:
         if zone is None:
             raise ValueError(f"tactical picture does not contain target OPSZONE: {objective.control_object_id}")
 
-        defender = self._select_defender(zone, picture.contacts)
+        defender = self._select_defender(zone, picture)
+        lost_recon_contact = self._select_lost_recon_contact(zone, picture)
+        proposal_issues = self._intel_issues(picture, defender, lost_recon_contact)
         phases: list[PlanPhase] = []
         previous_phase: str | None = None
+        if lost_recon_contact is not None:
+            phases.append(
+                PlanPhase(
+                    phase_id="recon",
+                    name="Reacquire important lost contacts",
+                    metadata={"requires_tactical_replanning": True, "intel_id": picture.intel_id},
+                    intents=(
+                        MissionIntent(
+                            intent_id="recon-objective",
+                            name="Reconnoitre the objective area",
+                            auftrag_types=("RECON",),
+                            target_object_id=objective.control_object_id,
+                            asset_requirements=(
+                                AssetRequirement(
+                                    requirement_id="REQ:Reconnaissance",
+                                    role=AssetRole.RECONNAISSANCE,
+                                    mission_types=("RECON",),
+                                    performer_categories=("AIR", "GROUND", "NAVAL"),
+                                ),
+                            ),
+                            metadata={
+                                "auftrag_params": {
+                                    "zones": (objective.control_object_id,),
+                                    "ad_infinitum": False,
+                                    "randomly": False,
+                                },
+                                "lost_contact_id": lost_recon_contact.contact.object_id,
+                            },
+                        ),
+                    ),
+                )
+            )
+            previous_phase = "recon"
         if defender is not None:
             target_id = defender.target_object_id
             assert target_id is not None
@@ -72,6 +124,7 @@ class RuleBasedOperationalPlanner:
                 PlanPhase(
                     phase_id="isolate",
                     name="Isolate the objective",
+                    depends_on=(previous_phase,) if previous_phase else (),
                     intents=(
                         MissionIntent(
                             intent_id="interdict-defenders",
@@ -164,6 +217,20 @@ class RuleBasedOperationalPlanner:
             if defender is not None
             else "No coalition-visible ground defender near the objective; no isolation strike was proposed."
         )
+        recon_metadata = None
+        if lost_recon_contact is not None:
+            contact = lost_recon_contact.contact
+            recon_metadata = {
+                "status": "required",
+                "reason": "important_lost_contact",
+                "contact_id": contact.object_id,
+                "target_object_id": contact.target_object_id,
+                "last_detected_time": contact.detected_time,
+                "lost_time": lost_recon_contact.lost_time,
+                "last_known_x": contact.x,
+                "last_known_z": contact.z,
+                "threat_level": contact.threat_level,
+            }
         proposal_id = plan_id or f"PLAN:{goal.goal_id.removeprefix('GOAL:')}"
         return OperationalPlan(
             plan_id=proposal_id,
@@ -181,12 +248,102 @@ class RuleBasedOperationalPlanner:
                     "Ground seizure is required; air defense and ammunition supply are optional consolidation tasks."
                 ),
             ),
+            proposal_issues=proposal_issues,
             metadata={
                 "planner": self.config.source_id,
                 "objective_control_id": objective.control_object_id,
                 "selected_defender_contact_id": defender.object_id if defender else None,
+                "reconnaissance_requirement": recon_metadata,
             },
         )
+
+    def _intel_issues(
+        self,
+        picture: TacticalPicture,
+        defender: IntelContact | None,
+        lost_recon_contact: IntelContactMemory | None,
+    ) -> tuple[PlanProposalIssue, ...]:
+        issues: list[PlanProposalIssue] = []
+        if picture.intel is None:
+            issues.append(
+                PlanProposalIssue(
+                    "warning",
+                    "intel_status_unknown",
+                    "The tactical picture contains no INTEL status; detection coverage cannot be assessed.",
+                    picture.intel_id,
+                )
+            )
+        else:
+            if not picture.intel.is_running:
+                issues.append(
+                    PlanProposalIssue(
+                        "warning",
+                        "intel_not_running",
+                        "The INTEL source is not running; contacts may be incomplete or stale.",
+                        picture.intel.object_id,
+                    )
+                )
+            if picture.intel.alive_agent_count is None:
+                issues.append(
+                    PlanProposalIssue(
+                        "warning",
+                        "intel_agent_status_unknown",
+                        "The number of living INTEL agents is unknown.",
+                        picture.intel.object_id,
+                    )
+                )
+            elif picture.intel.alive_agent_count == 0:
+                issues.append(
+                    PlanProposalIssue(
+                        "warning",
+                        "intel_no_alive_agents",
+                        "The INTEL source has no living detection agents.",
+                        picture.intel.object_id,
+                    )
+                )
+        if defender is None:
+            issues.append(
+                PlanProposalIssue(
+                    "warning",
+                    "intel_no_visible_defenders",
+                    (
+                        "No coalition-visible ground defender was found near the objective. "
+                        "This is not evidence that the objective is undefended."
+                    ),
+                    picture.intel_id,
+                )
+            )
+        else:
+            assessment = assess_intel_contact(
+                defender,
+                picture.clock.mission_time if picture.clock else None,
+                fresh_for_s=self.config.contact_fresh_for_s,
+                stale_after_s=self.config.contact_stale_after_s,
+            )
+            if assessment.state in {ContactInformationState.DEGRADED, ContactInformationState.UNKNOWN}:
+                age = f"{assessment.age_s:.0f} seconds" if assessment.age_s is not None else "unknown"
+                issues.append(
+                    PlanProposalIssue(
+                        "warning",
+                        "intel_contact_quality_degraded",
+                        f"The selected defender contact has {assessment.state.value} freshness (age {age}).",
+                        defender.object_id,
+                    )
+                )
+        if lost_recon_contact is not None:
+            contact = lost_recon_contact.contact
+            issues.append(
+                PlanProposalIssue(
+                    "warning",
+                    "reconnaissance_required",
+                    (
+                        f"Important contact {contact.target_object_id or contact.object_id} was lost near the objective. "
+                        "A RECON phase was proposed before relying on its last known position."
+                    ),
+                    contact.object_id,
+                )
+            )
+        return tuple(issues)
 
     @staticmethod
     def _validate_inputs(
@@ -207,12 +364,13 @@ class RuleBasedOperationalPlanner:
         if not objective.control_object_id or not objective.control_object_id.startswith("OPSZONE:"):
             raise ValueError("initial rule-based CAPTURE planner requires an OPSZONE control object")
 
-    def _select_defender(self, zone: OpsZone, contacts: list[IntelContact]) -> IntelContact | None:
+    def _select_defender(self, zone: OpsZone, picture: TacticalPicture) -> IntelContact | None:
         if zone.x is None or zone.z is None:
             return None
         radius = max(0.0, zone.zone_radius or 0.0) + self.config.isolation_distance_from_zone_m
         candidates: list[tuple[float, float, str, IntelContact]] = []
-        for contact in contacts:
+        mission_time = picture.clock.mission_time if picture.clock else None
+        for contact in picture.contacts:
             target_id = contact.target_object_id or ""
             if not (contact.is_ground or contact.is_static) or not target_id.startswith(("GROUP:", "UNIT:", "STATIC:")):
                 continue
@@ -221,7 +379,53 @@ class RuleBasedOperationalPlanner:
             distance = math.hypot(contact.x - zone.x, contact.z - zone.z)
             if distance > radius:
                 continue
-            candidates.append((-(contact.threat_level or 0.0), distance, target_id, contact))
+            assessment = assess_intel_contact(
+                contact,
+                mission_time,
+                fresh_for_s=self.config.contact_fresh_for_s,
+                stale_after_s=self.config.contact_stale_after_s,
+            )
+            if assessment.state is ContactInformationState.STALE:
+                continue
+            effective_threat = (contact.threat_level or 0.0) * assessment.confidence
+            candidates.append((-effective_threat, distance, target_id, contact))
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: item[:3])[-1]
+
+    def _select_lost_recon_contact(
+        self,
+        zone: OpsZone,
+        picture: TacticalPicture,
+    ) -> IntelContactMemory | None:
+        if zone.x is None or zone.z is None:
+            return None
+        current_targets = {contact.target_object_id for contact in picture.contacts if contact.target_object_id}
+        mission_time = picture.clock.mission_time if picture.clock else None
+        radius = max(0.0, zone.zone_radius or 0.0) + self.config.isolation_distance_from_zone_m
+        candidates: list[tuple[float, float, str, IntelContactMemory]] = []
+        for memory in picture.lost_contacts:
+            contact = memory.contact
+            target_id = contact.target_object_id or ""
+            if target_id in current_targets:
+                continue
+            if not (contact.is_ground or contact.is_static) or not target_id.startswith(("GROUP:", "UNIT:", "STATIC:")):
+                continue
+            if contact.x is None or contact.z is None or (contact.threat_level or 0.0) < self.config.lost_contact_recon_threat_min:
+                continue
+            distance = math.hypot(contact.x - zone.x, contact.z - zone.z)
+            if distance > radius:
+                continue
+            assessment = assess_intel_contact(
+                contact,
+                mission_time,
+                fresh_for_s=self.config.contact_fresh_for_s,
+                stale_after_s=self.config.lost_contact_recon_window_s,
+                lost=True,
+            )
+            if assessment.age_s is not None and assessment.age_s > self.config.lost_contact_recon_window_s:
+                continue
+            candidates.append((-(contact.threat_level or 0.0), distance, target_id, memory))
         if not candidates:
             return None
         return min(candidates, key=lambda item: item[:3])[-1]

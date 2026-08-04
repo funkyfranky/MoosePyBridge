@@ -312,7 +312,9 @@ def test_state_indexes_intel_snapshots_and_events() -> None:
     state.apply_message(
         {
             "type": "event",
+            "id": "event-lost-contact-1",
             "event": "intel.lost_contact",
+            "mission_time": 125.0,
             "payload": {
                 "contact": {
                     "object_id": "INTELCONTACT:BlueIntel:Ground-1",
@@ -325,6 +327,22 @@ def test_state_indexes_intel_snapshots_and_events() -> None:
     )
 
     assert state.intel_contact("INTELCONTACT:BlueIntel:Ground-1") is None
+    memory = state.lost_contacts_for_intel("INTEL:BlueIntel")[0]
+    assert memory.contact.target_object_id == "GROUP:Ground-1"
+    assert memory.lost_time == 125.0
+    assert memory.event_id == "event-lost-contact-1"
+
+    state.apply_message(
+        {
+            "type": "event",
+            "event": "intel.new_contact",
+            "mission_time": 140.0,
+            "payload": {"contact": dict(memory.contact.raw)},
+        }
+    )
+
+    assert state.intel_contact("INTELCONTACT:BlueIntel:Ground-1") is not None
+    assert state.lost_contacts_for_intel("INTEL:BlueIntel") == []
 
 
 def test_state_tracks_dcs_clock_for_each_snapshot_kind() -> None:

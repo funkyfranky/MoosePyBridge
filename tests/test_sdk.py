@@ -29,6 +29,7 @@ from moosebridge.auftraege import (
     Auftrag_ONGUARD,
     Auftrag_ORBIT,
     Auftrag_PATROLZONE,
+    Auftrag_RECON,
     Auftrag_RESCUEHELO,
     Auftrag_REARMING,
     Auftrag_SEAD,
@@ -39,6 +40,7 @@ from moosebridge.auftraege import (
     AuftragEvent,
     GeneralSet,
     GroupSet,
+    ZoneSet,
 )
 from moosebridge.protocol import BridgeCommand
 from moosebridge.diagnostics import (
@@ -1692,6 +1694,19 @@ def test_group_set_rejects_non_group_object_ids() -> None:
         raise AssertionError("Expected ValueError")
 
 
+def test_zone_set_serializes_and_rejects_non_zone_object_ids() -> None:
+    zone_set = ZoneSet("ZONE:Recon Alpha", "ZONE:Recon Bravo")
+
+    assert zone_set.to_params_value() == ["ZONE:Recon Alpha", "ZONE:Recon Bravo"]
+    assert isinstance(zone_set, GeneralSet)
+    try:
+        ZoneSet("OPSZONE:Recon Alpha")
+    except ValueError as exc:
+        assert "ZONE:<name>" in str(exc)
+    else:
+        raise AssertionError("Expected ValueError")
+
+
 def test_sdk_add_trooptransport_accepts_group_set() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -1954,6 +1969,36 @@ def test_sdk_add_patrolzone_auftrag_to_legion_uses_patrolzone_params() -> None:
             "altitude_ft": 2000,
             "formation": "Off Road",
             "legion_id": "LEGION:Ground Brigade",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_recon_auftrag_to_commander_uses_zone_set() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_RECON(
+            zones=ZoneSet("ZONE:Recon Alpha", "ZONE:Recon Bravo"),
+            speed_kts=250,
+            altitude_ft=12_000,
+            ad_infinitum=False,
+            randomly=True,
+            formation="Vee",
+        )
+
+        await client.add_auftrag(auftrag=auftrag, commander="COMMANDER:Blue Commander")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_recon"
+        assert command.params == {
+            "zones": ["ZONE:Recon Alpha", "ZONE:Recon Bravo"],
+            "speed_kts": 250,
+            "altitude_ft": 12_000,
+            "ad_infinitum": False,
+            "randomly": True,
+            "formation": "Vee",
+            "commander_id": "COMMANDER:Blue Commander",
         }
 
     asyncio.run(scenario())

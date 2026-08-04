@@ -145,7 +145,8 @@ def format_operational_plan_assessment(
         ),
         (
             f"  feasible={assessment.feasible} requirements={len(assessment.requirements)} "
-            f"errors={len(assessment.errors)} warnings={len(assessment.warnings)}"
+            f"errors={len(assessment.errors)} warnings={len(assessment.warnings)} "
+            f"proposal_issues={len(plan.proposal_issues)}"
         ),
     ]
     phase_names = {phase.phase_id: phase.name for phase in plan.phases}
@@ -163,6 +164,9 @@ def format_operational_plan_assessment(
             f"required={requirement.required_count} available={requirement.available_count} "
             f"shortfall={requirement.shortfall} allocation=[{allocations}]"
         )
+    for issue in plan.proposal_issues:
+        reference = f" {issue.reference_id}" if issue.reference_id else ""
+        lines.append(f"  PROPOSAL {issue.severity.upper()} {issue.code}{reference}: {issue.message}")
     for issue in assessment.issues:
         reference = f" {issue.reference_id}" if issue.reference_id else ""
         lines.append(f"  {issue.severity.upper()} {issue.code}{reference}: {issue.message}")
@@ -195,6 +199,17 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
         )
         if provenance.get("rationale"):
             lines.append(f"    rationale={provenance['rationale']}")
+    proposal_issues = execution.plan_snapshot.get("proposal_issues")
+    if isinstance(proposal_issues, list):
+        for issue in proposal_issues:
+            if not isinstance(issue, dict):
+                continue
+            reference = f" {issue.get('reference_id')}" if issue.get("reference_id") else ""
+            lines.append(
+                f"  PROPOSAL {str(issue.get('severity') or 'warning').upper()} "
+                f"{issue.get('code') or 'unknown'}{reference}: "
+                f"{issue.get('message') or '-'}"
+            )
     for mission in execution.missions:
         requirement = f"{mission.phase_id}/{mission.intent_id}/{mission.requirement_id}"
         lines.append(

@@ -221,6 +221,40 @@ def test_state_payload_roundtrip_includes_loss_reports() -> None:
     assert target.loss_reports == source.loss_reports
 
 
+def test_state_payload_roundtrip_includes_lost_intel_contact_memory() -> None:
+    source = MooseBridgeState(connected=True)
+    source.apply_message(
+        {
+            "type": "event",
+            "source": "dcs",
+            "id": "event-lost-1",
+            "event": "intel.lost_contact",
+            "mission_time": 125.0,
+            "payload": {
+                "contact": {
+                    "object_id": "INTELCONTACT:Blue:Armor",
+                    "intel_id": "INTEL:Blue",
+                    "target_object_id": "GROUP:Armor",
+                    "is_ground": True,
+                    "detected_time": 120.0,
+                    "x": 10.0,
+                    "z": 20.0,
+                }
+            },
+        }
+    )
+
+    target = MooseBridgeState()
+    payload = state_payload(source, kinds=("lost_intel_contacts",))
+    apply_state_payload(target, payload)
+
+    assert payload["counts"]["lost_intel_contacts"] == 1
+    memory = target.lost_contacts_for_intel("INTEL:Blue")[0]
+    assert memory.contact.target_object_id == "GROUP:Armor"
+    assert memory.lost_time == 125.0
+    assert memory.event_id == "event-lost-1"
+
+
 def test_state_payload_roundtrip_includes_territories() -> None:
     source = MooseBridgeState(connected=True)
     source.apply_message(

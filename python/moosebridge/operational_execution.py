@@ -17,6 +17,7 @@ from .auftraege import (
     Auftrag_CAPTUREZONE,
     Auftrag_FUELSUPPLY,
     Auftrag_PATROLZONE,
+    Auftrag_RECON,
     Auftrag_REARMING,
     AuftragCommand,
     AuftragEvent,
@@ -904,6 +905,25 @@ class OperationalPlanExecutor:
                 PlanExecutionEvent("phase.completed", plan.plan_id, phase_id=phase.phase_id, status=phase.status.value),
                 on_event,
             )
+            if phase.metadata.get("requires_tactical_replanning"):
+                await self.client.refresh_intel_state()
+                next_phase = next(
+                    (item for item in plan.phases if item.status is not PlanPhaseStatus.COMPLETED),
+                    None,
+                )
+                reason = "reconnaissance completed; refresh the tactical picture and replan from current INTEL contacts"
+                await self._emit(
+                    execution,
+                    PlanExecutionEvent(
+                        "plan.replanning_required",
+                        plan.plan_id,
+                        phase_id=phase.phase_id,
+                        status="review_required",
+                        message=reason,
+                    ),
+                    on_event,
+                )
+                return await self._block(plan, next_phase, execution, reason, on_event)
 
         await self._refresh_goal_control(goal.objective_id)
         self.client.sync_strategic_objectives(source="plan.execution")
@@ -1089,6 +1109,9 @@ class OperationalPlanExecutor:
                 value = params.get(key)
                 if isinstance(value, str) and ":" in value:
                     targets.add(value)
+            zone_values = params.get("zones")
+            if isinstance(zone_values, (list, tuple)):
+                targets.update(str(value) for value in zone_values if isinstance(value, str) and ":" in value)
 
         snapshot_methods = {
             "GROUP": "snapshot_groups",
@@ -1308,6 +1331,11 @@ def build_plan_auftrag(
             raise ValueError(f"PATROLZONE intent {intent.intent_id} requires a ZONE or OPSZONE target")
         params.setdefault("zone", target)
         command = Auftrag_PATROLZONE(**params)
+    elif mission_type == "RECON":
+        if not target or not target.startswith(("ZONE:", "OPSZONE:")):
+            raise ValueError(f"RECON intent {intent.intent_id} requires a ZONE or OPSZONE target")
+        params.setdefault("zones", (target,))
+        command = Auftrag_RECON(**params)
     elif mission_type == "CAPTUREZONE":
         if not target or not target.startswith("OPSZONE:"):
             raise ValueError(f"CAPTUREZONE intent {intent.intent_id} requires an OPSZONE target")

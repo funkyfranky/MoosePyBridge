@@ -8,6 +8,7 @@ from typing import Any, Iterable, Protocol
 from .clock import DcsTime
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
+from .intelligence import IntelContactAssessment, IntelContactMemory, assess_intel_contact
 
 
 class HasGeographicPoint(Protocol):
@@ -275,6 +276,7 @@ class TacticalPicture:
     clock: DcsTime | None = None
     intel: Intel | None = None
     contacts: list[IntelContact] = field(default_factory=list)
+    lost_contacts: list[IntelContactMemory] = field(default_factory=list)
     clusters: list[IntelCluster] = field(default_factory=list)
     opszones: list[OpsZone] = field(default_factory=list)
     opsgroups: list[OpsGroup] = field(default_factory=list)
@@ -283,6 +285,45 @@ class TacticalPicture:
     missions: list[Auftrag] = field(default_factory=list)
     loss_reports: list[dict[str, Any]] = field(default_factory=list)
 
+    def contact_assessments(
+        self,
+        *,
+        fresh_for_s: float = 120.0,
+        stale_after_s: float = 600.0,
+    ) -> tuple[IntelContactAssessment, ...]:
+        """Return current contacts with time-based information quality."""
+
+        mission_time = self.clock.mission_time if self.clock else None
+        return tuple(
+            assess_intel_contact(
+                contact,
+                mission_time,
+                fresh_for_s=fresh_for_s,
+                stale_after_s=stale_after_s,
+            )
+            for contact in self.contacts
+        )
+
+    def lost_contact_assessments(
+        self,
+        *,
+        fresh_for_s: float = 120.0,
+        stale_after_s: float = 900.0,
+    ) -> tuple[IntelContactAssessment, ...]:
+        """Return last-known lost contacts with decaying confidence."""
+
+        mission_time = self.clock.mission_time if self.clock else None
+        return tuple(
+            assess_intel_contact(
+                memory.contact,
+                mission_time,
+                fresh_for_s=fresh_for_s,
+                stale_after_s=stale_after_s,
+                lost=True,
+            )
+            for memory in self.lost_contacts
+        )
+
     def to_geojson(self) -> GeoJsonFeatureCollection:
         """Return a GeoJSON FeatureCollection suitable for a tactical map."""
 
@@ -290,6 +331,7 @@ class TacticalPicture:
         features.extend(self._zone_features())
         features.extend(self._asset_features())
         features.extend(self._contact_features())
+        features.extend(self._lost_contact_features())
         features.extend(self._cluster_features())
         features.extend(self._loss_report_features())
         features.extend(self._mission_features())
@@ -339,6 +381,7 @@ class TacticalPicture:
         return features
 
     def _contact_features(self) -> list[GeoJsonFeature | None]:
+        assessments = {item.contact.object_id: item for item in self.contact_assessments()}
         return [
             _point_feature(
                 contact,
@@ -354,9 +397,37 @@ class TacticalPicture:
                     "heading": contact.heading,
                     "altitude_m": contact.altitude_m,
                     "mission_id": contact.mission_id,
+                    "information_state": assessments[contact.object_id].state.value,
+                    "information_age_s": assessments[contact.object_id].age_s,
+                    "confidence": assessments[contact.object_id].confidence,
                 },
             )
             for contact in self.contacts
+        ]
+
+    def _lost_contact_features(self) -> list[GeoJsonFeature | None]:
+        assessments = {
+            item.contact.object_id: item
+            for item in self.lost_contact_assessments()
+        }
+        return [
+            _point_feature(
+                memory.contact,
+                "lost_enemy_contacts",
+                {
+                    "intel_id": memory.contact.intel_id,
+                    "target_object_id": memory.contact.target_object_id,
+                    "contact_type": memory.contact.contact_type,
+                    "threat_level": memory.contact.threat_level,
+                    "detected_time": memory.contact.detected_time,
+                    "lost_time": memory.lost_time,
+                    "recce": memory.contact.recce,
+                    "information_state": assessments[memory.contact.object_id].state.value,
+                    "information_age_s": assessments[memory.contact.object_id].age_s,
+                    "confidence": assessments[memory.contact.object_id].confidence,
+                },
+            )
+            for memory in self.lost_contacts
         ]
 
     def _cluster_features(self) -> list[GeoJsonFeature | None]:

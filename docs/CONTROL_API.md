@@ -291,6 +291,22 @@ rule-based draft for an OPSZONE CAPTURE goal. The initial conservative planner
 selects at most one coalition-visible nearby ground defender for BAI isolation,
 then proposes CAPTUREZONE seizure and optional AIRDEFENSE/AMMOSUPPLY
 consolidation. Call `add_operational_plan`, validation, and approval explicitly.
+The draft carries structured `proposal_issues` when INTEL coverage is unknown,
+not running, has no living agents, or exposes no nearby defender. These warnings
+are audit-persistent and informational; they are not feasibility errors.
+Contact freshness is derived from MOOSE `Tdetected`. `TacticalPicture` exposes
+`contact_assessments()` and `lost_contact_assessments()` with typed information
+states, age, and confidence. `LostContact` events retain the last-known contact
+in coalition-private memory. Important recent losses near a capture objective
+produce a structured `reconnaissance_required` proposal issue and metadata;
+the rule-based planner adds an executable RECON phase. `Auftrag_RECON` accepts a
+`ZoneSet`, speed, altitude, route repetition/randomization, and formation.
+INTEL agent membership is mission-independent. Registering an INTEL enables
+MOOSE `INTEL:SetAgentAuto(true)`, which periodically maintains all living groups
+of that coalition in the detection set. Successful route completion means the
+recon asset survived; it does not assert that enemies were found or that the area is clear.
+Execution therefore stops at a `plan.replanning_required` boundary after INTEL
+has been refreshed.
 - typed OPS state: `commander`, `commanders`, `commander_for_coalition`,
   `legions_of_commander`, `missions_of_commander`, `legion`, `cohort`, `cohorts_of_legion`,
   `missions_of_legion`, `missions_of_group`, `ready_cohorts_of_legion`,
