@@ -73,6 +73,11 @@ class FakeSdkServer:
         self.state = MooseBridgeState(connected=True)
         self.commands: list[tuple[BridgeCommand, float]] = []
         self.events_to_emit: list[dict[str, Any]] = []
+        self.audit_records: list[tuple[str, dict[str, Any]]] = []
+
+    async def append_audit_record(self, record_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self.audit_records.append((record_type, payload))
+        return {"record_type": record_type, "payload": payload}
 
     async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
         self.commands.append((command, timeout))
@@ -2186,6 +2191,10 @@ def test_sdk_execute_recon_returns_event_based_tactical_outcome() -> None:
         assert result.first_intelligence_delay == 10
         assert result.spatial_coverage is not None
         assert result.spatial_coverage.area_coverage_ratio == 1
+        assert server.audit_records[-1][0] == "recon.execution"
+        audit_payload = server.audit_records[-1][1]
+        assert audit_payload["missions"][0]["recon_tracks"]["GROUP:MQ-9"][0]["x"] == 0
+        assert audit_payload["missions"][0]["recon_outcome"]["spatial_coverage"]["area_coverage_ratio"] == 1
 
     asyncio.run(scenario())
 

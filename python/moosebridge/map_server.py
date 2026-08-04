@@ -33,6 +33,7 @@ from .frontlines import (
 from .pictures import GlobalPicture
 from .operational_audit import execution_from_dict
 from .recon import ReconArea, build_recon_coverage_footprints
+from .recon import RECON_EXECUTION_AUDIT_TYPE
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_MAP_HOST = "127.0.0.1"
@@ -398,10 +399,15 @@ class GlobalMapRuntime:
     ) -> dict[str, Any]:
         """Append persisted potential RECON sensor coverage to the map."""
 
-        queried_records = await bridge.server.query_audit_records(
+        operational_records = await bridge.server.query_audit_records(
             record_type="operational_plan.execution",
             latest_attempts=True,
         )
+        direct_records = await bridge.server.query_audit_records(
+            record_type=RECON_EXECUTION_AUDIT_TYPE,
+            latest_attempts=True,
+        )
+        queried_records = (*operational_records, *direct_records)
         latest_by_plan: dict[str, dict[str, Any]] = {}
         for record in queried_records:
             payload = record.get("payload") if isinstance(record, dict) else None

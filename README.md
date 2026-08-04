@@ -3,6 +3,9 @@
 MoosePyBridge is a semantic Python control plane for Digital Combat Simulator
 (DCS) missions that use the MOOSE framework.
 
+See [the roadmap](docs/ROADMAP.md) for the architectural direction and
+[the backlog](docs/BACKLOG.md) for concrete pending work.
+
 The bridge lets Python observe, analyze, and command a running DCS mission
 through MOOSE and MOOSE OPS abstractions. It is intentionally not a raw Lua
 remote execution tunnel. DCS remains the simulation runtime, MOOSE remains the
@@ -271,8 +274,8 @@ if assessment.feasible:
 ```
 
 Approval still records a command decision only. `execute_plan()` is the
-separate, explicit execution step. The initial executor supports `CAPTURE`
-goals and maps `BAI`, `PATROLZONE`, `RECON`, `CAPTUREZONE`, `AIRDEFENSE`,
+separate, explicit execution step. The executor supports `CAPTURE` and
+deadline-based `DEFEND` goals and maps `BAI`, `PATROLZONE`, `RECON`, `CAPTUREZONE`, `AIRDEFENSE`,
 `AMMOSUPPLY`, `FUELSUPPLY`, and `REARMING` requirements to concrete AUFTRAGs.
 It submits all requirements in a phase before waiting for required outcomes,
 then advances automatically when their `auftrag.evaluated` events report
@@ -394,28 +397,37 @@ Supported source types are `operator`, `rule_engine`, `llm`, and `import`.
 Provenance remains optional for manually constructed legacy plans and survives
 the same audit/restore roundtrip as phases and approvals.
 
-The initial rule-based planner proposes conservative CAPTURE drafts from a
+The rule-based planner proposes conservative CAPTURE and DEFEND drafts from a
 coalition-visible tactical picture:
 
 ```python
 picture = await bridge.refresh_tactical_picture("blue", "INTEL:Blue Intel")
 draft = bridge.propose_capture_plan("GOAL:Blue capture Town", picture)
+# A DEFEND goal must carry deadline_mission_time.
+defense = bridge.propose_defend_plan("GOAL:Blue defend Town", picture)
 
 bridge.add_operational_plan(draft)
 assessment = await bridge.refresh_and_validate_operational_plan(draft)
 ```
 
-It currently requires an OPSZONE-controlled objective. A visible nearby ground
-contact adds a BAI isolation phase; otherwise the planner starts with ground
-seizure. Local air defense and ammunition supply are optional consolidation
-intents. The result stays `draft`: proposing never registers, validates,
-approves, or executes a plan. Enemy selection uses only `TacticalPicture`
-INTEL contacts, never global truth. In particular, a proposal without a visible
-defender carries the structured `intel_no_visible_defenders` warning; absence
-of a contact is not treated as proof that the objective is undefended. Missing
-INTEL status, stopped INTEL, and absent living detection agents produce their
-own proposal warnings. These remain distinct from feasibility errors, appear in
-diagnostics, and survive audit persistence and restore.
+Both variants currently require an OPSZONE-controlled objective. CAPTURE can
+add a BAI isolation phase before ground seizure. DEFEND requires current
+friendly ownership, optionally interdicts the strongest visible nearby ground
+attacker, and tasks ground forces to hold the zone until the goal deadline.
+Local air defense and ammunition supply are optional support intents. The
+DEFEND executor monitors objective and goal events alongside AUFTRAG events;
+loss of control fails immediately, while holding the objective to the deadline
+completes the plan and cancels its remaining active missions on a best-effort
+basis. See `examples/sdk/plan_defend_goal.py` for a parameterless DCS example.
+
+The result stays `draft`: proposing never registers, validates, approves, or
+executes a plan. Enemy selection uses only `TacticalPicture` INTEL contacts,
+never global truth. CAPTURE without a visible defender carries
+`intel_no_visible_defenders`; DEFEND without a visible attacker carries
+`intel_no_visible_attackers`. Absence of a contact is never treated as proof
+that the area is clear. Missing INTEL status, stopped INTEL, and absent living
+detection agents produce their own proposal warnings. These remain distinct
+from feasibility errors and survive audit persistence and restore.
 
 Current INTEL contacts are assessed from MOOSE `Tdetected`, which represents
 the last successful detection in absolute mission seconds. The default planner
@@ -959,9 +971,9 @@ Movement history is derived from periodic DCS positions because DCS does not
 emit position-change events. Tracks are removed when an object dies or
 disappears and are reset when mission time restarts.
 
-Completed structured RECON assessments from each plan's latest execution
-attempt are loaded from the persistent operational audit and shown under
-`RECON coverage`. The combined search
+Completed structured RECON assessments from each plan's latest execution and
+direct `execute_recon()` runs are loaded from the persistent audit and shown
+under `RECON coverage`. The combined search
 footprint is visible by default; individual asset footprints can be enabled
 separately. Covered and uncovered known objective components use distinct map
 markers. These polygons represent optimistic potential sensor access along the

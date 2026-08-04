@@ -1,5 +1,7 @@
 # MoosePyBridge Roadmap
 
+Concrete pending work is maintained in [BACKLOG.md](BACKLOG.md).
+
 ## Vision
 
 MoosePyBridge is a semantic Python environment for DCS missions built on MOOSE.
@@ -322,8 +324,8 @@ Current operational-planning baseline:
 - Same-phase requirements compete for finite COHORT stock; later phases may
   reuse surviving assets.
 - Feasible plans can be approved and explicitly executed through a coalition
-  COMMANDER. The first event-driven executor covers CAPTURE plans, automatic
-  phase progression, parallel required AUFTRAG monitoring, optional support
+  COMMANDER. The event-driven executor covers CAPTURE and deadline-based DEFEND
+  plans, automatic phase progression, parallel required AUFTRAG monitoring, optional support
   missions, one-shot target existence preflight, and blocked-state handoff
   without automatic retries.
 - Blocked plans can be returned explicitly to draft state. Completed phases
@@ -357,10 +359,11 @@ Current operational-planning baseline:
   operator, rule engine, LLM, or imported source, including source id, tactical
   picture mission time, and rationale. Provenance is preserved through audit
   persistence and restore independently of the approving client.
-- A first conservative rule-based planner creates unregistered CAPTURE drafts
-  for OPSZONE objectives from coalition-specific tactical pictures. It uses
-  visible INTEL contacts for optional isolation and never reads global truth;
-  registration, validation, approval, and execution remain explicit SDK steps.
+- A conservative rule-based planner creates unregistered CAPTURE and DEFEND
+  drafts for OPSZONE objectives from coalition-specific tactical pictures. It
+  uses visible INTEL contacts for optional isolation or counterattack and never
+  reads global truth; registration, validation, approval, and execution remain
+  explicit SDK steps.
 - Rule-based proposals retain structured INTEL coverage warnings separately
   from technical feasibility findings, including the important distinction that
   no visible defender does not prove an objective is undefended.
@@ -382,11 +385,13 @@ Current operational-planning baseline:
   persists each mission's `ReconOutcome`, emits a structured `recon.assessed`
   boundary, and gives replanning an explicit satisfied/incomplete/indeterminate
   reason. Later phases are never resumed from the stale pre-recon plan.
-- Spatial RECON coverage uses sampled assigned-group trajectories and bounded
+- Spatial RECON coverage from operational plans and direct `execute_recon()`
+  runs uses sampled assigned-group trajectories and bounded
   sensor profiles. It reports optimistic potential access over circular or
   polygonal objective areas plus weighted known infrastructure points. Unknown
   sensor bounds remain indeterminate, and coverage never asserts enemy absence.
-- The browser map reads completed RECON assessments from the operational audit.
+- The browser map reads completed RECON assessments from operational-plan and
+  direct-RECON audit records.
   It renders the combined search footprint by default, optional per-asset
   footprints, and separate covered/uncovered objective-component markers.
 - INTEL acquisition is mission-independent: all coalition agents contribute

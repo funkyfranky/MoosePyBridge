@@ -584,6 +584,148 @@ class _ExecutionServer:
         return {"ok": True, "result": {"kind": "intel_clusters", "count": len(self.state.intel_cluster_objects)}}
 
 
+class _DefendExecutionServer(_ExecutionServer):
+    """Execution server that advances DCS time to a DEFEND deadline."""
+
+    def __init__(self, *, lose_control: bool = False) -> None:
+        super().__init__(final_owner="blue")
+        self.lose_control = lose_control
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        if filters:
+            return await super().wait_for_event(event_name, filters, timeout, after_id)
+        if self.lose_control:
+            self.state.apply_message(
+                {
+                    "type": "snapshot",
+                    "kind": "opszones",
+                    "payload": {
+                        "opszones": [{
+                            "object_id": "OPSZONE:Town",
+                            "object_type": "OPSZONE",
+                            "owner_current_name": "red",
+                            "is_contested": False,
+                        }]
+                    },
+                }
+            )
+        self._event_number += 1
+        event = {
+            "type": "heartbeat",
+            "source": "dcs",
+            "id": f"event-{self._event_number}",
+            "mission_time": 110.0 if self.lose_control else 120.0,
+            "dcs_time": 43_310.0 if self.lose_control else 43_320.0,
+        }
+        self.event_history.append(event)
+        return event
+
+
+def _executable_defend_plan(*, lose_control: bool = False) -> tuple[MooseBridgeClient, OperationalPlan]:
+    server = _DefendExecutionServer(lose_control=lose_control)
+    server._objective_updated = True
+    bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+    bridge.state.apply_message(
+        {"type": "heartbeat", "source": "dcs", "mission_time": 100.0, "dcs_time": 43_300.0}
+    )
+    bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Town",
+            name="Town",
+            kind=ObjectiveKind.OPSZONE,
+            control_object_id="OPSZONE:Town",
+            ownership_policy=OwnershipPolicy.MOOSE_MANAGED,
+            owner="blue",
+        )
+    )
+    bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Defend Town",
+            name="Defend Town",
+            coalition="blue",
+            action=StrategicGoalAction.DEFEND,
+            objective_id="OBJECTIVE:Town",
+            deadline_mission_time=120.0,
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "commanders",
+            "payload": {
+                "commanders": [{
+                    "object_id": "COMMANDER:Blue Command",
+                    "object_type": "COMMANDER",
+                    "coalition": "blue",
+                    "legion_ids": ["LEGION:Blue Brigade"],
+                }]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {"legions": [{"object_id": "LEGION:Blue Brigade", "coalition": "blue"}]},
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [{
+                    "object_id": "COHORT:Blue Armor",
+                    "legion_id": "LEGION:Blue Brigade",
+                    "is_ground": True,
+                    "available_asset_count": 3,
+                    "mission_types": ["PATROLZONE"],
+                }]
+            },
+        }
+    )
+    plan = bridge.add_operational_plan(
+        OperationalPlan(
+            plan_id="PLAN:Defend Town",
+            name="Defend Town",
+            goal_id="GOAL:Defend Town",
+            coalition="blue",
+            phases=(
+                PlanPhase(
+                    phase_id="defend",
+                    name="Defend",
+                    intents=(
+                        MissionIntent(
+                            intent_id="hold-zone",
+                            name="Hold zone",
+                            auftrag_types=("PATROLZONE",),
+                            target_object_id="OPSZONE:Town",
+                            asset_requirements=(
+                                AssetRequirement(
+                                    requirement_id="REQ:Ground defense",
+                                    role=AssetRole.COMBAT,
+                                    min_count=2,
+                                    mission_types=("PATROLZONE",),
+                                    performer_categories=("GROUND",),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    bridge.validate_operational_plan(plan)
+    bridge.approve_operational_plan(plan)
+    return bridge, plan
+
+
 def _executable_capture_plan(
     *,
     success: bool = True,
@@ -731,6 +873,41 @@ def test_execute_capture_plan_uses_commander_events_and_confirms_goal() -> None:
         assert "approved_by=operator" in rendered
         assert "ack=ack-1" in rendered
         assert f"correlation={command.id}" in rendered
+
+    asyncio.run(scenario())
+
+
+def test_execute_defend_plan_completes_from_deadline_goal_event() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_defend_plan()
+        observed: list[str] = []
+
+        execution = await bridge.execute_plan(
+            plan,
+            mission_timeout_s=2,
+            on_event=lambda event: observed.append(event.event),
+        )
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert plan.phases[0].status is PlanPhaseStatus.COMPLETED
+        assert bridge.strategic_goal("GOAL:Defend Town").status is StrategicGoalStatus.ACHIEVED  # type: ignore[union-attr]
+        assert execution.missions[0].status in {PlanMissionStatus.SUCCEEDED, PlanMissionStatus.CANCELLED}
+        assert "plan.completed" in observed
+        assert bridge.server.commands[0].action == "auftrag.create_patrolzone"  # type: ignore[attr-defined]
+
+    asyncio.run(scenario())
+
+
+def test_execute_defend_plan_blocks_when_control_is_lost_before_deadline() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_defend_plan(lose_control=True)
+
+        execution = await bridge.execute_plan(plan, mission_timeout_s=2)
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert plan.status is OperationalPlanStatus.BLOCKED
+        assert bridge.strategic_goal("GOAL:Defend Town").status is StrategicGoalStatus.FAILED  # type: ignore[union-attr]
+        assert "strategic DEFEND goal failed" in (execution.blocked_reason or "")
 
     asyncio.run(scenario())
 

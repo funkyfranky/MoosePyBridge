@@ -272,7 +272,9 @@ def test_map_runtime_publishes_persisted_recon_coverage() -> None:
 
     class Server:
         async def query_audit_records(self, **kwargs: object) -> tuple[dict[str, object], ...]:
-            assert kwargs == {"record_type": "operational_plan.execution", "latest_attempts": True}
+            if kwargs["record_type"] == "operational_plan.execution":
+                return ()
+            assert kwargs == {"record_type": "recon.execution", "latest_attempts": True}
             return ({
                 "recorded_at": "2026-08-04T20:00:00Z",
                 "payload": {

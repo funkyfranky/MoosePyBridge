@@ -39,7 +39,7 @@ from .recon import (
     ReconTrackingSession,
     build_recon_outcome,
 )
-from .strategic import StrategicGoalAction, StrategicGoalStatus
+from .strategic import StrategicGoal, StrategicGoalAction, StrategicGoalStatus
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -668,15 +668,15 @@ class OperationalPlanExecutor:
         mission_timeout_s: float = 3600.0,
         on_event: PlanExecutionCallback | None = None,
     ) -> OperationalPlanExecution:
-        """Execute an approved capture plan and return its runtime record."""
+        """Execute an approved operational plan and return its runtime record."""
 
         if plan.status is not OperationalPlanStatus.APPROVED:
             raise ValueError("only an approved operational plan can be executed")
         goal = self.client.strategic_goal(plan.goal_id)
         if goal is None:
             raise ValueError(f"Unknown strategic goal: {plan.goal_id}")
-        if goal.action is not StrategicGoalAction.CAPTURE:
-            raise ValueError("the first operational executor supports CAPTURE goals only")
+        if goal.action not in {StrategicGoalAction.CAPTURE, StrategicGoalAction.DEFEND}:
+            raise ValueError("operational execution currently supports CAPTURE and DEFEND goals")
         assessment = self.client.plans.assessment(plan.plan_id)
         if assessment is None or not assessment.feasible:
             raise ValueError("operational plan requires a current feasible assessment")
@@ -909,12 +909,31 @@ class OperationalPlanExecutor:
                     if required:
                         required_missions.append(mission)
 
-            failed = await self._wait_for_required_missions(
-                execution,
-                required_missions,
-                mission_timeout_s=mission_timeout_s,
-                on_event=on_event,
-            )
+            defend_status: StrategicGoalStatus | None = None
+            try:
+                if goal.action is StrategicGoalAction.DEFEND:
+                    defend_status, failed = await self._wait_for_defend_phase(
+                        goal,
+                        execution,
+                        required_missions,
+                        mission_timeout_s=mission_timeout_s,
+                        on_event=on_event,
+                    )
+                else:
+                    failed = await self._wait_for_required_missions(
+                        execution,
+                        required_missions,
+                        mission_timeout_s=mission_timeout_s,
+                        on_event=on_event,
+                    )
+            except Exception as exc:
+                return await self._block(
+                    plan,
+                    phase,
+                    execution,
+                    f"strategic goal monitoring failed: {exc}",
+                    on_event,
+                )
             if failed is not None:
                 return await self._block(
                     plan,
@@ -923,6 +942,53 @@ class OperationalPlanExecutor:
                     failed.error or f"{failed.auftrag_id} did not succeed",
                     on_event,
                 )
+
+            if defend_status in {StrategicGoalStatus.ACHIEVED, StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
+                cleanup_reason = (
+                    "strategic DEFEND goal achieved"
+                    if defend_status is StrategicGoalStatus.ACHIEVED
+                    else f"strategic DEFEND goal {defend_status.value}"
+                )
+                await self._cancel_plan_missions(execution, cleanup_reason, on_event)
+                if defend_status is not StrategicGoalStatus.ACHIEVED:
+                    return await self._block(plan, phase, execution, cleanup_reason, on_event)
+
+                phase.status = PlanPhaseStatus.COMPLETED
+                await self._emit(
+                    execution,
+                    PlanExecutionEvent(
+                        "phase.completed",
+                        plan.plan_id,
+                        phase_id=phase.phase_id,
+                        status=phase.status.value,
+                        message="defense objective held until its deadline",
+                    ),
+                    on_event,
+                )
+                for remaining_phase in plan.phases:
+                    if remaining_phase.status is PlanPhaseStatus.PENDING:
+                        remaining_phase.status = PlanPhaseStatus.SKIPPED
+                        await self._emit(
+                            execution,
+                            PlanExecutionEvent(
+                                "phase.skipped",
+                                plan.plan_id,
+                                phase_id=remaining_phase.phase_id,
+                                status=remaining_phase.status.value,
+                                message="strategic DEFEND goal already achieved",
+                            ),
+                            on_event,
+                        )
+                plan.status = OperationalPlanStatus.COMPLETED
+                execution.status = plan.status
+                execution.current_phase_id = None
+                execution.completed_mission_time = self.client._current_mission_time()
+                await self._emit(
+                    execution,
+                    PlanExecutionEvent("plan.completed", plan.plan_id, status=plan.status.value),
+                    on_event,
+                )
+                return execution
 
             phase.status = PlanPhaseStatus.COMPLETED
             await self._emit(
@@ -1117,6 +1183,96 @@ class OperationalPlanExecutor:
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _wait_for_defend_phase(
+        self,
+        goal: StrategicGoal,
+        execution: OperationalPlanExecution,
+        missions: list[PlanMissionExecution],
+        *,
+        mission_timeout_s: float,
+        on_event: PlanExecutionCallback | None,
+    ) -> tuple[StrategicGoalStatus, PlanMissionExecution | None]:
+        """Wait for required missions or a terminal deadline-based DEFEND goal."""
+
+        goal_task = asyncio.create_task(self._wait_for_defend_goal(goal, mission_timeout_s))
+        mission_task = asyncio.create_task(
+            self._wait_for_required_missions(
+                execution,
+                missions,
+                mission_timeout_s=mission_timeout_s,
+                on_event=on_event,
+            )
+        )
+        try:
+            done, _ = await asyncio.wait({goal_task, mission_task}, return_when=asyncio.FIRST_COMPLETED)
+            if goal_task in done:
+                return goal_task.result(), None
+            failed = mission_task.result()
+            if failed is not None:
+                return goal.status, failed
+            return await goal_task, None
+        finally:
+            for task in (goal_task, mission_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(goal_task, mission_task, return_exceptions=True)
+
+    async def _wait_for_defend_goal(self, goal: StrategicGoal, timeout_s: float) -> StrategicGoalStatus:
+        """Consume bridge events until a DEFEND goal reaches its deadline or fails."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        after_id = await self.client.server.event_cursor()
+        deadline_refreshed = False
+        while goal.status is StrategicGoalStatus.ACTIVE:
+            mission_time = self.client._current_mission_time()
+            if (
+                not deadline_refreshed
+                and goal.deadline_mission_time is not None
+                and mission_time is not None
+                and mission_time >= goal.deadline_mission_time
+            ):
+                await self._refresh_goal_control(goal.objective_id)
+                deadline_refreshed = True
+            self.client.sync_strategic_objectives(source="plan.defend")
+            self.client.sync_strategic_goals(source="plan.defend")
+            if goal.status is not StrategicGoalStatus.ACTIVE:
+                break
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise TimeoutError(f"timed out waiting for strategic DEFEND goal {goal.goal_id}")
+            message = await self.client.server.wait_for_event("*", timeout=remaining, after_id=after_id)
+            after_id = str(message.get("id") or "") or after_id
+            self.client.state.apply_message(message)
+            self.client._on_bridge_message(message)
+        return goal.status
+
+    async def _cancel_plan_missions(
+        self,
+        execution: OperationalPlanExecution,
+        reason: str,
+        on_event: PlanExecutionCallback | None,
+    ) -> None:
+        """Best-effort cleanup for missions still active when a DEFEND goal ends."""
+
+        for mission in execution.missions:
+            if not mission.auftrag_id or mission.status not in {
+                PlanMissionStatus.SUBMITTED,
+                PlanMissionStatus.RUNNING,
+            }:
+                continue
+            try:
+                await self.client.cancel_mission(mission.auftrag_id)
+            except Exception as exc:
+                message = str(exc) or f"could not cancel {mission.auftrag_id}"
+                mission.error = message
+                await self._mission_event(execution, mission, "mission.cancel_failed", on_event, message=message)
+                continue
+            mission.status = PlanMissionStatus.CANCELLED
+            mission.error = reason
+            await self._mission_event(execution, mission, "mission.cancelled", on_event, message=reason)
 
     async def _wait_for_mission(
         self,

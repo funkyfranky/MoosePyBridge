@@ -37,6 +37,7 @@ from .recon import (
     ReconArea,
     ReconOutcome,
     ReconRequirement,
+    RECON_EXECUTION_AUDIT_TYPE,
     ReconSpatialCoverage,
     ReconTrackSample,
     ReconTrackingSession,
@@ -820,6 +821,31 @@ class MooseBridgeClient:
         if objective is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
         return (planner or RuleBasedOperationalPlanner()).propose_capture(
+            item,
+            objective,
+            picture,
+            plan_id=plan_id,
+            name=name,
+        )
+
+    def propose_defend_plan(
+        self,
+        goal: StrategicGoal | str,
+        picture: TacticalPicture,
+        *,
+        plan_id: str | None = None,
+        name: str | None = None,
+        planner: RuleBasedOperationalPlanner | None = None,
+    ) -> OperationalPlan:
+        """Create an unregistered rule-based DEFEND draft from tactical state."""
+
+        item = goal if isinstance(goal, StrategicGoal) else self.strategic_goal(goal)
+        if item is None:
+            raise KeyError(f"Unknown strategic goal: {goal}")
+        objective = self.strategic_objective(item.objective_id)
+        if objective is None:
+            raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        return (planner or RuleBasedOperationalPlanner()).propose_defend(
             item,
             objective,
             picture,
@@ -2209,7 +2235,7 @@ class MooseBridgeClient:
         )
         history = await self.server.query_events("*", after_id=cursor)
         events = history.get("events") if isinstance(history.get("events"), list) else []
-        return build_recon_outcome(
+        result = build_recon_outcome(
             auftrag_id=outcome.auftrag_id,
             intel_id=intel,
             mission_outcome=outcome,
@@ -2223,6 +2249,43 @@ class MooseBridgeClient:
             command_ack=ack,
             event_history_complete=bool(history.get("history_complete")),
         )
+        completed_time = result.completed_time if result.completed_time is not None else self._current_mission_time()
+        area_id = requirement.area_object_id if requirement is not None else result.auftrag_id
+        plan_id = f"DIRECT_RECON:{intel}:{area_id}"
+        attempt_id = f"{plan_id}:{completed_time if completed_time is not None else 'unknown'}"
+        intel_snapshot = self.intel(intel)
+        await self.server.append_audit_record(
+            RECON_EXECUTION_AUDIT_TYPE,
+            {
+                "plan_id": plan_id,
+                "commander_id": commander or "",
+                "attempt_id": attempt_id,
+                "attempt_number": 1,
+                "status": "completed",
+                "started_mission_time": result.started_time,
+                "completed_mission_time": completed_time,
+                "plan": {"coalition": intel_snapshot.coalition if intel_snapshot else None},
+                "missions": [{
+                    "phase_id": "direct_recon",
+                    "intent_id": "direct_recon",
+                    "requirement_id": requirement.area_object_id if requirement else "direct_recon",
+                    "mission_type": "RECON",
+                    "required": True,
+                    "status": "succeeded" if result.mission_outcome.success is True else "failed",
+                    "auftrag_id": result.auftrag_id,
+                    "outcome": result.mission_outcome.to_dict(),
+                    "recon_outcome": result.to_dict(),
+                    "recon_intel_id": intel,
+                    "recon_assigned_group_ids": list(tracking.assigned_group_ids),
+                    "recon_tracks": {
+                        group_id: [sample.to_dict() for sample in samples]
+                        for group_id, samples in tracking.tracks.items()
+                    },
+                }],
+                "events": [],
+            },
+        )
+        return result
 
     def mission_id(self, mission: AuftragCommand | Auftrag | str) -> str:
         """Return the stable ``AUFTRAG:id`` for an SDK mission reference.

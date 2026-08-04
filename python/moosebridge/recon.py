@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any, Iterable
 from .models import IntelContact
 from .outcomes import AuftragOutcome
 
+RECON_EXECUTION_AUDIT_TYPE = "recon.execution"
+
 if TYPE_CHECKING:
     from .operational import OperationalPlan
     from .pictures import TacticalPicture
@@ -946,6 +948,7 @@ __all__ = [
     "ReconOutcome",
     "ReconRelevantTarget",
     "ReconRequirement",
+    "RECON_EXECUTION_AUDIT_TYPE",
     "ReconTargetSource",
     "ReconTrackSample",
     "ReconTrackingSession",

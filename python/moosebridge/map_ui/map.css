@@ -81,6 +81,7 @@ button, input { font: inherit; letter-spacing: 0; }
 .panel-tab.is-active { color: var(--text); border-bottom-color: var(--blue); font-weight: 600; }
 .layer-controls[hidden], .filter-controls[hidden] { display: none; }
 .layer-controls { display: grid; gap: 4px; }
+.layer-section + .layer-section { padding-top: 3px; border-top: 1px solid var(--border); }
 .layer-control { min-height: 30px; display: flex; align-items: center; gap: 9px; padding: 3px 4px; cursor: pointer; }
 .layer-control input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
 .layer-symbol { width: 16px; height: 16px; flex: 0 0 auto; color: var(--swatch); stroke-width: 2.2; }
@@ -88,10 +89,12 @@ button, input { font: inherit; letter-spacing: 0; }
 .layer-count { color: var(--muted); font-variant-numeric: tabular-nums; }
 .layer-group-header { display: flex; align-items: center; }
 .layer-control-parent { flex: 1; min-width: 0; }
+.layer-section-control { font-weight: 600; }
 .layer-expand { width: 24px; height: 30px; flex: 0 0 auto; padding: 5px; }
 .layer-expand svg { width: 14px; height: 14px; transition: transform 120ms ease; }
 .layer-expand[aria-expanded="false"] svg { transform: rotate(-90deg); }
 .layer-children { margin-left: 24px; padding-left: 8px; border-left: 1px solid var(--border); }
+.layer-section-children { margin-left: 12px; }
 .layer-control-child { min-height: 28px; }
 .layer-control-child .layer-symbol { width: 14px; height: 14px; }
 .filter-controls { display: grid; gap: 12px; }

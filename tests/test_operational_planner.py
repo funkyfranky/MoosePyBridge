@@ -232,3 +232,95 @@ def test_rule_based_capture_proposal_rejects_wrong_picture_coalition() -> None:
         assert "coalition" in str(exc)
     else:
         raise AssertionError("Planner should reject an opposing coalition tactical picture")
+
+
+def _defend_context() -> tuple[MooseBridgeClient, StrategicGoal, StrategicObjective]:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Town",
+            name="Town",
+            kind=ObjectiveKind.OPSZONE,
+            control_object_id="OPSZONE:Town",
+            ownership_policy=OwnershipPolicy.MOOSE_MANAGED,
+            owner="blue",
+        )
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Blue defend Town",
+            name="Blue defend Town",
+            coalition="blue",
+            action=StrategicGoalAction.DEFEND,
+            objective_id=objective.objective_id,
+            deadline_mission_time=1_200,
+        )
+    )
+    return bridge, goal, objective
+
+
+def test_rule_based_defend_proposal_holds_zone_and_interdicts_visible_attacker() -> None:
+    bridge, goal, _ = _defend_context()
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        intel=_intel(),
+        clock=DcsTime(mission_time=600),
+        opszones=[_zone()],
+        contacts=[
+            _contact("INTELCONTACT:Low", "GROUP:Low", 101_000, 201_000, 2, detected_time=590),
+            _contact("INTELCONTACT:High", "GROUP:High", 102_000, 200_000, 8, detected_time=590),
+        ],
+    )
+
+    plan = bridge.propose_defend_plan(goal, picture)
+
+    assert plan.status is OperationalPlanStatus.DRAFT
+    assert bridge.operational_plan(plan.plan_id) is None
+    assert [phase.phase_id for phase in plan.phases] == ["defend"]
+    assert [intent.intent_id for intent in plan.phases[0].intents] == [
+        "counterattack-visible-threat",
+        "hold-zone",
+        "establish-air-defense",
+        "sustain-defenders",
+    ]
+    assert plan.phases[0].intents[0].target_object_id == "GROUP:High"
+    hold = plan.phases[0].intents[1]
+    assert hold.auftrag_types == ("PATROLZONE",)
+    assert hold.asset_requirements[0].min_count == 2
+    assert plan.metadata["defense_deadline_mission_time"] == 1_200
+    assert plan.proposal_issues == ()
+
+
+def test_rule_based_defend_proposal_warns_when_no_attacker_is_visible() -> None:
+    bridge, goal, _ = _defend_context()
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        intel=_intel(),
+        clock=DcsTime(mission_time=600),
+        opszones=[_zone()],
+    )
+
+    plan = bridge.propose_defend_plan(goal.goal_id, picture)
+
+    assert [intent.intent_id for intent in plan.phases[0].intents] == [
+        "hold-zone",
+        "establish-air-defense",
+        "sustain-defenders",
+    ]
+    assert [issue.code for issue in plan.proposal_issues] == ["intel_no_visible_attackers"]
+    assert "not evidence" in plan.proposal_issues[0].message
+
+
+def test_rule_based_defend_proposal_requires_friendly_control() -> None:
+    bridge, goal, objective = _defend_context()
+    objective.owner = "red"
+    picture = TacticalPicture(coalition="blue", intel_id="INTEL:Blue", opszones=[_zone()])
+
+    try:
+        bridge.propose_defend_plan(goal, picture)
+    except ValueError as exc:
+        assert "controlled" in str(exc)
+    else:
+        raise AssertionError("Planner should reject defense of an enemy-controlled objective")

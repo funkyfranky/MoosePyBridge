@@ -25,11 +25,12 @@ from .strategic import StrategicGoal, StrategicGoalAction, StrategicGoalStatus, 
 
 @dataclass(slots=True, frozen=True)
 class RuleBasedPlannerConfig:
-    """Conservative constants used by the initial capture planner."""
+    """Conservative constants used by the rule-based operational planner."""
 
-    source_id: str = "moosebridge.rule_based_capture.v1"
+    source_id: str = "moosebridge.rule_based_operational.v1"
     isolation_distance_from_zone_m: float = 30_000.0
     ground_assault_groups: int = 2
+    ground_defense_groups: int = 2
     contact_fresh_for_s: float = 120.0
     contact_stale_after_s: float = 600.0
     lost_contact_recon_window_s: float = 900.0
@@ -44,6 +45,8 @@ class RuleBasedPlannerConfig:
             raise ValueError("isolation distance must be finite and non-negative")
         if self.ground_assault_groups < 1:
             raise ValueError("ground assault groups must be at least one")
+        if self.ground_defense_groups < 1:
+            raise ValueError("ground defense groups must be at least one")
         if not math.isfinite(self.contact_fresh_for_s) or self.contact_fresh_for_s < 0:
             raise ValueError("contact fresh duration must be finite and non-negative")
         if not math.isfinite(self.contact_stale_after_s) or self.contact_stale_after_s <= self.contact_fresh_for_s:
@@ -58,7 +61,7 @@ class RuleBasedPlannerConfig:
 
 
 class RuleBasedOperationalPlanner:
-    """Create reviewable CAPTURE drafts from coalition-visible tactical state."""
+    """Create reviewable operational drafts from coalition-visible tactical state."""
 
     def __init__(self, config: RuleBasedPlannerConfig | None = None) -> None:
         self.config = config or RuleBasedPlannerConfig()
@@ -279,11 +282,149 @@ class RuleBasedOperationalPlanner:
             },
         )
 
+    def propose_defend(
+        self,
+        goal: StrategicGoal,
+        objective: StrategicObjective,
+        picture: TacticalPicture,
+        *,
+        plan_id: str | None = None,
+        name: str | None = None,
+    ) -> OperationalPlan:
+        """Return a draft OPSZONE defense plan without registering or approving it."""
+
+        self._validate_defend_inputs(goal, objective, picture)
+        assert objective.control_object_id is not None
+        zone = next((item for item in picture.opszones if item.object_id == objective.control_object_id), None)
+        if zone is None:
+            raise ValueError(f"tactical picture does not contain defended OPSZONE: {objective.control_object_id}")
+
+        attacker = self._select_defender(zone, picture)
+        proposal_issues = self._intel_issues(
+            picture,
+            attacker,
+            None,
+            missing_code="intel_no_visible_attackers",
+            missing_message=(
+                "No coalition-visible ground attacker was found near the objective. "
+                "This is not evidence that the objective is not threatened."
+            ),
+        )
+        intents: list[MissionIntent] = []
+        if attacker is not None:
+            assert attacker.target_object_id is not None
+            intents.append(
+                MissionIntent(
+                    intent_id="counterattack-visible-threat",
+                    name="Interdict the strongest visible ground threat",
+                    auftrag_types=("BAI",),
+                    target_object_id=attacker.target_object_id,
+                    asset_requirements=(
+                        AssetRequirement(
+                            requirement_id="REQ:Counterattack",
+                            role=AssetRole.COMBAT,
+                            mission_types=("BAI",),
+                            performer_categories=("AIR",),
+                            require_payload=True,
+                        ),
+                    ),
+                    metadata={"intel_contact_id": attacker.object_id},
+                )
+            )
+        intents.extend(
+            (
+                MissionIntent(
+                    intent_id="hold-zone",
+                    name="Hold the defended OPSZONE",
+                    auftrag_types=("PATROLZONE",),
+                    target_object_id=objective.control_object_id,
+                    asset_requirements=(
+                        AssetRequirement(
+                            requirement_id="REQ:Ground defense",
+                            role=AssetRole.COMBAT,
+                            min_count=self.config.ground_defense_groups,
+                            max_count=self.config.ground_defense_groups,
+                            mission_types=("PATROLZONE",),
+                            performer_categories=("GROUND",),
+                        ),
+                    ),
+                ),
+                MissionIntent(
+                    intent_id="establish-air-defense",
+                    name="Establish local air defense",
+                    auftrag_types=("AIRDEFENSE",),
+                    target_object_id=objective.control_object_id,
+                    required=False,
+                    asset_requirements=(
+                        AssetRequirement(
+                            requirement_id="REQ:Air defense",
+                            role=AssetRole.AIR_DEFENSE,
+                            mission_types=("AIRDEFENSE",),
+                            performer_categories=("GROUND", "NAVAL"),
+                        ),
+                    ),
+                ),
+                MissionIntent(
+                    intent_id="sustain-defenders",
+                    name="Supply the defending force",
+                    auftrag_types=("AMMOSUPPLY",),
+                    target_object_id=objective.control_object_id,
+                    required=False,
+                    asset_requirements=(
+                        AssetRequirement(
+                            requirement_id="REQ:Logistics",
+                            role=AssetRole.LOGISTICS,
+                            mission_types=("AMMOSUPPLY",),
+                            performer_categories=("GROUND",),
+                        ),
+                    ),
+                ),
+            )
+        )
+
+        attacker_text = (
+            f"Visible attacker {attacker.target_object_id} selected for interdiction."
+            if attacker is not None
+            else "No visible attacker was selected; holding forces remain required."
+        )
+        proposal_id = plan_id or f"PLAN:{goal.goal_id.removeprefix('GOAL:')}"
+        return OperationalPlan(
+            plan_id=proposal_id,
+            name=name or f"Defend {objective.name}",
+            goal_id=goal.goal_id,
+            coalition=goal.coalition,
+            phases=(PlanPhase(phase_id="defend", name="Defend the objective", intents=tuple(intents)),),
+            posture=OperationalPosture.BALANCED,
+            provenance=OperationalPlanProvenance(
+                source_type=PlanSourceType.RULE_ENGINE,
+                source_id=self.config.source_id,
+                picture_mission_time=picture.clock.mission_time if picture.clock else None,
+                rationale=(
+                    f"Conservative defense of {objective.objective_id} until mission time "
+                    f"{goal.deadline_mission_time}. {attacker_text} Ground defense is required; "
+                    "air defense and ammunition supply are optional support tasks."
+                ),
+            ),
+            proposal_issues=proposal_issues,
+            metadata={
+                "planner": self.config.source_id,
+                "objective_control_id": objective.control_object_id,
+                "defense_deadline_mission_time": goal.deadline_mission_time,
+                "selected_attacker_contact_id": attacker.object_id if attacker else None,
+            },
+        )
+
     def _intel_issues(
         self,
         picture: TacticalPicture,
         defender: IntelContact | None,
         lost_recon_contact: IntelContactMemory | None,
+        *,
+        missing_code: str = "intel_no_visible_defenders",
+        missing_message: str = (
+            "No coalition-visible ground defender was found near the objective. "
+            "This is not evidence that the objective is undefended."
+        ),
     ) -> tuple[PlanProposalIssue, ...]:
         issues: list[PlanProposalIssue] = []
         if picture.intel is None:
@@ -327,11 +468,8 @@ class RuleBasedOperationalPlanner:
             issues.append(
                 PlanProposalIssue(
                     "warning",
-                    "intel_no_visible_defenders",
-                    (
-                        "No coalition-visible ground defender was found near the objective. "
-                        "This is not evidence that the objective is undefended."
-                    ),
+                    missing_code,
+                    missing_message,
                     picture.intel_id,
                 )
             )
@@ -374,7 +512,7 @@ class RuleBasedOperationalPlanner:
         picture: TacticalPicture,
     ) -> None:
         if goal.action is not StrategicGoalAction.CAPTURE:
-            raise ValueError("rule-based operational planner currently supports CAPTURE goals only")
+            raise ValueError("propose_capture requires a CAPTURE goal")
         if goal.status in {StrategicGoalStatus.ACHIEVED, StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
             raise ValueError(f"cannot propose a plan for goal in state {goal.status.value}")
         if goal.objective_id != objective.objective_id:
@@ -385,6 +523,25 @@ class RuleBasedOperationalPlanner:
             raise ValueError("strategic objective is already controlled by the goal coalition")
         if not objective.control_object_id or not objective.control_object_id.startswith("OPSZONE:"):
             raise ValueError("initial rule-based CAPTURE planner requires an OPSZONE control object")
+
+    @staticmethod
+    def _validate_defend_inputs(
+        goal: StrategicGoal,
+        objective: StrategicObjective,
+        picture: TacticalPicture,
+    ) -> None:
+        if goal.action is not StrategicGoalAction.DEFEND:
+            raise ValueError("rule-based DEFEND planning requires a DEFEND goal")
+        if goal.status in {StrategicGoalStatus.ACHIEVED, StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
+            raise ValueError(f"cannot propose a plan for goal in state {goal.status.value}")
+        if goal.objective_id != objective.objective_id:
+            raise ValueError("goal and strategic objective do not match")
+        if picture.coalition.lower() != goal.coalition:
+            raise ValueError("tactical picture coalition does not match the strategic goal")
+        if objective.owner != goal.coalition:
+            raise ValueError("DEFEND objective must currently be controlled by the goal coalition")
+        if not objective.control_object_id or not objective.control_object_id.startswith("OPSZONE:"):
+            raise ValueError("initial rule-based DEFEND planner requires an OPSZONE control object")
 
     def _select_defender(self, zone: OpsZone, picture: TacticalPicture) -> IntelContact | None:
         if zone.x is None or zone.z is None:

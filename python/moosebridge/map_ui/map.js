@@ -18,7 +18,7 @@
     { key: "zones", label: "Zones", color: "#c19424", icon: "map-pin", default: false },
     { key: "territories", label: "Territories", color: "#59635e", icon: "map", default: true },
     { key: "frontlines", label: "Frontlines", color: "#573a58", icon: "git-commit-horizontal", default: true },
-    { key: "pressure_frontlines", label: "Pressure line", color: "#9a6f24", icon: "activity", default: false },
+    { key: "pressure_frontlines", label: "Pressure lines", color: "#9a6f24", icon: "activity", default: false },
     { key: "incursions", label: "Incursions", color: "#d06f27", icon: "shield-alert", size: 1.12, default: true },
     { key: "opszones", label: "OPS zones", color: "#8b5ea7", icon: "shield", default: true },
     { key: "opsgroups", label: "OPS groups", color: "#1e8171", icon: "badge", size: 1.1, default: true },
@@ -37,6 +37,40 @@
     },
     { key: "missions", label: "Missions", color: "#ad3c76", icon: "target", size: 1.05, default: true },
   ];
+  const layerSections = [
+    {
+      key: "forces", label: "Forces", icon: "boxes", color: "#245f96",
+      layers: ["groups", "units", "opsgroups", "statics", "trajectories"],
+    },
+    {
+      key: "territorial", label: "Territorial control", icon: "map", color: "#573a58",
+      layers: ["territories", "frontlines", "pressure_frontlines", "incursions"],
+    },
+    {
+      key: "zones", label: "Zones", icon: "map-pin", color: "#8b5ea7",
+      layers: ["zones", "opszones"],
+    },
+    {
+      key: "intelligence", label: "Intelligence", icon: "radar", color: "#c44343",
+      layers: ["intel_contacts", "intel_clusters", "recon_coverage"],
+    },
+    {
+      key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#137f87",
+      layers: ["airbases"],
+    },
+    {
+      key: "operations", label: "Operations", icon: "target", color: "#ad3c76",
+      layers: ["legions", "missions"],
+    },
+    {
+      key: "events", label: "Events", icon: "history", color: "#8f3434",
+      layers: ["loss_reports"],
+    },
+  ];
+  const layerSpecByKey = new Map(layerSpecs.map((spec) => [spec.key, spec]));
+  const layerSectionByLayer = new Map(
+    layerSections.flatMap((section) => section.layers.map((layer) => [layer, section.key])),
+  );
   const coalitionColors = { blue: "#2776b9", red: "#c44343", neutral: "#858d88", unknown: "#59635e" };
   const filterSpecs = [
     {
@@ -385,11 +419,20 @@
         });
         addMapLayer(spec, {
           type: "line",
-          filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["get", "map_category"], ["literal", ["aggregate", "assets"]]]],
+          filter: ["all", ["==", ["get", "layer"], spec.key], ["==", ["get", "map_category"], "aggregate"]],
           paint: {
-            "line-color": ["match", ["get", "map_category"], "assets", "#397f96", "#12665f"],
-            "line-width": ["match", ["get", "map_category"], "assets", 1.4, 2.4],
-            "line-dasharray": ["match", ["get", "map_category"], "assets", ["literal", [2, 1.5]], ["literal", [1, 0]]],
+            "line-color": "#12665f",
+            "line-width": 2.4,
+            "line-opacity": 0.9,
+          },
+        });
+        addMapLayer(spec, {
+          type: "line",
+          filter: ["all", ["==", ["get", "layer"], spec.key], ["==", ["get", "map_category"], "assets"]],
+          paint: {
+            "line-color": "#397f96",
+            "line-width": 1.4,
+            "line-dasharray": [2, 1.5],
             "line-opacity": 0.9,
           },
         });
@@ -550,6 +593,10 @@
     document.querySelectorAll("[data-filter-count]").forEach((node) => {
       node.textContent = String(counts.get(`${node.dataset.filterCount}:${node.dataset.filterValue}`) || 0);
     });
+    document.querySelectorAll("[data-layer-section-count]").forEach((node) => {
+      const section = layerSections.find((candidate) => candidate.key === node.dataset.layerSectionCount);
+      node.textContent = String(section?.layers.reduce((total, layer) => total + (counts.get(layer) || 0), 0) || 0);
+    });
   }
 
   function layerControlMarkup(spec, attributes = "") {
@@ -559,62 +606,99 @@
       <span class="layer-name">${spec.label}</span>`;
   }
 
-  function buildLayerControls() {
-    for (const spec of layerSpecs) {
-      if (spec.children) {
-        const group = document.createElement("div");
-        group.className = "layer-group";
-        const header = document.createElement("div");
-        header.className = "layer-group-header";
-        const expand = document.createElement("button");
-        expand.className = "layer-expand icon-button";
-        expand.type = "button";
-        expand.title = `Collapse ${spec.label}`;
-        expand.setAttribute("aria-label", `Collapse ${spec.label}`);
-        expand.setAttribute("aria-expanded", "true");
-        expand.innerHTML = '<i data-lucide="chevron-down"></i>';
-        const parent = document.createElement("label");
-        parent.className = "layer-control layer-control-parent";
-        parent.innerHTML = `${layerControlMarkup(spec, `data-layer="${spec.key}"`)}<span class="layer-count" data-layer-count="${spec.key}">0</span>`;
-        header.append(expand, parent);
+  function expandButton(label, expanded = true) {
+    const button = document.createElement("button");
+    button.className = "layer-expand icon-button";
+    button.type = "button";
+    button.dataset.expandLabel = label;
+    button.title = `${expanded ? "Collapse" : "Expand"} ${label}`;
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-expanded", String(expanded));
+    button.innerHTML = '<i data-lucide="chevron-down"></i>';
+    return button;
+  }
 
-        const children = document.createElement("div");
-        children.className = "layer-children";
-        for (const child of spec.children) {
-          const label = document.createElement("label");
-          label.className = "layer-control layer-control-child";
-          label.innerHTML = `${layerControlMarkup(child, `data-parent-layer="${spec.key}" data-category="${child.key}"`)}<span class="layer-count" data-layer-category-count="${spec.key}" data-category="${child.key}">0</span>`;
-          children.appendChild(label);
-        }
-        group.append(header, children);
-        elements.layerControls.appendChild(group);
-        continue;
+  function appendLayerControl(spec, container) {
+    if (spec.children) {
+      const group = document.createElement("div");
+      group.className = "layer-group layer-subgroup";
+      const header = document.createElement("div");
+      header.className = "layer-group-header";
+      const parent = document.createElement("label");
+      parent.className = "layer-control layer-control-parent";
+      parent.innerHTML = `${layerControlMarkup(spec, `data-layer="${spec.key}"`)}<span class="layer-count" data-layer-count="${spec.key}">0</span>`;
+      header.append(expandButton(spec.label), parent);
+
+      const children = document.createElement("div");
+      children.className = "layer-children";
+      for (const child of spec.children) {
+        const label = document.createElement("label");
+        label.className = "layer-control layer-control-child";
+        label.innerHTML = `${layerControlMarkup(child, `data-parent-layer="${spec.key}" data-category="${child.key}"`)}<span class="layer-count" data-layer-category-count="${spec.key}" data-category="${child.key}">0</span>`;
+        children.appendChild(label);
       }
-      const label = document.createElement("label");
-      label.className = "layer-control";
-      label.innerHTML = `${layerControlMarkup(spec, `data-layer="${spec.key}"`)}<span class="layer-count" data-layer-count="${spec.key}">0</span>`;
-      elements.layerControls.appendChild(label);
+      group.append(header, children);
+      container.appendChild(group);
+      return;
     }
+    const label = document.createElement("label");
+    label.className = "layer-control";
+    label.innerHTML = `${layerControlMarkup(spec, `data-layer="${spec.key}"`)}<span class="layer-count" data-layer-count="${spec.key}">0</span>`;
+    container.appendChild(label);
+  }
+
+  function buildLayerControls() {
+    for (const section of layerSections) {
+      const group = document.createElement("section");
+      group.className = "layer-group layer-section";
+      const header = document.createElement("div");
+      header.className = "layer-group-header";
+      const parent = document.createElement("label");
+      parent.className = "layer-control layer-control-parent layer-section-control";
+      parent.innerHTML = `${layerControlMarkup(
+        { ...section, default: true },
+        `data-layer-section="${section.key}"`,
+      )}<span class="layer-count" data-layer-section-count="${section.key}">0</span>`;
+      header.append(expandButton(section.label, false), parent);
+
+      const children = document.createElement("div");
+      children.className = "layer-children layer-section-children";
+      children.hidden = true;
+      for (const layerKey of section.layers) appendLayerControl(layerSpecByKey.get(layerKey), children);
+      group.append(header, children);
+      elements.layerControls.appendChild(group);
+    }
+    for (const spec of layerSpecs) updateParentLayerControl(spec.key);
+    for (const section of layerSections) updateLayerSectionControl(section.key);
     elements.layerControls.addEventListener("change", (event) => {
       const target = event.target;
-      if (target.matches("[data-layer]")) {
-        const spec = layerSpecs.find((candidate) => candidate.key === target.dataset.layer);
+      if (target.matches("[data-layer-section]")) {
+        const section = layerSections.find((candidate) => candidate.key === target.dataset.layerSection);
+        for (const layerKey of section.layers) {
+          const layer = document.querySelector(`[data-layer="${layerKey}"]`);
+          layer.checked = target.checked;
+          layer.indeterminate = false;
+          document.querySelectorAll(`[data-parent-layer="${layerKey}"]`).forEach((child) => { child.checked = target.checked; });
+        }
+      } else if (target.matches("[data-layer]")) {
+        const spec = layerSpecByKey.get(target.dataset.layer);
         if (spec?.children) {
           document.querySelectorAll(`[data-parent-layer="${spec.key}"]`).forEach((child) => { child.checked = target.checked; });
         }
+        updateLayerSectionControl(layerSectionByLayer.get(target.dataset.layer));
       } else if (target.matches("[data-parent-layer]")) {
         updateParentLayerControl(target.dataset.parentLayer);
+        updateLayerSectionControl(layerSectionByLayer.get(target.dataset.parentLayer));
       }
       applyLayerVisibility();
     });
     elements.layerControls.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-layer-expand], .layer-expand");
+      const button = event.target.closest(".layer-expand");
       if (!button) return;
-      const children = button.closest(".layer-group").querySelector(".layer-children");
+      const children = button.closest(".layer-group").querySelector(":scope > .layer-children");
       children.hidden = !children.hidden;
       button.setAttribute("aria-expanded", String(!children.hidden));
-      const label = button.closest(".layer-group").querySelector("[data-layer]").dataset.layer;
-      button.title = `${children.hidden ? "Expand" : "Collapse"} ${layerSpecs.find((spec) => spec.key === label).label}`;
+      button.title = `${children.hidden ? "Expand" : "Collapse"} ${button.dataset.expandLabel}`;
       button.setAttribute("aria-label", button.title);
     });
   }
@@ -626,6 +710,17 @@
     const selected = children.filter((child) => child.checked).length;
     parent.checked = selected > 0;
     parent.indeterminate = selected > 0 && selected < children.length;
+  }
+
+  function updateLayerSectionControl(sectionKey) {
+    if (!sectionKey) return;
+    const section = layerSections.find((candidate) => candidate.key === sectionKey);
+    const parent = document.querySelector(`[data-layer-section="${sectionKey}"]`);
+    if (!section || !parent) return;
+    const children = section.layers.map((layer) => document.querySelector(`[data-layer="${layer}"]`));
+    const selected = children.filter((child) => child.checked).length;
+    parent.checked = selected > 0;
+    parent.indeterminate = children.some((child) => child.indeterminate) || (selected > 0 && selected < children.length);
   }
 
   function buildFilterControls() {
