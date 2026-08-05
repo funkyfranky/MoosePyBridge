@@ -3,6 +3,7 @@ from __future__ import annotations
 from moosebridge import (
     Intel,
     MooseBridgeClient,
+    ObjectiveComponent,
     ObjectiveKind,
     OperationalPlanStatus,
     OwnershipPolicy,
@@ -324,3 +325,154 @@ def test_rule_based_defend_proposal_requires_friendly_control() -> None:
         assert "controlled" in str(exc)
     else:
         raise AssertionError("Planner should reject defense of an enemy-controlled objective")
+
+
+def test_rule_based_destroy_proposal_selects_weighted_static_components() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Depot",
+            name="Depot",
+            kind=ObjectiveKind.DEPOT,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=(
+                ObjectiveComponent("STATIC:Main", weight=0.6),
+                ObjectiveComponent("STATIC:Reserve", weight=0.3),
+                ObjectiveComponent("STATIC:Shed", weight=0.1),
+            ),
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "statics",
+            "payload": {
+                "statics": [
+                    {"object_id": "STATIC:Main", "alive": True},
+                    {"object_id": "STATIC:Reserve", "alive": True},
+                    {"object_id": "STATIC:Shed", "alive": True},
+                ]
+            },
+        }
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Damage Depot",
+            name="Damage Depot",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id=objective.objective_id,
+            required_damage=0.7,
+        )
+    )
+    picture = TacticalPicture(coalition="blue", intel_id="INTEL:Blue", clock=DcsTime(mission_time=100))
+
+    plan = bridge.propose_destroy_plan(goal, picture)
+
+    assert [intent.target_object_id for intent in plan.phases[0].intents] == [
+        "STATIC:Main",
+        "STATIC:Reserve",
+    ]
+    assert plan.metadata["required_damage"] == 0.7
+    assert plan.metadata["current_health"] == 1.0
+    assert abs(plan.metadata["projected_health"] - 0.1) < 1e-12
+    assert "at most 30.0%" in (plan.provenance.rationale or "")  # type: ignore[union-attr]
+
+
+def test_rule_based_destroy_proposal_requires_intel_for_moving_components() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Armor",
+            name="Armor",
+            kind=ObjectiveKind.FORCE,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=(ObjectiveComponent("GROUP:Armor", weight=1.0),),
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "groups",
+            "payload": {"groups": [{"object_id": "GROUP:Armor", "alive": True}]},
+        }
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Destroy Armor",
+            name="Destroy Armor",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id=objective.objective_id,
+        )
+    )
+    picture = TacticalPicture(coalition="blue", intel_id="INTEL:Blue")
+
+    try:
+        bridge.propose_destroy_plan(goal, picture)
+    except ValueError as exc:
+        assert "visible targetable components" in str(exc)
+    else:
+        raise AssertionError("Moving objective components must require coalition INTEL")
+
+
+def test_destroy_replan_prefers_an_already_damaged_component() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Damaged Depot",
+            name="Damaged Depot",
+            kind=ObjectiveKind.DEPOT,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=(
+                ObjectiveComponent("STATIC:Damaged", weight=0.2),
+                ObjectiveComponent("STATIC:Untouched", weight=0.8),
+            ),
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "statics",
+            "payload": {
+                "statics": [
+                    {"object_id": "STATIC:Damaged", "alive": True},
+                    {"object_id": "STATIC:Untouched", "alive": True},
+                ]
+            },
+        }
+    )
+    bridge.objectives.record_component_health(
+        objective,
+        "STATIC:Damaged",
+        0.5,
+        source="auftrag_summary:AUFTRAG:1",
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Finish Damaged Depot",
+            name="Finish Damaged Depot",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id=objective.objective_id,
+            required_damage=0.5,
+        )
+    )
+
+    plan = bridge.propose_destroy_plan(
+        goal,
+        TacticalPicture(coalition="blue", intel_id="INTEL:Blue", clock=DcsTime(mission_time=200)),
+    )
+
+    assert plan.metadata["current_health"] == 0.9
+    assert [intent.target_object_id for intent in plan.phases[0].intents] == [
+        "STATIC:Damaged",
+        "STATIC:Untouched",
+    ]
+    assert plan.phases[0].intents[0].metadata["objective_component_health"] == 0.5

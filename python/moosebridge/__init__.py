@@ -211,6 +211,7 @@ from .operational_execution import (
     PlanMissionReconciliation,
     PlanMissionExecution,
     PlanMissionStatus,
+    StrategicDamageAssessment,
     PlanReconciliationStatus,
     build_plan_auftrag,
 )
@@ -263,6 +264,7 @@ from .diagnostics import (
 from .state import MooseBridgeState, MooseObjectIdentity
 from .strategic import (
     CaptureBehavior,
+    ComponentHealthEstimate,
     GoalCondition,
     GoalConditionKind,
     GoalConditionMatch,
@@ -280,6 +282,8 @@ from .strategic import (
     StrategicObjective,
     StrategicObjectiveRegistry,
     capture_actions,
+    component_health,
+    effective_component_health,
     normalize_coalition,
 )
 from .datamine_ranges import (
@@ -409,6 +413,7 @@ __all__ = [
     "CapabilityKind",
     "CapabilityReadiness",
     "CaptureBehavior",
+    "ComponentHealthEstimate",
     "Cohort",
     "Commander",
     "ContactInformationState",
@@ -497,6 +502,7 @@ __all__ = [
     "PlanMissionReconciliation",
     "PlanMissionExecution",
     "PlanMissionStatus",
+    "StrategicDamageAssessment",
     "PlanReconciliationStatus",
     "PlanValidationIssue",
     "RangeSource",
@@ -574,6 +580,8 @@ __all__ = [
     "canonical_auftrag_type",
     "canonical_mission_type",
     "capture_actions",
+    "component_health",
+    "effective_component_health",
     "classify_ammunition_weapon",
     "command_action_for_auftrag_recommendation",
     "evaluate_auftrag_request",

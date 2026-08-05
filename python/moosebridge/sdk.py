@@ -75,6 +75,8 @@ from .strategic import (
     StrategicGoalRegistry,
     StrategicObjective,
     StrategicObjectiveRegistry,
+    component_health,
+    effective_component_health,
 )
 from .weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY, RangeSource, WeaponRangeProfile, WeaponRangeRegistry
 
@@ -849,6 +851,36 @@ class MooseBridgeClient:
             item,
             objective,
             picture,
+            plan_id=plan_id,
+            name=name,
+        )
+
+    def propose_destroy_plan(
+        self,
+        goal: StrategicGoal | str,
+        picture: TacticalPicture,
+        *,
+        plan_id: str | None = None,
+        name: str | None = None,
+        planner: RuleBasedOperationalPlanner | None = None,
+    ) -> OperationalPlan:
+        """Create an unregistered weighted DESTROY draft from tactical state."""
+
+        item = goal if isinstance(goal, StrategicGoal) else self.strategic_goal(goal)
+        if item is None:
+            raise KeyError(f"Unknown strategic goal: {goal}")
+        objective = self.strategic_objective(item.objective_id)
+        if objective is None:
+            raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        health_by_id = {
+            component.object_id: effective_component_health(objective, component.object_id, self.state)
+            for component in objective.components
+        }
+        return (planner or RuleBasedOperationalPlanner()).propose_destroy(
+            item,
+            objective,
+            picture,
+            health_by_id,
             plan_id=plan_id,
             name=name,
         )

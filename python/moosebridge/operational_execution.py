@@ -39,7 +39,7 @@ from .recon import (
     ReconTrackingSession,
     build_recon_outcome,
 )
-from .strategic import StrategicGoal, StrategicGoalAction, StrategicGoalStatus
+from .strategic import StrategicGoal, StrategicGoalAction, StrategicGoalStatus, StrategicObjective, component_health
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -183,6 +183,23 @@ class PlanMissionExecution:
     recon_tracks: dict[str, list[ReconTrackSample]] = field(default_factory=dict, repr=False)
     error: str | None = None
 
+
+@dataclass(slots=True, frozen=True)
+class StrategicDamageAssessment:
+    """Snapshot-derived strategic damage, independent of MOOSE AUFTRAG success."""
+
+    phase_id: str
+    objective_id: str
+    required_damage: float
+    health_before: float | None
+    health_after: float | None
+    achieved_damage: float | None
+    phase_damage: float | None
+    satisfied: bool
+    component_health: tuple[tuple[str, float | None, str], ...] = ()
+    mission_time: float | None = None
+
+
 @dataclass(slots=True)
 class OperationalPlanExecution:
     """Runtime state and audit trail for one execution attempt."""
@@ -202,6 +219,7 @@ class OperationalPlanExecution:
     objective_snapshot: dict[str, Any] = field(default_factory=dict)
     assessment_snapshot: dict[str, Any] = field(default_factory=dict)
     missions: list[PlanMissionExecution] = field(default_factory=list)
+    damage_assessments: list[StrategicDamageAssessment] = field(default_factory=list)
     events: list[PlanExecutionEvent] = field(default_factory=list)
     plan_ref: OperationalPlan | None = field(default=None, repr=False, compare=False)
 
@@ -675,8 +693,12 @@ class OperationalPlanExecutor:
         goal = self.client.strategic_goal(plan.goal_id)
         if goal is None:
             raise ValueError(f"Unknown strategic goal: {plan.goal_id}")
-        if goal.action not in {StrategicGoalAction.CAPTURE, StrategicGoalAction.DEFEND}:
-            raise ValueError("operational execution currently supports CAPTURE and DEFEND goals")
+        if goal.action not in {
+            StrategicGoalAction.CAPTURE,
+            StrategicGoalAction.DEFEND,
+            StrategicGoalAction.DESTROY,
+        }:
+            raise ValueError("operational execution currently supports CAPTURE, DEFEND, and DESTROY goals")
         assessment = self.client.plans.assessment(plan.plan_id)
         if assessment is None or not assessment.feasible:
             raise ValueError("operational plan requires a current feasible assessment")
@@ -684,7 +706,10 @@ class OperationalPlanExecutor:
             await self.refresh_history(plan.plan_id)
         latest = self.get(plan.plan_id)
         if latest and latest.status is OperationalPlanStatus.EXECUTING:
-            raise ValueError(f"operational plan is already executing: {plan.plan_id}")
+            raise ValueError(
+                f"operational plan has an interrupted executing attempt: {plan.plan_id}; "
+                "reconcile or explicitly block/abort that attempt before reuse, or create a new plan id"
+            )
         if goal.status in {StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
             raise ValueError(f"strategic goal cannot be executed in state {goal.status.value}")
 
@@ -840,6 +865,10 @@ class OperationalPlanExecutor:
                 on_event,
             )
             phase.status = PlanPhaseStatus.ACTIVE
+            destroy_health_before = None
+            if goal.action is StrategicGoalAction.DESTROY:
+                objective = self.client.strategic_objective(goal.objective_id)
+                destroy_health_before = objective.health if objective is not None else None
             await self._emit(
                 execution,
                 PlanExecutionEvent("phase.started", plan.plan_id, phase_id=phase.phase_id, status=phase.status.value),
@@ -925,6 +954,7 @@ class OperationalPlanExecutor:
                         required_missions,
                         mission_timeout_s=mission_timeout_s,
                         on_event=on_event,
+                        stop_on_failure=goal.action is not StrategicGoalAction.DESTROY,
                     )
             except Exception as exc:
                 return await self._block(
@@ -934,12 +964,29 @@ class OperationalPlanExecutor:
                     f"strategic goal monitoring failed: {exc}",
                     on_event,
                 )
-            if failed is not None:
+            if goal.action is StrategicGoalAction.DESTROY:
+                self._record_destroy_auftrag_damage(goal, required_missions)
+                await self._refresh_goal_control(goal.objective_id)
+                self.client.sync_strategic_objectives(source="plan.destroy_phase")
+                self.client.sync_strategic_goals(source="plan.destroy_phase")
+                await self._record_destroy_assessment(
+                    execution,
+                    phase.phase_id,
+                    goal,
+                    health_before=destroy_health_before,
+                    callback=on_event,
+                )
+            if failed is not None and goal.status is not StrategicGoalStatus.ACHIEVED:
+                reason = (
+                    self._destroy_shortfall_reason(goal)
+                    if goal.action is StrategicGoalAction.DESTROY
+                    else failed.error or f"{failed.auftrag_id} did not succeed"
+                )
                 return await self._block(
                     plan,
                     phase,
                     execution,
-                    failed.error or f"{failed.auftrag_id} did not succeed",
+                    reason,
                     on_event,
                 )
 
@@ -1158,7 +1205,9 @@ class OperationalPlanExecutor:
         *,
         mission_timeout_s: float,
         on_event: PlanExecutionCallback | None,
+        stop_on_failure: bool = True,
     ) -> PlanMissionExecution | None:
+        failed: PlanMissionExecution | None = None
         tasks = {
             asyncio.create_task(self._wait_for_mission(execution, mission, mission_timeout_s, on_event)): mission
             for mission in missions
@@ -1176,13 +1225,117 @@ class OperationalPlanExecutor:
                         await self._mission_event(execution, mission, "mission.failed", on_event)
                         succeeded = False
                     if not succeeded:
-                        return mission
-            return None
+                        if stop_on_failure:
+                            return mission
+                        failed = mission
+            return failed
         finally:
             for task in tasks:
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _destroy_shortfall_reason(self, goal: StrategicGoal) -> str:
+        objective = self.client.strategic_objective(goal.objective_id)
+        health = objective.health if objective is not None else None
+        required = goal.required_damage
+        if health is None or required is None:
+            return "weighted destruction goal is not achieved after all strike missions completed"
+        achieved = max(0.0, min(1.0, 1.0 - health))
+        return f"weighted destruction not achieved: damage={achieved:.1%} required={required:.1%}"
+
+    async def _record_destroy_assessment(
+        self,
+        execution: OperationalPlanExecution,
+        phase_id: str,
+        goal: StrategicGoal,
+        *,
+        health_before: float | None,
+        callback: PlanExecutionCallback | None,
+    ) -> StrategicDamageAssessment:
+        objective = self.client.strategic_objective(goal.objective_id)
+        health_after = objective.health if objective is not None else None
+        achieved_damage = None if health_after is None else max(0.0, min(1.0, 1.0 - health_after))
+        phase_damage = (
+            None
+            if health_before is None or health_after is None
+            else max(0.0, min(1.0, health_before - health_after))
+        )
+        required_damage = goal.required_damage or 0.0
+        assessment = StrategicDamageAssessment(
+            phase_id=phase_id,
+            objective_id=goal.objective_id,
+            required_damage=required_damage,
+            health_before=health_before,
+            health_after=health_after,
+            achieved_damage=achieved_damage,
+            phase_damage=phase_damage,
+            satisfied=goal.status is StrategicGoalStatus.ACHIEVED,
+            component_health=tuple(
+                self._component_health_evidence(objective, component.object_id)
+                for component in (objective.components if objective is not None else ())
+                if component.contributes_to_health and component.weight > 0
+            ),
+            mission_time=self.client._current_mission_time(),
+        )
+        execution.damage_assessments.append(assessment)
+        damage = f"{achieved_damage:.1%}" if achieved_damage is not None else "unknown"
+        phase_damage_text = f"{phase_damage:.1%}" if phase_damage is not None else "unknown"
+        await self._emit(
+            execution,
+            PlanExecutionEvent(
+                "strategic.damage_assessed",
+                execution.plan_id,
+                phase_id=phase_id,
+                status="satisfied" if assessment.satisfied else "shortfall",
+                message=(
+                    f"objective={goal.objective_id} damage={damage} "
+                    f"required={required_damage:.1%} phase_damage={phase_damage_text}"
+                ),
+            ),
+            callback,
+        )
+        return assessment
+
+    def _record_destroy_auftrag_damage(
+        self,
+        goal: StrategicGoal,
+        missions: Iterable[PlanMissionExecution],
+    ) -> None:
+        objective = self.client.strategic_objective(goal.objective_id)
+        if objective is None:
+            return
+        component_ids = {component.object_id for component in objective.components}
+        for mission in missions:
+            if mission.outcome is None or mission.outcome.damage is None:
+                continue
+            params = mission.command.to_params() if mission.command is not None else {}
+            target = params.get("target")
+            if not isinstance(target, str) or target not in component_ids:
+                continue
+            damage = max(0.0, min(100.0, mission.outcome.damage))
+            self.client.objectives.record_component_health(
+                objective,
+                target,
+                1.0 - damage / 100.0,
+                source=f"auftrag_summary:{mission.auftrag_id or 'unknown'}",
+                mission_time=self.client._current_mission_time(),
+            )
+
+    def _component_health_evidence(
+        self,
+        objective: StrategicObjective,
+        component_id: str,
+    ) -> tuple[str, float | None, str]:
+        snapshot_health = component_health(component_id, self.client.state)
+        estimate = objective.component_health_estimates.get(component_id)
+        if estimate is None:
+            return component_id, snapshot_health, "snapshot"
+        if snapshot_health is None or estimate.health < snapshot_health:
+            return component_id, estimate.health, estimate.source
+        if estimate.health == snapshot_health:
+            return component_id, snapshot_health, f"snapshot+{estimate.source}"
+        return component_id, snapshot_health, "snapshot"
 
     async def _wait_for_defend_phase(
         self,
@@ -1324,7 +1477,13 @@ class OperationalPlanExecutor:
                 )
                 if mission.status is PlanMissionStatus.FAILED:
                     mission.error = "AUFTRAG evaluated without success"
-                await self._mission_event(execution, mission, f"mission.{mission.status.value}", on_event)
+                await self._mission_event(
+                    execution,
+                    mission,
+                    f"mission.{mission.status.value}",
+                    on_event,
+                    message=f"MOOSE AUFTRAG outcome success={mission.outcome.success}",
+                )
                 return mission.status is PlanMissionStatus.SUCCEEDED
             if (event.fsm_event or "").lower() == "cancel":
                 mission.status = PlanMissionStatus.CANCELLED
@@ -1336,7 +1495,16 @@ class OperationalPlanExecutor:
 
     async def _refresh_goal_control(self, objective_id: str) -> None:
         objective = self.client.strategic_objective(objective_id)
-        if objective is None or not objective.control_object_id:
+        if objective is None:
+            return
+        component_prefixes = {component.object_id.partition(":")[0].upper() for component in objective.components}
+        if "GROUP" in component_prefixes:
+            await self.client.snapshot_groups()
+        if "UNIT" in component_prefixes:
+            await self.client.snapshot_units()
+        if "STATIC" in component_prefixes:
+            await self.client.snapshot_statics()
+        if not objective.control_object_id:
             return
         if objective.control_object_id.startswith("OPSZONE:"):
             await self.client.snapshot_opszones()

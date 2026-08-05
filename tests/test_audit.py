@@ -12,6 +12,7 @@ from moosebridge.operational_audit import (
 )
 from moosebridge.strategic import (
     CaptureBehavior,
+    ComponentHealthEstimate,
     GoalCondition,
     GoalConditionMatch,
     ObjectiveComponent,
@@ -84,6 +85,9 @@ def test_strategic_audit_snapshots_roundtrip_typed_fields() -> None:
         status=ObjectiveStatus.DEGRADED,
         health=0.6,
         contested=True,
+        component_health_estimates={
+            "STATIC:Warehouse": ComponentHealthEstimate(0.6, "auftrag_summary:AUFTRAG:7", 120.0)
+        },
     )
     goal = StrategicGoal(
         goal_id="GOAL:Capture Depot",
@@ -103,3 +107,15 @@ def test_strategic_audit_snapshots_roundtrip_typed_fields() -> None:
     assert restored_objective.components[0].capture_behavior is CaptureBehavior.RESPAWN_FOR_NEW_OWNER
     assert restored_goal == goal
     assert restored_goal.success_conditions == goal.success_conditions
+
+    destroy = StrategicGoal(
+        goal_id="GOAL:Damage Depot",
+        name="Damage Depot",
+        coalition="blue",
+        action=StrategicGoalAction.DESTROY,
+        objective_id=objective.objective_id,
+        required_damage=0.7,
+    )
+    restored_destroy = goal_from_snapshot(goal_snapshot(destroy))
+    assert restored_destroy.required_damage == 0.7
+    assert restored_destroy.success_conditions == (GoalCondition.health_at_most(0.3),)

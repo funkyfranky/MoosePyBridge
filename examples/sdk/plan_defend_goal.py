@@ -30,10 +30,10 @@ CLIENT_DISPLAY_NAME = "Defend Planner Example"
 
 COALITION = "blue"
 INTEL_ID = "INTEL:Blue Intel"
-OPSZONE_ID = "OPSZONE:Town Fight"
-OBJECTIVE_ID = "OBJECTIVE:Town Fight"
-GOAL_ID = "GOAL:Blue defend Town Fight"
-PLAN_ID = "PLAN:Blue defend Town Fight"
+OPSZONE_ID = "OPSZONE:Blue Camp Alpha"
+OBJECTIVE_ID = "OBJECTIVE:Blue Camp Alpha"
+GOAL_ID = "GOAL:Blue defend Camp Alpha"
+PLAN_ID = "PLAN:Blue defend Camp Alpha"
 DEFENSE_DURATION_SECONDS = 1_800.0
 
 APPROVE_IF_FEASIBLE = True

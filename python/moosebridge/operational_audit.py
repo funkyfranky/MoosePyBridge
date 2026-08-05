@@ -26,11 +26,13 @@ from .operational_execution import (
     PlanExecutionEvent,
     PlanMissionExecution,
     PlanMissionStatus,
+    StrategicDamageAssessment,
 )
 from .outcomes import AuftragOutcome
 from .recon import ReconOutcome, ReconTrackSample
 from .strategic import (
     CaptureBehavior,
+    ComponentHealthEstimate,
     GoalCondition,
     GoalConditionKind,
     GoalConditionMatch,
@@ -73,6 +75,7 @@ def execution_to_dict(execution: OperationalPlanExecution) -> dict[str, Any]:
         "objective": execution.objective_snapshot,
         "assessment": execution.assessment_snapshot,
         "missions": [_mission_to_dict(mission) for mission in execution.missions],
+        "damage_assessments": [_damage_assessment_to_dict(item) for item in execution.damage_assessments],
         "events": [_event_to_dict(event) for event in execution.events],
     }
 
@@ -94,6 +97,11 @@ def execution_from_dict(data: Mapping[str, Any]) -> OperationalPlanExecution:
         objective_snapshot=dict(data.get("objective")) if isinstance(data.get("objective"), dict) else {},
         assessment_snapshot=dict(data.get("assessment")) if isinstance(data.get("assessment"), dict) else {},
         missions=[_mission_from_dict(item) for item in data.get("missions", ()) if isinstance(item, dict)],
+        damage_assessments=[
+            _damage_assessment_from_dict(item)
+            for item in data.get("damage_assessments", ())
+            if isinstance(item, dict)
+        ],
         events=[_event_from_dict(item) for item in data.get("events", ()) if isinstance(item, dict)],
     )
 
@@ -252,6 +260,14 @@ def objective_snapshot(objective: StrategicObjective) -> dict[str, Any]:
         "created_mission_time": objective.created_mission_time,
         "updated_mission_time": objective.updated_mission_time,
         "metadata": dict(objective.metadata),
+        "component_health_estimates": {
+            component_id: {
+                "health": estimate.health,
+                "source": estimate.source,
+                "mission_time": estimate.mission_time,
+            }
+            for component_id, estimate in objective.component_health_estimates.items()
+        },
     }
 
 
@@ -283,6 +299,15 @@ def objective_from_snapshot(data: Mapping[str, Any]) -> StrategicObjective:
         created_mission_time=_float(data.get("created_mission_time")),
         updated_mission_time=_float(data.get("updated_mission_time")),
         metadata=dict(data.get("metadata")) if isinstance(data.get("metadata"), dict) else {},
+        component_health_estimates={
+            str(component_id): ComponentHealthEstimate(
+                health=float(estimate.get("health")),
+                source=str(estimate.get("source") or "audit"),
+                mission_time=_float(estimate.get("mission_time")),
+            )
+            for component_id, estimate in (data.get("component_health_estimates") or {}).items()
+            if isinstance(estimate, dict) and _float(estimate.get("health")) is not None
+        },
     )
 
 
@@ -293,6 +318,7 @@ def goal_snapshot(goal: StrategicGoal) -> dict[str, Any]:
         "coalition": goal.coalition,
         "action": goal.action.value,
         "objective_id": goal.objective_id,
+        "required_damage": goal.required_damage,
         "priority": goal.priority,
         "status": goal.status.value,
         "evaluation_mode": goal.evaluation_mode.value,
@@ -316,6 +342,7 @@ def goal_from_snapshot(data: Mapping[str, Any]) -> StrategicGoal:
         coalition=str(data.get("coalition") or ""),
         action=StrategicGoalAction(data.get("action") or StrategicGoalAction.CAPTURE.value),
         objective_id=str(data.get("objective_id") or ""),
+        required_damage=_float(data.get("required_damage")),
         priority=float(data.get("priority") or 0.0),
         status=StrategicGoalStatus(data.get("status") or StrategicGoalStatus.PLANNED.value),
         evaluation_mode=GoalEvaluationMode(data.get("evaluation_mode") or GoalEvaluationMode.IMMEDIATE.value),
@@ -482,6 +509,47 @@ def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
             if isinstance(samples, list)
         } if isinstance(data.get("recon_tracks"), dict) else {},
         error=_text(data.get("error")),
+    )
+
+
+def _damage_assessment_to_dict(assessment: StrategicDamageAssessment) -> dict[str, Any]:
+    return {
+        "phase_id": assessment.phase_id,
+        "objective_id": assessment.objective_id,
+        "required_damage": assessment.required_damage,
+        "health_before": assessment.health_before,
+        "health_after": assessment.health_after,
+        "achieved_damage": assessment.achieved_damage,
+        "phase_damage": assessment.phase_damage,
+        "satisfied": assessment.satisfied,
+        "component_health": [
+            {"object_id": object_id, "health": health, "source": source}
+            for object_id, health, source in assessment.component_health
+        ],
+        "mission_time": assessment.mission_time,
+    }
+
+
+def _damage_assessment_from_dict(data: Mapping[str, Any]) -> StrategicDamageAssessment:
+    return StrategicDamageAssessment(
+        phase_id=str(data.get("phase_id") or ""),
+        objective_id=str(data.get("objective_id") or ""),
+        required_damage=_float(data.get("required_damage")) or 0.0,
+        health_before=_float(data.get("health_before")),
+        health_after=_float(data.get("health_after")),
+        achieved_damage=_float(data.get("achieved_damage")),
+        phase_damage=_float(data.get("phase_damage")),
+        satisfied=bool(data.get("satisfied", False)),
+        component_health=tuple(
+            (
+                str(item.get("object_id") or ""),
+                _float(item.get("health")),
+                str(item.get("source") or "snapshot"),
+            )
+            for item in data.get("component_health", ())
+            if isinstance(item, dict)
+        ),
+        mission_time=_float(data.get("mission_time")),
     )
 
 

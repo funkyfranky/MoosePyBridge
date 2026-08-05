@@ -12,8 +12,8 @@ Priorities:
 
 ## P1 - Decision and execution
 
-- [ ] **Broaden operational planning beyond CAPTURE and DEFEND goals.** Generate
-  and execute plans for DESTROY, DISABLE, PROTECT, and INTERDICT while
+- [ ] **Broaden operational planning beyond CAPTURE, DEFEND, and DESTROY goals.** Generate
+  and execute plans for DISABLE, PROTECT, and INTERDICT while
   preserving the existing validation, approval, audit, and replanning path.
 - [ ] **Add strategic goal selection and prioritization.** Let Python compare
   possible goals using strategic value, current control, visible threats,
@@ -72,8 +72,19 @@ Priorities:
 
 ## Recently completed
 
+- [x] Weighted DESTROY goals, rule-based component selection, COMMANDER
+  execution, component-state refresh, strategic confirmation, audit roundtrip,
+  diagnostics, and a parameterless DCS example use the established plan path.
+- [x] DESTROY events, pretty-print diagnostics, and audits distinguish MOOSE
+  AUFTRAG outcomes from evidence-derived weighted strategic damage assessments.
+- [x] Object-targeted AUFTRAG `Summary.damage` supplements snapshot component
+  health cumulatively without double counting; source attribution survives audit.
+- [x] DESTROY shortfalls can be replanned against already damaged components;
+  the DCS example demonstrates bounded, separately approved strike rounds.
 - [x] Rule-based DEFEND proposals and deadline-aware execution use the existing
   COMMANDER, validation, event, cleanup, audit, and replanning path.
+- [x] Deadline-based DEFEND execution was validated in a live DCS mission with
+  required ground defense and optional logistics tasking.
 - [x] Browser-map layers are grouped into compact force, territorial-control,
   zone, intelligence, infrastructure, operations, and event sections.
 - [x] Direct and operational RECON share route sampling and spatial coverage.

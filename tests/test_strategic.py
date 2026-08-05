@@ -583,6 +583,156 @@ def test_destroy_goal_follows_object_destroyed_event_without_polling() -> None:
     asyncio.run(scenario())
 
 
+def test_destroy_goal_uses_weighted_required_damage() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Depot",
+                name="Depot",
+                kind=ObjectiveKind.DEPOT,
+                control_object_id=None,
+                ownership_policy=OwnershipPolicy.FIXED,
+                owner="red",
+                components=(
+                    ObjectiveComponent("STATIC:Main", weight=0.75),
+                    ObjectiveComponent("STATIC:Reserve", weight=0.25),
+                ),
+            )
+        )
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "snapshot",
+                    "kind": "statics",
+                    "payload": {
+                        "statics": [
+                            {"object_id": "STATIC:Main", "alive": True},
+                            {"object_id": "STATIC:Reserve", "alive": True},
+                        ]
+                    },
+                }
+            )
+        )
+        weighted = bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Damage Depot",
+                name="Damage Depot",
+                coalition="blue",
+                action=StrategicGoalAction.DESTROY,
+                objective_id="OBJECTIVE:Depot",
+                required_damage=0.75,
+            ),
+            activate=True,
+        )
+        strict = bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Destroy Depot",
+                name="Destroy Depot",
+                coalition="blue",
+                action=StrategicGoalAction.DESTROY,
+                objective_id="OBJECTIVE:Depot",
+                required_damage=1.0,
+            ),
+            activate=True,
+        )
+
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "event",
+                    "event": "object.destroyed",
+                    "mission_time": 75,
+                    "payload": {
+                        "object_id": "STATIC:Main",
+                        "object_type": "STATIC",
+                        "object": {"object_id": "STATIC:Main", "object_type": "STATIC", "alive": False},
+                    },
+                }
+            )
+        )
+
+        objective = bridge.strategic_objective("OBJECTIVE:Depot")
+        assert objective is not None
+        assert objective.health == 0.25
+        assert weighted.status is StrategicGoalStatus.ACHIEVED
+        assert strict.status is StrategicGoalStatus.ACTIVE
+
+        await server._handle_line(
+            json.dumps(
+                {
+                    "type": "event",
+                    "event": "object.destroyed",
+                    "mission_time": 80,
+                    "payload": {
+                        "object_id": "STATIC:Reserve",
+                        "object_type": "STATIC",
+                        "object": {"object_id": "STATIC:Reserve", "object_type": "STATIC", "alive": False},
+                    },
+                }
+            )
+        )
+
+        assert objective.health == 0.0
+        assert strict.status is StrategicGoalStatus.ACHIEVED
+        assert "required_damage=100.0%" in format_strategic_goal(strict)
+
+    asyncio.run(scenario())
+
+
+def test_required_damage_is_rejected_for_non_destroy_goal() -> None:
+    try:
+        StrategicGoal(
+            goal_id="GOAL:Invalid",
+            name="Invalid",
+            coalition="blue",
+            action=StrategicGoalAction.CAPTURE,
+            objective_id="OBJECTIVE:Town",
+            required_damage=0.5,
+        )
+    except ValueError as exc:
+        assert "only valid for DESTROY" in str(exc)
+    else:
+        raise AssertionError("Non-DESTROY goals must reject required_damage")
+
+
+def test_component_health_evidence_is_cumulative_until_explicitly_cleared() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Depot Evidence",
+            name="Depot Evidence",
+            kind=ObjectiveKind.DEPOT,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            components=(ObjectiveComponent("STATIC:Evidence", weight=1.0),),
+        ),
+        sync=False,
+    )
+
+    first = bridge.objectives.record_component_health(
+        objective,
+        "STATIC:Evidence",
+        0.4,
+        source="auftrag_summary:AUFTRAG:1",
+        mission_time=10.0,
+    )
+    retained = bridge.objectives.record_component_health(
+        objective,
+        "STATIC:Evidence",
+        0.7,
+        source="auftrag_summary:AUFTRAG:2",
+        mission_time=20.0,
+    )
+
+    assert retained is first
+    assert objective.component_health_estimates["STATIC:Evidence"].health == 0.4
+
+    bridge.objectives.clear_component_health(objective, "STATIC:Evidence")
+    assert objective.component_health_estimates == {}
+
+
 def test_custom_goal_conditions_and_manual_completion_are_supported() -> None:
     bridge = MooseBridgeClient(MooseBridgeServer())
     bridge.add_strategic_objective(

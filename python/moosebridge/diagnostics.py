@@ -17,7 +17,12 @@ from .legions import Cohort, Commander, Legion
 from .intelligence import InformationRequirement
 from .models import Auftrag, Intel, IntelCluster, IntelContact
 from .operational import OperationalPlan, OperationalPlanAssessment
-from .operational_execution import OperationalPlanAbortResult, OperationalPlanExecution, OperationalPlanReconciliation
+from .operational_execution import (
+    OperationalPlanAbortResult,
+    OperationalPlanExecution,
+    OperationalPlanReconciliation,
+    PlanMissionStatus,
+)
 from .pictures import GlobalPicture, PictureValidationIssue
 from .recon import ReconOutcome
 from .sensor_ranges import SensorRangeProfile
@@ -233,16 +238,16 @@ def format_strategic_goal(goal: StrategicGoal) -> str:
 
     success = f" {goal.success_match.value} ".join(_format_goal_condition(item) for item in goal.success_conditions) or "manual"
     failure = f" {goal.failure_match.value} ".join(_format_goal_condition(item) for item in goal.failure_conditions) or "-"
-    return "\n".join(
-        (
+    lines = [
             f"{goal.goal_id} action={goal.action.value} coalition={goal.coalition} "
             f"status={goal.status.value} priority={goal.priority:g}",
             f"  objective={goal.objective_id} evaluation={goal.evaluation_mode.value} "
             f"deadline={_text(goal.deadline_mission_time)}",
-            f"  success: {success}",
-            f"  failure: {failure}",
-        )
-    )
+    ]
+    if goal.required_damage is not None:
+        lines.append(f"  required_damage={goal.required_damage:.1%}")
+    lines.extend((f"  success: {success}", f"  failure: {failure}"))
+    return "\n".join(lines)
 
 
 def format_operational_plan_assessment(
@@ -323,6 +328,22 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
                 f"{issue.get('code') or 'unknown'}{reference}: "
                 f"{issue.get('message') or '-'}"
             )
+    for assessment in execution.damage_assessments:
+        before = f"{assessment.health_before:.1%}" if assessment.health_before is not None else "-"
+        after = f"{assessment.health_after:.1%}" if assessment.health_after is not None else "-"
+        damage = f"{assessment.achieved_damage:.1%}" if assessment.achieved_damage is not None else "-"
+        phase_damage = f"{assessment.phase_damage:.1%}" if assessment.phase_damage is not None else "-"
+        lines.append(
+            f"  strategic_damage phase={assessment.phase_id} objective={assessment.objective_id} "
+            f"health={before}->{after} damage={damage} phase_damage={phase_damage} "
+            f"required={assessment.required_damage:.1%} satisfied={assessment.satisfied}"
+        )
+        if assessment.component_health:
+            components = ", ".join(
+                f"{object_id}={'-' if health is None else f'{health:.1%}'}({source})"
+                for object_id, health, source in assessment.component_health
+            )
+            lines.append(f"    components: {components}")
     for mission in execution.missions:
         requirement = f"{mission.phase_id}/{mission.intent_id}/{mission.requirement_id}"
         lines.append(
@@ -334,6 +355,13 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
                 f"    ack={_text(mission.command_ack.ack_id)} "
                 f"correlation={_text(mission.command_ack.correlation_id)} "
                 f"sequence={_text(mission.command_ack.sequence)}"
+            )
+        if mission.outcome:
+            outcome = mission.outcome
+            lines.append(
+                f"    moose_auftrag_outcome evaluated={outcome.evaluated} success={outcome.success} "
+                f"status={_text(outcome.status)} damage={_text(outcome.damage)} "
+                f"targets={_text(outcome.n_targets_initial)}->{_text(outcome.n_targets_final)}"
             )
         if mission.recon_outcome:
             recon = mission.recon_outcome
@@ -353,7 +381,14 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
                     f"samples={spatial.sample_count} sufficient={spatial.sufficient}"
                 )
         if mission.error:
-            lines.append(f"    error={mission.error}")
+            label = (
+                "auftrag_reason"
+                if mission.outcome is not None
+                else "reason"
+                if execution.status.value == "completed" and mission.status is PlanMissionStatus.CANCELLED
+                else "error"
+            )
+            lines.append(f"    {label}={mission.error}")
     return "\n".join(lines)
 
 

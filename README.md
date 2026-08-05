@@ -274,8 +274,8 @@ if assessment.feasible:
 ```
 
 Approval still records a command decision only. `execute_plan()` is the
-separate, explicit execution step. The executor supports `CAPTURE` and
-deadline-based `DEFEND` goals and maps `BAI`, `PATROLZONE`, `RECON`, `CAPTUREZONE`, `AIRDEFENSE`,
+separate, explicit execution step. The executor supports `CAPTURE`, weighted
+`DESTROY`, and deadline-based `DEFEND` goals and maps `BAI`, `PATROLZONE`, `RECON`, `CAPTUREZONE`, `AIRDEFENSE`,
 `AMMOSUPPLY`, `FUELSUPPLY`, and `REARMING` requirements to concrete AUFTRAGs.
 It submits all requirements in a phase before waiting for required outcomes,
 then advances automatically when their `auftrag.evaluated` events report
@@ -397,7 +397,7 @@ Supported source types are `operator`, `rule_engine`, `llm`, and `import`.
 Provenance remains optional for manually constructed legacy plans and survives
 the same audit/restore roundtrip as phases and approvals.
 
-The rule-based planner proposes conservative CAPTURE and DEFEND drafts from a
+The rule-based planner proposes conservative CAPTURE, DEFEND, and DESTROY drafts from a
 coalition-visible tactical picture:
 
 ```python
@@ -405,12 +405,13 @@ picture = await bridge.refresh_tactical_picture("blue", "INTEL:Blue Intel")
 draft = bridge.propose_capture_plan("GOAL:Blue capture Town", picture)
 # A DEFEND goal must carry deadline_mission_time.
 defense = bridge.propose_defend_plan("GOAL:Blue defend Town", picture)
+destruction = bridge.propose_destroy_plan("GOAL:Blue damage Depot", picture)
 
 bridge.add_operational_plan(draft)
 assessment = await bridge.refresh_and_validate_operational_plan(draft)
 ```
 
-Both variants currently require an OPSZONE-controlled objective. CAPTURE can
+CAPTURE and DEFEND currently require an OPSZONE-controlled objective. CAPTURE can
 add a BAI isolation phase before ground seizure. DEFEND requires current
 friendly ownership, optionally interdicts the strongest visible nearby ground
 attacker, and tasks ground forces to hold the zone until the goal deadline.
@@ -419,6 +420,40 @@ DEFEND executor monitors objective and goal events alongside AUFTRAG events;
 loss of control fails immediately, while holding the objective to the deadline
 completes the plan and cancels its remaining active missions on a best-effort
 basis. See `examples/sdk/plan_defend_goal.py` for a parameterless DCS example.
+
+DESTROY objectives may contain multiple weighted components. A goal's
+`required_damage` is a fraction from `0.0` to `1.0`; `1.0` requires complete
+weighted destruction. The planner selects the smallest useful set of currently
+targetable components whose weights can reach that threshold. Stationary
+`STATIC` components are treated as known infrastructure. Moving `GROUP` and
+`UNIT` components require a current, non-stale coalition INTEL contact. After
+each strike phase, the executor refreshes the affected component snapshots once
+and confirms the weighted objective health. All parallel strikes are allowed to
+finish before that assessment. A negative individual MOOSE AUFTRAG summary does
+not block a DESTROY plan when the required weighted damage was nevertheless
+reached; otherwise the blocked reason reports achieved and required damage. See
+`examples/sdk/plan_destroy_goal.py` for a parameterless DCS example.
+
+Execution diagnostics keep both meanings explicit. `moose_auftrag_outcome`
+reports the constructor-specific MOOSE result, while `strategic_damage` reports
+evidence-derived weighted objective health, total damage, phase damage, the
+required threshold, and component health. The same typed damage assessments and
+`strategic.damage_assessed` events are retained in the operational audit.
+
+For an AUFTRAG that targets exactly one objective component by object id, the
+cumulative MOOSE `Summary.damage` percentage supplements the regular snapshot.
+Python uses the lower confirmed component health from both sources and never
+adds damage percentages from repeated attacks. Coordinate-targeted missions do
+not contribute Summary damage because their MOOSE success semantics do not
+identify one strategic component. Retained Summary evidence is cleared only by
+an explicit repair, replacement, or respawn decision.
+
+When a DESTROY plan ends below its threshold, a follow-up proposal uses this
+retained effective health and prioritizes already damaged living components
+before untouched alternatives. The executor itself still performs no hidden
+retry: every follow-up is a distinct plan with its own validation, approval,
+execution, and audit trail. `examples/sdk/plan_destroy_goal.py` demonstrates up
+to three explicitly approved strike rounds through `MAX_STRIKE_ROUNDS`.
 
 The result stays `draft`: proposing never registers, validates, approves, or
 executes a plan. Enemy selection uses only `TacticalPicture` INTEL contacts,

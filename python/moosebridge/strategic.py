@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import math
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 
 from .state import MooseBridgeState
 
@@ -204,6 +204,23 @@ class ObjectiveComponent:
         object.__setattr__(self, "capture_behavior", CaptureBehavior(self.capture_behavior))
 
 
+@dataclass(slots=True, frozen=True)
+class ComponentHealthEstimate:
+    """Cumulative component-health evidence not available in regular snapshots."""
+
+    health: float
+    source: str
+    mission_time: float | None = None
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.health) or not 0 <= self.health <= 1:
+            raise ValueError("component health estimate must be between 0 and 1")
+        if not self.source.strip():
+            raise ValueError("component health estimate source must not be empty")
+        if self.mission_time is not None and (not math.isfinite(self.mission_time) or self.mission_time < 0):
+            raise ValueError("component health estimate mission_time must be finite and non-negative")
+
+
 @dataclass(slots=True)
 class StrategicObjective:
     """A Python-owned strategic objective composed of bridge objects."""
@@ -223,6 +240,7 @@ class StrategicObjective:
     created_mission_time: float | None = None
     updated_mission_time: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    component_health_estimates: dict[str, ComponentHealthEstimate] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.objective_id = self.objective_id.strip()
@@ -248,6 +266,9 @@ class StrategicObjective:
         component_ids = [component.object_id for component in self.components]
         if len(component_ids) != len(set(component_ids)):
             raise ValueError("objective components must have unique object ids")
+        unknown_estimates = set(self.component_health_estimates).difference(component_ids)
+        if unknown_estimates:
+            raise ValueError(f"component health estimates reference unknown components: {sorted(unknown_estimates)}")
 
 
 @dataclass(slots=True)
@@ -272,6 +293,7 @@ class StrategicGoal:
     completed_mission_time: float | None = None
     failure_reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    required_damage: float | None = None
 
     def __post_init__(self) -> None:
         self.goal_id = self.goal_id.strip()
@@ -279,12 +301,22 @@ class StrategicGoal:
         self.objective_id = self.objective_id.strip()
         self.coalition = normalize_coalition(self.coalition) or ""
         self.action = StrategicGoalAction(self.action)
+        if self.action is StrategicGoalAction.DESTROY:
+            self.required_damage = 1.0 if self.required_damage is None else float(self.required_damage)
+            if not math.isfinite(self.required_damage) or not 0 <= self.required_damage <= 1:
+                raise ValueError("DESTROY required_damage must be between 0 and 1")
+        elif self.required_damage is not None:
+            raise ValueError("required_damage is only valid for DESTROY goals")
         self.status = StrategicGoalStatus(self.status)
         self.evaluation_mode = self.evaluation_mode or _default_goal_evaluation_mode(self.action)
         self.evaluation_mode = GoalEvaluationMode(self.evaluation_mode)
         self.success_match = GoalConditionMatch(self.success_match)
         self.failure_match = GoalConditionMatch(self.failure_match)
-        self.success_conditions = tuple(self.success_conditions) or _default_success_conditions(self.action, self.coalition)
+        self.success_conditions = tuple(self.success_conditions) or _default_success_conditions(
+            self.action,
+            self.coalition,
+            required_damage=self.required_damage,
+        )
         self.failure_conditions = tuple(self.failure_conditions) or _default_failure_conditions(self.action, self.coalition)
         if not self.goal_id:
             raise ValueError("goal_id must not be empty")
@@ -434,7 +466,11 @@ class StrategicObjectiveRegistry:
             previous_health = objective.health
 
             resolved, owner, contested = _resolve_control(objective, state)
-            health = _objective_health(objective.components, state)
+            health = _objective_health(
+                objective.components,
+                state,
+                estimates=objective.component_health_estimates,
+            )
             status = _objective_status(
                 resolved=resolved,
                 previous=previous_status,
@@ -500,6 +536,44 @@ class StrategicObjectiveRegistry:
         for event in emitted:
             self._record(event)
         return tuple(emitted)
+
+    def record_component_health(
+        self,
+        objective: StrategicObjective | str,
+        component_id: str,
+        health: float,
+        *,
+        source: str,
+        mission_time: float | None = None,
+    ) -> ComponentHealthEstimate:
+        """Retain the lowest cumulative health reported for one component."""
+
+        item = objective if isinstance(objective, StrategicObjective) else self.get(objective)
+        if item is None:
+            raise KeyError(f"Unknown strategic objective: {objective}")
+        if component_id not in {component.object_id for component in item.components}:
+            raise KeyError(f"Unknown component for {item.objective_id}: {component_id}")
+        estimate = ComponentHealthEstimate(float(health), source.strip(), mission_time)
+        previous = item.component_health_estimates.get(component_id)
+        if previous is None or estimate.health < previous.health:
+            item.component_health_estimates[component_id] = estimate
+            return estimate
+        return previous
+
+    def clear_component_health(
+        self,
+        objective: StrategicObjective | str,
+        component_id: str | None = None,
+    ) -> None:
+        """Clear retained evidence after an explicit repair, replacement, or respawn."""
+
+        item = objective if isinstance(objective, StrategicObjective) else self.get(objective)
+        if item is None:
+            raise KeyError(f"Unknown strategic objective: {objective}")
+        if component_id is None:
+            item.component_health_estimates.clear()
+        else:
+            item.component_health_estimates.pop(component_id, None)
 
     def _record(self, event: ObjectiveEvent) -> None:
         self._events.append(event)
@@ -776,13 +850,19 @@ def _default_goal_evaluation_mode(action: StrategicGoalAction) -> GoalEvaluation
     return GoalEvaluationMode.IMMEDIATE
 
 
-def _default_success_conditions(action: StrategicGoalAction, coalition: str) -> tuple[GoalCondition, ...]:
+def _default_success_conditions(
+    action: StrategicGoalAction,
+    coalition: str,
+    *,
+    required_damage: float | None = None,
+) -> tuple[GoalCondition, ...]:
     if action is StrategicGoalAction.CAPTURE:
         return (GoalCondition.owner_is(coalition), GoalCondition.contested_is(False))
     if action is StrategicGoalAction.DEFEND:
         return (GoalCondition.owner_is(coalition),)
     if action is StrategicGoalAction.DESTROY:
-        return (GoalCondition.status_is(ObjectiveStatus.DESTROYED),)
+        damage = 1.0 if required_damage is None else required_damage
+        return (GoalCondition.health_at_most(round(1.0 - damage, 12)),)
     if action is StrategicGoalAction.DISABLE:
         return (GoalCondition.status_in(ObjectiveStatus.DISABLED, ObjectiveStatus.DESTROYED),)
     if action is StrategicGoalAction.PROTECT:
@@ -859,13 +939,21 @@ def _resolve_control(
     return False, objective.owner, objective.contested
 
 
-def _objective_health(components: Iterable[ObjectiveComponent], state: MooseBridgeState) -> float | None:
+def _objective_health(
+    components: Iterable[ObjectiveComponent],
+    state: MooseBridgeState,
+    *,
+    estimates: Mapping[str, ComponentHealthEstimate] | None = None,
+) -> float | None:
     weighted_health = 0.0
     total_weight = 0.0
     for component in components:
         if not component.contributes_to_health or component.weight <= 0:
             continue
-        health = _component_health(component.object_id, state)
+        health = component_health(component.object_id, state)
+        estimate = (estimates or {}).get(component.object_id)
+        if estimate is not None:
+            health = estimate.health if health is None else min(health, estimate.health)
         if health is None:
             continue
         weighted_health += health * component.weight
@@ -875,7 +963,9 @@ def _objective_health(components: Iterable[ObjectiveComponent], state: MooseBrid
     return max(0.0, min(1.0, weighted_health / total_weight))
 
 
-def _component_health(object_id: str, state: MooseBridgeState) -> float | None:
+def component_health(object_id: str, state: MooseBridgeState) -> float | None:
+    """Return normalized current health for one objective component."""
+
     prefix = object_id.partition(":")[0].upper()
     collections = {
         "GROUP": state.groups,
@@ -900,6 +990,20 @@ def _component_health(object_id: str, state: MooseBridgeState) -> float | None:
     if payload.get("alive") is not None:
         return 1.0 if bool(payload.get("alive")) else 0.0
     return None
+
+
+def effective_component_health(
+    objective: StrategicObjective,
+    object_id: str,
+    state: MooseBridgeState,
+) -> float | None:
+    """Combine current snapshot health with retained cumulative evidence."""
+
+    health = component_health(object_id, state)
+    estimate = objective.component_health_estimates.get(object_id)
+    if estimate is None:
+        return health
+    return estimate.health if health is None else min(health, estimate.health)
 
 
 def _objective_status(

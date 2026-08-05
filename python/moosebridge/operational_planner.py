@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
 
@@ -20,7 +21,7 @@ from .operational import (
 )
 from .pictures import TacticalPicture
 from .recon import derive_recon_requirement
-from .strategic import StrategicGoal, StrategicGoalAction, StrategicGoalStatus, StrategicObjective
+from .strategic import ObjectiveComponent, StrategicGoal, StrategicGoalAction, StrategicGoalStatus, StrategicObjective
 
 
 @dataclass(slots=True, frozen=True)
@@ -414,6 +415,134 @@ class RuleBasedOperationalPlanner:
             },
         )
 
+    def propose_destroy(
+        self,
+        goal: StrategicGoal,
+        objective: StrategicObjective,
+        picture: TacticalPicture,
+        component_health_by_id: Mapping[str, float | None],
+        *,
+        plan_id: str | None = None,
+        name: str | None = None,
+    ) -> OperationalPlan:
+        """Return a weighted component-destruction draft without registering it."""
+
+        self._validate_destroy_inputs(goal, objective, picture)
+        weighted_components = tuple(
+            component
+            for component in objective.components
+            if component.contributes_to_health and component.weight > 0
+        )
+        total_weight = sum(component.weight for component in weighted_components)
+        if total_weight <= 0:
+            raise ValueError("DESTROY objective has no positively weighted health components")
+        unknown = [
+            component.object_id
+            for component in weighted_components
+            if component_health_by_id.get(component.object_id) is None
+        ]
+        if unknown:
+            raise ValueError(f"component health is unavailable; refresh snapshots for {sorted(unknown)}")
+
+        current_health = sum(
+            component.weight * float(component_health_by_id[component.object_id])
+            for component in weighted_components
+        ) / total_weight
+        required_damage = goal.required_damage if goal.required_damage is not None else 1.0
+        target_health = round(1.0 - required_damage, 12)
+        if current_health <= target_health:
+            raise ValueError("DESTROY goal damage threshold is already satisfied")
+
+        contacts_by_target = {
+            contact.target_object_id: contact
+            for contact in picture.contacts
+            if contact.target_object_id
+        }
+        mission_time = picture.clock.mission_time if picture.clock else None
+        candidates: list[tuple[bool, float, str, ObjectiveComponent]] = []
+        for component in weighted_components:
+            health = float(component_health_by_id[component.object_id])
+            if health <= 0:
+                continue
+            prefix = component.object_id.partition(":")[0].upper()
+            targetable = prefix == "STATIC"
+            if prefix in {"GROUP", "UNIT"}:
+                contact = contacts_by_target.get(component.object_id)
+                if contact is not None and (contact.is_ground or contact.is_static):
+                    assessment = assess_intel_contact(
+                        contact,
+                        mission_time,
+                        fresh_for_s=self.config.contact_fresh_for_s,
+                        stale_after_s=self.config.contact_stale_after_s,
+                    )
+                    targetable = assessment.state is not ContactInformationState.STALE
+            if targetable:
+                potential = component.weight * health / total_weight
+                untouched = health >= 1.0 - 1e-12
+                candidates.append((untouched, -potential, component.object_id, component))
+
+        selected: list[ObjectiveComponent] = []
+        projected_health = current_health
+        for _, negative_potential, _, component in sorted(candidates, key=lambda item: (item[0], item[1], item[2])):
+            selected.append(component)
+            projected_health -= -negative_potential
+            if projected_health <= target_health + 1e-12:
+                break
+        if projected_health > target_health + 1e-12:
+            raise ValueError(
+                "visible targetable components cannot satisfy required_damage; "
+                f"projected_damage={1.0 - projected_health:.1%} required={required_damage:.1%}"
+            )
+
+        intents = tuple(
+            MissionIntent(
+                intent_id=f"destroy-component-{index}",
+                name=f"Destroy {component.object_id}",
+                auftrag_types=("BAI",),
+                target_object_id=component.object_id,
+                asset_requirements=(
+                    AssetRequirement(
+                        requirement_id=f"REQ:Strike {index}",
+                        role=AssetRole.COMBAT,
+                        mission_types=("BAI",),
+                        performer_categories=("AIR",),
+                        require_payload=True,
+                    ),
+                ),
+                metadata={
+                    "objective_component_role": component.role,
+                    "objective_component_weight": component.weight,
+                    "objective_component_health": component_health_by_id[component.object_id],
+                },
+            )
+            for index, component in enumerate(selected, start=1)
+        )
+        proposal_id = plan_id or f"PLAN:{goal.goal_id.removeprefix('GOAL:')}"
+        return OperationalPlan(
+            plan_id=proposal_id,
+            name=name or f"Damage {objective.name} by {required_damage:.0%}",
+            goal_id=goal.goal_id,
+            coalition=goal.coalition,
+            phases=(PlanPhase(phase_id="strike", name="Strike objective components", intents=intents),),
+            posture=OperationalPosture.BALANCED,
+            provenance=OperationalPlanProvenance(
+                source_type=PlanSourceType.RULE_ENGINE,
+                source_id=self.config.source_id,
+                picture_mission_time=picture.clock.mission_time if picture.clock else None,
+                rationale=(
+                    f"Reduce weighted health of {objective.objective_id} from {current_health:.1%} "
+                    f"to at most {target_health:.1%}. Selected {len(selected)} known targetable component(s)."
+                ),
+            ),
+            metadata={
+                "planner": self.config.source_id,
+                "required_damage": required_damage,
+                "current_health": current_health,
+                "projected_health": max(0.0, projected_health),
+                "selected_component_ids": tuple(component.object_id for component in selected),
+            },
+        )
+
     def _intel_issues(
         self,
         picture: TacticalPicture,
@@ -542,6 +671,25 @@ class RuleBasedOperationalPlanner:
             raise ValueError("DEFEND objective must currently be controlled by the goal coalition")
         if not objective.control_object_id or not objective.control_object_id.startswith("OPSZONE:"):
             raise ValueError("initial rule-based DEFEND planner requires an OPSZONE control object")
+
+    @staticmethod
+    def _validate_destroy_inputs(
+        goal: StrategicGoal,
+        objective: StrategicObjective,
+        picture: TacticalPicture,
+    ) -> None:
+        if goal.action is not StrategicGoalAction.DESTROY:
+            raise ValueError("propose_destroy requires a DESTROY goal")
+        if goal.status in {StrategicGoalStatus.ACHIEVED, StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
+            raise ValueError(f"cannot propose a plan for goal in state {goal.status.value}")
+        if goal.objective_id != objective.objective_id:
+            raise ValueError("goal and strategic objective do not match")
+        if picture.coalition.lower() != goal.coalition:
+            raise ValueError("tactical picture coalition does not match the strategic goal")
+        if objective.owner == goal.coalition:
+            raise ValueError("DESTROY planner refuses to target a friendly-owned objective")
+        if not objective.components:
+            raise ValueError("DESTROY objective requires weighted components")
 
     def _select_defender(self, zone: OpsZone, picture: TacticalPicture) -> IntelContact | None:
         if zone.x is None or zone.z is None:

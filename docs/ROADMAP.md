@@ -324,7 +324,7 @@ Current operational-planning baseline:
 - Same-phase requirements compete for finite COHORT stock; later phases may
   reuse surviving assets.
 - Feasible plans can be approved and explicitly executed through a coalition
-  COMMANDER. The event-driven executor covers CAPTURE and deadline-based DEFEND
+  COMMANDER. The event-driven executor covers CAPTURE, weighted DESTROY, and deadline-based DEFEND
   plans, automatic phase progression, parallel required AUFTRAG monitoring, optional support
   missions, one-shot target existence preflight, and blocked-state handoff
   without automatic retries.
@@ -359,11 +359,27 @@ Current operational-planning baseline:
   operator, rule engine, LLM, or imported source, including source id, tactical
   picture mission time, and rationale. Provenance is preserved through audit
   persistence and restore independently of the approving client.
-- A conservative rule-based planner creates unregistered CAPTURE and DEFEND
-  drafts for OPSZONE objectives from coalition-specific tactical pictures. It
+- A conservative rule-based planner creates unregistered CAPTURE, DEFEND, and
+  weighted DESTROY drafts from coalition-specific tactical pictures. It
   uses visible INTEL contacts for optional isolation or counterattack and never
   reads global truth; registration, validation, approval, and execution remain
   explicit SDK steps.
+- Weighted DESTROY goals select enough objective components to meet a configurable
+  damage fraction. Static infrastructure is known by position; moving targets
+  require current coalition INTEL. Execution refreshes component state at phase
+  boundaries and confirms weighted objective health without status polling.
+  Parallel strikes settle before assessment, so strategic damage rather than an
+  individual AUFTRAG success flag determines DESTROY completion.
+- DESTROY diagnostics and audits explicitly separate constructor-specific MOOSE
+  AUFTRAG outcomes from snapshot-derived strategic damage assessments, including
+  weighted component health and threshold satisfaction.
+- Cumulative MOOSE `Summary.damage` supplements snapshot health only when an
+  AUFTRAG targets one exact strategic object component. Repeated reports retain
+  the strongest confirmed damage instead of adding percentages; coordinate
+  missions cannot provide component damage evidence.
+- DESTROY follow-up proposals retain cumulative component health and prioritize
+  damaged living targets. Each strike round remains a separately validated,
+  approved, executed, and audited plan rather than an implicit executor retry.
 - Rule-based proposals retain structured INTEL coverage warnings separately
   from technical feasibility findings, including the important distinction that
   no visible defender does not prove an objective is undefended.

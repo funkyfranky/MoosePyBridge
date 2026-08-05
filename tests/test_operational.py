@@ -10,8 +10,10 @@ from moosebridge import (
     MissionIntent,
     MooseBridgeClient,
     MooseBridgeServer,
+    ObjectiveComponent,
     ObjectiveKind,
     OperationalPlan,
+    OperationalPlanExecution,
     OperationalPlanProvenance,
     OperationalPlanStatus,
     OperationalPosture,
@@ -627,6 +629,51 @@ class _DefendExecutionServer(_ExecutionServer):
         return event
 
 
+class _DestroyExecutionServer(_ExecutionServer):
+    """Execution server that applies weighted component destruction after BAI."""
+
+    def __init__(
+        self,
+        *,
+        success: bool = True,
+        destroy_main: bool = True,
+        summary_damage: float | None = None,
+    ) -> None:
+        super().__init__(success=success)
+        self.main_destroyed = False
+        self.destroy_main = destroy_main
+        self.summary_damage = summary_damage
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        event = await super().wait_for_event(event_name, filters, timeout, after_id)
+        if self.summary_damage is not None:
+            event["payload"]["summary"]["damage"] = self.summary_damage
+        if self.destroy_main and event.get("payload", {}).get("auftrag_type") == "BAI":
+            self.main_destroyed = True
+        return event
+
+    async def snapshot_statics(self) -> dict[str, Any]:
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "statics",
+                "payload": {
+                    "statics": [
+                        {"object_id": "STATIC:Main", "alive": not self.main_destroyed},
+                        {"object_id": "STATIC:Reserve", "alive": True},
+                    ]
+                },
+            }
+        )
+        return {"ok": True, "result": {"kind": "statics", "count": 2}}
+
+
 def _executable_defend_plan(*, lose_control: bool = False) -> tuple[MooseBridgeClient, OperationalPlan]:
     server = _DefendExecutionServer(lose_control=lose_control)
     server._objective_updated = True
@@ -713,6 +760,118 @@ def _executable_defend_plan(*, lose_control: bool = False) -> tuple[MooseBridgeC
                                     min_count=2,
                                     mission_types=("PATROLZONE",),
                                     performer_categories=("GROUND",),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    bridge.validate_operational_plan(plan)
+    bridge.approve_operational_plan(plan)
+    return bridge, plan
+
+
+def _executable_destroy_plan(
+    *,
+    mission_success: bool = True,
+    destroy_main: bool = True,
+    summary_damage: float | None = None,
+) -> tuple[MooseBridgeClient, OperationalPlan]:
+    server = _DestroyExecutionServer(
+        success=mission_success,
+        destroy_main=destroy_main,
+        summary_damage=summary_damage,
+    )
+    bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+    bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Depot",
+            name="Depot",
+            kind=ObjectiveKind.DEPOT,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=(
+                ObjectiveComponent("STATIC:Main", weight=0.6),
+                ObjectiveComponent("STATIC:Reserve", weight=0.4),
+            ),
+        )
+    )
+    bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Damage Depot",
+            name="Damage Depot",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id="OBJECTIVE:Depot",
+            required_damage=0.6,
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "commanders",
+            "payload": {
+                "commanders": [{
+                    "object_id": "COMMANDER:Blue Command",
+                    "object_type": "COMMANDER",
+                    "coalition": "blue",
+                    "legion_ids": ["LEGION:Blue Wing"],
+                }]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {"legions": [{"object_id": "LEGION:Blue Wing", "coalition": "blue"}]},
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [{
+                    "object_id": "COHORT:Strike",
+                    "legion_id": "LEGION:Blue Wing",
+                    "is_air": True,
+                    "stock_asset_count": 2,
+                    "available_asset_count": 2,
+                    "mission_types": ["BAI"],
+                    "payloads_by_mission": {
+                        "BAI": {"available_count": 1, "total_available": 2}
+                    },
+                }]
+            },
+        }
+    )
+    plan = bridge.add_operational_plan(
+        OperationalPlan(
+            plan_id="PLAN:Damage Depot",
+            name="Damage Depot",
+            goal_id="GOAL:Damage Depot",
+            coalition="blue",
+            phases=(
+                PlanPhase(
+                    phase_id="strike",
+                    name="Strike",
+                    intents=(
+                        MissionIntent(
+                            intent_id="destroy-main",
+                            name="Destroy main depot",
+                            auftrag_types=("BAI",),
+                            target_object_id="STATIC:Main",
+                            asset_requirements=(
+                                AssetRequirement(
+                                    requirement_id="REQ:Strike",
+                                    role=AssetRole.COMBAT,
+                                    mission_types=("BAI",),
+                                    performer_categories=("AIR",),
+                                    require_payload=True,
                                 ),
                             ),
                         ),
@@ -908,6 +1067,128 @@ def test_execute_defend_plan_blocks_when_control_is_lost_before_deadline() -> No
         assert plan.status is OperationalPlanStatus.BLOCKED
         assert bridge.strategic_goal("GOAL:Defend Town").status is StrategicGoalStatus.FAILED  # type: ignore[union-attr]
         assert "strategic DEFEND goal failed" in (execution.blocked_reason or "")
+
+    asyncio.run(scenario())
+
+
+def test_completed_plan_formats_expected_mission_cancellation_as_reason() -> None:
+    execution = OperationalPlanExecution(
+        plan_id="PLAN:Defend Town",
+        commander_id="COMMANDER:Blue",
+        status=OperationalPlanStatus.COMPLETED,
+        missions=[
+            PlanMissionExecution(
+                phase_id="defend",
+                intent_id="hold-zone",
+                requirement_id="REQ:Ground defense",
+                mission_type="PATROLZONE",
+                required=True,
+                status=PlanMissionStatus.CANCELLED,
+                auftrag_id="AUFTRAG:1",
+                error="strategic DEFEND goal achieved",
+            )
+        ],
+    )
+
+    rendered = format_operational_plan_execution(execution)
+
+    assert "reason=strategic DEFEND goal achieved" in rendered
+    assert "error=strategic DEFEND goal achieved" not in rendered
+
+
+def test_execute_destroy_plan_refreshes_weighted_components_and_confirms_goal() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_destroy_plan()
+        observed: list[str] = []
+
+        execution = await bridge.execute_plan(plan, on_event=lambda event: observed.append(str(event)))
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert execution.missions[0].status is PlanMissionStatus.SUCCEEDED
+        assert execution.damage_assessments[0].achieved_damage == 0.6
+        assert execution.damage_assessments[0].required_damage == 0.6
+        assert execution.damage_assessments[0].satisfied is True
+        assert any("strategic.damage_assessed status=satisfied" in item for item in observed)
+        assert any("MOOSE AUFTRAG outcome success=True" in item for item in observed)
+        objective = bridge.strategic_objective("OBJECTIVE:Depot")
+        goal = bridge.strategic_goal("GOAL:Damage Depot")
+        assert objective is not None and abs((objective.health or 0) - 0.4) < 1e-12
+        assert goal is not None and goal.status is StrategicGoalStatus.ACHIEVED
+
+        rendered = format_operational_plan_execution(execution)
+        assert "strategic_damage phase=strike" in rendered
+        assert "damage=60.0%" in rendered
+        assert "required=60.0% satisfied=True" in rendered
+        assert "moose_auftrag_outcome evaluated=True success=True" in rendered
+
+        restored = execution_from_dict(execution_to_dict(execution))
+        assert restored.damage_assessments == execution.damage_assessments
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_uses_weighted_damage_over_auftrag_success() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_destroy_plan(mission_success=False, destroy_main=True)
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert execution.missions[0].status is PlanMissionStatus.FAILED
+        assert bridge.strategic_goal("GOAL:Damage Depot").status is StrategicGoalStatus.ACHIEVED  # type: ignore[union-attr]
+        rendered = format_operational_plan_execution(execution)
+        assert "moose_auftrag_outcome evaluated=True success=False" in rendered
+        assert "auftrag_reason=AUFTRAG evaluated without success" in rendered
+        assert "required=60.0% satisfied=True" in rendered
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_uses_cumulative_object_damage_from_auftrag_summary() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_destroy_plan(
+            mission_success=False,
+            destroy_main=False,
+            summary_damage=100.0,
+        )
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        objective = bridge.strategic_objective("OBJECTIVE:Depot")
+        assert objective is not None and objective.health == 0.4
+        estimate = objective.component_health_estimates["STATIC:Main"]
+        assert estimate.health == 0.0
+        assert estimate.source == "auftrag_summary:AUFTRAG:1"
+        assessment = execution.damage_assessments[0]
+        assert assessment.component_health[0] == (
+            "STATIC:Main",
+            0.0,
+            "auftrag_summary:AUFTRAG:1",
+        )
+        rendered = format_operational_plan_execution(execution)
+        assert "STATIC:Main=0.0%(auftrag_summary:AUFTRAG:1)" in rendered
+
+        restored = execution_from_dict(execution_to_dict(execution))
+        assert restored.objective_snapshot["component_health_estimates"]["STATIC:Main"]["health"] == 0.0
+        assert restored.damage_assessments == execution.damage_assessments
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_reports_weighted_damage_shortfall() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_destroy_plan(
+            mission_success=False,
+            destroy_main=False,
+            summary_damage=50.0,
+        )
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert execution.blocked_reason == "weighted destruction not achieved: damage=30.0% required=60.0%"
+        assert bridge.strategic_goal("GOAL:Damage Depot").status is StrategicGoalStatus.ACTIVE  # type: ignore[union-attr]
 
     asyncio.run(scenario())
 
