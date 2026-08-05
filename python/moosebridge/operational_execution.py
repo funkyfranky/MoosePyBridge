@@ -14,6 +14,7 @@ from .auftraege import (
     Auftrag_AIRDEFENSE,
     Auftrag_AMMOSUPPLY,
     Auftrag_ANTISHIP,
+    Auftrag_ARTY,
     Auftrag_BAI,
     Auftrag_BOMBING,
     Auftrag_BOMBRUNWAY,
@@ -46,6 +47,7 @@ from .recon import (
     ReconTrackingSession,
     build_recon_outcome,
 )
+from .server import DcsMissionEndedError
 from .strategic import (
     StrategicGoal,
     StrategicGoalAction,
@@ -185,6 +187,7 @@ class PlanMissionExecution:
     required: bool
     command: AuftragCommand | None = field(default=None, repr=False)
     command_snapshot: dict[str, Any] = field(default_factory=dict)
+    weapon_range_ack: CommandAckReference | None = None
     command_ack: CommandAckReference | None = None
     status: PlanMissionStatus = PlanMissionStatus.PENDING
     auftrag_id: str | None = None
@@ -256,6 +259,12 @@ class OperationalPlanExecutor:
         """Return all execution attempts for a plan in chronological order."""
 
         return tuple(self._executions.get(plan_id, ()))
+
+    def clear(self) -> None:
+        """Discard mission-scoped in-memory executions without touching the audit."""
+
+        self._executions.clear()
+        self._loaded_plan_ids.clear()
 
     async def refresh_history(self, plan_id: str) -> tuple[OperationalPlanExecution, ...]:
         """Load the latest persistent snapshot of every attempt from the daemon."""
@@ -935,6 +944,28 @@ class OperationalPlanExecutor:
                                 contact.object_id
                                 for contact in self.client.contacts_of_intel(mission.recon_intel_id)
                             )
+                        range_ack = await self._synchronize_arty_weapon_range(intent, requirement, command)
+                        if range_ack is not None:
+                            mission.weapon_range_ack = _command_ack_reference(range_ack)
+                            result = range_ack.get("result") if isinstance(range_ack.get("result"), dict) else {}
+                            await self._emit(
+                                execution,
+                                PlanExecutionEvent(
+                                    "mission.weapon_range_synchronized",
+                                    plan.plan_id,
+                                    phase_id=phase.phase_id,
+                                    intent_id=intent.intent_id,
+                                    requirement_id=requirement.requirement_id,
+                                    status="synchronized",
+                                    message=(
+                                        f"{result.get('cohort_id') or '-'} "
+                                        f"weapon_type={result.get('weapon_type')} "
+                                        f"range={float(result.get('minimum_m') or 0.0) / 1_000:.3f}-"
+                                        f"{float(result.get('maximum_m') or 0.0) / 1_000:.3f}km"
+                                    ),
+                                ),
+                                on_event,
+                            )
                         ack = await self.client.add_auftrag(
                             command,
                             commander=commander.object_id,
@@ -1130,6 +1161,42 @@ class OperationalPlanExecutor:
         execution.completed_mission_time = self.client._current_mission_time()
         await self._emit(execution, PlanExecutionEvent("plan.completed", plan.plan_id, status=plan.status.value), on_event)
         return execution
+
+    async def _synchronize_arty_weapon_range(
+        self,
+        intent: MissionIntent,
+        requirement: AssetRequirement,
+        command: AuftragCommand,
+    ) -> dict[str, Any] | None:
+        """Apply the resolver's exact weapon envelope before MOOSE recruits assets."""
+
+        if command.mission_type != "ARTY":
+            return None
+        support = intent.metadata.get("fire_support")
+        if not isinstance(support, dict) or not support.get("range_sync_required"):
+            return None
+
+        cohort_id = str(support.get("cohort_id") or "").strip()
+        if not cohort_id:
+            raise ValueError("ARTY weapon range synchronization requires fire_support.cohort_id")
+        if requirement.allowed_cohort_ids and cohort_id not in requirement.allowed_cohort_ids:
+            raise ValueError(f"ARTY weapon range COHORT is not allowed by the requirement: {cohort_id}")
+
+        weapon_type = int(support.get("weapon_flag_value"))
+        minimum_m = float(support.get("minimum_m"))
+        maximum_m = float(support.get("maximum_m"))
+        cohort = self.client.cohort(cohort_id)
+        configured = cohort.weapon_range_for_weapon_type(weapon_type) if cohort is not None else None
+        if configured is not None:
+            configured_minimum, configured_maximum = configured
+            if abs(configured_minimum - minimum_m) <= 1.0 and abs(configured_maximum - maximum_m) <= 1.0:
+                return None
+        return await self.client.set_cohort_weapon_range(
+            cohort_id,
+            weapon_type,
+            minimum_m,
+            maximum_m,
+        )
 
     @staticmethod
     def _recon_requirement_data(phase: PlanPhase, intent: MissionIntent) -> dict[str, Any] | None:
@@ -1342,6 +1409,8 @@ class OperationalPlanExecutor:
             return
         component_ids = {component.object_id for component in objective.components}
         for mission in missions:
+            if mission.mission_type in {"ARTY", "BOMBING", "BOMBCARPET", "STRIKE"}:
+                continue
             if mission.outcome is None or mission.outcome.damage is None:
                 continue
             params = mission.command.to_params() if mission.command is not None else {}
@@ -1435,6 +1504,8 @@ class OperationalPlanExecutor:
             after_id = str(message.get("id") or "") or after_id
             self.client.state.apply_message(message)
             self.client._on_bridge_message(message)
+            if str(message.get("event") or "") == "mission.ended":
+                raise DcsMissionEndedError("DCS mission ended while monitoring DEFEND goal")
         return goal.status
 
     async def _cancel_plan_missions(
@@ -1473,6 +1544,7 @@ class OperationalPlanExecutor:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
         after_id: str | None = mission.event_cursor
+        seen_status_keys: set[tuple[str | None, str | None, str | None, str | None]] = set()
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
@@ -1495,6 +1567,9 @@ class OperationalPlanExecutor:
                 raise
             after_id = str(message.get("id") or "") or after_id
             self.client.state.apply_message(message)
+            self.client._on_bridge_message(message)
+            if str(message.get("event") or "") == "mission.ended":
+                raise DcsMissionEndedError("DCS mission ended while executing operational plan")
             if mission.recon_intel_id:
                 await self._sample_recon_positions(mission)
             event = AuftragEvent.from_message(message)
@@ -1525,6 +1600,10 @@ class OperationalPlanExecutor:
                 mission.error = "AUFTRAG was cancelled"
                 await self._mission_event(execution, mission, "mission.cancelled", on_event)
                 return False
+            status_key = (event.fsm_event, event.status, event.from_state, event.to_state)
+            if status_key in seen_status_keys:
+                continue
+            seen_status_keys.add(status_key)
             mission.status = PlanMissionStatus.RUNNING
             await self._mission_event(execution, mission, "mission.status", on_event, message=str(event))
 
@@ -1538,7 +1617,22 @@ class OperationalPlanExecutor:
         if "UNIT" in component_prefixes:
             await self.client.snapshot_units()
         if "STATIC" in component_prefixes:
+            known_static_ids = set(self.client.state.statics)
             await self.client.snapshot_statics()
+            refreshed_static_ids = set(self.client.state.statics)
+            for component in objective.components:
+                component_id = component.object_id
+                if not component_id.startswith("STATIC:") or component_id in refreshed_static_ids:
+                    continue
+                if component_id not in known_static_ids and component_id not in objective.component_health_estimates:
+                    continue
+                self.client.objectives.record_component_health(
+                    objective,
+                    component_id,
+                    0.0,
+                    source="snapshot_absent_after_refresh",
+                    mission_time=self.client._current_mission_time(),
+                )
         if not objective.control_object_id:
             return
         if objective.control_object_id.startswith("OPSZONE:"):
@@ -1874,7 +1968,7 @@ def _auftrag_metadata(intent: MissionIntent, requirement: AssetRequirement) -> t
         params = metadata.get("auftrag_params")
         if isinstance(params, dict):
             constructor.update(params)
-        for key in ("clock_start", "clock_stop", "duration_s"):
+        for key in ("clock_start", "clock_stop", "duration_s", "weapon_type"):
             if key in metadata:
                 lifecycle[key] = metadata[key]
     return constructor, lifecycle
@@ -1895,6 +1989,11 @@ def build_plan_auftrag(
             raise ValueError(f"BAI intent {intent.intent_id} requires a GROUP, UNIT or STATIC target")
         params.setdefault("target", target)
         command = Auftrag_BAI(**params)
+    elif mission_type == "ARTY":
+        if not target or not target.startswith(("GROUP:", "UNIT:", "STATIC:")):
+            raise ValueError(f"ARTY intent {intent.intent_id} requires a GROUP, UNIT or STATIC target")
+        params.setdefault("target", target)
+        command = Auftrag_ARTY(**params)
     elif mission_type == "BOMBRUNWAY":
         if not target or not target.startswith("AIRBASE:"):
             raise ValueError(f"BOMBRUNWAY intent {intent.intent_id} requires an AIRBASE target")
@@ -1957,6 +2056,13 @@ def build_plan_auftrag(
         raise ValueError(f"Operational execution does not yet map AUFTRAG type {mission_type}")
 
     command.set_required_assets(requirement.min_count, requirement.max_count)
+    weapon_type = lifecycle.get("weapon_type")
+    if weapon_type is None and mission_type == "ARTY":
+        fire_support = intent.metadata.get("fire_support")
+        if isinstance(fire_support, Mapping):
+            weapon_type = fire_support.get("weapon_flag_value")
+    if weapon_type is not None:
+        command.set_weapon_type(weapon_type)
     if "clock_start" in lifecycle or "clock_stop" in lifecycle:
         command.set_time(lifecycle.get("clock_start"), lifecycle.get("clock_stop"))
     if "duration_s" in lifecycle:

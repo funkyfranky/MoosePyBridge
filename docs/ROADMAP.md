@@ -371,8 +371,18 @@ Current operational-planning baseline:
   CAPTURE isolation, DEFEND counterattacks, DESTROY component strikes, and
   runway denial. It retains ordered alternatives but binds the draft to one
   AUFTRAG supported by current COHORT state, so validation and execution use
-  the same mission type. Automatic artillery remains deferred until task-range,
-  weapon-flag, and ammunition checks participate in feasibility.
+  the same mission type. Automatic artillery now requires a stationary target,
+  known target and deployment positions, a matching indirect-fire weapon flag,
+  current ammunition or an explicit full-template assumption, and a valid
+  COHORT `engageRange`. The versioned Python datamine profile is synchronized
+  into MOOSE `weaponData` when missing or different, after which
+  `COHORT:GetMissionRange({WeaponType})` combines deployment and weapon reach.
+  This lets mobile artillery relocate before firing while COMMANDER recruitment
+  and Python feasibility use the same envelope. Execution is bound to the
+  qualified COHORT and applies the selected flag with `AUFTRAG:SetWeaponType()`.
+  Supported alternatives are now compared by configurable estimated time to
+  effect (preparation plus transit or ARTY relocation), with all timing inputs
+  retained in plan metadata and audit diagnostics.
 - Weighted DESTROY goals select enough objective components to meet a configurable
   damage fraction. Static infrastructure is known by position; moving targets
   require current coalition INTEL. Execution refreshes component state at phase

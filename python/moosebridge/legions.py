@@ -145,6 +145,44 @@ def _payloads_by_mission_keys(payloads_by_mission: dict[str, Any]) -> dict[str, 
     return result
 
 
+def _weapon_type_key(value: Any) -> str:
+    """Normalize decimal and scientific Lua representations of a DCS bit flag."""
+
+    try:
+        number = float(value)
+        if number.is_integer() and number >= 0:
+            return str(int(number))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return str(value)
+
+
+def _weapon_type_float_map(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, float] = {}
+    for key, item in value.items():
+        try:
+            result[_weapon_type_key(key)] = float(item)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _weapon_ranges_by_type(value: Any) -> dict[str, tuple[float, float]]:
+    result: dict[str, tuple[float, float]] = {}
+    if not isinstance(value, dict):
+        return result
+    for key, item in value.items():
+        if not isinstance(item, dict):
+            continue
+        minimum = _optional_float(item.get("minimum_m"))
+        maximum = _optional_float(item.get("maximum_m"))
+        if minimum is not None and maximum is not None:
+            result[_weapon_type_key(item.get("weapon_type", key))] = (minimum, maximum)
+    return result
+
+
 def _performer_categories(payload: dict[str, Any], is_air: bool, is_ground: bool, is_naval: bool) -> list[str]:
     """Infer canonical performer categories for a COHORT snapshot.
 
@@ -225,7 +263,10 @@ class Cohort:
     mission_performance_keys: dict[str, float] = field(default_factory=dict)
     payloads_by_mission: dict[str, Any] = field(default_factory=dict)
     payloads_by_mission_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
+    engage_range_m: float | None = None
     mission_range_m: float | None = None
+    mission_ranges_by_weapon_type: dict[str, float] = field(default_factory=dict)
+    weapon_ranges_by_type: dict[str, tuple[float, float]] = field(default_factory=dict)
     asset_count: int | None = None
     stock_asset_count: int | None = None
     available_asset_count: int | None = None
@@ -288,6 +329,16 @@ class Cohort:
         unlimited_count = _optional_int(payload_info.get("unlimited_count")) or 0
         return available_count > 0 and (total_available > 0 or unlimited_count > 0)
 
+    def mission_range_for_weapon_type(self, weapon_type: int) -> float | None:
+        """Return MOOSE ``GetMissionRange`` for one DCS weapon flag."""
+
+        return self.mission_ranges_by_weapon_type.get(str(int(weapon_type)))
+
+    def weapon_range_for_weapon_type(self, weapon_type: int) -> tuple[float, float] | None:
+        """Return the range currently configured through ``AddWeaponRange``."""
+
+        return self.weapon_ranges_by_type.get(str(int(weapon_type)))
+
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "Cohort":
         """Create a COHORT model from a raw payload.
@@ -323,7 +374,10 @@ class Cohort:
             mission_performance_keys=_mission_performance_keys(mission_performance),
             payloads_by_mission=payloads_by_mission,
             payloads_by_mission_keys=_payloads_by_mission_keys(payloads_by_mission),
+            engage_range_m=_optional_float(payload.get("engage_range_m")),
             mission_range_m=_optional_float(payload.get("mission_range_m") or payload.get("mission_range")),
+            mission_ranges_by_weapon_type=_weapon_type_float_map(payload.get("mission_ranges_by_weapon_type")),
+            weapon_ranges_by_type=_weapon_ranges_by_type(payload.get("weapon_ranges_by_type")),
             asset_count=_optional_int(payload.get("asset_count")),
             stock_asset_count=_optional_int(payload.get("stock_asset_count")),
             available_asset_count=_optional_int(payload.get("available_asset_count")),

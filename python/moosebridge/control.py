@@ -17,7 +17,7 @@ from typing import Any, Iterable
 
 from .clock import DcsTime
 from .protocol import BridgeCommand
-from .server import DcsBridgeConnectionError, MooseBridgeServer
+from .server import DcsBridgeCommandTimeoutError, DcsBridgeConnectionError, DcsMissionEndedError, MooseBridgeServer
 from .state import MooseBridgeState
 from .streams import close_stream_writer
 
@@ -124,6 +124,8 @@ def state_payload(state: MooseBridgeState, kinds: Iterable[str] | None = None) -
     selected = tuple(STATE_KINDS if kinds is None else kinds)
     payload: dict[str, Any] = {
         "connected": state.connected,
+        "mission_generation": state.mission_generation,
+        "mission_ended": state.mission_ended,
         "last_heartbeat": state.last_heartbeat,
         "clock": state.clock.to_dict() if state.clock else None,
         "snapshot_clocks": {kind: clock.to_dict() for kind, clock in state.snapshot_clocks.items()},
@@ -144,6 +146,8 @@ def apply_state_payload(state: MooseBridgeState, payload: dict[str, Any]) -> Moo
     """
 
     state.connected = bool(payload.get("connected", False))
+    state.mission_generation = int(payload.get("mission_generation") or 0)
+    state.mission_ended = bool(payload.get("mission_ended", False))
     state.last_heartbeat = payload.get("last_heartbeat") if isinstance(payload.get("last_heartbeat"), dict) else None
     clock_payload = payload.get("clock") if isinstance(payload.get("clock"), dict) else None
     snapshot_clock_payloads = payload.get("snapshot_clocks") if isinstance(payload.get("snapshot_clocks"), dict) else {}
@@ -243,6 +247,7 @@ class MooseBridgeControlServer:
         """
 
         data: Any = None
+        request: ControlRequest | None = None
         try:
             data = json.loads(line)
             if not isinstance(data, dict):
@@ -254,6 +259,21 @@ class MooseBridgeControlServer:
             request_id = data.get("id") if isinstance(data, dict) else None
             LOGGER.info("Control request interrupted by DCS reconnect: %s", exc)
             return {"id": request_id, "ok": False, "error": str(exc)}
+        except DcsBridgeCommandTimeoutError as exc:
+            request_id = data.get("id") if isinstance(data, dict) else None
+            LOGGER.warning("Control request timed out waiting for DCS ACK: %s", exc)
+            return {"id": request_id, "ok": False, "error": str(exc)}
+        except DcsMissionEndedError as exc:
+            request_id = data.get("id") if isinstance(data, dict) else None
+            LOGGER.info("Control request interrupted by mission end: %s", exc)
+            return {"id": request_id, "ok": False, "error": str(exc)}
+        except TimeoutError:
+            request_id = data.get("id") if isinstance(data, dict) else None
+            action = request.action if request is not None else "control request"
+            timeout = request.timeout if request is not None else 10.0
+            error = f"{action} timed out after {timeout:g} seconds"
+            LOGGER.info("Control request timed out: %s", error)
+            return {"id": request_id, "ok": False, "error": error}
         except Exception as exc:
             request_id = None
             try:

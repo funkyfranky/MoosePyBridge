@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -279,6 +280,28 @@ def format_operational_plan_assessment(
         for intent in phase.intents
         for requirement in intent.asset_requirements
     }
+    fire_support = {
+        (phase.phase_id, intent.intent_id, requirement.requirement_id): intent.metadata.get("fire_support")
+        for phase in plan.phases
+        for intent in phase.intents
+        for requirement in intent.asset_requirements
+    }
+    estimated_effect_times = {
+        (phase.phase_id, intent.intent_id, requirement.requirement_id): intent.metadata.get(
+            "estimated_time_to_effect_s"
+        )
+        for phase in plan.phases
+        for intent in phase.intents
+        for requirement in intent.asset_requirements
+    }
+    mission_assignments = {
+        (phase.phase_id, intent.intent_id, requirement.requirement_id): intent.metadata.get(
+            "mission_assignments"
+        )
+        for phase in plan.phases
+        for intent in phase.intents
+        for requirement in intent.asset_requirements
+    }
     current_phase: str | None = None
     for requirement in assessment.requirements:
         if requirement.phase_id != current_phase:
@@ -294,6 +317,54 @@ def format_operational_plan_assessment(
             f"required={requirement.required_count} available={requirement.available_count} "
             f"shortfall={requirement.shortfall} allocation=[{allocations}]"
         )
+        estimated_s = estimated_effect_times.get(
+            (requirement.phase_id, requirement.intent_id, requirement.requirement_id)
+        )
+        if isinstance(estimated_s, (int, float)):
+            lines.append(f"      estimated_time_to_effect={float(estimated_s):.0f}s")
+        assignments = mission_assignments.get(
+            (requirement.phase_id, requirement.intent_id, requirement.requirement_id)
+        )
+        if isinstance(assignments, list):
+            options: list[str] = []
+            for assignment in assignments[:5]:
+                if not isinstance(assignment, Mapping):
+                    continue
+                eta = assignment.get("estimated_time_to_effect_s")
+                eta_text = f"{float(eta):.0f}s" if isinstance(eta, (int, float)) else "unknown"
+                weapon = assignment.get("weapon_flag")
+                weapon_text = f"/{weapon}" if weapon else ""
+                options.append(
+                    f"{assignment.get('mission_type') or '-'}:{assignment.get('cohort_id') or '-'}"
+                    f"{weapon_text}={eta_text}"
+                )
+            if options:
+                lines.append(f"      time_to_effect_options={', '.join(options)}")
+        support = fire_support.get((requirement.phase_id, requirement.intent_id, requirement.requirement_id))
+        if isinstance(support, Mapping):
+            distance = float(support.get("distance_m") or 0.0) / 1_000.0
+            minimum = float(support.get("minimum_m") or 0.0) / 1_000.0
+            maximum = float(support.get("maximum_m") or 0.0) / 1_000.0
+            mission_range = float(support.get("mission_range_m") or 0.0) / 1_000.0
+            configured_minimum = support.get("configured_minimum_m")
+            configured_maximum = support.get("configured_maximum_m")
+            configured_range = (
+                "missing"
+                if configured_maximum is None
+                else (
+                    f"{float(configured_minimum or 0.0) / 1_000.0:.1f}-"
+                    f"{float(configured_maximum) / 1_000.0:.1f}km"
+                )
+            )
+            sync = "required" if support.get("range_sync_required") else "current"
+            relocation = float(support.get("required_relocation_m") or 0.0) / 1_000.0
+            lines.append(
+                f"      fire_support={support.get('cohort_id') or '-'} "
+                f"flag={support.get('weapon_flag') or '-'} distance={distance:.1f}km "
+                f"weapon_range={minimum:.1f}-{maximum:.1f}km mission_range={mission_range:.1f}km "
+                f"moose_configured={configured_range} sync={sync} relocation={relocation:.1f}km "
+                f"ammo={support.get('ammunition_source') or '-'}"
+            )
     for issue in plan.proposal_issues:
         reference = f" {issue.reference_id}" if issue.reference_id else ""
         lines.append(f"  PROPOSAL {issue.severity.upper()} {issue.code}{reference}: {issue.message}")

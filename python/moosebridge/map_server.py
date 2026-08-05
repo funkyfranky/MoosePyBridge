@@ -145,6 +145,7 @@ class GlobalMapRuntime:
     clients: set[WebSocket] = field(default_factory=set)
     tracks: dict[str, deque[TrackPoint]] = field(default_factory=dict)
     _task: asyncio.Task[None] | None = None
+    _mission_generation: int = 0
     _last_mission_time: float | None = None
     _frontline_mission_time: float | None = None
     _influence_mission_time: float | None = None
@@ -184,6 +185,7 @@ class GlobalMapRuntime:
         properties = self.picture.get("properties") if isinstance(self.picture.get("properties"), dict) else {}
         return {
             "connected": self.connected,
+            "mission_generation": self._mission_generation,
             "error": self.error,
             "feature_count": len(self.picture.get("features", [])),
             "sequence": properties.get("sequence"),
@@ -202,6 +204,26 @@ class GlobalMapRuntime:
             "recon_coverage_count": len(self._recon_features),
             "recon_coverage_error": self._recon_error,
         }
+
+    def reset_mission(self, generation: int) -> None:
+        """Clear all browser-facing caches owned by the completed mission."""
+
+        self._mission_generation = generation
+        self.picture = empty_picture()
+        self.tracks.clear()
+        self._last_mission_time = None
+        self._frontline_mission_time = None
+        self._influence_mission_time = None
+        self._group_influences.clear()
+        self._frontline_features.clear()
+        self._pressure_frontline_features.clear()
+        self._incursion_features.clear()
+        self._frontline_diagnostics.clear()
+        self._frontline_error = None
+        self._recon_features.clear()
+        self._recon_audit_signature = ()
+        self._recon_error = None
+        self._frontline_tracker.reset()
 
     def update_picture(self, picture: dict[str, Any]) -> dict[str, Any]:
         """Record movement observations and append trajectory features."""
@@ -791,6 +813,9 @@ class GlobalMapRuntime:
         while True:
             try:
                 status = await control.status(timeout=self.timeout)
+                generation = int(status.get("mission_generation") or 0)
+                if generation != self._mission_generation:
+                    self.reset_mission(generation)
                 if not status.get("connected"):
                     raise ConnectionError("DCS is not connected to the MooseBridge daemon")
                 picture = await bridge.refresh_global_picture()

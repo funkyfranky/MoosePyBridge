@@ -400,6 +400,7 @@ function MOOSE_BRIDGE:_CommonAuftragCommandInputs(cmd)
     duration=bridge_number_param(p.duration) or bridge_number_param(p.Duration) or bridge_number_param(legacy_params.duration) or bridge_number_param(legacy_params.Duration),
     required_assets_min=bridge_number_param(p.required_assets_min) or bridge_number_param(p.nassets_min) or bridge_number_param(p.NassetsMin) or bridge_number_param(legacy_params.required_assets_min) or bridge_number_param(legacy_params.nassets_min) or bridge_number_param(legacy_params.NassetsMin),
     required_assets_max=bridge_number_param(p.required_assets_max) or bridge_number_param(p.nassets_max) or bridge_number_param(p.NassetsMax) or bridge_number_param(legacy_params.required_assets_max) or bridge_number_param(legacy_params.nassets_max) or bridge_number_param(legacy_params.NassetsMax),
+    weapon_type=bridge_number_param(p.weapon_type) or bridge_number_param(p.WeaponType) or bridge_number_param(legacy_params.weapon_type) or bridge_number_param(legacy_params.WeaponType),
     target_id=bridge_optional_string_param(p.target) or bridge_optional_string_param(legacy_params.target),
     opszone_id=bridge_optional_string_param(p.opszone) or bridge_optional_string_param(p.opszone_id) or bridge_optional_string_param(legacy_params.opszone) or bridge_optional_string_param(legacy_params.opszone_id),
     capture_coalition=bridge_coalition_param(p.capture_coalition) or bridge_coalition_param(p.capture_coalition_id) or bridge_coalition_param(p.CaptureCoalition) or bridge_coalition_param(legacy_params.capture_coalition) or bridge_coalition_param(legacy_params.capture_coalition_id) or bridge_coalition_param(legacy_params.CaptureCoalition),
@@ -725,6 +726,40 @@ function MOOSE_BRIDGE:_AssignTrackedAuftrag(cmd)
   return self:_BuildAuftragCommandResult("auftrag.assign", auftrag, inputs)
 end
 
+function MOOSE_BRIDGE:_SetCohortWeaponRange(cmd)
+  local p = self:_CommandParams(cmd)
+  local cohort_id = bridge_optional_string_param(p.cohort_id)
+  local weapon_type = bridge_number_param(p.weapon_type)
+  local minimum_m = bridge_number_param(p.minimum_m)
+  local maximum_m = bridge_number_param(p.maximum_m)
+  if not cohort_id then error("cohort.set_weapon_range requires cohort_id") end
+  if weapon_type == nil then error("cohort.set_weapon_range requires weapon_type") end
+  if minimum_m == nil then minimum_m = 0 end
+  if maximum_m == nil or maximum_m <= 0 then error("cohort.set_weapon_range requires positive maximum_m") end
+  if minimum_m < 0 or minimum_m > maximum_m then error("Invalid cohort weapon range") end
+
+  local cohort, cohort_err = self:_ResolveCohortById(cohort_id)
+  if not cohort then error(cohort_err) end
+  if type(cohort.AddWeaponRange) ~= "function" then error("COHORT:AddWeaponRange is not available") end
+
+  local previous = type(cohort.weaponData) == "table" and cohort.weaponData[bridge_safe_tostring(weapon_type)] or nil
+  local ok, err = pcall(function()
+    return cohort:AddWeaponRange(minimum_m / 1852, maximum_m / 1852, weapon_type)
+  end)
+  if not ok then error("COHORT:AddWeaponRange failed: " .. bridge_safe_tostring(err)) end
+
+  return {
+    action="cohort.set_weapon_range",
+    cohort_id=cohort_id,
+    weapon_type=weapon_type,
+    minimum_m=minimum_m,
+    maximum_m=maximum_m,
+    previous_minimum_m=previous and previous.RangeMin or nil,
+    previous_maximum_m=previous and previous.RangeMax or nil,
+    mission_range_m=self:_SafeCallArg(cohort, "GetMissionRange", {weapon_type}),
+  }
+end
+
 function MOOSE_BRIDGE:_BuildZoneSet(value, label, required)
   local zone_ids = self:_NormalizeStringList(value)
   if not zone_ids or #zone_ids == 0 then
@@ -829,6 +864,12 @@ function MOOSE_BRIDGE:_ApplyAuftragTiming(auftrag, inputs)
     if nassets_min == nil then nassets_min = 1 end
     local assets_ok, assets_err = pcall(function() return auftrag:SetRequiredAssets(nassets_min, inputs.required_assets_max) end)
     if not assets_ok then error("AUFTRAG:SetRequiredAssets failed: " .. bridge_safe_tostring(assets_err)) end
+  end
+
+  if inputs.weapon_type ~= nil then
+    if type(auftrag.SetWeaponType) ~= "function" then error("AUFTRAG:SetWeaponType is not available") end
+    local weapon_ok, weapon_err = pcall(function() return auftrag:SetWeaponType(inputs.weapon_type) end)
+    if not weapon_ok then error("AUFTRAG:SetWeaponType failed: " .. bridge_safe_tostring(weapon_err)) end
   end
 
   return auftrag
@@ -951,6 +992,7 @@ function MOOSE_BRIDGE:_BuildAuftragCommandResult(action, auftrag, inputs)
     duration=inputs.duration,
     required_assets_min=inputs.required_assets_min,
     required_assets_max=inputs.required_assets_max,
+    weapon_type=inputs.weapon_type,
     target=inputs.target_id,
     opszone=inputs.opszone_id,
     capture_coalition=inputs.capture_coalition,
@@ -1585,6 +1627,10 @@ function MOOSE_BRIDGE:RegisterAuftragExecutionCommands()
 
   self:RegisterCommand("auftrag.assign", function(cmd)
     return self:_AssignTrackedAuftrag(cmd)
+  end)
+
+  self:RegisterCommand("cohort.set_weapon_range", function(cmd)
+    return self:_SetCohortWeaponRange(cmd)
   end)
 end
 

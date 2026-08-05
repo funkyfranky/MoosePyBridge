@@ -344,6 +344,12 @@ class OperationalPlanRegistry:
     def all(self) -> tuple[OperationalPlan, ...]:
         return tuple(self._plans[key] for key in sorted(self._plans))
 
+    def clear(self) -> None:
+        """Discard all mission-scoped plans and feasibility assessments."""
+
+        self._plans.clear()
+        self._assessments.clear()
+
     def assessment(self, plan_id: str) -> OperationalPlanAssessment | None:
         return self._assessments.get(plan_id)
 

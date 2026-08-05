@@ -184,6 +184,33 @@ class WeaponRangeRegistry:
         profiles = {**self._datamine_profiles, **self._profiles}
         return tuple(sorted(profiles.values(), key=lambda item: (item.dcs_type.casefold(), int(item.weapon_flag))))
 
+    def profiles_for_type(self, dcs_type: str) -> tuple[WeaponRangeProfile, ...]:
+        """Return known task envelopes for one DCS unit type."""
+
+        normalized = dcs_type.strip().casefold()
+        profiles = {
+            (profile.weapon_flag, profile.minimum_m, profile.maximum_m, profile.source): profile
+            for profile in self.profiles
+            if profile.dcs_type.strip().casefold() == normalized
+        }
+        envelope = self._datamine_envelopes.get(normalized)
+        if envelope is not None and envelope.primary_weapon_flag is not None:
+            profile = WeaponRangeProfile(
+                dcs_type=envelope.dcs_type,
+                weapon_flag=envelope.primary_weapon_flag,
+                minimum_m=envelope.minimum_m,
+                maximum_m=envelope.maximum_m,
+                source=RangeSource.DCS_DATAMINE_UNIT,
+            )
+            key = (profile.weapon_flag, profile.minimum_m, profile.maximum_m, profile.source)
+            profiles.setdefault(key, profile)
+        return tuple(
+            sorted(
+                profiles.values(),
+                key=lambda item: (item.minimum_m, -item.maximum_m, int(item.weapon_flag), item.source.value),
+            )
+        )
+
     def resolve(
         self,
         dcs_type: str,

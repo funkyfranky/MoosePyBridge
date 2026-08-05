@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from moosebridge.ammunition import DcsWeaponFlag
 from moosebridge.auftraege import (
     Auftrag_ARTY,
     Auftrag_AIRDEFENSE,
@@ -697,6 +698,42 @@ def test_sdk_refresh_helpers_request_expected_snapshots() -> None:
     asyncio.run(scenario())
 
 
+def test_set_cohort_weapon_range_sends_exact_flag_and_updates_local_state() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        server.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "cohorts",
+                "payload": {"cohorts": [{"object_id": "COHORT:Paladin"}]},
+            }
+        )
+
+        await client.set_cohort_weapon_range(
+            "COHORT:Paladin",
+            DcsWeaponFlag.CONVENTIONAL_SHELL,
+            30,
+            22_000,
+            timeout=7.5,
+        )
+
+        command, timeout = server.commands[-1]
+        assert command.action == "cohort.set_weapon_range"
+        assert command.params == {
+            "cohort_id": "COHORT:Paladin",
+            "weapon_type": int(DcsWeaponFlag.CONVENTIONAL_SHELL),
+            "minimum_m": 30.0,
+            "maximum_m": 22_000.0,
+        }
+        assert timeout == 7.5
+        cohort = client.cohort("COHORT:Paladin")
+        assert cohort is not None
+        assert cohort.weapon_range_for_weapon_type(DcsWeaponFlag.CONVENTIONAL_SHELL) == (30.0, 22_000.0)
+
+    asyncio.run(scenario())
+
+
 def test_sdk_build_tactical_picture_filters_by_coalition_and_intel() -> None:
     server = FakeSdkServer()
     client = MooseBridgeClient(server)  # type: ignore[arg-type]
@@ -1372,6 +1409,8 @@ def test_sdk_add_auftrag_includes_optional_timing_params() -> None:
         assert auftrag.set_time(start=600, stop="13:00") is auftrag
         assert auftrag.set_duration(duration=1800) is auftrag
         assert auftrag.set_required_assets(min_count=2, max_count=4) is auftrag
+        weapon_type = int(DcsWeaponFlag.CONVENTIONAL_SHELL)
+        assert auftrag.set_weapon_type(weapon_type) is auftrag
 
         await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
 
@@ -1384,6 +1423,7 @@ def test_sdk_add_auftrag_includes_optional_timing_params() -> None:
             "duration": 1800,
             "required_assets_min": 2,
             "required_assets_max": 4,
+            "weapon_type": weapon_type,
             "legion_id": "LEGION:Wing Parchim",
         }
 
@@ -1396,6 +1436,16 @@ def test_sdk_set_required_assets_defaults_max_to_min() -> None:
     auftrag.set_required_assets(min_count=3)
 
     assert auftrag.timing_params() == {"required_assets_min": 3, "required_assets_max": 3}
+
+
+def test_sdk_set_weapon_type_accepts_dcs_weapon_flag_value() -> None:
+    auftrag = Auftrag_ARTY(target="STATIC:Depot")
+    weapon_type = int(DcsWeaponFlag.CONVENTIONAL_SHELL)
+
+    auftrag.set_weapon_type(DcsWeaponFlag.CONVENTIONAL_SHELL)
+
+    assert auftrag.weapon_type == weapon_type
+    assert auftrag.timing_params() == {"weapon_type": weapon_type}
 
 
 def test_sdk_add_auftrag_to_opsgroup_uses_opsgroup_id() -> None:

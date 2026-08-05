@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from .control import ControlClientIdentity, MooseBridgeControlClient
 from .protocol import BridgeCommand
@@ -20,6 +20,31 @@ class ControlSdkAdapter:
     def __init__(self, client: MooseBridgeControlClient, timeout: float = 10.0) -> None:
         self.client = client
         self.timeout = timeout
+        self._message_listeners: list[Callable[[dict[str, Any]], None]] = []
+        self._mission_generation = client.state.mission_generation
+
+    def add_message_listener(self, listener: Callable[[dict[str, Any]], None]) -> None:
+        """Register an SDK listener for control-observed mission boundaries."""
+
+        if listener not in self._message_listeners:
+            self._message_listeners.append(listener)
+
+    def remove_message_listener(self, listener: Callable[[dict[str, Any]], None]) -> None:
+        if listener in self._message_listeners:
+            self._message_listeners.remove(listener)
+
+    def _notify_mission_boundary(self) -> None:
+        generation = self.client.state.mission_generation
+        if generation == self._mission_generation:
+            return
+        self._mission_generation = generation
+        message = {
+            "type": "event",
+            "event": "mission.ended",
+            "payload": {"reason": "mission_generation_changed", "mission_generation": generation},
+        }
+        for listener in tuple(self._message_listeners):
+            listener(message)
 
     @property
     def state(self) -> MooseBridgeState:
@@ -36,7 +61,9 @@ class ControlSdkAdapter:
     async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
         """Forward one SDK command through the local control API."""
 
-        return await self.client.send_dcs_command(command.action, command.params, timeout=timeout)
+        result = await self.client.send_dcs_command(command.action, command.params, timeout=timeout)
+        self._notify_mission_boundary()
+        return result
 
     async def wait_for_event(
         self,
@@ -47,7 +74,9 @@ class ControlSdkAdapter:
     ) -> dict[str, Any]:
         """Wait for one daemon event through the control API."""
 
-        return await self.client.wait_for_event(event_name, filters=filters, timeout=timeout, after_id=after_id)
+        result = await self.client.wait_for_event(event_name, filters=filters, timeout=timeout, after_id=after_id)
+        self._notify_mission_boundary()
+        return result
 
     async def event_cursor(self) -> str | None:
         """Return the latest daemon event id."""
@@ -95,6 +124,7 @@ class ControlSdkAdapter:
     async def _snapshot(self, kind: str) -> dict[str, Any]:
         action = f"snapshot.{kind}"
         result = await self.client.request("control.snapshots", params={"actions": [action]}, timeout=self.timeout)
+        self._notify_mission_boundary()
         acks = result.get("acks") if isinstance(result.get("acks"), list) else []
         return acks[0] if acks else {"ok": True, "result": {"kind": kind, "count": 0}}
 

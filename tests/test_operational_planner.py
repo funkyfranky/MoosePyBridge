@@ -12,6 +12,7 @@ from moosebridge import (
     StrategicGoalAction,
     StrategicGoalEffect,
     StrategicObjective,
+    format_operational_plan_assessment,
 )
 from moosebridge.clock import DcsTime
 from moosebridge.intelligence import IntelContactMemory
@@ -514,6 +515,114 @@ def test_destroy_planner_uses_resolver_and_current_cohort_capabilities() -> None
     assert intent.metadata["target_domain"] == "ground"
     assert intent.metadata["mission_candidates"] == ["SEAD", "BAI", "GROUNDATTACK"]
     assert intent.metadata["selected_cohort_id"] == "COHORT:SEAD"
+    assert intent.asset_requirements[0].allowed_cohort_ids == ("COHORT:SEAD",)
+
+
+def test_destroy_planner_binds_range_qualified_arty_cohort() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Artillery Target",
+            name="Artillery Target",
+            kind=ObjectiveKind.DEPOT,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=(ObjectiveComponent("STATIC:Artillery Target"),),
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "statics",
+            "payload": {
+                "statics": [
+                    {
+                        "object_id": "STATIC:Artillery Target",
+                        "alive": True,
+                        "x": 10_000,
+                        "z": 0,
+                    }
+                ]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {
+                "legions": [
+                    {
+                        "object_id": "LEGION:Blue Brigade",
+                        "coalition": "blue",
+                        "x": 0,
+                        "z": 0,
+                    }
+                ]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [
+                    {
+                        "object_id": "COHORT:Blue M109",
+                        "legion_id": "LEGION:Blue Brigade",
+                        "unit_type": "M-109",
+                        "is_ground": True,
+                        "available_asset_count": 2,
+                        "mission_types": ["ARTY"],
+                        "engage_range_m": 20_000,
+                        "mission_range_m": 42_000,
+                            "mission_ranges_by_weapon_type": {
+                                "206963736576": 42_000,
+                            },
+                            "weapon_ranges_by_type": {
+                                "206963736576": {
+                                    "minimum_m": 30,
+                                    "maximum_m": 22_000,
+                                },
+                            },
+                    }
+                ]
+            },
+        }
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Shell Artillery Target",
+            name="Shell Artillery Target",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id=objective.objective_id,
+        )
+    )
+
+    plan = bridge.propose_destroy_plan(
+        goal,
+        TacticalPicture(coalition="blue", intel_id="INTEL:Blue"),
+    )
+
+    intent = plan.phases[0].intents[0]
+    requirement = intent.asset_requirements[0]
+    assert intent.auftrag_types == ("ARTY",)
+    assert requirement.allowed_cohort_ids == ("COHORT:Blue M109",)
+    assert intent.metadata["fire_support"]["weapon_flag"] == "CONVENTIONAL_SHELL"
+    assert intent.metadata["fire_support"]["ammunition_source"] == "cohort_template_assumed_full"
+    assert intent.metadata["selection_basis"] == "shortest_estimated_time_to_effect"
+    assert intent.metadata["estimated_time_to_effect_s"] == 120.0
+    bridge.add_operational_plan(plan)
+    rendered = format_operational_plan_assessment(plan, bridge.validate_operational_plan(plan))
+    assert "fire_support=COHORT:Blue M109 flag=CONVENTIONAL_SHELL" in rendered
+    assert "distance=10.0km weapon_range=0.0-22.0km mission_range=42.0km" in rendered
+    assert "moose_configured=0.0-22.0km sync=current relocation=0.0km" in rendered
+    assert "estimated_time_to_effect=120s" in rendered
+    assert "time_to_effect_options=ARTY:COHORT:Blue M109/CONVENTIONAL_SHELL=120s" in rendered
+    assert "ammo=cohort_template_assumed_full" in rendered
 
 
 def test_destroy_resolver_ignores_enemy_cohort_capabilities() -> None:
@@ -589,6 +698,7 @@ def test_destroy_resolver_ignores_enemy_cohort_capabilities() -> None:
     intent = plan.phases[0].intents[0]
     assert intent.auftrag_types == ("BOMBING",)
     assert intent.metadata["selected_cohort_id"] == "COHORT:Blue Bombers"
+    assert intent.asset_requirements[0].allowed_cohort_ids == ("COHORT:Blue Bombers",)
 
 
 def test_destroy_replan_prefers_an_already_damaged_component() -> None:

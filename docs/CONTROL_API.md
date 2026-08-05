@@ -63,6 +63,18 @@ Errors are transport-level or control-level failures. DCS command rejection is
 usually represented as a successful control response containing an ACK with
 `ok=false`.
 
+## Mission Session Boundary
+
+Lua forwards DCS `S_EVENT_MISSION_END` as `mission.ended`. This event clears the
+daemon's mission-scoped state and wakes outstanding event waits, including waits
+for a different event type. SDK clients treat it as terminal for current
+operations and clear their local information requirements, objectives, goals,
+plans, execution histories, and AUFTRAG mappings. Audit records remain
+persistent and are not part of the live mission session. State and status
+responses expose a monotonic `mission_generation`; control-backed SDK clients
+use it to detect a completed mission even when they were idle as the event was
+emitted.
+
 ## Control Actions
 
 ### `control.status`
@@ -383,6 +395,23 @@ print(format_legion_status(bridge, "LEGION:Wing Parchim"))
 print(format_commander_status(bridge, "COMMANDER:Blue Command"))
 ```
 
+Weapon-specific COHORT ranges can be configured without mission-side Lua:
+
+```python
+from moosebridge import DcsWeaponFlag
+
+await bridge.set_cohort_weapon_range(
+    "COHORT:Paladin Laage",
+    DcsWeaponFlag.CONVENTIONAL_SHELL,
+    minimum_m=30,
+    maximum_m=22_000,
+)
+```
+
+The operational ARTY resolver performs this call automatically only when the
+current MOOSE `weaponData` entry is missing or differs from its selected
+versioned Python range profile.
+
 For code that should read closer to the MOOSE AUFTRAG API, use the lightweight
 Python AUFTRAG descriptions and let the SDK convert them to bridge commands:
 
@@ -496,18 +525,21 @@ ack = await bridge.add_auftrag(auftrag=auftrag_strafing, legion="LEGION:Wing Par
 ```
 
 All AUFTRAG helper objects support `set_time(start=..., stop=...)`,
-`set_duration(duration=...)`, and
-`set_required_assets(min_count=..., max_count=...)`. For `set_time`, use a
+`set_duration(duration=...)`, `set_required_assets(min_count=..., max_count=...)`,
+and `set_weapon_type(weapon_type)`. For `set_time`, use a
 string such as `"05:00"` for mission clock time or a number such as `600` for
 seconds relative to the time the mission is assigned. `set_duration` sets how
 many seconds the mission may run before MOOSE cancels it. `set_required_assets`
 sets how many asset groups a LEGION-level Auftrag should request.
+`set_weapon_type` forwards a numeric `DcsWeaponFlag` to MOOSE
+`AUFTRAG:SetWeaponType()`.
 
 ```python
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 auftrag_bai.set_time(start=600, stop="13:00")
 auftrag_bai.set_duration(duration=1800)
 auftrag_bai.set_required_assets(min_count=2, max_count=4)
+auftrag_bai.set_weapon_type(DcsWeaponFlag.ANY_BOMB)
 ```
 
 `get_auftrag_summary` and `wait_for_auftrag_outcome` wait for the Lua bridge's

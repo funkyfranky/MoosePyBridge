@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from moosebridge.protocol import BridgeCommand
-from moosebridge.server import DcsBridgeConnectionError, MooseBridgeServer
+from moosebridge.server import DcsBridgeCommandTimeoutError, DcsBridgeConnectionError, MooseBridgeServer
 
 
 def _bridge_port(server: MooseBridgeServer) -> int:
@@ -115,6 +115,34 @@ def test_pending_command_fails_when_dcs_disconnects() -> None:
                 writer.close()
         finally:
             await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_command_timeout_has_context_and_clears_pending_command() -> None:
+    class SilentWriter:
+        def write(self, data: bytes) -> None:
+            pass
+
+        async def drain(self) -> None:
+            pass
+
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        server._writer = SilentWriter()  # type: ignore[assignment]
+        command = BridgeCommand(action="snapshot.statics", params={})
+
+        try:
+            await server.send_command(command, timeout=0.01)
+        except DcsBridgeCommandTimeoutError as exc:
+            assert exc.action == "snapshot.statics"
+            assert exc.command_id == command.id
+            assert exc.timeout == 0.01
+            assert "within 0.01 seconds" in str(exc)
+        else:
+            raise AssertionError("command did not time out")
+
+        assert command.id not in server._pending
 
     asyncio.run(scenario())
 

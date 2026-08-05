@@ -51,6 +51,8 @@ class MooseBridgeState:
     """Stateful Python mirror of the DCS/MOOSE world."""
 
     connected: bool = False
+    mission_generation: int = 0
+    mission_ended: bool = False
     last_heartbeat: dict[str, Any] | None = None
     clock: DcsTime | None = None
     snapshot_clocks: dict[str, DcsTime] = field(default_factory=dict)
@@ -90,6 +92,16 @@ class MooseBridgeState:
     auftrag_outcome_history: dict[str, list[AuftragOutcome]] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
 
+    def reset_mission(self) -> None:
+        """Clear all state owned by the completed DCS mission."""
+
+        next_generation = self.mission_generation + 1
+        fresh = type(self)()
+        for field_name in self.__dataclass_fields__:
+            setattr(self, field_name, getattr(fresh, field_name))
+        self.mission_generation = next_generation
+        self.mission_ended = True
+
     def apply_message(self, message: dict[str, Any]) -> None:
         """Apply an incoming DCS message to the local state mirror.
 
@@ -116,6 +128,7 @@ class MooseBridgeState:
 
         if message_type == "heartbeat":
             self.connected = True
+            self.mission_ended = False
             self.last_heartbeat = message
             return
 
@@ -433,6 +446,9 @@ class MooseBridgeState:
 
         payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
         event_name = str(message.get("event") or payload.get("event") or "")
+        if event_name == "mission.ended":
+            self.reset_mission()
+            return
         if event_name == "object.destroyed":
             object_payload = payload.get("object") if isinstance(payload.get("object"), dict) else {}
             object_id = str(payload.get("object_id") or object_payload.get("object_id") or "")

@@ -23,6 +23,22 @@ class DcsBridgeConnectionError(ConnectionError):
     """A command could not complete because the DCS bridge disconnected."""
 
 
+class DcsBridgeCommandTimeoutError(TimeoutError):
+    """DCS did not acknowledge a bridge command within its requested timeout."""
+
+    def __init__(self, action: str, command_id: str, timeout: float) -> None:
+        self.action = action
+        self.command_id = command_id
+        self.timeout = timeout
+        super().__init__(
+            f"DCS did not acknowledge {action} ({command_id}) within {timeout:g} seconds"
+        )
+
+
+class DcsMissionEndedError(RuntimeError):
+    """The active DCS mission ended while Python was waiting for bridge work."""
+
+
 def event_name(message: dict[str, Any]) -> str:
     """Return the semantic event name from an event message."""
 
@@ -243,6 +259,9 @@ class MooseBridgeServer:
             except Exception:
                 LOGGER.exception("Bridge message listener failed")
 
+        if event_name(message) == "mission.ended":
+            self._fail_pending(DcsMissionEndedError("DCS mission ended"))
+
         if message.get("type") == "ack":
             self._resolve_ack(message)
         elif message.get("type") == "event":
@@ -251,18 +270,21 @@ class MooseBridgeServer:
     def _publish_event(self, message: dict[str, Any]) -> None:
         """Store and publish one DCS event message."""
 
+        mission_ended = event_name(message) == "mission.ended"
+        if mission_ended:
+            self._event_history.clear()
         self._event_history.append(message)
         if len(self._event_history) > 10_000:
             del self._event_history[:1_000]
 
         remaining: list[tuple[str, dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
-        for event_name, filters, future in self._event_waiters:
+        for expected_event, filters, future in self._event_waiters:
             if future.done():
                 continue
-            if event_matches(message, event_name, filters):
+            if mission_ended or event_matches(message, expected_event, filters):
                 future.set_result(message)
             else:
-                remaining.append((event_name, filters, future))
+                remaining.append((expected_event, filters, future))
         self._event_waiters = remaining
 
     async def wait_for_event(
@@ -385,9 +407,10 @@ class MooseBridgeServer:
 
         try:
             return await asyncio.wait_for(future, timeout=timeout)
-        except TimeoutError:
+        except TimeoutError as exc:
+            raise DcsBridgeCommandTimeoutError(command.action, command.id, timeout) from exc
+        finally:
             self._pending.pop(command.id, None)
-            raise
 
     async def message_to_coalition(self, coalition: str, text: str, duration: int = 10) -> dict[str, Any]:
         """Send a MOOSE message to one coalition.

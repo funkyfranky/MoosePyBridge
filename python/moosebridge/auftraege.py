@@ -111,6 +111,7 @@ class AuftragCommand:
     duration: float | int | None = field(default=None, init=False, repr=False)
     required_assets_min: int | None = field(default=None, init=False, repr=False)
     required_assets_max: int | None = field(default=None, init=False, repr=False)
+    weapon_type: int | None = field(default=None, init=False, repr=False)
     mission_type = ""
 
     def set_time(
@@ -139,6 +140,15 @@ class AuftragCommand:
         object.__setattr__(self, "required_assets_max", max_count)
         return self
 
+    def set_weapon_type(self, weapon_type: int | None) -> AuftragCommand:
+        """Set the DCS/MOOSE weapon flag used for engagement."""
+
+        normalized = None if weapon_type is None else int(weapon_type)
+        if normalized is not None and normalized < 0:
+            raise ValueError("weapon_type must be non-negative")
+        object.__setattr__(self, "weapon_type", normalized)
+        return self
+
     def to_params(self) -> dict[str, Any]:
         """Return flat Lua command parameters for this AUFTRAG."""
 
@@ -154,6 +164,7 @@ class AuftragCommand:
                 "duration": self.duration,
                 "required_assets_min": self.required_assets_min,
                 "required_assets_max": self.required_assets_max,
+                "weapon_type": self.weapon_type,
             }
         )
 

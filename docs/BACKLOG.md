@@ -38,10 +38,10 @@ Priorities:
 
 ## P2 - Forces and sustainment
 
-- [ ] **Use ammunition and task-range profiles in operational decisions.** Move
-  the existing weapon classification, DCS weapon flags, and min/max task ranges
-  from diagnostics into mission feasibility and asset ranking. This is also
-  required before `ARTY` can participate in automatic mission assignment.
+- [ ] **Extend ammunition/range-aware ranking beyond artillery.** ARTY now uses
+  weapon classification, DCS weapon flags, current ammunition, firing position,
+  and min/max task ranges for feasibility. Apply the same evidence to ranking
+  other combat missions where it changes a real operational decision.
 - [ ] **Expand logistics planning.** Model ammunition supply, rearming, force
   sustainment, and transport as operational dependencies rather than only
   optional support missions. Fuel remains irrelevant for DCS ground and naval
@@ -73,6 +73,25 @@ Priorities:
 
 ## Recently completed
 
+- [x] Cross-domain mission selection uses the shortest estimated time to effect
+  rather than resource cost. Configurable preparation delays and movement
+  speeds produce auditable timing components for air, ground, naval, and ARTY
+  assignments. Unknown positions remain unknown and fall back to doctrinal
+  candidate order instead of receiving a guessed ETA.
+- [x] Multiple feasible ARTY COHORTs are ranked by required relocation,
+  COHORT-specific observed ammunition, remaining rounds, mission performance,
+  range-source quality, synchronization state, and available assets. Qualified
+  alternatives remain in resolution metadata for diagnostics. No unsupported
+  shell-versus-rocket lethality or cost preference is inferred.
+- [x] Automatic `ARTY` assignment is restricted to stationary ground or static
+  targets and a concrete available COHORT with known deployment position,
+  matching indirect-fire weapon flag, ammunition evidence, and a known COHORT
+  `engageRange`. Mobile artillery may relocate within that range before firing.
+  Missing or stale MOOSE `weaponData` is synchronized from the versioned Python
+  datamine profile through `COHORT:AddWeaponRange` before COMMANDER submission.
+  The complete decision and synchronization ACK are retained in plan metadata
+  and audit diagnostics; execution applies the same flag through
+  `AUFTRAG:SetWeaponType()`.
 - [x] A central `StrategicMissionResolver` maps strategic effects and DCS/MOOSE
   target domains to prioritized AUFTRAG candidates. CAPTURE isolation, DEFEND
   counterattacks, DESTROY strikes, and runway denial use the same assignment

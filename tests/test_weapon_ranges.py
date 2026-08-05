@@ -54,6 +54,24 @@ def test_datamine_profiles_define_mlrs_and_m109_task_ranges() -> None:
     assert not m109.contains(22_001)
 
 
+def test_profiles_for_type_exposes_all_task_eligible_datamine_ranges() -> None:
+    registry = WeaponRangeRegistry()
+
+    mlrs = registry.profiles_for_type("MLRS")
+    m109 = registry.profiles_for_type("M-109")
+
+    assert any(
+        profile.weapon_flag is DcsWeaponFlag.ANY_ROCKET
+        and (profile.minimum_m, profile.maximum_m) == (10_000, 32_000)
+        for profile in mlrs
+    )
+    assert any(
+        profile.weapon_flag is DcsWeaponFlag.CONVENTIONAL_SHELL
+        and (profile.minimum_m, profile.maximum_m) == (30, 22_000)
+        for profile in m109
+    )
+
+
 def test_datamine_profile_takes_priority_over_descriptor_placeholders() -> None:
     state = MooseBridgeState()
     state.apply_message(

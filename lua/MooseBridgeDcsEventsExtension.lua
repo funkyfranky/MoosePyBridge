@@ -80,6 +80,11 @@ function MOOSE_BRIDGE:_StartDcsEventForwarding()
     self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.Dead
     self:_Log("DCS Dead event forwarding enabled")
   end
+  if bridge_event_available(EVENTS.MissionEnd) then
+    self:HandleEvent(EVENTS.MissionEnd)
+    self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.MissionEnd
+    self:_Log("DCS MissionEnd event forwarding enabled")
+  end
   if #self.DcsRegisteredEvents == 0 then
     self:_Log("No supported DCS events available for forwarding")
     return self
@@ -235,4 +240,22 @@ end
 -- @param Core.Event#EVENTDATA EventData MOOSE-normalized DCS event data.
 function MOOSE_BRIDGE:OnEventDead(EventData)
   self:_ForwardObjectDestroyed(EventData, "S_EVENT_DEAD")
+end
+
+--- Forward DCS S_EVENT_MISSION_END as the authoritative Python session boundary.
+-- Flush immediately because normal bridge scheduling stops with the mission.
+-- @param Core.Event#EVENTDATA EventData MOOSE-normalized DCS event data.
+function MOOSE_BRIDGE:OnEventMissionEnd(EventData)
+  local ok, err = pcall(function()
+    self:SendEvent("mission.ended", {
+      dcs_event_id=EventData and EventData.id or nil,
+      dcs_event_name="S_EVENT_MISSION_END",
+      dcs_event_time=EventData and EventData.time or nil,
+      reason="dcs_mission_end",
+    })
+    self:_FlushOutQueue()
+  end)
+  if not ok then
+    self:_Log("Failed to forward MissionEnd event: " .. tostring(err))
+  end
 end

@@ -18,6 +18,8 @@ def test_ops_snapshots_use_moose_available_asset_counts() -> None:
     assert 'self:_SafeCall(legion, "CountAvailableAssets")' in source
     assert 'self:_SafeCall(cohort, "CountAvailableAssets")' in source
     assert 'self:_SafeCall(commander, "CountAvailableAssets")' in source
+    assert 'self:_SafeCall(cohort, "GetMissionRange")' in source
+    assert 'self:_SafeCallArg(cohort, "GetMissionRange", {weapon_type})' in source
 
 
 def test_commander_tasking_uses_moose_recruitment_and_constraints() -> None:
@@ -26,6 +28,13 @@ def test_commander_tasking_uses_moose_recruitment_and_constraints() -> None:
     assert "inputs.commander:AddMission(auftrag)" in source
     assert "auftrag:AssignLegion(legion)" in source
     assert "auftrag:AssignCohort(cohort)" in source
+
+
+def test_auftrag_extension_applies_weapon_type_before_assignment() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
+
+    assert "weapon_type=bridge_number_param(p.weapon_type)" in source
+    assert "auftrag:SetWeaponType(inputs.weapon_type)" in source
 
 
 def test_recon_auftrag_builds_zone_set_and_moose_maintains_intel_agents() -> None:
@@ -49,8 +58,12 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert "self:HandleEvent(EVENTS.BaseCaptured)" in source
     assert "self:HandleEvent(EVENTS.UnitLost)" in source
     assert "self:HandleEvent(EVENTS.Dead)" in source
+    assert "self:HandleEvent(EVENTS.MissionEnd)" in source
     assert "function MOOSE_BRIDGE:OnEventBaseCaptured(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventUnitLost(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventDead(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventMissionEnd(EventData)" in source
     assert 'self:SendEvent("airbase.coalition_changed"' in source
     assert 'self:SendEvent("object.destroyed"' in source
+    assert 'self:SendEvent("mission.ended"' in source
+    assert "self:_FlushOutQueue()" in source

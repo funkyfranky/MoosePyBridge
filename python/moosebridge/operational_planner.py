@@ -175,6 +175,7 @@ class RuleBasedOperationalPlanner:
                                     role=assignment.role,
                                     mission_types=(assignment.mission_type,),
                                     performer_categories=assignment.performer_categories,
+                                    allowed_cohort_ids=_selected_cohort_ids(resolution),
                                     require_payload=assignment.require_payload,
                                 ),
                             ),
@@ -345,6 +346,7 @@ class RuleBasedOperationalPlanner:
                             role=assignment.role,
                             mission_types=(assignment.mission_type,),
                             performer_categories=assignment.performer_categories,
+                            allowed_cohort_ids=_selected_cohort_ids(resolution),
                             require_payload=assignment.require_payload,
                         ),
                     ),
@@ -480,6 +482,7 @@ class RuleBasedOperationalPlanner:
                     role=selected.role,
                     mission_types=(selected.mission_type,),
                     performer_categories=selected.performer_categories,
+                    allowed_cohort_ids=_selected_cohort_ids(mission_resolution),
                     require_payload=selected.require_payload,
                 ),
             ),
@@ -604,6 +607,7 @@ class RuleBasedOperationalPlanner:
                             role=assignment.role,
                             mission_types=(assignment.mission_type,),
                             performer_categories=assignment.performer_categories,
+                            allowed_cohort_ids=_selected_cohort_ids(resolution),
                             require_payload=assignment.require_payload,
                         ),
                     ),
@@ -854,6 +858,14 @@ class RuleBasedOperationalPlanner:
         if not candidates:
             return None
         return min(candidates, key=lambda item: item[:3])[-1]
+
+
+def _selected_cohort_ids(resolution: MissionResolution) -> tuple[str, ...]:
+    """Bind execution to the COHORT used for the selected time-to-effect estimate."""
+
+    if resolution.selected_cohort_id is None:
+        return ()
+    return (resolution.selected_cohort_id,)
 
 
 __all__ = ["RuleBasedOperationalPlanner", "RuleBasedPlannerConfig"]

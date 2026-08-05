@@ -451,6 +451,7 @@ def _mission_to_dict(mission: PlanMissionExecution) -> dict[str, Any]:
         "mission_type": mission.mission_type,
         "required": mission.required,
         "command": command,
+        "weapon_range_ack": _ack_to_dict(mission.weapon_range_ack),
         "command_ack": (
             {
                 "ack_id": mission.command_ack.ack_id,
@@ -481,6 +482,9 @@ def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
     outcome_data = data.get("outcome") if isinstance(data.get("outcome"), dict) else None
     recon_outcome_data = data.get("recon_outcome") if isinstance(data.get("recon_outcome"), dict) else None
     ack_data = data.get("command_ack") if isinstance(data.get("command_ack"), dict) else None
+    weapon_range_ack_data = (
+        data.get("weapon_range_ack") if isinstance(data.get("weapon_range_ack"), dict) else None
+    )
     return PlanMissionExecution(
         phase_id=str(data.get("phase_id") or ""),
         intent_id=str(data.get("intent_id") or ""),
@@ -488,6 +492,7 @@ def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
         mission_type=str(data.get("mission_type") or ""),
         required=bool(data.get("required", False)),
         command_snapshot=dict(data.get("command")) if isinstance(data.get("command"), dict) else {},
+        weapon_range_ack=_ack_from_dict(weapon_range_ack_data),
         command_ack=(
             CommandAckReference(
                 ack_id=_text(ack_data.get("ack_id")),
@@ -512,6 +517,28 @@ def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
             if isinstance(samples, list)
         } if isinstance(data.get("recon_tracks"), dict) else {},
         error=_text(data.get("error")),
+    )
+
+
+def _ack_to_dict(ack: CommandAckReference | None) -> dict[str, Any] | None:
+    if ack is None:
+        return None
+    return {
+        "ack_id": ack.ack_id,
+        "correlation_id": ack.correlation_id,
+        "sequence": ack.sequence,
+        "result": dict(ack.result),
+    }
+
+
+def _ack_from_dict(data: Mapping[str, Any] | None) -> CommandAckReference | None:
+    if data is None:
+        return None
+    return CommandAckReference(
+        ack_id=_text(data.get("ack_id")),
+        correlation_id=_text(data.get("correlation_id")),
+        sequence=_int(data.get("sequence")),
+        result=dict(data.get("result")) if isinstance(data.get("result"), dict) else {},
     )
 
 

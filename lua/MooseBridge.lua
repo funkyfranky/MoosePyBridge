@@ -1561,6 +1561,43 @@ function MOOSE_BRIDGE:_CollectOpsGroupIdsFromSet(set_opsgroup)
   return result
 end
 
+function MOOSE_BRIDGE:_CollectCohortIndirectMissionRanges(cohort)
+  local result = {}
+  local weapon_types = {
+    16384,        -- HeavyRocket
+    30720,        -- AnyRocket
+    68719476736,  -- SubmunitionDispenserShell
+    137438953472, -- GuidedShell
+    206963736576, -- ConventionalShell
+    258503344128, -- AnyShell
+  }
+  for _, weapon_type in ipairs(weapon_types) do
+    local mission_range = self:_SafeCallArg(cohort, "GetMissionRange", {weapon_type})
+    if type(mission_range) == "number" then
+      result[string.format("%.0f", weapon_type)] = mission_range
+    end
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_CollectCohortWeaponRanges(cohort)
+  local result = {}
+  if type(cohort) ~= "table" or type(cohort.weaponData) ~= "table" then return result end
+  for key, weapon in pairs(cohort.weaponData) do
+    if type(weapon) == "table" then
+      local bit_type = self:_NumberOrNil(weapon.BitType) or self:_NumberOrNil(key)
+      if bit_type ~= nil then
+        result[string.format("%.0f", bit_type)] = {
+          weapon_type=bit_type,
+          minimum_m=self:_NumberOrNil(weapon.RangeMin),
+          maximum_m=self:_NumberOrNil(weapon.RangeMax),
+        }
+      end
+    end
+  end
+  return result
+end
+
 function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
   local name = self:_CohortName(cohort, cohort_name)
   if not name then return nil end
@@ -1584,6 +1621,10 @@ function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
     is_naval=self:_BoolOrFalse(cohort and cohort.isNaval),
     mission_types=mission_types,
     mission_performance=self:_CollectMissionPerformance(cohort, mission_types),
+    engage_range_m=self:_NumberOrNil(cohort and cohort.engageRange),
+    mission_range_m=self:_NumberOrNil(self:_SafeCall(cohort, "GetMissionRange")),
+    mission_ranges_by_weapon_type=self:_CollectCohortIndirectMissionRanges(cohort),
+    weapon_ranges_by_type=self:_CollectCohortWeaponRanges(cohort),
     asset_count=self:_NumberOrNil(self:_SafeCall(cohort, "CountAssets")),
     stock_asset_count=self:_NumberOrNil(self:_SafeCallArg(cohort, "CountAssets", true)),
     available_asset_count=self:_NumberOrNil(self:_SafeCall(cohort, "CountAvailableAssets")),

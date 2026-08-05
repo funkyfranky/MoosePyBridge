@@ -5,8 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from moosebridge import (
+    Auftrag_ARTY,
     AssetRequirement,
     AssetRole,
+    DcsWeaponFlag,
     MissionIntent,
     MooseBridgeClient,
     MooseBridgeServer,
@@ -386,6 +388,7 @@ def test_operational_execution_builds_resolved_object_attack_types() -> None:
         ("GROUNDATTACK", "GROUP:Armor"),
         ("NAVALENGAGEMENT", "STATIC:Coastal Target"),
         ("BOMBING", "STATIC:Depot"),
+        ("ARTY", "STATIC:Depot"),
     )
     for mission_type, target in cases:
         requirement = AssetRequirement(
@@ -412,6 +415,41 @@ def test_operational_execution_builds_resolved_object_attack_types() -> None:
 
         assert command.mission_type == mission_type
         assert command.to_params()["target"] == target
+
+
+def test_operational_execution_applies_resolved_arty_weapon_type() -> None:
+    weapon_type = int(DcsWeaponFlag.CONVENTIONAL_SHELL)
+    requirement = AssetRequirement(
+        "REQ:ARTY",
+        AssetRole.FIRES,
+        mission_types=("ARTY",),
+        performer_categories=("GROUND",),
+    )
+    intent = MissionIntent(
+        "shell-depot",
+        "Shell depot",
+        ("ARTY",),
+        (requirement,),
+        target_object_id="STATIC:Depot",
+        metadata={
+            "fire_support": {
+                "weapon_flag": "CONVENTIONAL_SHELL",
+                "weapon_flag_value": weapon_type,
+            }
+        },
+    )
+    plan = OperationalPlan(
+        "PLAN:ARTY Weapon",
+        "ARTY Weapon",
+        "GOAL:Destroy Depot",
+        "blue",
+        (PlanPhase("strike", "Strike", (intent,)),),
+    )
+
+    command = build_plan_auftrag(plan, intent, requirement)
+
+    assert command.weapon_type == weapon_type
+    assert command.timing_params()["weapon_type"] == weapon_type
 
 
 class _ExecutionServer:
@@ -713,6 +751,72 @@ class _DestroyExecutionServer(_ExecutionServer):
         return {"ok": True, "result": {"kind": "statics", "count": 2}}
 
 
+class _DuplicateStatusExecutionServer(_ExecutionServer):
+    """Execution server that repeats one status transition before evaluation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._event_steps: dict[str, int] = {}
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
+        step = self._event_steps.get(auftrag_id, 0)
+        self._event_steps[auftrag_id] = step + 1
+        self._event_number += 1
+        if step < 2:
+            event = {
+                "type": "event",
+                "id": f"event-{self._event_number}",
+                "event": "auftrag.status",
+                "payload": {
+                    "auftrag_id": auftrag_id,
+                    "auftrag_type": "CAPTUREZONE",
+                    "status": "queued",
+                    "fsm_event": "Queued",
+                    "from": "planned",
+                    "to": "queued",
+                },
+            }
+        else:
+            self._objective_updated = True
+            event = {
+                "type": "event",
+                "id": f"event-{self._event_number}",
+                "event": "auftrag.evaluated",
+                "payload": {
+                    "auftrag_id": auftrag_id,
+                    "auftrag_type": "CAPTUREZONE",
+                    "status": "Done",
+                    "summary": {"success": True, "Ntargets0": 1, "Ntargets": 0},
+                },
+            }
+        self.event_history.append(event)
+        return event
+
+
+class _DisappearingStaticDestroyExecutionServer(_DestroyExecutionServer):
+    """Execution server whose destroyed static vanishes from the complete snapshot."""
+
+    async def snapshot_statics(self) -> dict[str, Any]:
+        statics = [{"object_id": "STATIC:Reserve", "alive": True}]
+        if not self.main_destroyed:
+            statics.insert(0, {"object_id": "STATIC:Main", "alive": True})
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "statics",
+                "payload": {"statics": statics},
+            }
+        )
+        return {"ok": True, "result": {"kind": "statics", "count": len(statics)}}
+
+
 def _executable_defend_plan(*, lose_control: bool = False) -> tuple[MooseBridgeClient, OperationalPlan]:
     server = _DefendExecutionServer(lose_control=lose_control)
     server._objective_updated = True
@@ -922,6 +1026,15 @@ def _executable_destroy_plan(
     bridge.validate_operational_plan(plan)
     bridge.approve_operational_plan(plan)
     return bridge, plan
+
+
+def _replace_destroy_server(
+    bridge: MooseBridgeClient,
+    server: _DestroyExecutionServer,
+) -> None:
+    state = bridge.state
+    server.state = state
+    bridge.server = server  # type: ignore[assignment]
 
 
 def _executable_disable_plan(*, success: bool = True) -> tuple[MooseBridgeClient, OperationalPlan]:
@@ -1240,6 +1353,63 @@ def test_completed_plan_formats_expected_mission_cancellation_as_reason() -> Non
     assert "error=strategic DEFEND goal achieved" not in rendered
 
 
+def test_arty_execution_synchronizes_resolver_range_before_submission() -> None:
+    async def scenario() -> None:
+        server = _ExecutionServer()
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        bridge.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "cohorts",
+                "payload": {"cohorts": [{"object_id": "COHORT:Paladin"}]},
+            }
+        )
+        intent = MissionIntent(
+            intent_id="fire-support",
+            name="Fire support",
+            auftrag_types=("ARTY",),
+            target_object_id="GROUP:Target",
+            asset_requirements=(
+                AssetRequirement(
+                    requirement_id="REQ:Artillery",
+                    role=AssetRole.FIRES,
+                    mission_types=("ARTY",),
+                    allowed_cohort_ids=("COHORT:Paladin",),
+                ),
+            ),
+            metadata={
+                "fire_support": {
+                    "cohort_id": "COHORT:Paladin",
+                    "weapon_flag_value": int(DcsWeaponFlag.CONVENTIONAL_SHELL),
+                    "minimum_m": 30.0,
+                    "maximum_m": 22_000.0,
+                    "range_sync_required": True,
+                }
+            },
+        )
+
+        ack = await bridge.plan_executor._synchronize_arty_weapon_range(
+            intent,
+            intent.asset_requirements[0],
+            Auftrag_ARTY(target="GROUP:Target"),
+        )
+
+        assert ack is not None
+        assert [command.action for command in server.commands] == ["cohort.set_weapon_range"]
+        assert server.commands[0].params["weapon_type"] == int(DcsWeaponFlag.CONVENTIONAL_SHELL)
+        assert server.commands[0].params["maximum_m"] == 22_000.0
+
+        second = await bridge.plan_executor._synchronize_arty_weapon_range(
+            intent,
+            intent.asset_requirements[0],
+            Auftrag_ARTY(target="GROUP:Target"),
+        )
+        assert second is None
+        assert len(server.commands) == 1
+
+    asyncio.run(scenario())
+
+
 def test_execute_destroy_plan_refreshes_weighted_components_and_confirms_goal() -> None:
     async def scenario() -> None:
         bridge, plan = _executable_destroy_plan()
@@ -1267,6 +1437,29 @@ def test_execute_destroy_plan_refreshes_weighted_components_and_confirms_goal() 
 
         restored = execution_from_dict(execution_to_dict(execution))
         assert restored.damage_assessments == execution.damage_assessments
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_treats_known_static_missing_from_full_refresh_as_destroyed() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_destroy_plan(summary_damage=0.0)
+        server = _DisappearingStaticDestroyExecutionServer(summary_damage=0.0)
+        _replace_destroy_server(bridge, server)
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        objective = bridge.strategic_objective("OBJECTIVE:Depot")
+        assert objective is not None and objective.health == 0.4
+        estimate = objective.component_health_estimates["STATIC:Main"]
+        assert estimate.health == 0.0
+        assert estimate.source == "snapshot_absent_after_refresh"
+        assert execution.damage_assessments[0].component_health[0] == (
+            "STATIC:Main",
+            0.0,
+            "snapshot_absent_after_refresh",
+        )
 
     asyncio.run(scenario())
 
@@ -1471,6 +1664,23 @@ def test_execute_capture_plan_blocks_after_required_auftrag_failure() -> None:
         assert plan.phases[0].status.value == "blocked"
         assert execution.missions[0].status.value == "failed"
         assert "without success" in (execution.blocked_reason or "")
+
+    asyncio.run(scenario())
+
+
+def test_execute_plan_deduplicates_repeated_auftrag_status_events() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_capture_plan()
+        state = bridge.state
+        server = _DuplicateStatusExecutionServer()
+        server.state = state
+        bridge.server = server  # type: ignore[assignment]
+        observed: list[str] = []
+
+        execution = await bridge.execute_plan(plan, on_event=lambda event: observed.append(str(event)))
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert sum("Queued status=queued planned->queued" in item for item in observed) == 1
 
     asyncio.run(scenario())
 

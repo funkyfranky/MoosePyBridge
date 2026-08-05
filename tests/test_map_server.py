@@ -64,6 +64,7 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
 
     assert runtime.status_payload() == {
         "connected": True,
+        "mission_generation": 0,
         "error": None,
         "feature_count": 1,
         "sequence": 12,
@@ -82,6 +83,25 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "recon_coverage_count": 0,
         "recon_coverage_error": None,
     }
+
+
+def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:
+    runtime = GlobalMapRuntime()
+    runtime.update_picture(_moving_picture(10.0))
+    runtime._frontline_features.append({"type": "Feature"})
+    runtime._pressure_frontline_features.append({"type": "Feature"})
+    runtime._incursion_features.append({"type": "Feature"})
+    runtime._recon_features.append({"type": "Feature"})
+
+    runtime.reset_mission(1)
+
+    assert runtime._mission_generation == 1
+    assert runtime.picture == empty_picture()
+    assert not runtime.tracks
+    assert not runtime._frontline_features
+    assert not runtime._pressure_frontline_features
+    assert not runtime._incursion_features
+    assert not runtime._recon_features
 
 
 def _moving_picture(mission_time: float, *, x: float = 0, z: float = 0, alive: bool = True) -> dict[str, object]:

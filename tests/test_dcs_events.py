@@ -4,13 +4,21 @@ import asyncio
 import json
 
 from moosebridge import (
+    AssetRequirement,
+    AssetRole,
     DestroyedObjectEvent,
+    InformationRequirement,
+    MissionIntent,
     MooseBridgeClient,
     MooseBridgeServer,
     ObjectiveComponent,
     ObjectiveKind,
     ObjectiveStatus,
+    OperationalPlan,
     OwnershipPolicy,
+    PlanPhase,
+    StrategicGoal,
+    StrategicGoalAction,
     StrategicObjective,
 )
 from moosebridge.state import MooseBridgeState
@@ -49,6 +57,20 @@ def destroyed_message() -> dict[str, object]:
                 "unit_count": 2,
                 "alive_unit_count": 1,
             },
+        },
+    }
+
+
+def mission_ended_message() -> dict[str, object]:
+    return {
+        "type": "event",
+        "id": "event-mission-ended-1",
+        "event": "mission.ended",
+        "mission_time": 900.0,
+        "payload": {
+            "dcs_event_name": "S_EVENT_MISSION_END",
+            "dcs_event_time": 900.0,
+            "reason": "dcs_mission_end",
         },
     }
 
@@ -182,5 +204,90 @@ def test_sdk_waits_for_one_unit_lost_event() -> None:
 
         assert event.object_id == "UNIT:Armor-1-1"
         assert bridge.state.units[event.object_id]["alive"] is False
+
+    asyncio.run(scenario())
+
+
+def test_mission_end_clears_world_and_python_mission_registries() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        server.state.groups["GROUP:Old"] = {"object_id": "GROUP:Old", "alive": True}
+        objective = bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Old",
+                name="Old objective",
+                kind=ObjectiveKind.FORCE,
+                control_object_id=None,
+                ownership_policy=OwnershipPolicy.FIXED,
+                components=(ObjectiveComponent("GROUP:Old"),),
+            )
+        )
+        goal = bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Old",
+                name="Old goal",
+                coalition="blue",
+                action=StrategicGoalAction.DESTROY,
+                objective_id=objective.objective_id,
+            )
+        )
+        requirement = AssetRequirement(
+            "REQ:Old",
+            AssetRole.COMBAT,
+            mission_types=("BAI",),
+            performer_categories=("AIR",),
+        )
+        bridge.add_operational_plan(
+            OperationalPlan(
+                "PLAN:Old",
+                "Old plan",
+                goal.goal_id,
+                "blue",
+                (
+                    PlanPhase(
+                        "strike",
+                        "Strike",
+                        (MissionIntent("strike", "Strike", ("BAI",), (requirement,), "GROUP:Old"),),
+                    ),
+                ),
+            )
+        )
+        bridge.add_information_requirement(
+            InformationRequirement("INFO:Old", "INTEL:Blue", ("GROUP:Old",))
+        )
+        bridge.plan_executor._executions["PLAN:Old"] = []
+        bridge.plan_executor._loaded_plan_ids.add("PLAN:Old")
+        bridge._auftrag_ids_by_object[123] = "AUFTRAG:1"
+
+        await server._handle_line(json.dumps(mission_ended_message()))
+
+        assert bridge.state.connected is False
+        assert not bridge.state.groups
+        assert bridge.strategic_objectives() == ()
+        assert bridge.strategic_goals() == ()
+        assert bridge.operational_plans() == ()
+        assert bridge.information_requirements() == ()
+        assert not bridge.plan_executor._executions
+        assert not bridge.plan_executor._loaded_plan_ids
+        assert not bridge._auftrag_ids_by_object
+        assert [event["event"] for event in server._event_history] == ["mission.ended"]
+
+    asyncio.run(scenario())
+
+
+def test_mission_end_wakes_unrelated_event_waiters() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        waiter = asyncio.create_task(
+            server.wait_for_event("auftrag.*", filters={"auftrag_id": "AUFTRAG:1"}, timeout=1.0)
+        )
+        await asyncio.sleep(0)
+
+        await server._handle_line(json.dumps(mission_ended_message()))
+
+        event = await waiter
+        assert event["event"] == "mission.ended"
+        assert not server._event_waiters
 
     asyncio.run(scenario())

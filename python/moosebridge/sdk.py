@@ -59,7 +59,7 @@ from .operational_planner import RuleBasedOperationalPlanner
 from .operational_audit import RestoredOperationalPlan
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
-from .server import MooseBridgeServer
+from .server import DcsMissionEndedError, MooseBridgeServer
 from .sensor_ranges import (
     DEFAULT_SENSOR_RANGE_REGISTRY,
     SensorDetectionType,
@@ -514,6 +514,18 @@ class MooseBridgeClient:
 
         return self.server.state
 
+    def reset_mission(self, *, reset_state: bool = True) -> None:
+        """Discard all Python runtime state owned by the completed DCS mission."""
+
+        self.plan_executor.clear()
+        self.plans.clear()
+        self.goals.clear()
+        self.objectives.clear()
+        self.information_requirement_registry.clear()
+        self._auftrag_ids_by_object.clear()
+        if reset_state:
+            self.state.reset_mission()
+
     def opszone(self, object_id: str) -> OpsZone | None:
         """Return a typed OPSZONE by object id.
 
@@ -826,11 +838,17 @@ class MooseBridgeClient:
         if objective is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
         resolver = mission_resolver or StrategicMissionResolver()
+        legions = self._strategic_legions(item.coalition)
+        cohorts = self._strategic_cohorts(item.coalition)
+        ammunition = self._strategic_ammunition(item.coalition)
         target_resolutions = {
             contact.target_object_id: resolver.resolve(
                 contact.target_object_id,
                 target_data=self._strategic_target_data(contact.target_object_id, picture=picture),
-                cohorts=self._strategic_cohorts(item.coalition),
+                cohorts=cohorts,
+                legions=legions,
+                ammunition=ammunition,
+                weapon_ranges=self.weapon_range_registry,
             )
             for contact in picture.contacts
             if contact.target_object_id and (contact.is_ground or contact.is_static)
@@ -863,11 +881,17 @@ class MooseBridgeClient:
         if objective is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
         resolver = mission_resolver or StrategicMissionResolver()
+        legions = self._strategic_legions(item.coalition)
+        cohorts = self._strategic_cohorts(item.coalition)
+        ammunition = self._strategic_ammunition(item.coalition)
         target_resolutions = {
             contact.target_object_id: resolver.resolve(
                 contact.target_object_id,
                 target_data=self._strategic_target_data(contact.target_object_id, picture=picture),
-                cohorts=self._strategic_cohorts(item.coalition),
+                cohorts=cohorts,
+                legions=legions,
+                ammunition=ammunition,
+                weapon_ranges=self.weapon_range_registry,
             )
             for contact in picture.contacts
             if contact.target_object_id and (contact.is_ground or contact.is_static)
@@ -904,12 +928,18 @@ class MooseBridgeClient:
             for component in objective.components
         }
         resolver = mission_resolver or StrategicMissionResolver()
+        legions = self._strategic_legions(item.coalition)
+        cohorts = self._strategic_cohorts(item.coalition)
+        ammunition = self._strategic_ammunition(item.coalition)
         resolutions = {
             component.object_id: resolver.resolve(
                 component.object_id,
                 effect=item.effect,
                 target_data=self._strategic_target_data(component.object_id, picture=picture),
-                cohorts=self._strategic_cohorts(item.coalition),
+                cohorts=cohorts,
+                legions=legions,
+                ammunition=ammunition,
+                weapon_ranges=self.weapon_range_registry,
             )
             for component in objective.components
             if component.contributes_to_health and health_by_id.get(component.object_id) not in {None, 0.0}
@@ -954,6 +984,9 @@ class MooseBridgeClient:
             effect=item.effect,
             target_data=airbase,
             cohorts=self._strategic_cohorts(item.coalition),
+            legions=self._strategic_legions(item.coalition),
+            ammunition=self._strategic_ammunition(item.coalition),
+            weapon_ranges=self.weapon_range_registry,
         )
         return (planner or RuleBasedOperationalPlanner()).propose_disable(
             item,
@@ -991,6 +1024,14 @@ class MooseBridgeClient:
         use_global_object_data = prefix not in {"GROUP", "UNIT"} or picture is None or contact is None
         data = dict(value) if use_global_object_data and isinstance(value, Mapping) else {}
         if contact is not None:
+            data.update(
+                {
+                    "x": contact.x,
+                    "y": contact.y,
+                    "z": contact.z,
+                    "speed_mps": contact.speed_mps,
+                }
+            )
             if not data.get("category"):
                 if contact.is_ship:
                     data["category"] = "Ship"
@@ -1009,16 +1050,35 @@ class MooseBridgeClient:
     def _strategic_cohorts(self, coalition: str) -> tuple[Cohort, ...]:
         """Return COHORTs belonging to LEGIONs of one coalition."""
 
-        legion_ids = {
-            legion.object_id
-            for legion in self.state.legion_objects.values()
-            if normalize_coalition(legion.coalition or legion.coalition_name) == coalition
-        }
+        legion_ids = {legion.object_id for legion in self._strategic_legions(coalition)}
         return tuple(
             cohort
             for cohort in self.state.cohort_objects.values()
             if cohort.legion_id in legion_ids
         )
+
+    def _strategic_legions(self, coalition: str) -> tuple[Legion, ...]:
+        """Return LEGIONs belonging to one coalition."""
+
+        normalized = normalize_coalition(coalition)
+        return tuple(
+            legion
+            for legion in self.state.legion_objects.values()
+            if normalize_coalition(legion.coalition or legion.coalition_name) == normalized
+        )
+
+    def _strategic_ammunition(self, coalition: str) -> tuple[UnitAmmunition, ...]:
+        """Return observed ammunition for active units of one coalition."""
+
+        normalized = normalize_coalition(coalition)
+        result: list[UnitAmmunition] = []
+        for ammunition in self.state.ammunition_objects.values():
+            group = self.state.groups.get(ammunition.group_id or "")
+            unit = self.state.units.get(ammunition.unit_id)
+            payload = group if isinstance(group, Mapping) else unit
+            if isinstance(payload, Mapping) and normalize_coalition(payload.get("coalition")) == normalized:
+                result.append(ammunition)
+        return tuple(sorted(result, key=lambda item: item.unit_id))
 
     def validate_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlanAssessment:
         """Validate a plan against currently mirrored LEGION and COHORT stock."""
@@ -1314,6 +1374,9 @@ class MooseBridgeClient:
         message_type = str(message.get("type") or "")
         kind = str(message.get("kind") or "")
         event_name = str(message.get("event") or "")
+        if message_type == "event" and event_name == "mission.ended":
+            self.reset_mission(reset_state=False)
+            return
         if (
             message_type == "event" and event_name.startswith("intel.")
             or message_type == "snapshot" and kind == "intel_contacts"
@@ -1612,6 +1675,49 @@ class MooseBridgeClient:
         """
 
         return self.state.cohort(object_id)
+
+    async def set_cohort_weapon_range(
+        self,
+        cohort_id: str,
+        weapon_type: DcsWeaponFlag | int,
+        minimum_m: float,
+        maximum_m: float,
+        *,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Configure one MOOSE COHORT weapon range from Python range data."""
+
+        normalized_type = int(weapon_type)
+        minimum = float(minimum_m)
+        maximum = float(maximum_m)
+        if normalized_type < 0:
+            raise ValueError("weapon_type must be non-negative")
+        if not math.isfinite(minimum) or not math.isfinite(maximum) or minimum < 0 or maximum <= 0:
+            raise ValueError("weapon range must be finite with minimum >= 0 and maximum > 0")
+        if minimum > maximum:
+            raise ValueError("weapon range minimum must not exceed maximum")
+        ack = require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="cohort.set_weapon_range",
+                    params={
+                        "cohort_id": cohort_id,
+                        "weapon_type": normalized_type,
+                        "minimum_m": minimum,
+                        "maximum_m": maximum,
+                    },
+                ),
+                timeout=timeout,
+            )
+        )
+        cohort = self.cohort(cohort_id)
+        result = ack.get("result") if isinstance(ack.get("result"), Mapping) else {}
+        if cohort is not None:
+            cohort.weapon_ranges_by_type[str(normalized_type)] = (minimum, maximum)
+            mission_range = result.get("mission_range_m")
+            if isinstance(mission_range, (int, float)):
+                cohort.mission_ranges_by_weapon_type[str(normalized_type)] = float(mission_range)
+        return ack
 
     def intel(self, object_id: str) -> Intel | None:
         """Return a typed INTEL object by object id.
@@ -2629,6 +2735,9 @@ class MooseBridgeClient:
             seen = True
             last_event_id = str(event.get("id") or "") or last_event_id
             self.state.apply_message(event)
+            self._on_bridge_message(event)
+            if str(event.get("event") or "") == "mission.ended":
+                raise DcsMissionEndedError("DCS mission ended while waiting for AUFTRAG outcome")
             auftrag_event = AuftragEvent.from_message(event)
             if auftrag_event.event != "auftrag.evaluated":
                 status_key = (

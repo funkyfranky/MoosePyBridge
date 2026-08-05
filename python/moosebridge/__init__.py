@@ -218,8 +218,11 @@ from .operational_execution import (
 from .operational_audit import RestoredOperationalPlan
 from .operational_planner import RuleBasedOperationalPlanner, RuleBasedPlannerConfig
 from .mission_resolver import (
+    FireSupportAssignment,
+    MissionAssignment,
     MissionCandidate,
     MissionResolution,
+    MissionTimingAssumptions,
     StrategicMissionResolver,
     StrategicTargetDomain,
     classify_strategic_target,
@@ -475,8 +478,11 @@ __all__ = [
     "MooseBridgeServer",
     "MooseBridgeState",
     "MissionIntent",
+    "FireSupportAssignment",
+    "MissionAssignment",
     "MissionCandidate",
     "MissionResolution",
+    "MissionTimingAssumptions",
     "MooseSnapshotObject",
     "MooseObjectIdentity",
     "NearestResult",

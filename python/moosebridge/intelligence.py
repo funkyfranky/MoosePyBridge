@@ -170,6 +170,12 @@ class InformationRequirementRegistry:
     def all(self) -> tuple[InformationRequirement, ...]:
         return tuple(self._requirements[key] for key in sorted(self._requirements))
 
+    def clear(self) -> None:
+        """Discard all mission-scoped requirements and their local event history."""
+
+        self._requirements.clear()
+        self._events.clear()
+
     def filter(
         self,
         *,

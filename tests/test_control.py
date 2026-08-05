@@ -32,10 +32,12 @@ from examples.control_server_client.interactive_control_client import (
     split_two_object_arguments,
 )
 from moosebridge.recommendations import AuftragRecommendation
+from moosebridge.control_sdk import sdk_from_control_client
 from moosebridge.protocol import BridgeCommand
 from moosebridge.sdk import NearestResult
 from moosebridge.state import MooseBridgeState
-from moosebridge.server import DcsBridgeConnectionError, MooseBridgeServer
+from moosebridge.server import DcsBridgeCommandTimeoutError, DcsBridgeConnectionError, MooseBridgeServer
+from moosebridge.strategic import ObjectiveKind, OwnershipPolicy, StrategicObjective
 
 
 class FakeBridgeServer:
@@ -121,6 +123,8 @@ def test_state_payload_roundtrip_applies_requested_kinds() -> None:
 
     assert payload["counts"]["objects"] == 1
     assert target.connected is True
+    assert target.mission_generation == 0
+    assert target.mission_ended is False
     assert target.objects["UNIT:Scout-1"]["object_type"] == "UNIT"
     assert payload["clock"]["dcs_time"] == 43_325.5
     assert target.clock is not None
@@ -128,6 +132,33 @@ def test_state_payload_roundtrip_applies_requested_kinds() -> None:
     assert target.clock.time_of_day == "12:02:05"
     assert target.clock.dcs_date == "2026/07/15"
     assert target.snapshot_clocks["objects"].sequence == 12
+
+
+def test_control_backed_sdk_clears_local_registries_after_mission_generation_changes() -> None:
+    async def scenario() -> None:
+        daemon, server, control = await _with_control_server()
+        bridge = sdk_from_control_client(control)
+        bridge.add_strategic_objective(
+            StrategicObjective(
+                "OBJECTIVE:Old",
+                "Old objective",
+                ObjectiveKind.FORCE,
+                None,
+                OwnershipPolicy.FIXED,
+            )
+        )
+        try:
+            daemon.state.reset_mission()
+            daemon.state.connected = True
+
+            await bridge.snapshot_groups()
+
+            assert bridge.strategic_objectives() == ()
+            assert control.state.mission_generation == 1
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
 
 
 def test_control_audit_records_survive_daemon_restart(tmp_path) -> None:
@@ -1240,6 +1271,35 @@ def test_control_dcs_disconnect_is_not_logged_as_server_error(caplog: Any) -> No
     }
     assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
     assert "interrupted by DCS reconnect" in caplog.text
+
+
+def test_control_dcs_ack_timeout_is_reported_without_error_traceback(caplog: Any) -> None:
+    class TimingOutBridge(FakeBridgeServer):
+        async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
+            raise DcsBridgeCommandTimeoutError(command.action, command.id, timeout)
+
+    async def scenario() -> dict[str, Any]:
+        control = MooseBridgeControlServer(TimingOutBridge())  # type: ignore[arg-type]
+        return await control._handle_line(
+            json.dumps(
+                {
+                    "id": "ctrl-timeout",
+                    "action": "control.command",
+                    "params": {"action": "snapshot.statics"},
+                    "timeout": 4.0,
+                }
+            )
+        )
+
+    with caplog.at_level(logging.INFO, logger="moosebridge.control"):
+        response = asyncio.run(scenario())
+
+    assert response["id"] == "ctrl-timeout"
+    assert response["ok"] is False
+    assert "DCS did not acknowledge snapshot.statics" in response["error"]
+    assert "within 4 seconds" in response["error"]
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+    assert "timed out waiting for DCS ACK" in caplog.text
 
 
 def test_control_snapshots_forwards_actions_and_updates_client_state() -> None:

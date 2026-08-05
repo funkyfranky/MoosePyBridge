@@ -457,6 +457,12 @@ class StrategicObjectiveRegistry:
 
         return tuple(self._objectives[key] for key in sorted(self._objectives))
 
+    def clear(self) -> None:
+        """Discard all mission-scoped objectives and their local event history."""
+
+        self._objectives.clear()
+        self._events.clear()
+
     def filter(
         self,
         *,
@@ -714,6 +720,12 @@ class StrategicGoalRegistry:
 
     def all(self) -> tuple[StrategicGoal, ...]:
         return tuple(self._goals[key] for key in sorted(self._goals))
+
+    def clear(self) -> None:
+        """Discard all mission-scoped goals and their local event history."""
+
+        self._goals.clear()
+        self._events.clear()
 
     def filter(
         self,

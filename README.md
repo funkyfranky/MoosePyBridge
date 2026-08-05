@@ -430,14 +430,79 @@ The conservative mappings currently include:
 - air-defense targets -> `SEAD`, then `BAI` or `GROUNDATTACK`
 - naval `GROUP`/`UNIT` -> `ANTISHIP`, then `NAVALENGAGEMENT`
 - `STATIC` infrastructure -> `BAI`, `BOMBING`, `GROUNDATTACK`, or `NAVALENGAGEMENT`
+- stationary ground and `STATIC` targets -> `ARTY` when an available artillery
+  COHORT has a known deployment position, a matching indirect-fire weapon
+  profile, ammunition, and the target lies inside the COHORT mission range
 - `AIRBASE` plus `deny_runway` -> `BOMBRUNWAY`
 - scenery/map objects plus `attack_map_object` -> `STRIKE`
 
-Artillery is intentionally not selected yet: a valid `ARTY` assignment also
-requires weapon flag, ammunition, and min/max range checks against the firing
-unit. A candidate with no currently matching COHORT remains in the draft as the
-preferred type so normal plan validation reports the asset shortfall rather
-than silently changing the requested effect.
+An `ARTY` resolution stores the selected DCS weapon flag, initial distance,
+weapon range, COHORT engage range, total mission range, required relocation,
+range source, ammunition source, and weapon ids in the intent metadata. The
+Lua COHORT snapshot exposes both `COHORT:GetMissionRange({WeaponType})` and the
+underlying `COHORT.weaponData` entry. Python compares that configuration with
+its versioned Quaggles-derived profile. Immediately before an ARTY mission is
+submitted, a missing or differing entry is synchronized once through
+`COHORT:AddWeaponRange`; an already matching entry causes no command. The
+COMMANDER therefore recruits against the same weapon flag and range used by
+the Python resolver. The total mission range is `engageRange + weapon range`,
+so mobile artillery may move into a valid firing position instead of being
+rejected merely because its initial distance exceeds weapon range.
+Because those checks depend on one COHORT, the
+plan constrains execution to that qualified COHORT. Observed ammunition is
+authoritative, including `count=0`. If no live ammunition observation exists
+for a not-yet-spawned COHORT type, planning uses the versioned template weapon
+profile and records `cohort_template_assumed_full`. Call
+`await bridge.snapshot_ammunition()` before planning when current spawned-unit
+ammunition should participate; it is deliberately not refreshed implicitly.
+Moving ground contacts, unknown positions, missing COHORT deployment ranges,
+and targets outside the synchronized total mission range do not receive an
+ARTY candidate.
+
+`examples/sdk/test_arty_weapon_selection.py` is a parameterless DCS integration
+test for M109 and MLRS COHORTs. Configure its COHORT and target ids at the top;
+it prints the complete feasibility decision, synchronizes stale MOOSE weapon
+ranges, verifies the ACK weapon flag, and optionally waits for both AUFTRAG
+outcomes. The same operation is available explicitly as
+`await bridge.set_cohort_weapon_range(...)`.
+
+The executor applies the selected flag through `AUFTRAG:SetWeaponType()` before
+the mission is submitted to its COMMANDER, LEGION, or OPSGROUP. The same
+resolver ranks multiple feasible artillery assignments deterministically by:
+
+1. no relocation, then shortest required relocation;
+2. observed current ammunition, then remaining rounds;
+3. COHORT ARTY mission performance;
+4. range-source quality, an already synchronized range, available assets, and
+   stable ids as tie-breakers.
+
+Observed ammunition is associated with the COHORT through its spawned
+OPSGROUP ids, rather than being shared by every COHORT of the same DCS type.
+Weapon lethality or cost is deliberately not guessed, so shell and rocket
+flags receive no arbitrary intrinsic preference. The selected assignment and
+all qualified alternatives are retained in mission-resolution metadata.
+
+Across different executable AUFTRAG types, the resolver selects the shortest
+estimated time to effect. The estimate consists of a configurable preparation
+delay plus straight-line transit time. ARTY uses only required relocation;
+other missions use the target distance from the COHORT or its parent LEGION.
+The defaults are 300 s and 200 m/s for air, 60 s and 10 m/s for ground, 120 s
+and 12 m/s for naval forces, and 120 s plus 8.33 m/s relocation for artillery.
+They can be replaced through `MissionTimingAssumptions`. Missing position data
+produces no fabricated ETA; when every option lacks an ETA, the established
+doctrinal candidate order remains the deterministic fallback. Plans retain all
+mission assignments, timing components, and the selected ETA for diagnostics
+and audit.
+
+`examples/sdk/select_arty_cohort.py` compares the configured Paladin and M270
+COHORTs against one target, prints the ranked alternatives, synchronizes only
+the selected range if necessary, and optionally submits that AUFTRAG.
+
+The Pythonic setting is available for manually created missions as
+`auftrag.set_weapon_type(DcsWeaponFlag.CONVENTIONAL_SHELL)`. A candidate with no
+currently matching COHORT remains in the draft as the preferred type so normal
+plan validation reports the asset shortfall rather than silently changing the
+requested effect.
 
 CAPTURE and DEFEND currently require an OPSZONE-controlled objective. CAPTURE can
 add a BAI isolation phase before ground seizure. DEFEND requires current
@@ -608,6 +673,14 @@ and, for units, a current MOOSE GROUP snapshot. Python merges the tombstone
 with the last known object state, removes stale ammunition data, and updates
 strategic component health without requesting another snapshot. This remains
 fully event-driven and does not poll destroyed objects.
+
+`EVENTS.MissionEnd` is forwarded as `mission.ended` and defines the hard
+boundary of one Python mission session. The daemon clears its mirrored DCS and
+MOOSE state, while every active SDK client clears mission-scoped information
+requirements, strategic objectives, goals, plans, execution histories, and
+AUFTRAG mappings. Persistent audit records are deliberately retained. The Lua
+handler flushes this final event immediately because normal bridge scheduling
+ends with the DCS mission.
 
 Set `UNIT_ID` directly in the parameterless test example and destroy that unit
 in DCS:
@@ -1310,18 +1383,21 @@ ack = await bridge.add_auftrag(auftrag=auftrag_strafing, legion="LEGION:Wing Par
 ```
 
 All AUFTRAG helper objects support `set_time(start=..., stop=...)`,
-`set_duration(duration=...)`, and
-`set_required_assets(min_count=..., max_count=...)`. For `set_time`, use a
+`set_duration(duration=...)`, `set_required_assets(min_count=..., max_count=...)`,
+and `set_weapon_type(weapon_type)`. For `set_time`, use a
 string such as `"05:00"` for mission clock time or a number such as `600` for
 seconds relative to the time the mission is assigned. `set_duration` sets how
 many seconds the mission may run before MOOSE cancels it. `set_required_assets`
 sets how many asset groups a LEGION-level Auftrag should request.
+`set_weapon_type` forwards a numeric `DcsWeaponFlag` to MOOSE
+`AUFTRAG:SetWeaponType()`.
 
 ```python
 auftrag_bai = Auftrag_BAI(target="UNIT:Ground-1-1", altitude_ft=15000)
 auftrag_bai.set_time(start=600, stop="13:00")
 auftrag_bai.set_duration(duration=1800)
 auftrag_bai.set_required_assets(min_count=2, max_count=4)
+auftrag_bai.set_weapon_type(DcsWeaponFlag.ANY_BOMB)
 ```
 
 `get_auftrag_summary` waits for the MOOSE FSM `OnAfterEvaluated` event sent by
