@@ -68,6 +68,7 @@ from .sensor_ranges import (
     SensorTargetDomain,
 )
 from .state import MooseBridgeState
+from .strategic_feedback import StrategicFeedbackEvent, StrategicFeedbackMonitor
 from .strategic import (
     ObjectiveEvent,
     OwnershipPolicy,
@@ -498,9 +499,11 @@ class MooseBridgeClient:
         self.objectives = StrategicObjectiveRegistry()
         self.goals = StrategicGoalRegistry(self.objectives)
         self.plans = OperationalPlanRegistry(self.goals)
+        self.strategic_feedback = StrategicFeedbackMonitor(self.goals, self.plans)
         self.information_requirement_registry = InformationRequirementRegistry()
         self.plan_executor = OperationalPlanExecutor(self)
         self._auftrag_ids_by_object: dict[int, str] = {}
+        self._strategic_feedback_message_ids: set[str] = set()
         add_listener = getattr(server, "add_message_listener", None)
         if callable(add_listener):
             add_listener(self._on_bridge_message)
@@ -518,11 +521,13 @@ class MooseBridgeClient:
         """Discard all Python runtime state owned by the completed DCS mission."""
 
         self.plan_executor.clear()
+        self.strategic_feedback.clear()
         self.plans.clear()
         self.goals.clear()
         self.objectives.clear()
         self.information_requirement_registry.clear()
         self._auftrag_ids_by_object.clear()
+        self._strategic_feedback_message_ids.clear()
         if reset_state:
             self.state.reset_mission()
 
@@ -818,6 +823,49 @@ class MooseBridgeClient:
         """Return all operational plans in stable id order."""
 
         return self.plans.all()
+
+    def strategic_feedback_events(
+        self,
+        *,
+        event: str | None = None,
+        coalition: str | None = None,
+        goal_id: str | None = None,
+        plan_id: str | None = None,
+    ) -> tuple[StrategicFeedbackEvent, ...]:
+        """Return event-driven strategic feedback, optionally filtered."""
+
+        return self.strategic_feedback.filter(
+            event=event,
+            coalition=coalition,
+            goal_id=goal_id,
+            plan_id=plan_id,
+        )
+
+    def add_strategic_feedback_listener(
+        self,
+        listener: Callable[[StrategicFeedbackEvent], None],
+    ) -> None:
+        """Subscribe to strategic goal, feasibility, and allocation changes."""
+
+        self.strategic_feedback.add_listener(listener)
+
+    def remove_strategic_feedback_listener(
+        self,
+        listener: Callable[[StrategicFeedbackEvent], None],
+    ) -> None:
+        """Remove a strategic feedback listener."""
+
+        self.strategic_feedback.remove_listener(listener)
+
+    def sync_strategic_feedback(self, *, source: str = "manual") -> tuple[StrategicFeedbackEvent, ...]:
+        """Reassess non-terminal plans from current mirrored asset state."""
+
+        return self.strategic_feedback.reassess_plans(
+            legions=self.state.legion_objects.values(),
+            cohorts=self.state.cohort_objects.values(),
+            mission_time=self._current_mission_time(),
+            source=source,
+        )
 
     def propose_capture_plan(
         self,
@@ -1374,6 +1422,13 @@ class MooseBridgeClient:
         message_type = str(message.get("type") or "")
         kind = str(message.get("kind") or "")
         event_name = str(message.get("event") or "")
+        message_id = str(message.get("id") or "")
+        feedback_message_is_new = not message_id or message_id not in self._strategic_feedback_message_ids
+        if message_id and feedback_message_is_new:
+            self._strategic_feedback_message_ids.add(message_id)
+            if len(self._strategic_feedback_message_ids) > 20_000:
+                self._strategic_feedback_message_ids.clear()
+                self._strategic_feedback_message_ids.add(message_id)
         if message_type == "event" and event_name == "mission.ended":
             self.reset_mission(reset_state=False)
             return
@@ -1385,6 +1440,22 @@ class MooseBridgeClient:
                 self.state,
                 source=event_name or "snapshot.intel_contacts",
             )
+            if message_type == "event" and feedback_message_is_new:
+                payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+                contact = payload.get("contact") if isinstance(payload.get("contact"), dict) else {}
+                self.strategic_feedback.record_context_change(
+                    "feedback.intelligence_changed",
+                    source=event_name,
+                    mission_time=self._current_mission_time(),
+                    coalition=normalize_coalition(contact.get("coalition")),
+                    reference_id=str(
+                        contact.get("target_object_id")
+                        or contact.get("object_id")
+                        or payload.get("contact_id")
+                        or ""
+                    ) or None,
+                    details={"intel_event": event_name},
+                )
         if message_type == "heartbeat":
             self.goals.sync(mission_time=self._current_mission_time(), source="heartbeat")
             return
@@ -1404,8 +1475,48 @@ class MooseBridgeClient:
             "statics",
         }):
             source = event_name or f"snapshot.{kind}"
-            self.objectives.sync(self.state, source=source)
+            objective_events = self.objectives.sync(self.state, source=source)
             self.goals.sync(mission_time=self._current_mission_time(), source=source)
+            for objective_event in objective_events:
+                self.strategic_feedback.record_context_change(
+                    "feedback.objective_changed",
+                    source=source,
+                    mission_time=objective_event.mission_time,
+                    reference_id=objective_event.objective_id,
+                    details={"objective_event": objective_event.event},
+                )
+        should_reassess_plans = relevant_event or (
+            message_type == "snapshot"
+            and kind in {
+                "airbases",
+                "opszones",
+                "territories",
+                "groups",
+                "units",
+                "statics",
+                "legions",
+                "cohorts",
+                "commanders",
+            }
+        )
+        if should_reassess_plans:
+            self.sync_strategic_feedback(source=event_name or f"snapshot.{kind}")
+        if message_type == "event" and event_name == "auftrag.evaluated" and feedback_message_is_new:
+            payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+            self.strategic_feedback.record_context_change(
+                "feedback.mission_outcome",
+                source=event_name,
+                mission_time=self._current_mission_time(),
+                reference_id=str(payload.get("auftrag_id") or "") or None,
+                details={
+                    "auftrag_type": payload.get("auftrag_type"),
+                    "success": (
+                        payload.get("summary", {}).get("success")
+                        if isinstance(payload.get("summary"), dict)
+                        else None
+                    ),
+                },
+            )
 
     def _current_mission_time(self) -> float | None:
         return self.state.clock.mission_time if self.state.clock else None

@@ -1351,13 +1351,16 @@ def test_sdk_add_auftrag_uses_commander_with_optional_constraints() -> None:
             mission,
             commander="COMMANDER:Blue Command",
             allowed_legions=["LEGION:Wing Parchim"],
-            allowed_cohorts=["COHORT:F-4E Parchim Alpha"],
+            allowed_cohorts=["COHORT:F-4E Parchim Alpha", "COHORT:F-18 Laage"],
         )
 
         command = server.commands[0][0]
         assert command.params["commander_id"] == "COMMANDER:Blue Command"
         assert command.params["allowed_legion_ids"] == ["LEGION:Wing Parchim"]
-        assert command.params["allowed_cohort_ids"] == ["COHORT:F-4E Parchim Alpha"]
+        assert command.params["allowed_cohort_ids"] == [
+            "COHORT:F-4E Parchim Alpha",
+            "COHORT:F-18 Laage",
+        ]
 
     asyncio.run(scenario())
 

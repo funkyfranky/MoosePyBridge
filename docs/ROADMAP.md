@@ -353,6 +353,12 @@ Current operational-planning baseline:
   COMMANDER, LEGION, COHORT, strategic-control, allocation, constraint, and
   target state is refreshed before any phase AUFTRAG is submitted; completed
   and later phases are not unnecessarily reassessed.
+- A passive `StrategicFeedbackMonitor` now compares non-terminal plan
+  feasibility and predicted allocation whenever relevant mirrored state
+  changes. It reports goal transitions, INTEL and mission context, asset
+  shortfalls, restored feasibility, and allocation changes without polling or
+  autonomous retasking. These events form the input contract for the later
+  strategic decision coordinator.
 - Plan snapshots retain explicit operator attribution and approval reasons.
   Submitted missions retain compact ACK ids, correlation ids, sequence numbers,
   and relevant results across daemon audit persistence and SDK restore.
@@ -380,13 +386,19 @@ Current operational-planning baseline:
   This lets mobile artillery relocate before firing while COMMANDER recruitment
   and Python feasibility use the same envelope. Execution is bound to the
   qualified COHORT and applies the selected flag with `AUFTRAG:SetWeaponType()`.
-  Supported alternatives are now compared by configurable estimated time to
-  effect (preparation plus transit or ARTY relocation), with all timing inputs
-  retained in plan metadata and audit diagnostics.
-- Weighted DESTROY goals select enough objective components to meet a configurable
-  damage fraction. Static infrastructure is known by position; moving targets
-  require current coalition INTEL. Execution refreshes component state at phase
-  boundaries and confirms weighted objective health without status polling.
+  Mission selection now has two stages: the first executable type in the
+  doctrinal AUFTRAG order is fixed, then its COHORTs are compared by a
+  configurable score of mission performance, skill, and response time.
+  Response time includes preparation plus transit or ARTY relocation. Every
+  component is retained in plan metadata and diagnostics. All qualified
+  COHORTs of the selected mission type remain eligible in score order, allowing
+  validation and COMMANDER recruitment to use lower-ranked capacity when the
+  best COHORT is exhausted.
+- Weighted DESTROY goals task every alive, known, and targetable objective
+  component. Their configurable damage fraction controls strategic completion,
+  not target selection. Static infrastructure is known by position; moving
+  targets require current coalition INTEL. Execution refreshes component state
+  at phase boundaries and confirms weighted objective health without polling.
   Parallel strikes settle before assessment, so strategic damage rather than an
   individual AUFTRAG success flag determines DESTROY completion.
 - DESTROY diagnostics and audits explicitly separate constructor-specific MOOSE

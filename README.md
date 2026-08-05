@@ -252,6 +252,29 @@ available.
 `await bridge.wait_for_strategic_goal_event(goal_id)` waits for completion
 without periodically requesting objective snapshots.
 
+The SDK also maintains passive strategic feedback. Relevant ownership and
+loss events update objectives and goals immediately. COHORT, LEGION, and world
+state snapshots revalidate every non-terminal plan from the existing mirror;
+they do not trigger additional DCS polling. The monitor emits meaningful
+changes such as `feedback.replanning_required`,
+`feedback.plan_feasibility_restored`, `feedback.plan_allocation_changed`,
+`feedback.goal_status_changed`, `feedback.intelligence_changed`, and
+`feedback.mission_outcome`. It never creates, approves, cancels, or replaces an
+AUFTRAG by itself.
+
+```python
+bridge.add_strategic_feedback_listener(
+    lambda event: print(format_strategic_feedback(event))
+)
+
+# Explicitly establish or refresh the comparison baseline from mirrored state.
+bridge.sync_strategic_feedback(source="operator")
+```
+
+Use `bridge.strategic_feedback_events(plan_id=plan.plan_id)` to inspect retained
+feedback. This is the event-driven input for a later deterministic or LLM-based
+decision coordinator.
+
 ### Operational planning
 
 `OperationalPlan` translates one coalition-private `StrategicGoal` into ordered
@@ -482,17 +505,30 @@ Weapon lethality or cost is deliberately not guessed, so shell and rocket
 flags receive no arbitrary intrinsic preference. The selected assignment and
 all qualified alternatives are retained in mission-resolution metadata.
 
-Across different executable AUFTRAG types, the resolver selects the shortest
-estimated time to effect. The estimate consists of a configurable preparation
-delay plus straight-line transit time. ARTY uses only required relocation;
-other missions use the target distance from the COHORT or its parent LEGION.
-The defaults are 300 s and 200 m/s for air, 60 s and 10 m/s for ground, 120 s
-and 12 m/s for naval forces, and 120 s plus 8.33 m/s relocation for artillery.
-They can be replaced through `MissionTimingAssumptions`. Missing position data
-produces no fabricated ETA; when every option lacks an ETA, the established
-doctrinal candidate order remains the deterministic fallback. Plans retain all
-mission assignments, timing components, and the selected ETA for diagnostics
-and audit.
+Mission selection has two distinct stages. First, the resolver walks the
+doctrinally ordered AUFTRAG candidates and selects the first mission type with
+an executable COHORT. A faster fallback such as ARTY therefore cannot displace
+a preferred BAI mission merely because it has a shorter response time. Second,
+COHORTs for that mission type are ranked by an auditable score: mission
+performance contributes 50%, COHORT skill 30%, and response time 20%.
+Response time combines distance, platform speed, and a preparation delay, so
+distance is not counted twice. ARTY uses only required relocation; other
+missions use the target distance from the COHORT or its parent LEGION. The
+timing defaults are 300 s and 200 m/s for air, 60 s and 10 m/s for ground,
+120 s and 12 m/s for naval forces, and 120 s plus 8.33 m/s relocation for
+artillery. Timing can be replaced through `MissionTimingAssumptions`; scoring
+weights and normalization defaults through `MissionScoringAssumptions`.
+Missing performance, skill, or position data uses explicit neutral defaults.
+Plans retain the total score, every score component, timing inputs, and all
+qualified alternatives for diagnostics and audit.
+
+The selected mission type is constrained to every qualified COHORT in score
+order, rather than only the highest-scoring one. Phase validation consumes the
+best COHORT's available assets first and continues with the next candidate when
+capacity is exhausted. COMMANDER receives the same allowed COHORT pool, so
+MOOSE can recruit and reserve across it. ARTY fallbacks additionally require the
+selected weapon flag and an already synchronized MOOSE weapon range; the
+selected ARTY COHORT itself may be synchronized immediately before submission.
 
 `examples/sdk/select_arty_cohort.py` compares the configured Paladin and M270
 COHORTs against one target, prints the ranked alternatives, synchronizes only
@@ -516,12 +552,13 @@ basis. See `examples/sdk/plan_defend_goal.py` for a parameterless DCS example.
 
 DESTROY objectives may contain multiple weighted components. A goal's
 `required_damage` is a fraction from `0.0` to `1.0`; `1.0` requires complete
-weighted destruction. The planner selects the smallest useful set of currently
-targetable components whose weights can reach that threshold. Stationary
-`STATIC` components are treated as known infrastructure. Moving `GROUP` and
-`UNIT` components require a current, non-stale coalition INTEL contact. After
-each strike phase, the executor refreshes the affected component snapshots once
-and confirms the weighted objective health. All parallel strikes are allowed to
+weighted destruction. The planner creates one intent for every currently alive,
+known, and targetable component; the damage threshold controls strategic goal
+completion, not which structures receive an AUFTRAG. Stationary `STATIC`
+components are treated as known infrastructure. Moving `GROUP` and `UNIT`
+components require a current, non-stale coalition INTEL contact. After each
+strike phase, the executor refreshes the affected component snapshots once and
+confirms the weighted objective health. All parallel strikes are allowed to
 finish before that assessment. A negative individual MOOSE AUFTRAG summary does
 not block a DESTROY plan when the required weighted damage was nevertheless
 reached; otherwise the blocked reason reports achieved and required damage. See

@@ -222,6 +222,7 @@ from .mission_resolver import (
     MissionAssignment,
     MissionCandidate,
     MissionResolution,
+    MissionScoringAssumptions,
     MissionTimingAssumptions,
     StrategicMissionResolver,
     StrategicTargetDomain,
@@ -267,11 +268,13 @@ from .diagnostics import (
     format_recon_outcome,
     format_sensor_range,
     format_strategic_goal,
+    format_strategic_feedback,
     format_unit_capabilities,
     format_unit_influence,
     format_weapon_range,
 )
 from .state import MooseBridgeState, MooseObjectIdentity
+from .strategic_feedback import StrategicFeedbackEvent, StrategicFeedbackMonitor
 from .strategic import (
     CaptureBehavior,
     ComponentHealthEstimate,
@@ -482,6 +485,7 @@ __all__ = [
     "MissionAssignment",
     "MissionCandidate",
     "MissionResolution",
+    "MissionScoringAssumptions",
     "MissionTimingAssumptions",
     "MooseSnapshotObject",
     "MooseObjectIdentity",
@@ -564,6 +568,8 @@ __all__ = [
     "StrategicGoalEvent",
     "StrategicGoalRegistry",
     "StrategicGoalStatus",
+    "StrategicFeedbackEvent",
+    "StrategicFeedbackMonitor",
     "StrategicMissionResolver",
     "StrategicTargetDomain",
     "Territory",
@@ -631,6 +637,7 @@ __all__ = [
     "format_recon_outcome",
     "format_sensor_range",
     "format_strategic_goal",
+    "format_strategic_feedback",
     "format_unit_capabilities",
     "format_unit_influence",
     "format_weapon_range",

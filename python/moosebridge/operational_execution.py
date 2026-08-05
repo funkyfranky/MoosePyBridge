@@ -153,12 +153,23 @@ class PlanExecutionEvent:
     mission_time: float | None = None
     message: str | None = None
     attempt_id: str | None = None
+    mission_type: str | None = None
 
     def __str__(self) -> str:
         """Return a compact progress line suitable for example callbacks."""
 
         reference = self.auftrag_id or self.requirement_id or self.phase_id or self.plan_id
-        parts = [reference, self.event]
+        parts = [reference]
+        if self.mission_type:
+            parts.append(f"type={self.mission_type}")
+        if self.event == "mission.status" and self.message:
+            message = self.message
+            prefix = f"{reference} "
+            if message.startswith(prefix):
+                message = message[len(prefix):]
+            parts.append(message)
+            return " ".join(parts)
+        parts.append(self.event)
         if self.status:
             parts.append(f"status={self.status}")
         if self.message:
@@ -1859,6 +1870,7 @@ class OperationalPlanExecutor:
                 auftrag_id=mission.auftrag_id,
                 status=status or mission.status.value,
                 message=message or mission.error,
+                mission_type=mission.mission_type,
             ),
             callback,
         )
@@ -1881,6 +1893,7 @@ class OperationalPlanExecutor:
                 self.client._current_mission_time(),
                 event.message,
                 execution.attempt_id,
+                event.mission_type,
             )
         execution.events.append(event)
         await self._persist(execution)

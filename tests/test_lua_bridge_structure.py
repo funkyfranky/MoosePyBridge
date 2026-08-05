@@ -20,6 +20,7 @@ def test_ops_snapshots_use_moose_available_asset_counts() -> None:
     assert 'self:_SafeCall(commander, "CountAvailableAssets")' in source
     assert 'self:_SafeCall(cohort, "GetMissionRange")' in source
     assert 'self:_SafeCallArg(cohort, "GetMissionRange", {weapon_type})' in source
+    assert "skill=cohort and cohort.skill or nil" in source
 
 
 def test_commander_tasking_uses_moose_recruitment_and_constraints() -> None:

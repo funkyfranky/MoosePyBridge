@@ -1621,6 +1621,7 @@ function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
     is_naval=self:_BoolOrFalse(cohort and cohort.isNaval),
     mission_types=mission_types,
     mission_performance=self:_CollectMissionPerformance(cohort, mission_types),
+    skill=cohort and cohort.skill or nil,
     engage_range_m=self:_NumberOrNil(cohort and cohort.engageRange),
     mission_range_m=self:_NumberOrNil(self:_SafeCall(cohort, "GetMissionRange")),
     mission_ranges_by_weapon_type=self:_CollectCohortIndirectMissionRanges(cohort),

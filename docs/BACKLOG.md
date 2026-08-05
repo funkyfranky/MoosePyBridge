@@ -22,6 +22,9 @@ Priorities:
 - [ ] **Close the strategic feedback loop.** Reassess active goals and plans
   after objective ownership changes, losses, INTEL changes, mission outcomes,
   and asset availability changes without duplicating MOOSE tactical behavior.
+  The passive event monitor and feasibility/allocation change detection are
+  complete; add the deterministic policy that turns feedback into explicit
+  keep, abort, replan, or propose-follow-up decisions with approval boundaries.
 
 ## P1 - Intelligence and RECON
 
@@ -40,8 +43,9 @@ Priorities:
 
 - [ ] **Extend ammunition/range-aware ranking beyond artillery.** ARTY now uses
   weapon classification, DCS weapon flags, current ammunition, firing position,
-  and min/max task ranges for feasibility. Apply the same evidence to ranking
-  other combat missions where it changes a real operational decision.
+  and min/max task ranges for feasibility. Apply current losses, readiness, and
+  ammunition evidence to other combat missions where it changes a real
+  operational decision.
 - [ ] **Expand logistics planning.** Model ammunition supply, rearming, force
   sustainment, and transport as operational dependencies rather than only
   optional support missions. Fuel remains irrelevant for DCS ground and naval
@@ -49,6 +53,37 @@ Priorities:
 - [ ] **Improve force-effectiveness estimates.** Combine unit role, DCS
   attributes, life, active state, ammunition availability, weapon reach, and a
   small logistics contribution for territorial control and planning.
+
+## P2 - Deferred COHORT ranking
+
+- [ ] **Calibrate COHORT score assumptions with live DCS scenarios.** Validate
+  the current 50% mission-performance, 30% skill, and 20% response weighting,
+  the neutral values for unknown inputs, and the 900-second response reference.
+  Introduce mission- or domain-specific values only when observed behavior
+  demonstrates a real need.
+- [ ] **Replace timing fallbacks with measured capability where available.** Use
+  reliable COHORT, template, or spawned OPSGROUP preparation and movement data
+  instead of fixed air, ground, naval, and artillery speeds without adding
+  periodic polling solely for ranking.
+- [ ] **Decide whether force size belongs in the score.** Asset availability is
+  currently a hard capacity constraint and unit/group count is deliberately not
+  a score component. Revisit combat mass, losses, and remaining unit count only
+  with a model that does not reward oversized formations indiscriminately.
+- [ ] **Make ranking diagnostics reflect the two-stage decision.** Show only
+  COHORT alternatives for the selected AUFTRAG type under `cohort_options`, and
+  list lower-priority mission types separately as doctrinal fallbacks. Retain
+  the complete raw assignment metadata for audit and debugging.
+- [ ] **Verify and expose actual MOOSE recruitment.** Compare Python's predicted
+  capacity allocation with the COHORTs and assets recruited by COMMANDER, then
+  retain the actual selection in events, execution diagnostics, and audit data.
+  Do not assume that repeated `AssignCohort` calls imply score-order preference.
+- [ ] **Broaden safe ARTY fallback recruitment.** Synchronize the selected
+  weapon range for every otherwise qualified fallback COHORT before submission.
+  Until then, only the selected ARTY COHORT and already synchronized alternatives
+  with the same weapon flag may enter the COMMANDER recruitment pool.
+- [ ] **Validate COHORT skill semantics.** Confirm all values used by the MOOSE
+  branch and DCS templates, including `Random` and numeric forms, then replace
+  neutral mappings only where the runtime meaning is unambiguous.
 
 ## P2 - Tactical picture
 
@@ -73,11 +108,19 @@ Priorities:
 
 ## Recently completed
 
-- [x] Cross-domain mission selection uses the shortest estimated time to effect
-  rather than resource cost. Configurable preparation delays and movement
-  speeds produce auditable timing components for air, ground, naval, and ARTY
-  assignments. Unknown positions remain unknown and fall back to doctrinal
-  candidate order instead of receiving a guessed ETA.
+- [x] A passive event-driven strategic feedback monitor reports goal status,
+  plan feasibility, predicted allocation, INTEL context, objective changes, and
+  mission outcomes. It emits `replanning_required` on real asset shortfalls and
+  reports recovery without mutating plans or issuing DCS commands.
+- [x] Cross-domain mission selection first fixes the first executable type in
+  the doctrinal AUFTRAG order, then ranks only its COHORTs. Mission performance,
+  skill, and response time produce auditable COHORT score components for air,
+  ground, naval, and ARTY assignments. Distance and platform speed are combined
+  in response time and unknown inputs receive explicit neutral defaults.
+- [x] Generated mission requirements retain all qualified COHORTs in score
+  order. Phase validation distributes capacity across that order and passes the
+  same recruitment pool to MOOSE COMMANDER. ARTY alternatives remain constrained
+  by weapon flag and synchronized weapon range.
 - [x] Multiple feasible ARTY COHORTs are ranked by required relocation,
   COHORT-specific observed ammunition, remaining rounds, mission performance,
   range-source quality, synchronization state, and available assets. Qualified
@@ -99,9 +142,10 @@ Priorities:
 - [x] AIRBASE `DISABLE` goals default to `deny_runway`; planning accepts only
   MOOSE `Airdrome` objects and completion requires a successful object-targeted
   `BOMBRUNWAY` AUFTRAG. Unverified BOMBING/ARTY fallbacks are intentionally absent.
-- [x] Weighted DESTROY goals, rule-based component selection, COMMANDER
-  execution, component-state refresh, strategic confirmation, audit roundtrip,
-  diagnostics, and a parameterless DCS example use the established plan path.
+- [x] Weighted DESTROY goals create one task per alive, known, targetable
+  component while retaining the damage threshold solely as the strategic
+  completion condition. COMMANDER execution, component-state refresh,
+  confirmation, audit, diagnostics, and the DCS example use the established path.
 - [x] DESTROY events, pretty-print diagnostics, and audits distinguish MOOSE
   AUFTRAG outcomes from evidence-derived weighted strategic damage assessments.
 - [x] Object-targeted AUFTRAG `Summary.damage` supplements snapshot component

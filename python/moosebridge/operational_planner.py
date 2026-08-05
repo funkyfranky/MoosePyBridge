@@ -575,13 +575,11 @@ class RuleBasedOperationalPlanner:
                 untouched = health >= 1.0 - 1e-12
                 candidates.append((untouched, -potential, component.object_id, component))
 
-        selected: list[ObjectiveComponent] = []
-        projected_health = current_health
-        for _, negative_potential, _, component in sorted(candidates, key=lambda item: (item[0], item[1], item[2])):
-            selected.append(component)
-            projected_health -= -negative_potential
-            if projected_health <= target_health + 1e-12:
-                break
+        ordered_candidates = sorted(candidates, key=lambda item: (item[0], item[1], item[2]))
+        selected = [component for _, _, _, component in ordered_candidates]
+        projected_health = current_health - sum(
+            -negative_potential for _, negative_potential, _, _ in ordered_candidates
+        )
         if projected_health > target_health + 1e-12:
             raise ValueError(
                 "visible targetable components cannot satisfy required_damage; "
@@ -633,7 +631,7 @@ class RuleBasedOperationalPlanner:
                 picture_mission_time=picture.clock.mission_time if picture.clock else None,
                 rationale=(
                     f"Reduce weighted health of {objective.objective_id} from {current_health:.1%} "
-                    f"to at most {target_health:.1%}. Selected {len(selected)} known targetable component(s)."
+                    f"to at most {target_health:.1%}. Tasked all {len(selected)} known targetable component(s)."
                 ),
             ),
             metadata={
@@ -861,11 +859,32 @@ class RuleBasedOperationalPlanner:
 
 
 def _selected_cohort_ids(resolution: MissionResolution) -> tuple[str, ...]:
-    """Bind execution to the COHORT used for the selected time-to-effect estimate."""
+    """Return all qualified COHORTs for the selected mission type in score order."""
 
-    if resolution.selected_cohort_id is None:
-        return ()
-    return (resolution.selected_cohort_id,)
+    if resolution.fire_support is not None:
+        selected = resolution.fire_support
+        synchronized_fallbacks = {
+            item.cohort_id
+            for item in resolution.fire_support_candidates
+            if item.weapon_flag == selected.weapon_flag and not item.range_sync_required
+        }
+        synchronized_fallbacks.add(selected.cohort_id)
+        return tuple(
+            dict.fromkeys(
+                assignment.cohort_id
+                for assignment in resolution.assignments
+                if assignment.mission_type == resolution.selected.mission_type
+                and assignment.weapon_flag == selected.weapon_flag
+                and assignment.cohort_id in synchronized_fallbacks
+            )
+        )
+    return tuple(
+        dict.fromkeys(
+            assignment.cohort_id
+            for assignment in resolution.assignments
+            if assignment.mission_type == resolution.selected.mission_type
+        )
+    )
 
 
 __all__ = ["RuleBasedOperationalPlanner", "RuleBasedPlannerConfig"]

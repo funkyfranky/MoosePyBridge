@@ -71,7 +71,7 @@ class MissionResolution:
             "selected_cohort_id": self.selected_cohort_id,
             "mission_candidates": [candidate.mission_type for candidate in self.candidates],
             "selection_rationale": self.selected.rationale,
-            "selection_basis": "shortest_estimated_time_to_effect",
+            "selection_basis": "doctrinal_mission_then_weighted_cohort_score",
         }
         if self.fire_support is not None:
             metadata["fire_support"] = self.fire_support.to_dict()
@@ -95,6 +95,7 @@ class MissionResolution:
             metadata["estimated_time_to_effect_s"] = (
                 selected_assignment.estimated_time_to_effect_s if selected_assignment else None
             )
+            metadata["selection_score"] = selected_assignment.selection_score if selected_assignment else None
         return metadata
 
 
@@ -183,8 +184,42 @@ class MissionTimingAssumptions:
 
 
 @dataclass(slots=True, frozen=True)
+class MissionScoringAssumptions:
+    """Weights and stable normalization values for COHORT assignment scoring."""
+
+    mission_performance_weight: float = 0.50
+    skill_weight: float = 0.30
+    response_weight: float = 0.20
+    response_reference_time_s: float = 900.0
+    unknown_performance_score: float = 50.0
+    unknown_skill_score: float = 60.0
+    unknown_response_score: float = 50.0
+
+    def __post_init__(self) -> None:
+        weights = (
+            self.mission_performance_weight,
+            self.skill_weight,
+            self.response_weight,
+        )
+        if any(not math.isfinite(value) or value < 0 for value in weights):
+            raise ValueError("mission scoring weights must be finite and non-negative")
+        if not math.isclose(sum(weights), 1.0, abs_tol=1e-9):
+            raise ValueError("mission scoring weights must sum to 1.0")
+        if not math.isfinite(self.response_reference_time_s) or self.response_reference_time_s <= 0:
+            raise ValueError("response_reference_time_s must be finite and positive")
+        for name in (
+            "unknown_performance_score",
+            "unknown_skill_score",
+            "unknown_response_score",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value < 0 or value > 100:
+                raise ValueError(f"{name} must be between 0 and 100")
+
+
+@dataclass(slots=True, frozen=True)
 class MissionAssignment:
-    """One executable COHORT/AUFTRAG option with an estimated time to effect."""
+    """One executable COHORT/AUFTRAG option with transparent selection scores."""
 
     mission_type: str
     cohort_id: str
@@ -193,6 +228,12 @@ class MissionAssignment:
     transit_distance_m: float | None
     transit_speed_mps: float | None
     weapon_flag: DcsWeaponFlag | None = None
+    mission_performance: float | None = None
+    cohort_skill: str | float | None = None
+    performance_score: float = 0.0
+    skill_score: float = 0.0
+    response_score: float = 0.0
+    selection_score: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -204,6 +245,12 @@ class MissionAssignment:
             "transit_speed_mps": self.transit_speed_mps,
             "weapon_flag": self.weapon_flag.name if self.weapon_flag is not None else None,
             "weapon_flag_value": int(self.weapon_flag) if self.weapon_flag is not None else None,
+            "mission_performance": self.mission_performance,
+            "cohort_skill": self.cohort_skill,
+            "performance_score": self.performance_score,
+            "skill_score": self.skill_score,
+            "response_score": self.response_score,
+            "selection_score": self.selection_score,
         }
 
 
@@ -258,8 +305,13 @@ def _candidate(
 class StrategicMissionResolver:
     """Resolve a strategic effect and target object to one executable AUFTRAG type."""
 
-    def __init__(self, timing: MissionTimingAssumptions | None = None) -> None:
+    def __init__(
+        self,
+        timing: MissionTimingAssumptions | None = None,
+        scoring: MissionScoringAssumptions | None = None,
+    ) -> None:
         self.timing = timing or MissionTimingAssumptions()
+        self.scoring = scoring or MissionScoringAssumptions()
 
     def resolve(
         self,
@@ -487,16 +539,66 @@ class StrategicMissionResolver:
             for item in legions
             if item.x is not None and item.z is not None
         }
+        candidate_priority = {item.mission_type: index for index, item in enumerate(candidates)}
+        cohort_by_id = {item.object_id: item for item in cohorts}
+        fire_priority = {
+            (item.cohort_id, item.weapon_flag): index for index, item in enumerate(fire_support)
+        }
+
+        def build_assignment(
+            candidate: MissionCandidate,
+            cohort: Cohort,
+            eta: float | None,
+            preparation: float | None,
+            distance: float | None,
+            speed: float | None,
+            weapon_flag: DcsWeaponFlag | None = None,
+        ) -> MissionAssignment:
+            performance = cohort.mission_performance_for(candidate.mission_type)
+            performance_score = _bounded_score(
+                performance,
+                default=self.scoring.unknown_performance_score,
+            )
+            skill_score = _skill_score(cohort.skill, default=self.scoring.unknown_skill_score)
+            response_score = (
+                100.0 / (1.0 + eta / self.scoring.response_reference_time_s)
+                if eta is not None
+                else self.scoring.unknown_response_score
+            )
+            selection_score = (
+                self.scoring.mission_performance_weight * performance_score
+                + self.scoring.skill_weight * skill_score
+                + self.scoring.response_weight * response_score
+            )
+            return MissionAssignment(
+                mission_type=candidate.mission_type,
+                cohort_id=cohort.object_id,
+                estimated_time_to_effect_s=eta,
+                preparation_time_s=preparation,
+                transit_distance_m=distance,
+                transit_speed_mps=speed,
+                weapon_flag=weapon_flag,
+                mission_performance=performance,
+                cohort_skill=cohort.skill,
+                performance_score=performance_score,
+                skill_score=skill_score,
+                response_score=response_score,
+                selection_score=selection_score,
+            )
+
         assignments: list[MissionAssignment] = []
         for candidate in candidates:
             if candidate.mission_type == "ARTY":
                 for support in fire_support:
+                    cohort = cohort_by_id.get(support.cohort_id)
+                    if cohort is None:
+                        continue
                     preparation = self.timing.artillery_preparation_s
                     speed = self.timing.artillery_relocation_speed_mps
                     assignments.append(
-                        MissionAssignment(
-                            candidate.mission_type,
-                            support.cohort_id,
+                        build_assignment(
+                            candidate,
+                            cohort,
                             preparation + support.required_relocation_m / speed,
                             preparation,
                             support.required_relocation_m,
@@ -525,29 +627,17 @@ class StrategicMissionResolver:
                 speed, preparation = self._platform_timing(cohort)
                 eta = preparation + distance / speed if distance is not None else None
                 assignments.append(
-                    MissionAssignment(
-                        candidate.mission_type,
-                        cohort.object_id,
-                        eta,
-                        preparation,
-                        distance,
-                        speed,
-                    )
+                    build_assignment(candidate, cohort, eta, preparation, distance, speed)
                 )
-        candidate_priority = {item.mission_type: index for index, item in enumerate(candidates)}
-        cohort_by_id = {item.object_id: item for item in cohorts}
-        fire_priority = {
-            (item.cohort_id, item.weapon_flag): index for index, item in enumerate(fire_support)
-        }
         return tuple(
             sorted(
                 assignments,
                 key=lambda item: (
+                    candidate_priority[item.mission_type],
+                    -item.selection_score,
                     item.estimated_time_to_effect_s is None,
                     item.estimated_time_to_effect_s if item.estimated_time_to_effect_s is not None else math.inf,
-                    candidate_priority[item.mission_type],
                     fire_priority.get((item.cohort_id, item.weapon_flag), math.inf),
-                    -(cohort_by_id[item.cohort_id].mission_performance_for(item.mission_type) or 0.0),
                     item.cohort_id,
                 ),
             )
@@ -565,10 +655,13 @@ class StrategicMissionResolver:
         candidates: tuple[MissionCandidate, ...],
         assignments: tuple[MissionAssignment, ...],
     ) -> tuple[MissionCandidate, str | None, DcsWeaponFlag | None]:
-        if assignments:
-            assignment = assignments[0]
-            candidate = next(item for item in candidates if item.mission_type == assignment.mission_type)
-            return candidate, assignment.cohort_id, assignment.weapon_flag
+        for candidate in candidates:
+            assignment = next(
+                (item for item in assignments if item.mission_type == candidate.mission_type),
+                None,
+            )
+            if assignment is not None:
+                return candidate, assignment.cohort_id, assignment.weapon_flag
         return candidates[0], None, None
 
     @staticmethod
@@ -734,6 +827,46 @@ def _fire_support_rank(item: FireSupportAssignment) -> tuple[Any, ...]:
         item.cohort_id,
         int(item.weapon_flag),
     )
+
+
+def _bounded_score(value: float | int | None, *, default: float) -> float:
+    if value is None:
+        return default
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(score):
+        return default
+    return min(100.0, max(0.0, score))
+
+
+def _skill_score(value: str | float | None, *, default: float) -> float:
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        named_scores = {
+            "average": 40.0,
+            "good": 60.0,
+            "high": 80.0,
+            "excellent": 100.0,
+            "random": default,
+            "client": 100.0,
+            "player": 100.0,
+        }
+        if normalized in named_scores:
+            return named_scores[normalized]
+        try:
+            value = float(normalized)
+        except ValueError:
+            return default
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return default
+        if 0.0 <= numeric <= 1.0:
+            numeric *= 100.0
+        return min(100.0, max(0.0, numeric))
+    return default
 
 
 def _object_name(object_id: str) -> str:

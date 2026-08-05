@@ -28,6 +28,7 @@ from .pictures import GlobalPicture, PictureValidationIssue
 from .recon import ReconOutcome
 from .sensor_ranges import SensorRangeProfile
 from .strategic import GoalCondition, StrategicGoal
+from .strategic_feedback import StrategicFeedbackEvent
 from .weapon_ranges import WeaponRangeProfile
 
 if TYPE_CHECKING:
@@ -36,6 +37,41 @@ if TYPE_CHECKING:
 
 def _text(value: object, default: str = "-") -> str:
     return str(value) if value not in (None, "") else default
+
+
+def format_strategic_feedback(event: StrategicFeedbackEvent) -> str:
+    """Return one readable strategic feedback event."""
+
+    lines = [
+        f"{event.plan_id or event.goal_id or event.reference_id or 'STRATEGY'} {event.event}",
+        (
+            f"  source={event.source} mission_time={_text(event.mission_time)} "
+            f"coalition={_text(event.coalition)} goal={_text(event.goal_id)}"
+        ),
+    ]
+    if "feasible" in event.details:
+        lines.append(f"  feasible={event.details['feasible']} reason={_text(event.details.get('reason'))}")
+    allocations = event.details.get("allocations")
+    if isinstance(allocations, list) and allocations:
+        lines.append(
+            "  allocations: "
+            + ", ".join(
+                f"{item.get('requirement_id')}={item.get('cohort_id')} x{item.get('count')}"
+                for item in allocations
+                if isinstance(item, Mapping)
+            )
+        )
+    issues = event.details.get("issues")
+    if isinstance(issues, list) and issues:
+        lines.append(
+            "  issues: "
+            + ", ".join(
+                f"{item.get('severity')}:{item.get('code')}"
+                for item in issues
+                if isinstance(item, Mapping)
+            )
+        )
+    return "\n".join(lines)
 
 
 def format_recon_outcome(outcome: ReconOutcome) -> str:
@@ -294,6 +330,14 @@ def format_operational_plan_assessment(
         for intent in phase.intents
         for requirement in intent.asset_requirements
     }
+    selection_scores = {
+        (phase.phase_id, intent.intent_id, requirement.requirement_id): intent.metadata.get(
+            "selection_score"
+        )
+        for phase in plan.phases
+        for intent in phase.intents
+        for requirement in intent.asset_requirements
+    }
     mission_assignments = {
         (phase.phase_id, intent.intent_id, requirement.requirement_id): intent.metadata.get(
             "mission_assignments"
@@ -322,12 +366,17 @@ def format_operational_plan_assessment(
         )
         if isinstance(estimated_s, (int, float)):
             lines.append(f"      estimated_time_to_effect={float(estimated_s):.0f}s")
+        selected_score = selection_scores.get(
+            (requirement.phase_id, requirement.intent_id, requirement.requirement_id)
+        )
+        if isinstance(selected_score, (int, float)):
+            lines.append(f"      assignment_score={float(selected_score):.1f}")
         assignments = mission_assignments.get(
             (requirement.phase_id, requirement.intent_id, requirement.requirement_id)
         )
         if isinstance(assignments, list):
             options: list[str] = []
-            for assignment in assignments[:5]:
+            for index, assignment in enumerate(assignments[:5], start=1):
                 if not isinstance(assignment, Mapping):
                     continue
                 eta = assignment.get("estimated_time_to_effect_s")
@@ -335,11 +384,17 @@ def format_operational_plan_assessment(
                 weapon = assignment.get("weapon_flag")
                 weapon_text = f"/{weapon}" if weapon else ""
                 options.append(
-                    f"{assignment.get('mission_type') or '-'}:{assignment.get('cohort_id') or '-'}"
-                    f"{weapon_text}={eta_text}"
+                    f"      option {index}: {assignment.get('mission_type') or '-'}:"
+                    f"{assignment.get('cohort_id') or '-'}{weapon_text} "
+                    f"score={float(assignment.get('selection_score') or 0.0):.1f} "
+                    f"performance={float(assignment.get('performance_score') or 0.0):.1f} "
+                    f"skill={float(assignment.get('skill_score') or 0.0):.1f} "
+                    f"response={float(assignment.get('response_score') or 0.0):.1f} "
+                    f"eta={eta_text}"
                 )
             if options:
-                lines.append(f"      time_to_effect_options={', '.join(options)}")
+                lines.append("      assignment_options:")
+                lines.extend(options)
         support = fire_support.get((requirement.phase_id, requirement.intent_id, requirement.requirement_id))
         if isinstance(support, Mapping):
             distance = float(support.get("distance_m") or 0.0) / 1_000.0
@@ -842,4 +897,5 @@ __all__ = [
     "format_operational_plan_execution",
     "format_operational_plan_reconciliation",
     "format_strategic_goal",
+    "format_strategic_feedback",
 ]

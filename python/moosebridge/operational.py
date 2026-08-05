@@ -417,8 +417,12 @@ class OperationalPlanRegistry:
                         if _cohort_matches_requirement(cohort, requirement, mission_types)
                     ]
                     preferred = set(requirement.preferred_legion_ids)
+                    cohort_priority = {
+                        cohort_id: index for index, cohort_id in enumerate(requirement.allowed_cohort_ids)
+                    }
                     candidates.sort(
                         key=lambda cohort: (
+                            cohort_priority.get(cohort.object_id, len(cohort_priority)),
                             0 if cohort.legion_id in preferred else 1,
                             -max((cohort.mission_performance_for(mission) or 0 for mission in mission_types), default=0),
                             cohort.object_id,

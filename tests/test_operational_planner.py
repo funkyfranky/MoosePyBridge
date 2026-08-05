@@ -331,7 +331,7 @@ def test_rule_based_defend_proposal_requires_friendly_control() -> None:
         raise AssertionError("Planner should reject defense of an enemy-controlled objective")
 
 
-def test_rule_based_destroy_proposal_selects_weighted_static_components() -> None:
+def test_rule_based_destroy_proposal_tasks_every_targetable_static_component() -> None:
     bridge = MooseBridgeClient(MooseBridgeServer())
     objective = bridge.add_strategic_objective(
         StrategicObjective(
@@ -378,11 +378,106 @@ def test_rule_based_destroy_proposal_selects_weighted_static_components() -> Non
     assert [intent.target_object_id for intent in plan.phases[0].intents] == [
         "STATIC:Main",
         "STATIC:Reserve",
+        "STATIC:Shed",
     ]
     assert plan.metadata["required_damage"] == 0.7
     assert plan.metadata["current_health"] == 1.0
-    assert abs(plan.metadata["projected_health"] - 0.1) < 1e-12
+    assert abs(plan.metadata["projected_health"]) < 1e-12
     assert "at most 30.0%" in (plan.provenance.rationale or "")  # type: ignore[union-attr]
+    assert "Tasked all 3 known targetable component(s)" in (plan.provenance.rationale or "")  # type: ignore[union-attr]
+
+
+def test_destroy_plan_spreads_requirements_across_ranked_cohort_capacity() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Distributed Depot",
+            name="Distributed Depot",
+            kind=ObjectiveKind.DEPOT,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=tuple(
+                ObjectiveComponent(f"STATIC:Distributed {index}", weight=1 / 3)
+                for index in range(1, 4)
+            ),
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "statics",
+            "payload": {
+                "statics": [
+                    {"object_id": f"STATIC:Distributed {index}", "alive": True}
+                    for index in range(1, 4)
+                ]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {"legions": [{"object_id": "LEGION:Blue Wing", "coalition": "blue"}]},
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [
+                    {
+                        "object_id": "COHORT:Primary Strike",
+                        "legion_id": "LEGION:Blue Wing",
+                        "is_air": True,
+                        "available_asset_count": 2,
+                        "mission_types": ["BAI"],
+                        "mission_performance": {"BAI": 100},
+                        "skill": "Good",
+                        "payloads_by_mission": {"BAI": {"available_count": 2, "total_available": 2}},
+                    },
+                    {
+                        "object_id": "COHORT:Reserve Strike",
+                        "legion_id": "LEGION:Blue Wing",
+                        "is_air": True,
+                        "available_asset_count": 2,
+                        "mission_types": ["BAI"],
+                        "mission_performance": {"BAI": 80},
+                        "skill": "Good",
+                        "payloads_by_mission": {"BAI": {"available_count": 2, "total_available": 2}},
+                    },
+                ]
+            },
+        }
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Damage Distributed Depot",
+            name="Damage Distributed Depot",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id=objective.objective_id,
+            required_damage=0.7,
+        )
+    )
+
+    plan = bridge.propose_destroy_plan(goal, TacticalPicture(coalition="blue", intel_id="INTEL:Blue"))
+
+    expected_candidates = ("COHORT:Primary Strike", "COHORT:Reserve Strike")
+    assert all(
+        intent.asset_requirements[0].allowed_cohort_ids == expected_candidates
+        for intent in plan.phases[0].intents
+    )
+    bridge.add_operational_plan(plan)
+    assessment = bridge.validate_operational_plan(plan)
+    assert assessment.feasible is True
+    assert [item.allocations[0].cohort_id for item in assessment.requirements] == [
+        "COHORT:Primary Strike",
+        "COHORT:Primary Strike",
+        "COHORT:Reserve Strike",
+    ]
 
 
 def test_rule_based_destroy_proposal_requires_intel_for_moving_components() -> None:
@@ -613,15 +708,19 @@ def test_destroy_planner_binds_range_qualified_arty_cohort() -> None:
     assert requirement.allowed_cohort_ids == ("COHORT:Blue M109",)
     assert intent.metadata["fire_support"]["weapon_flag"] == "CONVENTIONAL_SHELL"
     assert intent.metadata["fire_support"]["ammunition_source"] == "cohort_template_assumed_full"
-    assert intent.metadata["selection_basis"] == "shortest_estimated_time_to_effect"
+    assert intent.metadata["selection_basis"] == "doctrinal_mission_then_weighted_cohort_score"
     assert intent.metadata["estimated_time_to_effect_s"] == 120.0
+    assert intent.metadata["selection_score"] > 0
     bridge.add_operational_plan(plan)
     rendered = format_operational_plan_assessment(plan, bridge.validate_operational_plan(plan))
     assert "fire_support=COHORT:Blue M109 flag=CONVENTIONAL_SHELL" in rendered
     assert "distance=10.0km weapon_range=0.0-22.0km mission_range=42.0km" in rendered
     assert "moose_configured=0.0-22.0km sync=current relocation=0.0km" in rendered
     assert "estimated_time_to_effect=120s" in rendered
-    assert "time_to_effect_options=ARTY:COHORT:Blue M109/CONVENTIONAL_SHELL=120s" in rendered
+    assert "assignment_score=" in rendered
+    assert "option 1: ARTY:COHORT:Blue M109/CONVENTIONAL_SHELL" in rendered
+    assert "performance=50.0 skill=60.0" in rendered
+    assert "eta=120s" in rendered
     assert "ammo=cohort_template_assumed_full" in rendered
 
 

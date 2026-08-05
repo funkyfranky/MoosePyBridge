@@ -22,6 +22,8 @@ def _cohort(
     z: float | None = None,
     legion_id: str = "LEGION:Test",
     engage_range_m: float = 20_000,
+    mission_performance: float | None = None,
+    skill: str | float | None = None,
 ) -> Cohort:
     category_key = category.lower()
     payloads = (
@@ -52,6 +54,10 @@ def _cohort(
             "available_asset_count": 2,
             "opsgroup_ids": ["OPSGROUP:M109-1"] if unit_type == "M-109" else [],
             "mission_types": [mission_type],
+            "mission_performance": (
+                {mission_type: mission_performance} if mission_performance is not None else {}
+            ),
+            "skill": skill,
             "is_air": category_key == "air",
             "is_ground": category_key == "ground",
             "is_naval": category_key == "naval",
@@ -367,7 +373,7 @@ def test_fire_support_prefers_observed_ammunition_when_movement_is_equal() -> No
     assert resolution.fire_support.current_rounds == 12
 
 
-def test_shortest_time_to_effect_selects_arty_over_distant_aircraft() -> None:
+def test_doctrinal_mission_priority_selects_bai_over_faster_arty() -> None:
     mlrs = _cohort(
         "COHORT:MLRS",
         "ARTY",
@@ -392,11 +398,12 @@ def test_shortest_time_to_effect_selects_arty_over_distant_aircraft() -> None:
         cohorts=(aircraft, mlrs),
     )
 
-    assert resolution.selected.mission_type == "ARTY"
-    assert resolution.selected_cohort_id == "COHORT:MLRS"
-    assert resolution.assignments[0].estimated_time_to_effect_s == 120.0
-    assert resolution.assignments[1].mission_type == "BAI"
-    assert resolution.assignments[1].estimated_time_to_effect_s == 950.0
+    assert resolution.selected.mission_type == "BAI"
+    assert resolution.selected_cohort_id == "COHORT:Aircraft"
+    assert resolution.assignments[0].mission_type == "BAI"
+    assert resolution.assignments[0].estimated_time_to_effect_s == 950.0
+    assert resolution.assignments[1].mission_type == "ARTY"
+    assert resolution.assignments[1].estimated_time_to_effect_s == 120.0
 
 
 def test_shortest_time_to_effect_selects_near_aircraft_over_relocating_arty() -> None:
@@ -430,6 +437,67 @@ def test_shortest_time_to_effect_selects_near_aircraft_over_relocating_arty() ->
     assert resolution.assignments[1].mission_type == "ARTY"
     assert resolution.assignments[1].estimated_time_to_effect_s is not None
     assert resolution.assignments[1].estimated_time_to_effect_s > 1_000
+
+
+def test_assignment_score_can_prefer_effective_skilled_distant_cohort() -> None:
+    near = _cohort(
+        "COHORT:Near",
+        "BAI",
+        "air",
+        payload=True,
+        x=20_000,
+        z=0,
+        mission_performance=40,
+        skill="Average",
+    )
+    distant = _cohort(
+        "COHORT:Distant",
+        "BAI",
+        "air",
+        payload=True,
+        x=-100_000,
+        z=0,
+        mission_performance=90,
+        skill="Excellent",
+    )
+
+    resolution = StrategicMissionResolver().resolve(
+        "GROUP:Armor",
+        target_data={"category": "Ground Unit", "x": 30_000, "z": 0},
+        cohorts=(near, distant),
+    )
+
+    assert resolution.selected_cohort_id == "COHORT:Distant"
+    assert resolution.assignments[0].selection_score > resolution.assignments[1].selection_score
+    assert resolution.assignments[0].performance_score == 90
+    assert resolution.assignments[0].skill_score == 100
+    assert resolution.assignments[0].estimated_time_to_effect_s == 950
+    assert resolution.to_metadata()["selection_basis"] == "doctrinal_mission_then_weighted_cohort_score"
+
+
+def test_assignment_score_exposes_numeric_skill_and_response_components() -> None:
+    cohort = _cohort(
+        "COHORT:Strike",
+        "BAI",
+        "air",
+        payload=True,
+        x=0,
+        z=0,
+        mission_performance=80,
+        skill=0.8,
+    )
+
+    resolution = StrategicMissionResolver().resolve(
+        "GROUP:Armor",
+        target_data={"category": "Ground Unit", "x": 20_000, "z": 0},
+        cohorts=(cohort,),
+    )
+
+    assignment = resolution.assignments[0]
+    assert assignment.skill_score == 80
+    assert assignment.performance_score == 80
+    assert assignment.response_score > 0
+    assert resolution.to_metadata()["selection_score"] == assignment.selection_score
 
 
 def test_missing_positions_fall_back_to_doctrinal_candidate_order() -> None:

@@ -39,9 +39,9 @@ PLAN_ID_PREFIX = "PLAN:Blue damage Red Supply Depot"
 # Replace these ids with objects from the DCS mission. Weights describe each
 # component's share of the objective's total functional health.
 COMPONENTS = (
-    ObjectiveComponent("STATIC:Red Depot Alpha Main", role="main storage", weight=0.6),
+    ObjectiveComponent("STATIC:Red Depot Alpha Main", role="main storage", weight=0.5),
     ObjectiveComponent("STATIC:Red Depot Alpha Ammo", role="ammo storage", weight=0.3),
-    ObjectiveComponent("STATIC:Red Depot Alpha Fuel", role="fuel storage", weight=0.1),
+    ObjectiveComponent("STATIC:Red Depot Alpha Fuel", role="fuel storage", weight=0.2),
 )
 REQUIRED_DAMAGE = 0.7
 MAX_STRIKE_ROUNDS = 3

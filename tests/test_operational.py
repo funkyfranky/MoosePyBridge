@@ -25,6 +25,7 @@ from moosebridge import (
     PlanProposalIssue,
     PlanMissionExecution,
     PlanMissionStatus,
+    PlanExecutionEvent,
     PlanReconciliationStatus,
     PlanSourceType,
     ReconRequirement,
@@ -67,6 +68,28 @@ def _bridge_with_goal(server: Any | None = None) -> MooseBridgeClient:
         )
     )
     return bridge
+
+
+def test_plan_execution_event_formats_mission_type_without_duplicate_status() -> None:
+    event = PlanExecutionEvent(
+        event="mission.status",
+        plan_id="PLAN:Strike",
+        auftrag_id="AUFTRAG:1",
+        status="running",
+        message="AUFTRAG:1 Queued status=queued planned->queued",
+        mission_type="BAI",
+    )
+
+    assert str(event) == "AUFTRAG:1 type=BAI Queued status=queued planned->queued"
+    assert str(event).count("status=") == 1
+
+    execution = OperationalPlanExecution(
+        plan_id="PLAN:Strike",
+        commander_id="COMMANDER:Blue",
+        events=[event],
+    )
+    restored = execution_from_dict(execution_to_dict(execution))
+    assert restored.events[0].mission_type == "BAI"
 
 
 def _apply_force_state(

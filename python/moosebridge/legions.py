@@ -261,6 +261,7 @@ class Cohort:
     mission_type_keys: list[str] = field(default_factory=list)
     mission_performance: dict[str, float] = field(default_factory=dict)
     mission_performance_keys: dict[str, float] = field(default_factory=dict)
+    skill: str | float | None = None
     payloads_by_mission: dict[str, Any] = field(default_factory=dict)
     payloads_by_mission_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     engage_range_m: float | None = None
@@ -372,6 +373,7 @@ class Cohort:
             mission_type_keys=_mission_type_keys(mission_types),
             mission_performance=mission_performance,
             mission_performance_keys=_mission_performance_keys(mission_performance),
+            skill=payload.get("skill") if isinstance(payload.get("skill"), (str, int, float)) else None,
             payloads_by_mission=payloads_by_mission,
             payloads_by_mission_keys=_payloads_by_mission_keys(payloads_by_mission),
             engage_range_m=_optional_float(payload.get("engage_range_m")),

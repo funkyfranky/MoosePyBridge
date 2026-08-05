@@ -595,6 +595,7 @@ def _event_to_dict(event: PlanExecutionEvent) -> dict[str, Any]:
         "mission_time": event.mission_time,
         "message": event.message,
         "attempt_id": event.attempt_id,
+        "mission_type": event.mission_type,
     }
 
 
@@ -610,6 +611,7 @@ def _event_from_dict(data: Mapping[str, Any]) -> PlanExecutionEvent:
         mission_time=_float(data.get("mission_time")),
         message=_text(data.get("message")),
         attempt_id=_text(data.get("attempt_id")),
+        mission_type=_text(data.get("mission_type")),
     )
 
 
