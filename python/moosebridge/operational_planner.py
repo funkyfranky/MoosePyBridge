@@ -21,7 +21,16 @@ from .operational import (
 )
 from .pictures import TacticalPicture
 from .recon import derive_recon_requirement
-from .strategic import ObjectiveComponent, StrategicGoal, StrategicGoalAction, StrategicGoalStatus, StrategicObjective
+from .mission_resolver import MissionResolution
+from .strategic import (
+    ObjectiveComponent,
+    ObjectiveKind,
+    StrategicGoal,
+    StrategicGoalAction,
+    StrategicGoalEffect,
+    StrategicGoalStatus,
+    StrategicObjective,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -73,6 +82,7 @@ class RuleBasedOperationalPlanner:
         objective: StrategicObjective,
         picture: TacticalPicture,
         *,
+        target_resolutions: Mapping[str, MissionResolution] | None = None,
         plan_id: str | None = None,
         name: str | None = None,
     ) -> OperationalPlan:
@@ -144,6 +154,10 @@ class RuleBasedOperationalPlanner:
         if defender is not None:
             target_id = defender.target_object_id
             assert target_id is not None
+            resolution = (target_resolutions or {}).get(target_id)
+            if resolution is None:
+                raise ValueError(f"mission resolution is unavailable for {target_id}")
+            assignment = resolution.selected
             phases.append(
                 PlanPhase(
                     phase_id="isolate",
@@ -153,18 +167,18 @@ class RuleBasedOperationalPlanner:
                         MissionIntent(
                             intent_id="interdict-defenders",
                             name="Interdict detected defenders",
-                            auftrag_types=("BAI",),
+                            auftrag_types=(assignment.mission_type,),
                             target_object_id=target_id,
                             asset_requirements=(
                                 AssetRequirement(
                                     requirement_id="REQ:Strike",
-                                    role=AssetRole.COMBAT,
-                                    mission_types=("BAI",),
-                                    performer_categories=("AIR",),
-                                    require_payload=True,
+                                    role=assignment.role,
+                                    mission_types=(assignment.mission_type,),
+                                    performer_categories=assignment.performer_categories,
+                                    require_payload=assignment.require_payload,
                                 ),
                             ),
-                            metadata={"intel_contact_id": defender.object_id},
+                            metadata={"intel_contact_id": defender.object_id, **resolution.to_metadata()},
                         ),
                     ),
                 )
@@ -289,6 +303,7 @@ class RuleBasedOperationalPlanner:
         objective: StrategicObjective,
         picture: TacticalPicture,
         *,
+        target_resolutions: Mapping[str, MissionResolution] | None = None,
         plan_id: str | None = None,
         name: str | None = None,
     ) -> OperationalPlan:
@@ -314,22 +329,26 @@ class RuleBasedOperationalPlanner:
         intents: list[MissionIntent] = []
         if attacker is not None:
             assert attacker.target_object_id is not None
+            resolution = (target_resolutions or {}).get(attacker.target_object_id)
+            if resolution is None:
+                raise ValueError(f"mission resolution is unavailable for {attacker.target_object_id}")
+            assignment = resolution.selected
             intents.append(
                 MissionIntent(
                     intent_id="counterattack-visible-threat",
                     name="Interdict the strongest visible ground threat",
-                    auftrag_types=("BAI",),
+                    auftrag_types=(assignment.mission_type,),
                     target_object_id=attacker.target_object_id,
                     asset_requirements=(
                         AssetRequirement(
                             requirement_id="REQ:Counterattack",
-                            role=AssetRole.COMBAT,
-                            mission_types=("BAI",),
-                            performer_categories=("AIR",),
-                            require_payload=True,
+                            role=assignment.role,
+                            mission_types=(assignment.mission_type,),
+                            performer_categories=assignment.performer_categories,
+                            require_payload=assignment.require_payload,
                         ),
                     ),
-                    metadata={"intel_contact_id": attacker.object_id},
+                    metadata={"intel_contact_id": attacker.object_id, **resolution.to_metadata()},
                 )
             )
         intents.extend(
@@ -415,6 +434,77 @@ class RuleBasedOperationalPlanner:
             },
         )
 
+    def propose_disable(
+        self,
+        goal: StrategicGoal,
+        objective: StrategicObjective,
+        picture: TacticalPicture,
+        *,
+        mission_resolution: MissionResolution,
+        plan_id: str | None = None,
+        name: str | None = None,
+    ) -> OperationalPlan:
+        """Return a runway-denial draft for an AIRBASE airdrome."""
+
+        if goal.action is not StrategicGoalAction.DISABLE:
+            raise ValueError("propose_disable requires a DISABLE goal")
+        if goal.effect is not StrategicGoalEffect.DENY_RUNWAY:
+            raise ValueError("only deny_runway DISABLE planning is currently supported")
+        if goal.status in {StrategicGoalStatus.ACHIEVED, StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
+            raise ValueError(f"cannot propose a plan for goal in state {goal.status.value}")
+        if goal.objective_id != objective.objective_id:
+            raise ValueError("goal and strategic objective do not match")
+        if picture.coalition.lower() != goal.coalition:
+            raise ValueError("tactical picture coalition does not match the strategic goal")
+        if objective.kind is not ObjectiveKind.AIRBASE:
+            raise ValueError("deny_runway requires an AIRBASE strategic objective")
+        if not objective.control_object_id or not objective.control_object_id.startswith("AIRBASE:"):
+            raise ValueError("deny_runway requires an AIRBASE control object")
+        if mission_resolution.target_object_id != objective.control_object_id:
+            raise ValueError("runway-denial mission resolution does not match the objective target")
+        if mission_resolution.selected.mission_type != "BOMBRUNWAY":
+            raise ValueError("deny_runway requires a BOMBRUNWAY mission resolution")
+        if objective.owner == goal.coalition:
+            raise ValueError("DISABLE planner refuses to target a friendly-owned airbase")
+
+        target = objective.control_object_id
+        selected = mission_resolution.selected
+        intent = MissionIntent(
+            intent_id="deny-runway",
+            name=f"Deny runway at {target}",
+            auftrag_types=(selected.mission_type,),
+            target_object_id=target,
+            asset_requirements=(
+                AssetRequirement(
+                    requirement_id="REQ:Runway strike",
+                    role=selected.role,
+                    mission_types=(selected.mission_type,),
+                    performer_categories=selected.performer_categories,
+                    require_payload=selected.require_payload,
+                ),
+            ),
+            metadata=mission_resolution.to_metadata(),
+        )
+        proposal_id = plan_id or f"PLAN:{goal.goal_id.removeprefix('GOAL:')}"
+        return OperationalPlan(
+            plan_id=proposal_id,
+            name=name or f"Deny runway at {objective.name}",
+            goal_id=goal.goal_id,
+            coalition=goal.coalition,
+            phases=(PlanPhase(phase_id="strike", name="Deny runway", intents=(intent,)),),
+            posture=OperationalPosture.BALANCED,
+            provenance=OperationalPlanProvenance(
+                source_type=PlanSourceType.RULE_ENGINE,
+                source_id=self.config.source_id,
+                picture_mission_time=picture.clock.mission_time if picture.clock else None,
+                rationale=(
+                    f"Deny use of {target} with BOMBRUNWAY. Goal success requires a successful "
+                    "MOOSE AUFTRAG against the AIRBASE airdrome object."
+                ),
+            ),
+            metadata={"planner": self.config.source_id, "effect": goal.effect.value},
+        )
+
     def propose_destroy(
         self,
         goal: StrategicGoal,
@@ -422,6 +512,7 @@ class RuleBasedOperationalPlanner:
         picture: TacticalPicture,
         component_health_by_id: Mapping[str, float | None],
         *,
+        mission_resolutions: Mapping[str, MissionResolution] | None = None,
         plan_id: str | None = None,
         name: str | None = None,
     ) -> OperationalPlan:
@@ -468,7 +559,7 @@ class RuleBasedOperationalPlanner:
             targetable = prefix == "STATIC"
             if prefix in {"GROUP", "UNIT"}:
                 contact = contacts_by_target.get(component.object_id)
-                if contact is not None and (contact.is_ground or contact.is_static):
+                if contact is not None:
                     assessment = assess_intel_contact(
                         contact,
                         mission_time,
@@ -494,36 +585,43 @@ class RuleBasedOperationalPlanner:
                 f"projected_damage={1.0 - projected_health:.1%} required={required_damage:.1%}"
             )
 
-        intents = tuple(
-            MissionIntent(
-                intent_id=f"destroy-component-{index}",
-                name=f"Destroy {component.object_id}",
-                auftrag_types=("BAI",),
-                target_object_id=component.object_id,
-                asset_requirements=(
-                    AssetRequirement(
-                        requirement_id=f"REQ:Strike {index}",
-                        role=AssetRole.COMBAT,
-                        mission_types=("BAI",),
-                        performer_categories=("AIR",),
-                        require_payload=True,
+        resolutions = mission_resolutions or {}
+        intents: list[MissionIntent] = []
+        for index, component in enumerate(selected, start=1):
+            resolution = resolutions.get(component.object_id)
+            if resolution is None:
+                raise ValueError(f"mission resolution is unavailable for {component.object_id}")
+            assignment = resolution.selected
+            intents.append(
+                MissionIntent(
+                    intent_id=f"destroy-component-{index}",
+                    name=f"Destroy {component.object_id}",
+                    auftrag_types=(assignment.mission_type,),
+                    target_object_id=component.object_id,
+                    asset_requirements=(
+                        AssetRequirement(
+                            requirement_id=f"REQ:Strike {index}",
+                            role=assignment.role,
+                            mission_types=(assignment.mission_type,),
+                            performer_categories=assignment.performer_categories,
+                            require_payload=assignment.require_payload,
+                        ),
                     ),
-                ),
-                metadata={
-                    "objective_component_role": component.role,
-                    "objective_component_weight": component.weight,
-                    "objective_component_health": component_health_by_id[component.object_id],
-                },
+                    metadata={
+                        "objective_component_role": component.role,
+                        "objective_component_weight": component.weight,
+                        "objective_component_health": component_health_by_id[component.object_id],
+                        **resolution.to_metadata(),
+                    },
+                )
             )
-            for index, component in enumerate(selected, start=1)
-        )
         proposal_id = plan_id or f"PLAN:{goal.goal_id.removeprefix('GOAL:')}"
         return OperationalPlan(
             plan_id=proposal_id,
             name=name or f"Damage {objective.name} by {required_damage:.0%}",
             goal_id=goal.goal_id,
             coalition=goal.coalition,
-            phases=(PlanPhase(phase_id="strike", name="Strike objective components", intents=intents),),
+            phases=(PlanPhase(phase_id="strike", name="Strike objective components", intents=tuple(intents)),),
             posture=OperationalPosture.BALANCED,
             provenance=OperationalPlanProvenance(
                 source_type=PlanSourceType.RULE_ENGINE,

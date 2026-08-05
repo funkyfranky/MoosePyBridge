@@ -28,6 +28,7 @@ from moosebridge import (
     ReconRequirement,
     StrategicGoal,
     StrategicGoalAction,
+    StrategicGoalEffect,
     StrategicGoalStatus,
     StrategicObjective,
     format_operational_plan_assessment,
@@ -39,6 +40,7 @@ from moosebridge.control import ControlClientIdentity
 from moosebridge.protocol import BridgeCommand
 from moosebridge.operational_execution import build_plan_auftrag
 from moosebridge.operational_audit import execution_from_dict, execution_to_dict
+from moosebridge.pictures import TacticalPicture
 from moosebridge.state import MooseBridgeState
 
 
@@ -336,6 +338,7 @@ def test_operational_diagnostics_show_phase_allocations_and_shortfalls() -> None
 
     assert "PLAN:Diagnostic goal=GOAL:Capture Town" in rendered
     assert "phase shape: Shape the battlespace" in rendered
+    assert "mission=BAI" in rendered
     assert "required=1 available=0 shortfall=1" in rendered
     assert "ERROR asset_shortfall REQ:isolate" in rendered
     assert "proposal_issues=1" in rendered
@@ -373,6 +376,42 @@ def test_operational_execution_builds_recon_auftrag() -> None:
         "randomly": False,
     }
     assert command.required_assets_min == 1
+
+
+def test_operational_execution_builds_resolved_object_attack_types() -> None:
+    cases = (
+        ("SEAD", "GROUP:SAM"),
+        ("ANTISHIP", "GROUP:Ship"),
+        ("INTERCEPT", "UNIT:Bandit"),
+        ("GROUNDATTACK", "GROUP:Armor"),
+        ("NAVALENGAGEMENT", "STATIC:Coastal Target"),
+        ("BOMBING", "STATIC:Depot"),
+    )
+    for mission_type, target in cases:
+        requirement = AssetRequirement(
+            f"REQ:{mission_type}",
+            AssetRole.COMBAT,
+            mission_types=(mission_type,),
+        )
+        intent = MissionIntent(
+            f"intent-{mission_type.lower()}",
+            mission_type,
+            (mission_type,),
+            (requirement,),
+            target_object_id=target,
+        )
+        plan = OperationalPlan(
+            f"PLAN:{mission_type}",
+            mission_type,
+            "GOAL:Capture Town",
+            "blue",
+            (PlanPhase("strike", "Strike", (intent,)),),
+        )
+
+        command = build_plan_auftrag(plan, intent, requirement)
+
+        assert command.mission_type == mission_type
+        assert command.to_params()["target"] == target
 
 
 class _ExecutionServer:
@@ -885,6 +924,75 @@ def _executable_destroy_plan(
     return bridge, plan
 
 
+def _executable_disable_plan(*, success: bool = True) -> tuple[MooseBridgeClient, OperationalPlan]:
+    server = _ExecutionServer(success=success, opszone_ids=())
+    bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Tutow",
+            name="Tutow Airbase",
+            kind=ObjectiveKind.AIRBASE,
+            control_object_id="AIRBASE:Tutow",
+            ownership_policy=OwnershipPolicy.DCS_MANAGED,
+            owner="red",
+        )
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Deny Tutow runway",
+            name="Deny Tutow runway",
+            coalition="blue",
+            action=StrategicGoalAction.DISABLE,
+            objective_id=objective.objective_id,
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "airbases",
+            "payload": {
+                "airbases": [{"object_id": "AIRBASE:Tutow", "category": "Airdrome", "coalition": "red"}]
+            },
+        }
+    )
+    for kind, payload in (
+        (
+            "commanders",
+            [{
+                "object_id": "COMMANDER:Blue Command",
+                "object_type": "COMMANDER",
+                "coalition": "blue",
+                "legion_ids": ["LEGION:Blue Wing"],
+            }],
+        ),
+        ("legions", [{"object_id": "LEGION:Blue Wing", "coalition": "blue"}]),
+        (
+            "cohorts",
+            [{
+                "object_id": "COHORT:Runway Strike",
+                "legion_id": "LEGION:Blue Wing",
+                "is_air": True,
+                "stock_asset_count": 2,
+                "available_asset_count": 2,
+                "mission_types": ["BOMBRUNWAY"],
+                "payloads_by_mission": {"BOMBRUNWAY": {"available_count": 1, "total_available": 2}},
+            }],
+        ),
+    ):
+        bridge.state.apply_message(
+            {"type": "snapshot", "kind": kind, "payload": {kind: payload}}
+        )
+    plan = bridge.propose_disable_plan(
+        goal,
+        TacticalPicture(coalition="blue", intel_id="INTEL:Blue"),
+        plan_id="PLAN:Deny Tutow runway",
+    )
+    bridge.add_operational_plan(plan)
+    bridge.validate_operational_plan(plan)
+    bridge.approve_operational_plan(plan)
+    return bridge, plan
+
+
 def _executable_capture_plan(
     *,
     success: bool = True,
@@ -991,6 +1099,42 @@ def _executable_capture_plan(
     bridge.validate_operational_plan(plan)
     bridge.approve_operational_plan(plan, approved_by=approved_by, reason=approval_reason)
     return bridge, plan
+
+
+def test_execute_disable_plan_confirms_runway_denial_from_successful_bombrunway() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_disable_plan()
+        observed: list[str] = []
+
+        execution = await bridge.execute_plan(plan, on_event=lambda event: observed.append(event.event))
+
+        goal = bridge.strategic_goal("GOAL:Deny Tutow runway")
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert goal is not None
+        assert goal.effect is StrategicGoalEffect.DENY_RUNWAY
+        assert goal.status is StrategicGoalStatus.ACHIEVED
+        assert execution.missions[0].status is PlanMissionStatus.SUCCEEDED
+        assert "strategic.effect_confirmed" in observed
+        command = bridge.server.commands[0]  # type: ignore[attr-defined]
+        assert command.action == "auftrag.create_bombrunway"
+        assert command.params["target"] == "AIRBASE:Tutow"
+
+    asyncio.run(scenario())
+
+
+def test_execute_disable_plan_blocks_when_bombrunway_fails() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_disable_plan(success=False)
+
+        execution = await bridge.execute_plan(plan)
+
+        goal = bridge.strategic_goal("GOAL:Deny Tutow runway")
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert goal is not None
+        assert goal.status is StrategicGoalStatus.ACTIVE
+        assert execution.missions[0].status is PlanMissionStatus.FAILED
+
+    asyncio.run(scenario())
 
 
 def test_execute_capture_plan_uses_commander_events_and_confirms_goal() -> None:

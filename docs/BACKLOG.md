@@ -12,8 +12,8 @@ Priorities:
 
 ## P1 - Decision and execution
 
-- [ ] **Broaden operational planning beyond CAPTURE, DEFEND, and DESTROY goals.** Generate
-  and execute plans for DISABLE, PROTECT, and INTERDICT while
+- [ ] **Broaden operational planning beyond CAPTURE, DEFEND, DESTROY, and runway denial.** Generate
+  and execute plans for remaining DISABLE effects, PROTECT, and INTERDICT while
   preserving the existing validation, approval, audit, and replanning path.
 - [ ] **Add strategic goal selection and prioritization.** Let Python compare
   possible goals using strategic value, current control, visible threats,
@@ -40,7 +40,8 @@ Priorities:
 
 - [ ] **Use ammunition and task-range profiles in operational decisions.** Move
   the existing weapon classification, DCS weapon flags, and min/max task ranges
-  from diagnostics into mission feasibility and asset ranking.
+  from diagnostics into mission feasibility and asset ranking. This is also
+  required before `ARTY` can participate in automatic mission assignment.
 - [ ] **Expand logistics planning.** Model ammunition supply, rearming, force
   sustainment, and transport as operational dependencies rather than only
   optional support missions. Fuel remains irrelevant for DCS ground and naval
@@ -72,6 +73,13 @@ Priorities:
 
 ## Recently completed
 
+- [x] A central `StrategicMissionResolver` maps strategic effects and DCS/MOOSE
+  target domains to prioritized AUFTRAG candidates. CAPTURE isolation, DEFEND
+  counterattacks, DESTROY strikes, and runway denial use the same assignment
+  path, with current COHORT support selecting the concrete mission type.
+- [x] AIRBASE `DISABLE` goals default to `deny_runway`; planning accepts only
+  MOOSE `Airdrome` objects and completion requires a successful object-targeted
+  `BOMBRUNWAY` AUFTRAG. Unverified BOMBING/ARTY fallbacks are intentionally absent.
 - [x] Weighted DESTROY goals, rule-based component selection, COMMANDER
   execution, component-state refresh, strategic confirmation, audit roundtrip,
   diagnostics, and a parameterless DCS example use the established plan path.

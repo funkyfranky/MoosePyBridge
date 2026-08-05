@@ -13,12 +13,19 @@ from typing import TYPE_CHECKING, Any
 from .auftraege import (
     Auftrag_AIRDEFENSE,
     Auftrag_AMMOSUPPLY,
+    Auftrag_ANTISHIP,
     Auftrag_BAI,
+    Auftrag_BOMBING,
+    Auftrag_BOMBRUNWAY,
     Auftrag_CAPTUREZONE,
     Auftrag_FUELSUPPLY,
+    Auftrag_GROUNDATTACK,
+    Auftrag_INTERCEPT,
+    Auftrag_NAVALENGAGEMENT,
     Auftrag_PATROLZONE,
     Auftrag_RECON,
     Auftrag_REARMING,
+    Auftrag_SEAD,
     AuftragCommand,
     AuftragEvent,
 )
@@ -39,7 +46,14 @@ from .recon import (
     ReconTrackingSession,
     build_recon_outcome,
 )
-from .strategic import StrategicGoal, StrategicGoalAction, StrategicGoalStatus, StrategicObjective, component_health
+from .strategic import (
+    StrategicGoal,
+    StrategicGoalAction,
+    StrategicGoalEffect,
+    StrategicGoalStatus,
+    StrategicObjective,
+    component_health,
+)
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -697,8 +711,11 @@ class OperationalPlanExecutor:
             StrategicGoalAction.CAPTURE,
             StrategicGoalAction.DEFEND,
             StrategicGoalAction.DESTROY,
+            StrategicGoalAction.DISABLE,
         }:
-            raise ValueError("operational execution currently supports CAPTURE, DEFEND, and DESTROY goals")
+            raise ValueError("operational execution currently supports CAPTURE, DEFEND, DESTROY, and DISABLE goals")
+        if goal.action is StrategicGoalAction.DISABLE and goal.effect is not StrategicGoalEffect.DENY_RUNWAY:
+            raise ValueError("operational execution currently supports only deny_runway DISABLE goals")
         assessment = self.client.plans.assessment(plan.plan_id)
         if assessment is None or not assessment.feasible:
             raise ValueError("operational plan requires a current feasible assessment")
@@ -989,6 +1006,24 @@ class OperationalPlanExecutor:
                     reason,
                     on_event,
                 )
+
+            if goal.action is StrategicGoalAction.DISABLE:
+                effect_error = await self._confirm_disable_effect(
+                    goal,
+                    plan,
+                    phase.phase_id,
+                    required_missions,
+                    execution,
+                    on_event,
+                )
+                if effect_error is not None:
+                    return await self._block(
+                        plan,
+                        phase,
+                    execution,
+                    effect_error,
+                    on_event,
+                    )
 
             if defend_status in {StrategicGoalStatus.ACHIEVED, StrategicGoalStatus.FAILED, StrategicGoalStatus.CANCELLED}:
                 cleanup_reason = (
@@ -1520,6 +1555,27 @@ class OperationalPlanExecutor:
         callback: PlanExecutionCallback | None,
     ) -> tuple[PlanReconciliationStatus, str | None]:
         current = self._current_execution_phase(plan, execution)
+        goal = self.client.strategic_goal(plan.goal_id)
+        if goal is None:
+            reason = f"strategic goal is unavailable after reconciliation: {plan.goal_id}"
+            await self._block(plan, current, execution, reason, callback)
+            return PlanReconciliationStatus.BLOCKED, reason
+        if goal.action is StrategicGoalAction.DISABLE:
+            effect_error = await self._confirm_disable_effect(
+                goal,
+                plan,
+                current.phase_id,
+                tuple(
+                    mission
+                    for mission in execution.missions
+                    if mission.phase_id == current.phase_id and mission.required
+                ),
+                execution,
+                callback,
+            )
+            if effect_error is not None:
+                await self._block(plan, current, execution, effect_error, callback)
+                return PlanReconciliationStatus.BLOCKED, effect_error
         current.status = PlanPhaseStatus.COMPLETED
         await self._emit(
             execution,
@@ -1540,11 +1596,6 @@ class OperationalPlanExecutor:
             await self._block(plan, next_phase, execution, reason, callback)
             return PlanReconciliationStatus.BLOCKED, reason
 
-        goal = self.client.strategic_goal(plan.goal_id)
-        if goal is None:
-            reason = f"strategic goal is unavailable after reconciliation: {plan.goal_id}"
-            await self._block(plan, None, execution, reason, callback)
-            return PlanReconciliationStatus.BLOCKED, reason
         await self._refresh_goal_control(goal.objective_id)
         self.client.sync_strategic_objectives(source="plan.reconciliation")
         self.client.sync_strategic_goals(source="plan.reconciliation")
@@ -1563,6 +1614,43 @@ class OperationalPlanExecutor:
             callback,
         )
         return PlanReconciliationStatus.COMPLETED, None
+
+    async def _confirm_disable_effect(
+        self,
+        goal: StrategicGoal,
+        plan: OperationalPlan,
+        phase_id: str,
+        required_missions: Iterable[PlanMissionExecution],
+        execution: OperationalPlanExecution,
+        callback: PlanExecutionCallback | None,
+    ) -> str | None:
+        """Confirm a supported manual DISABLE effect from authoritative mission outcomes."""
+
+        missions = tuple(required_missions)
+        if goal.effect is not StrategicGoalEffect.DENY_RUNWAY:
+            return "operational execution currently supports only deny_runway DISABLE goals"
+        if not missions or any(
+            mission.mission_type != "BOMBRUNWAY" or mission.status is not PlanMissionStatus.SUCCEEDED
+            for mission in missions
+        ):
+            return "deny_runway requires a successful BOMBRUNWAY AUFTRAG against an AIRBASE airdrome"
+        self.client.complete_strategic_goal(
+            goal,
+            achieved=True,
+            reason="successful BOMBRUNWAY AUFTRAG against AIRBASE airdrome",
+        )
+        await self._emit(
+            execution,
+            PlanExecutionEvent(
+                "strategic.effect_confirmed",
+                plan.plan_id,
+                phase_id=phase_id,
+                status=goal.status.value,
+                message="effect=deny_runway confirmed by successful BOMBRUNWAY AUFTRAG",
+            ),
+            callback,
+        )
+        return None
 
     @staticmethod
     def _current_execution_phase(plan: OperationalPlan, execution: OperationalPlanExecution) -> PlanPhase:
@@ -1807,6 +1895,37 @@ def build_plan_auftrag(
             raise ValueError(f"BAI intent {intent.intent_id} requires a GROUP, UNIT or STATIC target")
         params.setdefault("target", target)
         command = Auftrag_BAI(**params)
+    elif mission_type == "BOMBRUNWAY":
+        if not target or not target.startswith("AIRBASE:"):
+            raise ValueError(f"BOMBRUNWAY intent {intent.intent_id} requires an AIRBASE target")
+        params.setdefault("target", target)
+        command = Auftrag_BOMBRUNWAY(**params)
+    elif mission_type in {"SEAD", "ANTISHIP", "INTERCEPT"}:
+        if not target or not target.startswith(("GROUP:", "UNIT:")):
+            raise ValueError(f"{mission_type} intent {intent.intent_id} requires a GROUP or UNIT target")
+        params.setdefault("target", target)
+        factories = {
+            "SEAD": Auftrag_SEAD,
+            "ANTISHIP": Auftrag_ANTISHIP,
+            "INTERCEPT": Auftrag_INTERCEPT,
+        }
+        command = factories[mission_type](**params)
+    elif mission_type in {"GROUNDATTACK", "NAVALENGAGEMENT"}:
+        if not target or not target.startswith(("GROUP:", "UNIT:", "STATIC:")):
+            raise ValueError(
+                f"{mission_type} intent {intent.intent_id} requires a GROUP, UNIT or STATIC target"
+            )
+        params.setdefault("target", target)
+        factories = {
+            "GROUNDATTACK": Auftrag_GROUNDATTACK,
+            "NAVALENGAGEMENT": Auftrag_NAVALENGAGEMENT,
+        }
+        command = factories[mission_type](**params)
+    elif mission_type == "BOMBING":
+        if not target or not target.startswith(("GROUP:", "UNIT:", "STATIC:")):
+            raise ValueError(f"BOMBING intent {intent.intent_id} requires a GROUP, UNIT or STATIC target")
+        params.setdefault("target", target)
+        command = Auftrag_BOMBING(**params)
     elif mission_type == "PATROLZONE":
         if not target or not target.startswith(("ZONE:", "OPSZONE:")):
             raise ValueError(f"PATROLZONE intent {intent.intent_id} requires a ZONE or OPSZONE target")

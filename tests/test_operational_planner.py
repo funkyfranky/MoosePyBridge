@@ -10,6 +10,7 @@ from moosebridge import (
     PlanSourceType,
     StrategicGoal,
     StrategicGoalAction,
+    StrategicGoalEffect,
     StrategicObjective,
 )
 from moosebridge.clock import DcsTime
@@ -64,6 +65,7 @@ def _contact(
     threat: float,
     *,
     detected_time: float = 300.0,
+    attribute: str | None = None,
 ) -> IntelContact:
     return IntelContact.from_payload(
         {
@@ -74,6 +76,7 @@ def _contact(
             "z": z,
             "threat_level": threat,
             "detected_time": detected_time,
+            "attribute": attribute,
         }
     )
 
@@ -420,6 +423,174 @@ def test_rule_based_destroy_proposal_requires_intel_for_moving_components() -> N
         raise AssertionError("Moving objective components must require coalition INTEL")
 
 
+def test_destroy_planner_uses_resolver_and_current_cohort_capabilities() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:SAM",
+            name="SAM Site",
+            kind=ObjectiveKind.FORCE,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=(ObjectiveComponent("GROUP:SAM", weight=1.0),),
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "groups",
+            "payload": {
+                "groups": [{
+                    "object_id": "GROUP:SAM",
+                    "alive": True,
+                    "category": "Ground Unit",
+                    "attributes": ["SAM SR", "Air Defence"],
+                }]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {
+                "legions": [{
+                    "object_id": "LEGION:Wing",
+                    "coalition": "blue",
+                }]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [{
+                    "object_id": "COHORT:SEAD",
+                    "legion_id": "LEGION:Wing",
+                    "is_air": True,
+                    "available_asset_count": 2,
+                    "mission_types": ["SEAD"],
+                    "payloads_by_mission": {
+                        "SEAD": {"available_count": 1, "total_available": 2}
+                    },
+                }]
+            },
+        }
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Suppress SAM",
+            name="Suppress SAM",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id=objective.objective_id,
+            effect=StrategicGoalEffect.SUPPRESS_AIR_DEFENSE,
+        )
+    )
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        clock=DcsTime(mission_time=350),
+        contacts=[
+            _contact(
+                "INTELCONTACT:SAM",
+                "GROUP:SAM",
+                100_000,
+                200_000,
+                8,
+                attribute="SAM SR",
+            )
+        ],
+    )
+
+    plan = bridge.propose_destroy_plan(goal, picture)
+
+    intent = plan.phases[0].intents[0]
+    assert intent.auftrag_types == ("SEAD",)
+    assert intent.asset_requirements[0].role.value == "sead"
+    assert intent.metadata["target_domain"] == "ground"
+    assert intent.metadata["mission_candidates"] == ["SEAD", "BAI", "GROUNDATTACK"]
+    assert intent.metadata["selected_cohort_id"] == "COHORT:SEAD"
+
+
+def test_destroy_resolver_ignores_enemy_cohort_capabilities() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Depot Coalition Filter",
+            name="Depot Coalition Filter",
+            kind=ObjectiveKind.DEPOT,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=(ObjectiveComponent("STATIC:Coalition Filter Depot"),),
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "statics",
+            "payload": {"statics": [{"object_id": "STATIC:Coalition Filter Depot", "alive": True}]},
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {
+                "legions": [
+                    {"object_id": "LEGION:Blue Wing", "coalition": "blue"},
+                    {"object_id": "LEGION:Red Wing", "coalition": "red"},
+                ]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [
+                    {
+                        "object_id": "COHORT:Blue Bombers",
+                        "legion_id": "LEGION:Blue Wing",
+                        "is_air": True,
+                        "available_asset_count": 1,
+                        "mission_types": ["BOMBING"],
+                        "payloads_by_mission": {"BOMBING": {"available_count": 1, "total_available": 1}},
+                    },
+                    {
+                        "object_id": "COHORT:Red BAI",
+                        "legion_id": "LEGION:Red Wing",
+                        "is_air": True,
+                        "available_asset_count": 1,
+                        "mission_types": ["BAI"],
+                        "payloads_by_mission": {"BAI": {"available_count": 1, "total_available": 1}},
+                    },
+                ]
+            },
+        }
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Destroy Coalition Filter Depot",
+            name="Destroy Coalition Filter Depot",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id=objective.objective_id,
+        )
+    )
+
+    plan = bridge.propose_destroy_plan(goal, TacticalPicture(coalition="blue", intel_id="INTEL:Blue"))
+
+    intent = plan.phases[0].intents[0]
+    assert intent.auftrag_types == ("BOMBING",)
+    assert intent.metadata["selected_cohort_id"] == "COHORT:Blue Bombers"
+
+
 def test_destroy_replan_prefers_an_already_damaged_component() -> None:
     bridge = MooseBridgeClient(MooseBridgeServer())
     objective = bridge.add_strategic_objective(
@@ -476,3 +647,82 @@ def test_destroy_replan_prefers_an_already_damaged_component() -> None:
         "STATIC:Untouched",
     ]
     assert plan.phases[0].intents[0].metadata["objective_component_health"] == 0.5
+
+
+def test_rule_based_disable_proposal_uses_bombrunway_for_airdrome() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Tutow",
+            name="Tutow Airbase",
+            kind=ObjectiveKind.AIRBASE,
+            control_object_id="AIRBASE:Tutow",
+            ownership_policy=OwnershipPolicy.DCS_MANAGED,
+            owner="red",
+        )
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Deny Tutow runway",
+            name="Deny Tutow runway",
+            coalition="blue",
+            action=StrategicGoalAction.DISABLE,
+            objective_id=objective.objective_id,
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "airbases",
+            "payload": {
+                "airbases": [{"object_id": "AIRBASE:Tutow", "category": "Airdrome", "coalition": "red"}]
+            },
+        }
+    )
+
+    plan = bridge.propose_disable_plan(goal, TacticalPicture(coalition="blue", intel_id="INTEL:Blue"))
+
+    intent = plan.phases[0].intents[0]
+    requirement = intent.asset_requirements[0]
+    assert goal.effect is StrategicGoalEffect.DENY_RUNWAY
+    assert intent.auftrag_types == ("BOMBRUNWAY",)
+    assert intent.target_object_id == "AIRBASE:Tutow"
+    assert requirement.performer_categories == ("AIR",)
+    assert requirement.require_payload is True
+
+
+def test_rule_based_disable_proposal_rejects_helipad() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:FARP",
+            name="FARP",
+            kind=ObjectiveKind.AIRBASE,
+            control_object_id="AIRBASE:FARP",
+            ownership_policy=OwnershipPolicy.DCS_MANAGED,
+            owner="red",
+        )
+    )
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Deny FARP",
+            name="Deny FARP",
+            coalition="blue",
+            action=StrategicGoalAction.DISABLE,
+            objective_id=objective.objective_id,
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "airbases",
+            "payload": {"airbases": [{"object_id": "AIRBASE:FARP", "category": "Helipad"}]},
+        }
+    )
+
+    try:
+        bridge.propose_disable_plan(goal, TacticalPicture(coalition="blue", intel_id="INTEL:Blue"))
+    except ValueError as exc:
+        assert "Airdrome" in str(exc)
+    else:
+        raise AssertionError("BOMBRUNWAY planning must reject helipads")

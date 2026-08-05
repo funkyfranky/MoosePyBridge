@@ -217,6 +217,13 @@ from .operational_execution import (
 )
 from .operational_audit import RestoredOperationalPlan
 from .operational_planner import RuleBasedOperationalPlanner, RuleBasedPlannerConfig
+from .mission_resolver import (
+    MissionCandidate,
+    MissionResolution,
+    StrategicMissionResolver,
+    StrategicTargetDomain,
+    classify_strategic_target,
+)
 from .pictures import GlobalPicture, PictureValidationIssue, TacticalPicture
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
@@ -276,6 +283,7 @@ from .strategic import (
     OwnershipPolicy,
     StrategicGoal,
     StrategicGoalAction,
+    StrategicGoalEffect,
     StrategicGoalEvent,
     StrategicGoalRegistry,
     StrategicGoalStatus,
@@ -467,6 +475,8 @@ __all__ = [
     "MooseBridgeServer",
     "MooseBridgeState",
     "MissionIntent",
+    "MissionCandidate",
+    "MissionResolution",
     "MooseSnapshotObject",
     "MooseObjectIdentity",
     "NearestResult",
@@ -544,9 +554,12 @@ __all__ = [
     "StrategicObjectiveRegistry",
     "StrategicGoal",
     "StrategicGoalAction",
+    "StrategicGoalEffect",
     "StrategicGoalEvent",
     "StrategicGoalRegistry",
     "StrategicGoalStatus",
+    "StrategicMissionResolver",
+    "StrategicTargetDomain",
     "Territory",
     "TerritoryVertex",
     "TacticalIntent",
@@ -566,6 +579,7 @@ __all__ = [
     "WeaponRangeProfile",
     "WeaponRangeRegistry",
     "auftrag_action_suffix",
+    "classify_strategic_target",
     "auftrag_command_params_from_recommendation",
     "assess_intel_contact",
     "assess_recon_spatial_coverage",

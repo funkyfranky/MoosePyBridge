@@ -43,6 +43,7 @@ from .strategic import (
     OwnershipPolicy,
     StrategicGoal,
     StrategicGoalAction,
+    StrategicGoalEffect,
     StrategicGoalStatus,
     StrategicObjective,
 )
@@ -319,6 +320,7 @@ def goal_snapshot(goal: StrategicGoal) -> dict[str, Any]:
         "action": goal.action.value,
         "objective_id": goal.objective_id,
         "required_damage": goal.required_damage,
+        "effect": goal.effect.value if goal.effect else None,
         "priority": goal.priority,
         "status": goal.status.value,
         "evaluation_mode": goal.evaluation_mode.value,
@@ -343,6 +345,7 @@ def goal_from_snapshot(data: Mapping[str, Any]) -> StrategicGoal:
         action=StrategicGoalAction(data.get("action") or StrategicGoalAction.CAPTURE.value),
         objective_id=str(data.get("objective_id") or ""),
         required_damage=_float(data.get("required_damage")),
+        effect=StrategicGoalEffect(data["effect"]) if data.get("effect") else None,
         priority=float(data.get("priority") or 0.0),
         status=StrategicGoalStatus(data.get("status") or StrategicGoalStatus.PLANNED.value),
         evaluation_mode=GoalEvaluationMode(data.get("evaluation_mode") or GoalEvaluationMode.IMMEDIATE.value),

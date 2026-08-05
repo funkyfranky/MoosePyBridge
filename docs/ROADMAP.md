@@ -324,7 +324,8 @@ Current operational-planning baseline:
 - Same-phase requirements compete for finite COHORT stock; later phases may
   reuse surviving assets.
 - Feasible plans can be approved and explicitly executed through a coalition
-  COMMANDER. The event-driven executor covers CAPTURE, weighted DESTROY, and deadline-based DEFEND
+  COMMANDER. The event-driven executor covers CAPTURE, weighted DESTROY,
+  deadline-based DEFEND, and AIRBASE runway denial
   plans, automatic phase progression, parallel required AUFTRAG monitoring, optional support
   missions, one-shot target existence preflight, and blocked-state handoff
   without automatic retries.
@@ -359,11 +360,19 @@ Current operational-planning baseline:
   operator, rule engine, LLM, or imported source, including source id, tactical
   picture mission time, and rationale. Provenance is preserved through audit
   persistence and restore independently of the approving client.
-- A conservative rule-based planner creates unregistered CAPTURE, DEFEND, and
-  weighted DESTROY drafts from coalition-specific tactical pictures. It
+- A conservative rule-based planner creates unregistered CAPTURE, DEFEND,
+  weighted DESTROY, and AIRBASE `deny_runway` drafts from coalition-specific
+  tactical pictures. Runway denial accepts only MOOSE `Airdrome` objects and
+  is confirmed only by a successful object-targeted `BOMBRUNWAY` AUFTRAG. It
   uses visible INTEL contacts for optional isolation or counterattack and never
   reads global truth; registration, validation, approval, and execution remain
   explicit SDK steps.
+- `StrategicMissionResolver` centralizes effect and target-domain assignment for
+  CAPTURE isolation, DEFEND counterattacks, DESTROY component strikes, and
+  runway denial. It retains ordered alternatives but binds the draft to one
+  AUFTRAG supported by current COHORT state, so validation and execution use
+  the same mission type. Automatic artillery remains deferred until task-range,
+  weapon-flag, and ammunition checks participate in feasibility.
 - Weighted DESTROY goals select enough objective components to meet a configurable
   damage fraction. Static infrastructure is known by position; moving targets
   require current coalition INTEL. Execution refreshes component state at phase

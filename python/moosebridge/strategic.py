@@ -64,6 +64,18 @@ class StrategicGoalAction(str, Enum):
     INTERDICT = "interdict"
 
 
+class StrategicGoalEffect(str, Enum):
+    """Concrete effect requested from an operational plan."""
+
+    DENY_RUNWAY = "deny_runway"
+    DESTROY_OBJECT = "destroy_object"
+    DESTROY_INFRASTRUCTURE = "destroy_infrastructure"
+    SUPPRESS_AIR_DEFENSE = "suppress_air_defense"
+    DESTROY_SHIP = "destroy_ship"
+    DAMAGE_AREA = "damage_area"
+    ATTACK_MAP_OBJECT = "attack_map_object"
+
+
 class StrategicGoalStatus(str, Enum):
     """Lifecycle state of a coalition-owned strategic goal."""
 
@@ -294,6 +306,7 @@ class StrategicGoal:
     failure_reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     required_damage: float | None = None
+    effect: StrategicGoalEffect | None = None
 
     def __post_init__(self) -> None:
         self.goal_id = self.goal_id.strip()
@@ -301,6 +314,9 @@ class StrategicGoal:
         self.objective_id = self.objective_id.strip()
         self.coalition = normalize_coalition(self.coalition) or ""
         self.action = StrategicGoalAction(self.action)
+        self.effect = StrategicGoalEffect(self.effect) if self.effect is not None else None
+        if self.effect is StrategicGoalEffect.DENY_RUNWAY and self.action is not StrategicGoalAction.DISABLE:
+            raise ValueError("deny_runway effect requires a DISABLE goal")
         if self.action is StrategicGoalAction.DESTROY:
             self.required_damage = 1.0 if self.required_damage is None else float(self.required_damage)
             if not math.isfinite(self.required_damage) or not 0 <= self.required_damage <= 1:
@@ -308,14 +324,23 @@ class StrategicGoal:
         elif self.required_damage is not None:
             raise ValueError("required_damage is only valid for DESTROY goals")
         self.status = StrategicGoalStatus(self.status)
-        self.evaluation_mode = self.evaluation_mode or _default_goal_evaluation_mode(self.action)
+        if self.effect is StrategicGoalEffect.DENY_RUNWAY:
+            if self.evaluation_mode not in {None, GoalEvaluationMode.MANUAL, GoalEvaluationMode.MANUAL.value}:
+                raise ValueError("deny_runway effect requires manual evaluation")
+            self.evaluation_mode = GoalEvaluationMode.MANUAL
+        else:
+            self.evaluation_mode = self.evaluation_mode or _default_goal_evaluation_mode(self.action)
         self.evaluation_mode = GoalEvaluationMode(self.evaluation_mode)
         self.success_match = GoalConditionMatch(self.success_match)
         self.failure_match = GoalConditionMatch(self.failure_match)
-        self.success_conditions = tuple(self.success_conditions) or _default_success_conditions(
-            self.action,
-            self.coalition,
-            required_damage=self.required_damage,
+        self.success_conditions = (
+            ()
+            if self.effect is StrategicGoalEffect.DENY_RUNWAY
+            else tuple(self.success_conditions) or _default_success_conditions(
+                self.action,
+                self.coalition,
+                required_damage=self.required_damage,
+            )
         )
         self.failure_conditions = tuple(self.failure_conditions) or _default_failure_conditions(self.action, self.coalition)
         if not self.goal_id:
@@ -609,8 +634,13 @@ class StrategicGoalRegistry:
     def add(self, goal: StrategicGoal, *, replace: bool = False) -> StrategicGoal:
         """Add a goal after validating its referenced objective."""
 
-        if self.objectives.get(goal.objective_id) is None:
+        objective = self.objectives.get(goal.objective_id)
+        if objective is None:
             raise ValueError(f"Unknown strategic objective: {goal.objective_id}")
+        if goal.effect is None and goal.action is StrategicGoalAction.DISABLE and objective.kind is ObjectiveKind.AIRBASE:
+            goal.effect = StrategicGoalEffect.DENY_RUNWAY
+            goal.evaluation_mode = GoalEvaluationMode.MANUAL
+            goal.success_conditions = ()
         if goal.goal_id in self._goals and not replace:
             raise ValueError(f"Strategic goal already exists: {goal.goal_id}")
         self._goals[goal.goal_id] = goal

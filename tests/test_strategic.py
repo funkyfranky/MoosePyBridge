@@ -15,6 +15,7 @@ from moosebridge import (
     OwnershipPolicy,
     StrategicGoal,
     StrategicGoalAction,
+    StrategicGoalEffect,
     StrategicGoalStatus,
     StrategicObjective,
     StrategicObjectiveRegistry,
@@ -22,6 +23,49 @@ from moosebridge import (
     format_strategic_goal,
 )
 from moosebridge.state import MooseBridgeState
+
+
+def test_airbase_disable_defaults_to_manual_runway_denial() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Tutow",
+            name="Tutow",
+            kind=ObjectiveKind.AIRBASE,
+            control_object_id="AIRBASE:Tutow",
+            ownership_policy=OwnershipPolicy.DCS_MANAGED,
+        )
+    )
+
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Deny Tutow runway",
+            name="Deny Tutow runway",
+            coalition="blue",
+            action=StrategicGoalAction.DISABLE,
+            objective_id=objective.objective_id,
+        )
+    )
+
+    assert goal.effect is StrategicGoalEffect.DENY_RUNWAY
+    assert goal.evaluation_mode is GoalEvaluationMode.MANUAL
+    assert goal.success_conditions == ()
+
+
+def test_deny_runway_effect_requires_disable_action() -> None:
+    try:
+        StrategicGoal(
+            goal_id="GOAL:Invalid",
+            name="Invalid",
+            coalition="blue",
+            action=StrategicGoalAction.DESTROY,
+            objective_id="OBJECTIVE:Tutow",
+            effect=StrategicGoalEffect.DENY_RUNWAY,
+        )
+    except ValueError as exc:
+        assert "DISABLE" in str(exc)
+    else:
+        raise AssertionError("deny_runway must reject non-DISABLE goals")
 
 
 def test_dcs_managed_composite_objective_tracks_owner_and_weighted_health() -> None:

@@ -21,6 +21,7 @@ from moosebridge.strategic import (
     OwnershipPolicy,
     StrategicGoal,
     StrategicGoalAction,
+    StrategicGoalEffect,
     StrategicGoalStatus,
     StrategicObjective,
 )
@@ -119,3 +120,15 @@ def test_strategic_audit_snapshots_roundtrip_typed_fields() -> None:
     restored_destroy = goal_from_snapshot(goal_snapshot(destroy))
     assert restored_destroy.required_damage == 0.7
     assert restored_destroy.success_conditions == (GoalCondition.health_at_most(0.3),)
+
+    runway_denial = StrategicGoal(
+        goal_id="GOAL:Deny runway",
+        name="Deny runway",
+        coalition="blue",
+        action=StrategicGoalAction.DISABLE,
+        objective_id=objective.objective_id,
+        effect=StrategicGoalEffect.DENY_RUNWAY,
+    )
+    restored_runway_denial = goal_from_snapshot(goal_snapshot(runway_denial))
+    assert restored_runway_denial.effect is StrategicGoalEffect.DENY_RUNWAY
+    assert restored_runway_denial == runway_denial

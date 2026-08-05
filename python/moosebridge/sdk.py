@@ -32,6 +32,7 @@ from .intelligence import (
 )
 from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
+from .mission_resolver import StrategicMissionResolver
 from .outcomes import AuftragOutcome
 from .recon import (
     ReconArea,
@@ -77,6 +78,7 @@ from .strategic import (
     StrategicObjectiveRegistry,
     component_health,
     effective_component_health,
+    normalize_coalition,
 )
 from .weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY, RangeSource, WeaponRangeProfile, WeaponRangeRegistry
 
@@ -813,6 +815,7 @@ class MooseBridgeClient:
         plan_id: str | None = None,
         name: str | None = None,
         planner: RuleBasedOperationalPlanner | None = None,
+        mission_resolver: StrategicMissionResolver | None = None,
     ) -> OperationalPlan:
         """Create an unregistered rule-based CAPTURE draft from tactical state."""
 
@@ -822,10 +825,21 @@ class MooseBridgeClient:
         objective = self.strategic_objective(item.objective_id)
         if objective is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        resolver = mission_resolver or StrategicMissionResolver()
+        target_resolutions = {
+            contact.target_object_id: resolver.resolve(
+                contact.target_object_id,
+                target_data=self._strategic_target_data(contact.target_object_id, picture=picture),
+                cohorts=self._strategic_cohorts(item.coalition),
+            )
+            for contact in picture.contacts
+            if contact.target_object_id and (contact.is_ground or contact.is_static)
+        }
         return (planner or RuleBasedOperationalPlanner()).propose_capture(
             item,
             objective,
             picture,
+            target_resolutions=target_resolutions,
             plan_id=plan_id,
             name=name,
         )
@@ -838,6 +852,7 @@ class MooseBridgeClient:
         plan_id: str | None = None,
         name: str | None = None,
         planner: RuleBasedOperationalPlanner | None = None,
+        mission_resolver: StrategicMissionResolver | None = None,
     ) -> OperationalPlan:
         """Create an unregistered rule-based DEFEND draft from tactical state."""
 
@@ -847,10 +862,21 @@ class MooseBridgeClient:
         objective = self.strategic_objective(item.objective_id)
         if objective is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        resolver = mission_resolver or StrategicMissionResolver()
+        target_resolutions = {
+            contact.target_object_id: resolver.resolve(
+                contact.target_object_id,
+                target_data=self._strategic_target_data(contact.target_object_id, picture=picture),
+                cohorts=self._strategic_cohorts(item.coalition),
+            )
+            for contact in picture.contacts
+            if contact.target_object_id and (contact.is_ground or contact.is_static)
+        }
         return (planner or RuleBasedOperationalPlanner()).propose_defend(
             item,
             objective,
             picture,
+            target_resolutions=target_resolutions,
             plan_id=plan_id,
             name=name,
         )
@@ -863,6 +889,7 @@ class MooseBridgeClient:
         plan_id: str | None = None,
         name: str | None = None,
         planner: RuleBasedOperationalPlanner | None = None,
+        mission_resolver: StrategicMissionResolver | None = None,
     ) -> OperationalPlan:
         """Create an unregistered weighted DESTROY draft from tactical state."""
 
@@ -876,13 +903,121 @@ class MooseBridgeClient:
             component.object_id: effective_component_health(objective, component.object_id, self.state)
             for component in objective.components
         }
+        resolver = mission_resolver or StrategicMissionResolver()
+        resolutions = {
+            component.object_id: resolver.resolve(
+                component.object_id,
+                effect=item.effect,
+                target_data=self._strategic_target_data(component.object_id, picture=picture),
+                cohorts=self._strategic_cohorts(item.coalition),
+            )
+            for component in objective.components
+            if component.contributes_to_health and health_by_id.get(component.object_id) not in {None, 0.0}
+        }
         return (planner or RuleBasedOperationalPlanner()).propose_destroy(
             item,
             objective,
             picture,
             health_by_id,
+            mission_resolutions=resolutions,
             plan_id=plan_id,
             name=name,
+        )
+
+    def propose_disable_plan(
+        self,
+        goal: StrategicGoal | str,
+        picture: TacticalPicture,
+        *,
+        plan_id: str | None = None,
+        name: str | None = None,
+        planner: RuleBasedOperationalPlanner | None = None,
+        mission_resolver: StrategicMissionResolver | None = None,
+    ) -> OperationalPlan:
+        """Create an unregistered rule-based DISABLE draft from tactical state."""
+
+        item = goal if isinstance(goal, StrategicGoal) else self.strategic_goal(goal)
+        if item is None:
+            raise KeyError(f"Unknown strategic goal: {goal}")
+        objective = self.strategic_objective(item.objective_id)
+        if objective is None:
+            raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        control_id = objective.control_object_id
+        airbase = self.state.airbases.get(control_id or "")
+        if airbase is None:
+            raise ValueError(
+                f"AIRBASE snapshot is unavailable for {control_id or objective.objective_id}; "
+                "call snapshot_airbases() before proposing runway denial"
+            )
+        resolution = (mission_resolver or StrategicMissionResolver()).resolve(
+            control_id or "",
+            effect=item.effect,
+            target_data=airbase,
+            cohorts=self._strategic_cohorts(item.coalition),
+        )
+        return (planner or RuleBasedOperationalPlanner()).propose_disable(
+            item,
+            objective,
+            picture,
+            mission_resolution=resolution,
+            plan_id=plan_id,
+            name=name,
+        )
+
+    def _strategic_target_data(
+        self,
+        object_id: str,
+        *,
+        picture: TacticalPicture | None = None,
+    ) -> Mapping[str, Any] | None:
+        """Return raw mirrored data used for strategic target classification."""
+
+        prefix = object_id.partition(":")[0].upper()
+        collection_name = {
+            "GROUP": "groups",
+            "UNIT": "units",
+            "STATIC": "statics",
+            "AIRBASE": "airbases",
+        }.get(prefix)
+        contact = next(
+            (
+                item
+                for item in picture.contacts
+                if item.target_object_id == object_id
+            ),
+            None,
+        ) if picture is not None else None
+        value = getattr(self.state, collection_name).get(object_id) if collection_name else None
+        use_global_object_data = prefix not in {"GROUP", "UNIT"} or picture is None or contact is None
+        data = dict(value) if use_global_object_data and isinstance(value, Mapping) else {}
+        if contact is not None:
+            if not data.get("category"):
+                if contact.is_ship:
+                    data["category"] = "Ship"
+                elif contact.is_ground:
+                    data["category"] = "Ground Unit"
+                elif contact.is_static:
+                    data["category"] = "Static"
+                elif contact.category_name:
+                    data["category"] = contact.category_name
+                elif contact.contact_type:
+                    data["category"] = contact.contact_type
+            if contact.attribute and not data.get("attributes"):
+                data["attributes"] = [contact.attribute]
+        return data or None
+
+    def _strategic_cohorts(self, coalition: str) -> tuple[Cohort, ...]:
+        """Return COHORTs belonging to LEGIONs of one coalition."""
+
+        legion_ids = {
+            legion.object_id
+            for legion in self.state.legion_objects.values()
+            if normalize_coalition(legion.coalition or legion.coalition_name) == coalition
+        }
+        return tuple(
+            cohort
+            for cohort in self.state.cohort_objects.values()
+            if cohort.legion_id in legion_ids
         )
 
     def validate_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlanAssessment:

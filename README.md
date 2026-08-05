@@ -240,8 +240,10 @@ defend_parchim = bridge.add_strategic_goal(
 
 Supported actions are `CAPTURE`, `DEFEND`, `DESTROY`, `DISABLE`, `PROTECT`,
 and `INTERDICT`. Goals move through `planned`, `active`, `achieved`, `failed`,
-or `cancelled`. Capture, destruction and disablement complete immediately when
-their typed conditions match. Defense and protection are evaluated at their
+or `cancelled`. Capture and destruction complete when their typed conditions
+match. An AIRBASE `DISABLE` goal defaults to the concrete `deny_runway` effect;
+it is completed manually by the operational executor only after a successful
+MOOSE `BOMBRUNWAY` AUFTRAG against an `Airdrome`. Defense and protection are evaluated at their
 mission-time deadline; ownership changes and object losses can fail them
 earlier. Completed goals remain historical facts if the objective later changes
 again. A recapture therefore creates a new goal rather than reopening the old
@@ -275,7 +277,8 @@ if assessment.feasible:
 
 Approval still records a command decision only. `execute_plan()` is the
 separate, explicit execution step. The executor supports `CAPTURE`, weighted
-`DESTROY`, and deadline-based `DEFEND` goals and maps `BAI`, `PATROLZONE`, `RECON`, `CAPTUREZONE`, `AIRDEFENSE`,
+`DESTROY`, deadline-based `DEFEND`, and `deny_runway` DISABLE goals and maps
+`BAI`, `BOMBRUNWAY`, `PATROLZONE`, `RECON`, `CAPTUREZONE`, `AIRDEFENSE`,
 `AMMOSUPPLY`, `FUELSUPPLY`, and `REARMING` requirements to concrete AUFTRAGs.
 It submits all requirements in a phase before waiting for required outcomes,
 then advances automatically when their `auftrag.evaluated` events report
@@ -397,8 +400,8 @@ Supported source types are `operator`, `rule_engine`, `llm`, and `import`.
 Provenance remains optional for manually constructed legacy plans and survives
 the same audit/restore roundtrip as phases and approvals.
 
-The rule-based planner proposes conservative CAPTURE, DEFEND, and DESTROY drafts from a
-coalition-visible tactical picture:
+The rule-based planner proposes conservative CAPTURE, DEFEND, DESTROY, and
+AIRBASE runway-denial drafts from a coalition-visible tactical picture:
 
 ```python
 picture = await bridge.refresh_tactical_picture("blue", "INTEL:Blue Intel")
@@ -406,10 +409,35 @@ draft = bridge.propose_capture_plan("GOAL:Blue capture Town", picture)
 # A DEFEND goal must carry deadline_mission_time.
 defense = bridge.propose_defend_plan("GOAL:Blue defend Town", picture)
 destruction = bridge.propose_destroy_plan("GOAL:Blue damage Depot", picture)
+runway_denial = bridge.propose_disable_plan("GOAL:Blue deny Parchim runway", picture)
 
 bridge.add_operational_plan(draft)
 assessment = await bridge.refresh_and_validate_operational_plan(draft)
 ```
+
+`StrategicMissionResolver` is the single target/effect-to-AUFTRAG assignment
+point used by CAPTURE isolation, DEFEND counterattacks, DESTROY component
+strikes, and runway denial. It classifies mirrored `GROUP`, `UNIT`, `STATIC`,
+`AIRBASE`, and known scenery ids, builds an ordered candidate list, and selects
+the first candidate supported by a currently available COHORT. The selected
+mission, target domain, candidate order, rationale, and matching COHORT are
+stored in the mission intent metadata and shown in plan diagnostics.
+
+The conservative mappings currently include:
+
+- airborne `GROUP`/`UNIT` -> `INTERCEPT`
+- ordinary ground `GROUP`/`UNIT` -> `BAI`, then `GROUNDATTACK`
+- air-defense targets -> `SEAD`, then `BAI` or `GROUNDATTACK`
+- naval `GROUP`/`UNIT` -> `ANTISHIP`, then `NAVALENGAGEMENT`
+- `STATIC` infrastructure -> `BAI`, `BOMBING`, `GROUNDATTACK`, or `NAVALENGAGEMENT`
+- `AIRBASE` plus `deny_runway` -> `BOMBRUNWAY`
+- scenery/map objects plus `attack_map_object` -> `STRIKE`
+
+Artillery is intentionally not selected yet: a valid `ARTY` assignment also
+requires weapon flag, ammunition, and min/max range checks against the firing
+unit. A candidate with no currently matching COHORT remains in the draft as the
+preferred type so normal plan validation reports the asset shortfall rather
+than silently changing the requested effect.
 
 CAPTURE and DEFEND currently require an OPSZONE-controlled objective. CAPTURE can
 add a BAI isolation phase before ground seizure. DEFEND requires current
@@ -454,6 +482,14 @@ before untouched alternatives. The executor itself still performs no hidden
 retry: every follow-up is a distinct plan with its own validation, approval,
 execution, and audit trail. `examples/sdk/plan_destroy_goal.py` demonstrates up
 to three explicitly approved strike rounds through `MAX_STRIKE_ROUNDS`.
+
+Runway denial deliberately has narrower semantics. The objective must be backed
+by an `AIRBASE` snapshot whose MOOSE category is `Airdrome`; helipads and ships
+are rejected. The planner creates one payload-aware `BOMBRUNWAY` requirement,
+and the goal is achieved only when that exact MOOSE AUFTRAG reports success.
+No `BOMBING` or `ARTY` fallback currently claims runway denial because those
+constructors do not yet provide an agreed confirmation rule. See
+`examples/sdk/plan_deny_runway_goal.py` for a parameterless DCS example.
 
 The result stays `draft`: proposing never registers, validates, approves, or
 executes a plan. Enemy selection uses only `TacticalPicture` INTEL contacts,

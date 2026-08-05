@@ -246,6 +246,8 @@ def format_strategic_goal(goal: StrategicGoal) -> str:
     ]
     if goal.required_damage is not None:
         lines.append(f"  required_damage={goal.required_damage:.1%}")
+    if goal.effect is not None:
+        lines.append(f"  effect={goal.effect.value}")
     lines.extend((f"  success: {success}", f"  failure: {failure}"))
     return "\n".join(lines)
 
@@ -268,6 +270,15 @@ def format_operational_plan_assessment(
         ),
     ]
     phase_names = {phase.phase_id: phase.name for phase in plan.phases}
+    mission_types = {
+        (phase.phase_id, intent.intent_id, requirement.requirement_id): (
+            str(intent.metadata.get("selected_mission_type") or "")
+            or (requirement.mission_types[0] if requirement.mission_types else intent.auftrag_types[0])
+        )
+        for phase in plan.phases
+        for intent in phase.intents
+        for requirement in intent.asset_requirements
+    }
     current_phase: str | None = None
     for requirement in assessment.requirements:
         if requirement.phase_id != current_phase:
@@ -279,6 +290,7 @@ def format_operational_plan_assessment(
         ) or "-"
         lines.append(
             f"    {requirement.intent_id}/{requirement.requirement_id}: "
+            f"mission={mission_types.get((requirement.phase_id, requirement.intent_id, requirement.requirement_id), '-')} "
             f"required={requirement.required_count} available={requirement.available_count} "
             f"shortfall={requirement.shortfall} allocation=[{allocations}]"
         )
