@@ -341,14 +341,46 @@ function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
   return item
 end
 
+--- Forward the MOOSE OPSZONE Captured FSM event without replacing user logic.
+-- @param Ops.OpsZone#OPSZONE opszone OPSZONE instance.
+-- @param #string zone_name Registered zone name.
+-- @return #MOOSE_BRIDGE self
+function MOOSE_BRIDGE:_AttachOpsZoneEventForwarder(opszone, zone_name)
+  if type(opszone) ~= "table" or opszone.MooseBridgeCapturedEventRegistered then return self end
+  opszone.MooseBridgeCapturedEventRegistered = true
+  local bridge = self
+  local previous_captured = opszone.OnAfterCaptured
+  opszone.OnAfterCaptured = function(opszone_self, From, Event, To, Coalition)
+    if type(previous_captured) == "function" then
+      pcall(previous_captured, opszone_self, From, Event, To, Coalition)
+    end
+    local item = bridge:_BuildOpsZoneSnapshotItem(zone_name, opszone_self, "event")
+    if item and item.object_id then
+      bridge:SendEvent("opszone.owner_changed", {
+        opszone_id=item.object_id,
+        previous_coalition=item.owner_previous_name,
+        coalition=item.owner_current_name,
+        capturing_coalition=bridge:_CoalitionToName(Coalition),
+        fsm_event=Event,
+        from_state=From,
+        to_state=To,
+        opszone=item,
+      })
+    end
+  end
+  return self
+end
+
 function MOOSE_BRIDGE:BuildOpsZoneSnapshot()
   local result = {}; local seen = {}
   for name, opszone in pairs(self.RegisteredOpsZones or {}) do
+    self:_AttachOpsZoneEventForwarder(opszone, name)
     local ok, item = pcall(function() return self:_BuildOpsZoneSnapshotItem(name, opszone, "registered") end)
     if ok and item and item.object_id then result[#result + 1] = item; seen[item.object_id] = true end
   end
   if _DATABASE and type(_DATABASE.OPSZONES) == "table" then
     for name, opszone in pairs(_DATABASE.OPSZONES) do
+      self:_AttachOpsZoneEventForwarder(opszone, name)
       local ok, item = pcall(function() return self:_BuildOpsZoneSnapshotItem(name, opszone, "database.OPSZONES") end)
       if ok and item and item.object_id and not seen[item.object_id] then result[#result + 1] = item; seen[item.object_id] = true end
     end

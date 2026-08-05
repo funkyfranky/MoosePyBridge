@@ -39,6 +39,17 @@ button, input { font: inherit; letter-spacing: 0; }
 
 .brand { font-weight: 600; }
 .status-line { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); }
+.diplomacy-line { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted); }
+.relationship-state { padding: 3px 7px; border: 1px solid #9acbb3; border-radius: 4px; color: #176241; background: #e5f4ec; font-weight: 600; }
+.relationship-state[data-state="tense"] { color: #765817; background: #f7f0d8; border-color: #d5bd70; }
+.relationship-state[data-state="limited_conflict"] { color: #7a401d; background: #faeadf; border-color: #dba57e; }
+.relationship-state[data-state="war"] { color: #842e2e; background: #faeaea; border-color: #dfa2a2; }
+.relationship-state[data-state="ceasefire"] { color: #24526f; background: #e6f0f5; border-color: #9dbdce; }
+.escalation-score { font-variant-numeric: tabular-nums; }
+.pending-transition { color: #765817; font-weight: 600; }
+.doctrine { white-space: nowrap; }
+.doctrine.is-blue { color: #174f7d; }
+.doctrine.is-red { color: #842e2e; }
 .status-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: var(--green); }
 .status-dot.is-offline { background: var(--red); }
 .separator { width: 1px; height: 18px; background: var(--border); }
@@ -149,7 +160,8 @@ button, input { font: inherit; letter-spacing: 0; }
   .brand { width: calc(100% - 46px); }
   .topbar .icon-button { position: absolute; top: 7px; right: 8px; }
   .status-line { width: 100%; overflow: hidden; white-space: nowrap; }
+  .diplomacy-line { width: 100%; overflow-x: auto; padding-bottom: 1px; white-space: nowrap; }
   #mission-clock, .separator { display: none; }
-  .layer-panel, .detail-panel { top: 92px; }
+  .layer-panel, .detail-panel { top: 126px; }
   .layer-panel { width: min(236px, calc(100% - 24px)); }
 }

@@ -150,6 +150,11 @@
     connectionText: document.getElementById("connection-text"),
     dcsClock: document.getElementById("dcs-clock"),
     missionClock: document.getElementById("mission-clock"),
+    relationshipState: document.getElementById("relationship-state"),
+    escalationScore: document.getElementById("escalation-score"),
+    pendingTransition: document.getElementById("pending-transition"),
+    blueDoctrine: document.getElementById("blue-doctrine"),
+    redDoctrine: document.getElementById("red-doctrine"),
     featureCount: document.getElementById("feature-count"),
     layerPanel: document.getElementById("layer-panel"),
     layerControls: document.getElementById("layer-controls"),
@@ -519,6 +524,7 @@
     zones.setData(zoneCollection(latestPicture));
     updateCounts();
     updateClocks(picture.properties || {});
+    updateDiplomacy(picture.properties?.diplomacy);
     if (selectedObjectId) {
       selectionCandidates = selectionCandidates
         .map((candidate) => latestPicture.features.find((feature) => feature.properties?.object_id === candidate.properties?.object_id))
@@ -560,12 +566,36 @@
     elements.missionClock.textContent = properties.mission_elapsed ? `Mission ${properties.mission_elapsed}` : "Mission --";
   }
 
+  function displayState(value) {
+    return String(value || "peace")
+      .split("_")
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
+
+  function updateDiplomacy(diplomacy) {
+    if (!diplomacy) return;
+    const state = String(diplomacy.relationship || "peace");
+    elements.relationshipState.textContent = displayState(state);
+    elements.relationshipState.dataset.state = state;
+    elements.escalationScore.textContent = `Escalation ${Number(diplomacy.escalation_score || 0).toFixed(0)}`;
+    const pending = diplomacy.pending_transition;
+    elements.pendingTransition.hidden = !pending;
+    elements.pendingTransition.textContent = pending
+      ? `Pending ${displayState(pending.from_state)} to ${displayState(pending.to_state)}`
+      : "";
+    const doctrines = diplomacy.doctrines || {};
+    elements.blueDoctrine.textContent = `Blue ${displayState(doctrines.blue || "balanced")}`;
+    elements.redDoctrine.textContent = `Red ${displayState(doctrines.red || "balanced")}`;
+  }
+
   function updateStatus(status) {
     const connected = Boolean(status?.connected);
     elements.connectionDot.classList.toggle("is-offline", !connected);
     elements.connectionText.textContent = connected ? "DCS connected" : "DCS disconnected";
     elements.errorBanner.hidden = !status?.error;
     elements.errorBanner.textContent = status?.error ? "DCS bridge unavailable. Waiting for reconnection." : "";
+    updateDiplomacy(status?.diplomacy);
   }
 
   function updateCounts() {

@@ -80,6 +80,11 @@ function MOOSE_BRIDGE:_StartDcsEventForwarding()
     self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.Dead
     self:_Log("DCS Dead event forwarding enabled")
   end
+  if bridge_event_available(EVENTS.Kill) then
+    self:HandleEvent(EVENTS.Kill)
+    self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.Kill
+    self:_Log("DCS Kill event forwarding enabled")
+  end
   if bridge_event_available(EVENTS.MissionEnd) then
     self:HandleEvent(EVENTS.MissionEnd)
     self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.MissionEnd
@@ -240,6 +245,37 @@ end
 -- @param Core.Event#EVENTDATA EventData MOOSE-normalized DCS event data.
 function MOOSE_BRIDGE:OnEventDead(EventData)
   self:_ForwardObjectDestroyed(EventData, "S_EVENT_DEAD")
+end
+
+--- Forward an attributed DCS kill without replacing UnitLost/Dead state events.
+-- @param Core.Event#EVENTDATA EventData MOOSE-normalized DCS event data.
+function MOOSE_BRIDGE:OnEventKill(EventData)
+  local ok, err = pcall(function()
+    if type(EventData) ~= "table" then error("Kill event data is missing") end
+    local killer_name = EventData.IniUnitName or EventData.IniDCSUnitName
+    local target_name = EventData.TgtUnitName or EventData.TgtDCSUnitName
+    if not killer_name or not target_name then error("Kill event has no killer or target name") end
+
+    local target_is_static = Object and Object.Category
+      and EventData.TgtObjectCategory == Object.Category.STATIC
+    self:SendEvent("combat.kill", {
+      dcs_event_id=EventData.id,
+      dcs_event_name="S_EVENT_KILL",
+      dcs_event_time=EventData.time,
+      killer_object_id="UNIT:" .. tostring(killer_name),
+      killer_group_id=EventData.IniGroupName and ("GROUP:" .. tostring(EventData.IniGroupName)) or nil,
+      killer_coalition=self:_CoalitionToName(EventData.IniCoalition),
+      killer_type=EventData.IniTypeName and tostring(EventData.IniTypeName) or nil,
+      target_object_id=(target_is_static and "STATIC:" or "UNIT:") .. tostring(target_name),
+      target_group_id=EventData.TgtGroupName and ("GROUP:" .. tostring(EventData.TgtGroupName)) or nil,
+      target_coalition=self:_CoalitionToName(EventData.TgtCoalition),
+      target_type=EventData.TgtTypeName and tostring(EventData.TgtTypeName) or nil,
+      weapon_name=EventData.WeaponName and tostring(EventData.WeaponName) or nil,
+    })
+  end)
+  if not ok then
+    self:_Log("Failed to forward Kill event: " .. tostring(err))
+  end
 end
 
 --- Forward DCS S_EVENT_MISSION_END as the authoritative Python session boundary.

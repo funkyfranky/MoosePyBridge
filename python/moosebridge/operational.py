@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import math
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from .auftrag_specs import canonical_mission_type, get_auftrag_type_spec, platform_categories_match
 from .legions import Cohort, Legion
@@ -368,6 +368,7 @@ class OperationalPlanRegistry:
         mission_time: float | None = None,
         phase_ids: Iterable[str] | None = None,
         update_plan: bool = True,
+        reserved_assets: Mapping[str, int] | None = None,
     ) -> OperationalPlanAssessment:
         item = self._require(plan)
         selected_phases = set(phase_ids) if phase_ids is not None else None
@@ -391,7 +392,14 @@ class OperationalPlanRegistry:
                 selected_phases is not None and phase.phase_id not in selected_phases
             ):
                 continue
-            remaining = {cohort.object_id: max(0, cohort.available_asset_count or 0) for cohort in coalition_cohorts}
+            reservations = reserved_assets or {}
+            remaining = {
+                cohort.object_id: max(
+                    0,
+                    (cohort.available_asset_count or 0) - max(0, int(reservations.get(cohort.object_id, 0))),
+                )
+                for cohort in coalition_cohorts
+            }
             for cohort in coalition_cohorts:
                 if cohort.available_asset_count is None:
                     issues.append(

@@ -14,6 +14,7 @@ from .capabilities import (
     UnitCapabilities,
     UnitInfluence,
 )
+from .diplomacy import CoalitionDoctrine, CoalitionRelationship
 from .legions import Cohort, Commander, Legion
 from .intelligence import InformationRequirement
 from .models import Auftrag, Intel, IntelCluster, IntelContact
@@ -28,7 +29,8 @@ from .pictures import GlobalPicture, PictureValidationIssue
 from .recon import ReconOutcome
 from .sensor_ranges import SensorRangeProfile
 from .strategic import GoalCondition, StrategicGoal
-from .strategic_feedback import StrategicFeedbackEvent
+from .strategic_feedback import StrategicFeedbackDecision, StrategicFeedbackEvent
+from .strategic_selection import StrategicGoalPortfolio
 from .weapon_ranges import WeaponRangeProfile
 
 if TYPE_CHECKING:
@@ -72,6 +74,87 @@ def format_strategic_feedback(event: StrategicFeedbackEvent) -> str:
             )
         )
     return "\n".join(lines)
+
+
+def format_strategic_feedback_decision(decision: StrategicFeedbackDecision) -> str:
+    """Return one concise policy decision."""
+
+    reference = decision.plan_id or decision.goal_id or "STRATEGY"
+    mode = "automatic" if decision.automatic else "advisory"
+    return f"{reference} action={decision.action.value} mode={mode} reason={decision.reason}"
+
+
+def format_strategic_goal_portfolio(portfolio: StrategicGoalPortfolio) -> str:
+    """Return a readable concurrent strategic-goal selection."""
+
+    lines = [
+        f"Strategic portfolio coalition={portfolio.coalition} selected={len(portfolio.selected)} "
+        f"deferred={len(portfolio.deferred)} mission_time={_text(portfolio.mission_time)}"
+    ]
+    for item in portfolio.decisions:
+        status = "SELECTED" if item.selected else "DEFERRED"
+        lines.append(
+            f"  {status} {item.goal_id} plan={item.plan_id} priority={item.goal_priority:g} "
+            f"objective_priority={item.objective_priority:g} value={item.strategic_value:g} "
+            f"doctrine_tier={item.doctrine_tier}"
+        )
+        lines.append(f"    reason={item.reason}")
+        if item.reserved_assets:
+            lines.append(
+                "    reserves="
+                + ", ".join(f"{cohort_id} x{count}" for cohort_id, count in item.reserved_assets)
+            )
+    return "\n".join(lines)
+
+
+def format_relationship(relationship: CoalitionRelationship, *, incident_limit: int = 10) -> str:
+    """Return compact shared relationship and escalation diagnostics."""
+
+    if incident_limit < 0:
+        raise ValueError("incident_limit must be non-negative")
+
+    pending = relationship.pending_transition
+    lines = [
+        f"Relationship {relationship.coalition_a}/{relationship.coalition_b} "
+        f"state={relationship.state.value} escalation={relationship.escalation_score:.1f} "
+        f"automatic={relationship.automatic_transitions} incidents={len(relationship.incidents)}",
+        (
+            f"  responsibility: blue={relationship.responsibility('blue'):.1f} "
+            f"red={relationship.responsibility('red'):.1f}"
+        ),
+    ]
+    if pending is not None:
+        lines.append(
+            f"  pending={pending.from_state.value}->{pending.to_state.value} "
+            f"automatic={pending.automatic} reason={pending.reason}"
+        )
+    incidents = relationship.incidents[-incident_limit:] if incident_limit else []
+    if incidents:
+        hidden = len(relationship.incidents) - len(incidents)
+        lines.append(f"  incidents (latest {len(incidents)}{f', {hidden} older' if hidden else ''}):")
+        for incident in incidents:
+            points = (
+                relationship.incident_weights.get(incident.incident_type, 0.0)
+                * incident.confidence
+                * incident.multiplier
+            )
+            mission_time = f"{incident.mission_time:.1f}" if incident.mission_time is not None else "-"
+            lines.append(
+                f"    t={mission_time} {incident.incident_type.value} points={points:.1f} "
+                f"actor={incident.actor_coalition} target={incident.target_coalition} "
+                f"ref={incident.reference_id or '-'}"
+            )
+    return "\n".join(lines)
+
+
+def format_coalition_doctrine(coalition: str, doctrine: CoalitionDoctrine) -> str:
+    """Return compact coalition-doctrine diagnostics."""
+
+    return (
+        f"{coalition} doctrine={doctrine.preset.value} defense={doctrine.defense_bias:.2f} "
+        f"offense={doctrine.offense_bias:.2f} escalation_tolerance={doctrine.escalation_tolerance:.2f} "
+        f"risk={doctrine.risk_tolerance:.2f} preservation={doctrine.force_preservation:.2f}"
+    )
 
 
 def format_recon_outcome(outcome: ReconOutcome) -> str:
@@ -898,4 +981,8 @@ __all__ = [
     "format_operational_plan_reconciliation",
     "format_strategic_goal",
     "format_strategic_feedback",
+    "format_strategic_feedback_decision",
+    "format_strategic_goal_portfolio",
+    "format_relationship",
+    "format_coalition_doctrine",
 ]

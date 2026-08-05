@@ -158,6 +158,7 @@ class GlobalMapRuntime:
     _recon_features: list[dict[str, Any]] = field(default_factory=list)
     _recon_audit_signature: tuple[tuple[str, str], ...] = ()
     _recon_error: str | None = None
+    _diplomacy_event_cursor: str | None = None
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
 
@@ -203,6 +204,7 @@ class GlobalMapRuntime:
             "frontline_error": self._frontline_error,
             "recon_coverage_count": len(self._recon_features),
             "recon_coverage_error": self._recon_error,
+            "diplomacy": properties.get("diplomacy"),
         }
 
     def reset_mission(self, generation: int) -> None:
@@ -223,6 +225,7 @@ class GlobalMapRuntime:
         self._recon_features.clear()
         self._recon_audit_signature = ()
         self._recon_error = None
+        self._diplomacy_event_cursor = None
         self._frontline_tracker.reset()
 
     def update_picture(self, picture: dict[str, Any]) -> dict[str, Any]:
@@ -820,6 +823,23 @@ class GlobalMapRuntime:
                     raise ConnectionError("DCS is not connected to the MooseBridge daemon")
                 picture = await bridge.refresh_global_picture()
                 geojson = picture.to_geojson()
+                await bridge.refresh_diplomacy_state()
+                event_history = await control.query_events(
+                    "*",
+                    after_id=self._diplomacy_event_cursor,
+                    timeout=self.timeout,
+                )
+                events = event_history.get("events") if isinstance(event_history.get("events"), list) else []
+                incident_count = bridge.apply_diplomacy_events(
+                    event for event in events if isinstance(event, dict)
+                )
+                self._diplomacy_event_cursor = (
+                    str(event_history.get("latest_event_id") or "") or self._diplomacy_event_cursor
+                )
+                border_incidents = bridge.sync_border_violations()
+                if incident_count or border_incidents:
+                    await bridge.persist_diplomacy_state()
+                geojson.setdefault("properties", {})["diplomacy"] = bridge.diplomacy_status()
                 try:
                     geojson = await self.update_frontline(picture, geojson, bridge)
                 except Exception as exc:

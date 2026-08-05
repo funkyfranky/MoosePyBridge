@@ -23,7 +23,24 @@ from .ammunition import (
     select_task_weapon,
 )
 from .clock import DcsTime
-from .dcs_events import DestroyedObjectEvent
+from .dcs_events import DestroyedObjectEvent, KillEvent
+from .diplomacy import (
+    AIRBASE_CAPTURE_ESCALATION_POINTS,
+    OPSZONE_CAPTURE_CONTEXT_MULTIPLIERS,
+    BorderViolationTracker,
+    CoalitionDoctrine,
+    CoalitionDoctrinePreset,
+    CoalitionDoctrineRegistry,
+    CoalitionRelationship,
+    DEFAULT_INCIDENT_WEIGHTS,
+    EscalationIncident,
+    EscalationIncidentType,
+    LimitedConflictAuthorization,
+    RelationshipState,
+    RelationshipTransitionProposal,
+    airbase_capture_multiplier,
+    opszone_capture_multiplier,
+)
 from .capabilities import (
     CapabilityKind,
     CapabilityReadiness,
@@ -269,12 +286,27 @@ from .diagnostics import (
     format_sensor_range,
     format_strategic_goal,
     format_strategic_feedback,
+    format_strategic_feedback_decision,
+    format_strategic_goal_portfolio,
+    format_relationship,
+    format_coalition_doctrine,
     format_unit_capabilities,
     format_unit_influence,
     format_weapon_range,
 )
 from .state import MooseBridgeState, MooseObjectIdentity
-from .strategic_feedback import StrategicFeedbackEvent, StrategicFeedbackMonitor
+from .strategic_feedback import (
+    StrategicFeedbackAction,
+    StrategicFeedbackDecision,
+    StrategicFeedbackEvent,
+    StrategicFeedbackMonitor,
+    StrategicFeedbackPolicy,
+)
+from .strategic_selection import (
+    StrategicGoalPortfolio,
+    StrategicGoalPortfolioSelector,
+    StrategicGoalSelection,
+)
 from .strategic import (
     CaptureBehavior,
     ComponentHealthEstimate,
@@ -337,6 +369,8 @@ from .weapon_ranges import (
 )
 
 __all__ = [
+    "AIRBASE_CAPTURE_ESCALATION_POINTS",
+    "OPSZONE_CAPTURE_CONTEXT_MULTIPLIERS",
     "AUFTRAG_TYPE_NAMES",
     "AdvisoryIssue",
     "AmmunitionTracker",
@@ -427,6 +461,11 @@ __all__ = [
     "CapabilityKind",
     "CapabilityReadiness",
     "CaptureBehavior",
+    "BorderViolationTracker",
+    "CoalitionDoctrine",
+    "CoalitionDoctrinePreset",
+    "CoalitionDoctrineRegistry",
+    "CoalitionRelationship",
     "ComponentHealthEstimate",
     "Cohort",
     "Commander",
@@ -445,6 +484,8 @@ __all__ = [
     "CoordinateResult",
     "DistanceResult",
     "DestroyedObjectEvent",
+    "KillEvent",
+    "DEFAULT_INCIDENT_WEIGHTS",
     "DEFAULT_DATAMINE_SENSOR_DATA",
     "DEFAULT_SENSOR_RANGE_REGISTRY",
     "DEFAULT_WEAPON_RANGE_REGISTRY",
@@ -463,6 +504,11 @@ __all__ = [
     "FLAG_RANGE_FALLBACKS",
     "GlobalPicture",
     "GroupSet",
+    "airbase_capture_multiplier",
+    "opszone_capture_multiplier",
+    "EscalationIncident",
+    "EscalationIncidentType",
+    "LimitedConflictAuthorization",
     "ZoneSet",
     "GroupCapabilities",
     "GroupInfluence",
@@ -526,6 +572,8 @@ __all__ = [
     "PlanReconciliationStatus",
     "PlanValidationIssue",
     "RangeSource",
+    "RelationshipState",
+    "RelationshipTransitionProposal",
     "ReconContactObservation",
     "ReconCoverageFootprints",
     "ReconArea",
@@ -569,7 +617,13 @@ __all__ = [
     "StrategicGoalRegistry",
     "StrategicGoalStatus",
     "StrategicFeedbackEvent",
+    "StrategicFeedbackAction",
+    "StrategicFeedbackDecision",
     "StrategicFeedbackMonitor",
+    "StrategicFeedbackPolicy",
+    "StrategicGoalPortfolio",
+    "StrategicGoalPortfolioSelector",
+    "StrategicGoalSelection",
     "StrategicMissionResolver",
     "StrategicTargetDomain",
     "Territory",
@@ -638,6 +692,10 @@ __all__ = [
     "format_sensor_range",
     "format_strategic_goal",
     "format_strategic_feedback",
+    "format_strategic_feedback_decision",
+    "format_strategic_goal_portfolio",
+    "format_relationship",
+    "format_coalition_doctrine",
     "format_unit_capabilities",
     "format_unit_influence",
     "format_weapon_range",

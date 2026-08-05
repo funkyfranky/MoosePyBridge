@@ -356,9 +356,53 @@ Current operational-planning baseline:
 - A passive `StrategicFeedbackMonitor` now compares non-terminal plan
   feasibility and predicted allocation whenever relevant mirrored state
   changes. It reports goal transitions, INTEL and mission context, asset
-  shortfalls, restored feasibility, and allocation changes without polling or
-  autonomous retasking. These events form the input contract for the later
-  strategic decision coordinator.
+  shortfalls, restored feasibility, and allocation changes without additional
+  DCS polling. `StrategicFeedbackPolicy` deterministically maps relevant events
+  to `KEEP`, `WAIT`, `REPLAN`, or `ABORT`: running MOOSE missions survive
+  temporary shortages, persistent shortages request replanning after a DCS-time
+  threshold, and only terminal goals or unsafe friendly targets automatically
+  abort through the existing executor. Replanning retains the normal explicit
+  validation and approval boundary.
+- `StrategicGoalPortfolioSelector` admits multiple concurrent goals rather than
+  forcing one global winner. It ranks explicit priorities deterministically and
+  validates each candidate plan against a shared provisional COHORT-capacity
+  ledger. The reservation is conservative planning state only; MOOSE remains
+  responsible for actual COMMANDER recruitment after approval and submission.
+- Python now owns a compact shared blue/red relationship model with peace,
+  tension, limited conflict, war, and ceasefire states. Attributed incidents
+  update one auditable escalation score and apply escalation transitions
+  automatically by default; missions may explicitly require manual approval.
+  Independently mutable coalition-doctrine presets
+  expose only five behavior biases and do not change with relationship state
+  unless Python deliberately changes them.
+- Relationship constraints are applied before concurrent goal ranking. Peace,
+  tension, and ceasefire permit defensive goals only; limited conflict requires
+  explicit objective or territory authorization for offensive goals; war
+  permits all strategic actions. Doctrine then contributes a small categorical
+  preference tier and cannot override the relationship boundary.
+- Continuous ground-force border violations are derived from mirrored GROUP and
+  TERRITORY state. Entry starts a 60-second DCS-time tolerance by default;
+  withdrawal clears it; one uninterrupted crossing emits exactly one incident.
+  Heartbeats advance the timer without additional DCS polling, and aircraft,
+  dead groups, and inactive groups are excluded.
+- MOOSE `EVENTS.Kill` is normalized as `combat.kill` and supplies direct
+  attacker/target attribution for unit-destruction incidents. It remains
+  separate from deduplicated UnitLost/Dead state updates, so diplomacy does not
+  infer an attacker from an unattributed loss.
+- `airbase.coalition_changed` events now create deduplicated, attributed
+  `OBJECTIVE_CAPTURED` incidents. An explicit matrix scores enemy Airdromes at
+  60 points in opposing territory and 40 in no man's land, neutral Airdromes at
+  30 and 15, and a neutral FARP in no man's land at 5. Ownership, territorial
+  context, category, base score, and final score remain auditable.
+- MOOSE `OPSZONE:OnAfterCaptured` is forwarded as `opszone.owner_changed` and
+  creates a deduplicated `OPSZONE_CAPTURED` incident. Python owns a persisted
+  per-zone strategic value with a 20-point default and applies explicit
+  ownership/territory context multipliers without polling DCS or scanning the
+  zone itself.
+- Diplomacy snapshots are mission-generation scoped in the daemon audit store,
+  allowing independent SDK clients and the browser map to share relationship,
+  transition, incident, and doctrine state. The map header exposes the compact
+  political picture and the map runtime coordinates Kill and border incidents.
 - Plan snapshots retain explicit operator attribution and approval reasons.
   Submitted missions retain compact ACK ids, correlation ids, sequence numbers,
   and relevant results across daemon audit persistence and SDK restore.

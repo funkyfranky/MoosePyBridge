@@ -12,19 +12,51 @@ Priorities:
 
 ## P1 - Decision and execution
 
+- [ ] **Connect incidents to DCS and strategic events.** Convert attributed
+  border incursions, weapon fire, hits, unit losses, strategic-object attacks,
+  captures, and ceasefire violations into the compact relationship model.
+  Deduplicate source events and retain confidence where the attacker is not
+  known. Do not add periodic DCS polling solely for diplomacy. Continuous
+  ground-border violations with a configurable 60-second tolerance are
+  complete, MOOSE `EVENTS.Kill` provides primary destruction attribution
+  through `combat.kill`, and hostile airbase captures create strongly weighted
+  attributed incidents. MOOSE `OPSZONE:OnAfterCaptured` now supplies
+  configurable, context-weighted OPSZONE capture incidents. Weapon-fire, other
+  strategic-object attacks, and ceasefire sources remain open.
+- [ ] **Validate Kill-event reliability in live DCS missions.** Confirm that
+  `EVENTS.Kill` consistently supplies killer and target coalition/object data
+  for relevant air, ground, and naval kills. Only if live evidence shows gaps,
+  add a bounded last-Hit cache and correlate it with UnitLost/Dead; keep that
+  fallback explicitly lower-confidence and avoid forwarding every Hit to
+  Python.
+- [x] **Apply relationship constraints and doctrine to goal selection.** Block
+  offensive goals that are politically invalid in peace or a ceasefire, bound
+  limited-conflict goals to their authorized area/effects, and use doctrine
+  biases when ranking otherwise valid concurrent goals. Relationship remains a
+  hard policy boundary; doctrine is only a preference.
 - [ ] **Broaden operational planning beyond CAPTURE, DEFEND, DESTROY, and runway denial.** Generate
   and execute plans for remaining DISABLE effects, PROTECT, and INTERDICT while
   preserving the existing validation, approval, audit, and replanning path.
 - [ ] **Add strategic goal selection and prioritization.** Let Python compare
   possible goals using strategic value, current control, visible threats,
   available capabilities, expected cost, and uncertainty. Start with a
-  deterministic rule engine before adding an LLM decision layer.
-- [ ] **Close the strategic feedback loop.** Reassess active goals and plans
+  deterministic rule engine before adding an LLM decision layer. The first
+  capacity-aware portfolio selector is complete: it permits multiple concurrent
+  goals, applies explicit priority ordering, and prevents provisional COHORT
+  overbooking across candidate plans. Threat, cost, uncertainty, and objective
+  relationship scoring remain to be added.
+- [x] **Close the deterministic strategic feedback loop.** Reassess active goals and plans
   after objective ownership changes, losses, INTEL changes, mission outcomes,
   and asset availability changes without duplicating MOOSE tactical behavior.
-  The passive event monitor and feasibility/allocation change detection are
-  complete; add the deterministic policy that turns feedback into explicit
-  keep, abort, replan, or propose-follow-up decisions with approval boundaries.
+  The event monitor and policy now produce explicit keep, wait, replan, and
+  abort decisions. Temporary shortages preserve active MOOSE missions;
+  persistent shortages use DCS mission time and request an approved replan.
+  Only terminal goals and unsafe friendly targets trigger automatic aborts.
+- [ ] **Relate INTEL changes to goals before proposing replans.** New, lost, or
+  reacquired contacts currently remain planning context because a global INTEL
+  event does not prove relevance to every active plan. Add spatial, target, and
+  information-requirement matching before emitting plan-specific follow-up or
+  replan proposals; never replace running AUFTRAGs directly.
 
 ## P1 - Intelligence and RECON
 

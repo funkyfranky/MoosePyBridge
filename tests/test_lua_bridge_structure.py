@@ -59,12 +59,25 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert "self:HandleEvent(EVENTS.BaseCaptured)" in source
     assert "self:HandleEvent(EVENTS.UnitLost)" in source
     assert "self:HandleEvent(EVENTS.Dead)" in source
+    assert "self:HandleEvent(EVENTS.Kill)" in source
     assert "self:HandleEvent(EVENTS.MissionEnd)" in source
     assert "function MOOSE_BRIDGE:OnEventBaseCaptured(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventUnitLost(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventDead(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventKill(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventMissionEnd(EventData)" in source
     assert 'self:SendEvent("airbase.coalition_changed"' in source
     assert 'self:SendEvent("object.destroyed"' in source
+    assert 'self:SendEvent("combat.kill"' in source
     assert 'self:SendEvent("mission.ended"' in source
     assert "self:_FlushOutQueue()" in source
+
+
+def test_opszone_capture_fsm_event_is_forwarded_without_replacing_user_callback() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
+
+    assert "local previous_captured = opszone.OnAfterCaptured" in source
+    assert "pcall(previous_captured, opszone_self, From, Event, To, Coalition)" in source
+    assert 'bridge:SendEvent("opszone.owner_changed"' in source
+    assert "previous_coalition=item.owner_previous_name" in source
+    assert "capturing_coalition=bridge:_CoalitionToName(Coalition)" in source

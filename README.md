@@ -259,8 +259,12 @@ they do not trigger additional DCS polling. The monitor emits meaningful
 changes such as `feedback.replanning_required`,
 `feedback.plan_feasibility_restored`, `feedback.plan_allocation_changed`,
 `feedback.goal_status_changed`, `feedback.intelligence_changed`, and
-`feedback.mission_outcome`. It never creates, approves, cancels, or replaces an
-AUFTRAG by itself.
+`feedback.mission_outcome`. A deterministic policy maps plan-specific feedback
+to `keep`, `wait`, `replan`, or `abort`. Temporary shortages never cancel a
+running mission, persistent shortages produce an advisory replan decision, and
+replanning never happens without the normal validation and approval boundary.
+Only terminal goals and unsafe friendly targets may automatically abort an
+already active attempt through the existing plan executor.
 
 ```python
 bridge.add_strategic_feedback_listener(
@@ -269,11 +273,127 @@ bridge.add_strategic_feedback_listener(
 
 # Explicitly establish or refresh the comparison baseline from mirrored state.
 bridge.sync_strategic_feedback(source="operator")
+
+for event in bridge.strategic_feedback_events(plan_id=plan.plan_id):
+    for decision in bridge.strategic_feedback_decisions(event):
+        print(format_strategic_feedback_decision(decision))
 ```
 
 Use `bridge.strategic_feedback_events(plan_id=plan.plan_id)` to inspect retained
-feedback. This is the event-driven input for a later deterministic or LLM-based
-decision coordinator.
+feedback. Required asset shortfalls are considered persistent after 300 seconds
+of DCS mission time by default; configure this with
+`MooseBridgeClient(..., strategic_shortfall_timeout_s=...)`. INTEL changes
+remain context for planning until their relevance to a specific goal can be
+established; they do not replace or cancel running AUFTRAGs globally.
+
+Multiple strategic goals may be selected concurrently. The SDK builds a
+capacity-aware portfolio from their candidate operational plans:
+
+```python
+portfolio = bridge.select_strategic_goal_portfolio("blue")
+print(format_strategic_goal_portfolio(portfolio))
+```
+
+Candidates are ordered lexicographically by doctrine tier, explicit goal
+priority, objective priority, strategic value, deadline, and stable goal id.
+Each admitted plan reserves its largest simultaneous COHORT use in any phase.
+Later candidates are validated against the remaining capacity, preventing the
+same currently available asset group from being promised to multiple new plans.
+Portfolio selection does not activate goals, approve plans, reserve assets in
+MOOSE, or submit AUFTRAGs.
+
+### Relationship and doctrine
+
+Python owns one shared blue/red relationship with the states `peace`, `tense`,
+`limited_conflict`, `war`, and `ceasefire`. A deliberately small set of
+attributed incidents raises a bounded escalation score. Threshold crossings
+apply their transition automatically by default:
+
+```python
+incident = EscalationIncident(
+    incident_id="INCIDENT:1",
+    incident_type=EscalationIncidentType.BORDER_VIOLATION,
+    actor_coalition="red",
+    target_coalition="blue",
+)
+proposal = bridge.record_escalation_incident(incident)
+```
+
+Set `bridge.relationship.automatic_transitions = False` when a scenario should
+require explicit approval through `approve_relationship_transition()`.
+De-escalation remains explicit. Incident weights are
+configurable through `bridge.relationship.incident_weights`; defaults range
+from 5 points for a border violation to 60 for an objective capture. The
+thresholds are 20 for tension, 50 for limited conflict, and 80 for war.
+
+Each coalition has an independently mutable doctrine preset: `passive`,
+`defensive`, `balanced`, `offensive`, or `aggressive`. Presets provide defense,
+offense, escalation-tolerance, risk, and force-preservation biases and may be
+replaced by a custom `CoalitionDoctrine`. Relationship and doctrine are
+mission-scoped and reset when the DCS mission ends.
+
+Relationship is a hard boundary for portfolio selection. Peace, tension, and a
+ceasefire admit only DEFEND and PROTECT goals. Limited conflict admits offensive
+goals only for explicitly authorized objectives or territories:
+
+```python
+bridge.relationship.limited_conflict.authorize_objective("OBJECTIVE:Border Town")
+bridge.relationship.limited_conflict.authorize_territory("TERRITORY:Border")
+```
+
+War admits all currently implemented strategic actions. Doctrine never
+overrides these restrictions; it only places otherwise valid goals into simple
+preference tiers before their explicit priorities are compared.
+
+Living, active ground groups inside an opposing `TERRITORY` are tracked as
+potential border violations. A continuous stay of 60 DCS mission seconds emits
+one `BORDER_VIOLATION` incident; leaving before the threshold discards the
+candidate, and leaving after a report permits a later re-entry to become a new
+incident. Configure the duration with
+`MooseBridgeClient(..., border_violation_tolerance_s=...)`. Evaluation uses
+existing group/territory mirrors on snapshots and heartbeats and does not issue
+extra DCS queries. Aircraft do not create territorial border incidents.
+
+MOOSE `EVENTS.Kill` is forwarded separately as `combat.kill` with killer,
+target, coalition, type, and weapon attribution. An enemy unit kill creates one
+deduplicated `UNIT_DESTROYED` escalation incident. `object.destroyed` remains
+the authoritative UnitLost/Dead state update and is not used to guess the
+attacker.
+
+An `airbase.coalition_changed` event creates one attributed
+`OBJECTIVE_CAPTURED` incident with an explicit contextual score. Enemy-owned
+Airdromes are worth 60 points in opposing territory and 40 in no man's land;
+neutral Airdromes are worth 30 and 15 respectively. A neutral FARP in no man's
+land is worth 5 points. Remaining own-territory and FARP combinations are kept
+in the public `AIRBASE_CAPTURE_ESCALATION_POINTS` matrix. Every incident retains
+its ownership, territory, category, base score, and final score. Thus the
+60-point reference capture proposes `limited_conflict` from peace and can
+propose war when tension already exists.
+
+MOOSE `OPSZONE:OnAfterCaptured` is forwarded as `opszone.owner_changed` and
+creates a separate `OPSZONE_CAPTURED` incident. A strategic OPSZONE has a
+20-point reference value by default. Set a more important zone explicitly:
+
+```python
+bridge.set_opszone_strategic_value("OPSZONE:Town Fight", 40)
+```
+
+The full configured value applies when an enemy-owned OPSZONE is captured in
+the opponent's territory. Enemy captures in no man's land, neutral captures,
+and captures inside the actor's own territory receive smaller contextual
+multipliers. The configured values are part of the persisted mission diplomacy
+state. Processing is driven by the MOOSE FSM event and adds no periodic scan.
+
+Relationship state and both doctrines can be persisted as a mission-generation
+scoped daemon audit snapshot with `await bridge.persist_diplomacy_state()` and
+restored in another client with `await bridge.refresh_diplomacy_state()`. This
+keeps planning tools, diagnostics, and the browser map on the same shared state.
+`examples/sdk/monitor_relationship.py` provides a parameter-free monitor; its
+output includes the latest incidents and their individual point contributions.
+For a focused DCS test, edit `GROUP_ID` and `TERRITORY_ID` in
+`examples/sdk/test_border_violation.py`. The script uses only the global
+GROUP/TERRITORY mirror, displays the 60-second DCS-time countdown, and waits for
+the map server's persisted border incident; it never reads an INTEL contact.
 
 ### Operational planning
 
@@ -1147,6 +1267,12 @@ update interval, command timeout, or movement history limits. The viewer keeps
 ```powershell
 python -m moosebridge.map_server --history-seconds 1800 --history-max-points 360
 ```
+
+The header shows the shared relationship, escalation score, pending transition,
+and blue/red doctrine. The map server is the default diplomacy incident
+coordinator while it runs: it consumes retained `combat.kill` events, evaluates
+tolerated ground-border violations from the existing snapshots, and persists
+changes for other SDK clients. No additional Lua polling is introduced.
 
 Movement history is derived from periodic DCS positions because DCS does not
 emit position-change events. Tracks are removed when an object dies or

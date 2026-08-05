@@ -11,7 +11,24 @@ from typing import Any
 from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, WeaponRole, select_task_weapon
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
-from .dcs_events import DestroyedObjectEvent
+from .dcs_events import DestroyedObjectEvent, KillEvent
+from .diplomacy import (
+    BorderViolationTracker,
+    CoalitionDoctrine,
+    CoalitionDoctrinePreset,
+    CoalitionDoctrineRegistry,
+    CoalitionRelationship,
+    DIPLOMACY_AUDIT_TYPE,
+    DIPLOMACY_STATE_SCHEMA_VERSION,
+    EscalationIncident,
+    EscalationIncidentType,
+    RelationshipState,
+    RelationshipTransitionProposal,
+    airbase_capture_multiplier,
+    opszone_capture_multiplier,
+    apply_diplomacy_state,
+    diplomacy_state_to_dict,
+)
 from .auftrag_specs import auftrag_action_suffix
 from .capabilities import (
     GroupCapabilities,
@@ -46,7 +63,12 @@ from .recon import (
     build_recon_outcome,
     derive_recon_requirement,
 )
-from .operational import OperationalPlan, OperationalPlanAssessment, OperationalPlanRegistry
+from .operational import (
+    OperationalPlan,
+    OperationalPlanAssessment,
+    OperationalPlanRegistry,
+    OperationalPlanStatus,
+)
 from .operational_execution import (
     OperationalPlanAbortResult,
     OperationalPlanReconciliation,
@@ -68,7 +90,14 @@ from .sensor_ranges import (
     SensorTargetDomain,
 )
 from .state import MooseBridgeState
-from .strategic_feedback import StrategicFeedbackEvent, StrategicFeedbackMonitor
+from .strategic_feedback import (
+    StrategicFeedbackAction,
+    StrategicFeedbackDecision,
+    StrategicFeedbackEvent,
+    StrategicFeedbackMonitor,
+    StrategicFeedbackPolicy,
+)
+from .strategic_selection import StrategicGoalPortfolio, StrategicGoalPortfolioSelector
 from .strategic import (
     ObjectiveEvent,
     OwnershipPolicy,
@@ -242,6 +271,42 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _territory_at_point(
+    territories: Iterable[Territory],
+    x: float | None,
+    z: float | None,
+) -> Territory | None:
+    """Return the first declared territory containing a DCS-local point."""
+
+    if x is None or z is None:
+        return None
+    for territory in territories:
+        vertices = tuple((vertex.x, vertex.z) for vertex in territory.vertices)
+        if len(vertices) >= 3:
+            inside = False
+            previous_x, previous_z = vertices[-1]
+            for current_x, current_z in vertices:
+                if (current_z > z) != (previous_z > z):
+                    boundary_x = (
+                        (previous_x - current_x) * (z - current_z)
+                        / (previous_z - current_z)
+                        + current_x
+                    )
+                    if x < boundary_x:
+                        inside = not inside
+                previous_x, previous_z = current_x, current_z
+            if inside:
+                return territory
+        elif (
+            territory.x is not None
+            and territory.z is not None
+            and territory.radius is not None
+            and math.hypot(x - territory.x, z - territory.z) <= territory.radius
+        ):
+            return territory
+    return None
 
 
 class MooseBridgeCommandError(RuntimeError):
@@ -484,6 +549,10 @@ class MooseBridgeClient:
     """High-level SDK facade backed by a local ``MooseBridgeServer`` instance.
 
     :param server: Running bridge server instance.
+    :param strategic_shortfall_timeout_s: DCS-time duration before an asset
+        shortfall produces a persistent replanning advisory.
+    :param border_violation_tolerance_s: Continuous DCS-time duration inside
+        hostile territory before an escalation incident is recorded.
     """
 
     def __init__(
@@ -492,6 +561,8 @@ class MooseBridgeClient:
         *,
         weapon_ranges: WeaponRangeRegistry | None = None,
         sensor_ranges: SensorRangeRegistry | None = None,
+        strategic_shortfall_timeout_s: float = 300.0,
+        border_violation_tolerance_s: float = 60.0,
     ) -> None:
         self.server = server
         self.weapon_range_registry = weapon_ranges or DEFAULT_WEAPON_RANGE_REGISTRY
@@ -499,11 +570,22 @@ class MooseBridgeClient:
         self.objectives = StrategicObjectiveRegistry()
         self.goals = StrategicGoalRegistry(self.objectives)
         self.plans = OperationalPlanRegistry(self.goals)
-        self.strategic_feedback = StrategicFeedbackMonitor(self.goals, self.plans)
+        self.strategic_feedback = StrategicFeedbackMonitor(
+            self.goals,
+            self.plans,
+            persistent_shortfall_s=strategic_shortfall_timeout_s,
+        )
+        self.strategic_feedback_policy = StrategicFeedbackPolicy(self.objectives, self.goals, self.plans)
+        self.strategic_goal_selector = StrategicGoalPortfolioSelector(self.objectives, self.goals, self.plans)
+        self.relationship = CoalitionRelationship()
+        self.coalition_doctrines = CoalitionDoctrineRegistry()
+        self.border_violations = BorderViolationTracker(border_violation_tolerance_s)
         self.information_requirement_registry = InformationRequirementRegistry()
         self.plan_executor = OperationalPlanExecutor(self)
         self._auftrag_ids_by_object: dict[int, str] = {}
         self._strategic_feedback_message_ids: set[str] = set()
+        self._strategic_feedback_tasks: set[asyncio.Task[Any]] = set()
+        self.strategic_feedback.add_listener(self._on_strategic_feedback_policy_event)
         add_listener = getattr(server, "add_message_listener", None)
         if callable(add_listener):
             add_listener(self._on_bridge_message)
@@ -520,6 +602,12 @@ class MooseBridgeClient:
     def reset_mission(self, *, reset_state: bool = True) -> None:
         """Discard all Python runtime state owned by the completed DCS mission."""
 
+        for task in tuple(self._strategic_feedback_tasks):
+            task.cancel()
+        self._strategic_feedback_tasks.clear()
+        self.relationship.clear()
+        self.coalition_doctrines.clear()
+        self.border_violations.clear()
         self.plan_executor.clear()
         self.strategic_feedback.clear()
         self.plans.clear()
@@ -866,6 +954,214 @@ class MooseBridgeClient:
             mission_time=self._current_mission_time(),
             source=source,
         )
+
+    def strategic_feedback_decisions(
+        self,
+        event: StrategicFeedbackEvent,
+    ) -> tuple[StrategicFeedbackDecision, ...]:
+        """Evaluate one feedback event without changing plans or DCS state."""
+
+        executing = {
+            plan.plan_id
+            for plan in self.plans.all()
+            if plan.status in {OperationalPlanStatus.EXECUTING, OperationalPlanStatus.BLOCKED}
+        }
+        return self.strategic_feedback_policy.decide(event, executing_plan_ids=executing)
+
+    def record_escalation_incident(
+        self,
+        incident: EscalationIncident,
+    ) -> RelationshipTransitionProposal | None:
+        """Record an attributed incident and return any transition proposal."""
+
+        return self.relationship.record_incident(incident)
+
+    def sync_border_violations(self) -> tuple[EscalationIncident, ...]:
+        """Update tolerated ground-border violations from mirrored state."""
+
+        incidents = self.border_violations.update(
+            self.state.groups.values(),
+            self.state.territory_objects.values(),
+            mission_time=self._current_mission_time(),
+        )
+        for incident in incidents:
+            self.record_escalation_incident(incident)
+        return incidents
+
+    def approve_relationship_transition(self, proposal_id: str) -> RelationshipState:
+        """Approve and apply the pending shared relationship transition."""
+
+        return self.relationship.approve_transition(proposal_id)
+
+    def reject_relationship_transition(self, proposal_id: str) -> None:
+        """Reject the pending relationship transition."""
+
+        self.relationship.reject_transition(proposal_id)
+
+    def set_coalition_doctrine(
+        self,
+        coalition: str,
+        doctrine: CoalitionDoctrine | CoalitionDoctrinePreset | str,
+    ) -> CoalitionDoctrine:
+        """Change one coalition's doctrine independently of relationship state."""
+
+        return self.coalition_doctrines.set(coalition, doctrine)
+
+    def set_opszone_strategic_value(self, object_id: str, escalation_points: float) -> float:
+        """Set reference escalation points for capture of one strategic OPSZONE."""
+
+        return self.relationship.set_opszone_capture_points(object_id, escalation_points)
+
+    def diplomacy_status(self) -> dict[str, Any]:
+        """Return the compact shared relationship and doctrine state."""
+
+        proposal = self.relationship.pending_transition
+        return {
+            "relationship": self.relationship.state.value,
+            "escalation_score": self.relationship.escalation_score,
+            "automatic_transitions": self.relationship.automatic_transitions,
+            "incident_count": len(self.relationship.incidents),
+            "pending_transition": None if proposal is None else {
+                "proposal_id": proposal.proposal_id,
+                "from_state": proposal.from_state.value,
+                "to_state": proposal.to_state.value,
+                "reason": proposal.reason,
+                "mission_time": proposal.mission_time,
+                "automatic": proposal.automatic,
+            },
+            "doctrines": {
+                coalition: self.coalition_doctrines.get(coalition).preset.value
+                for coalition in ("blue", "red")
+            },
+        }
+
+    async def persist_diplomacy_state(self) -> dict[str, Any]:
+        """Persist this mission's shared diplomacy state in the daemon audit store."""
+
+        payload = diplomacy_state_to_dict(
+            self.relationship,
+            self.coalition_doctrines,
+            mission_generation=self.state.mission_generation,
+        )
+        return await self.server.append_audit_record(DIPLOMACY_AUDIT_TYPE, payload)
+
+    async def refresh_diplomacy_state(self) -> bool:
+        """Load the latest daemon diplomacy snapshot for the current mission."""
+
+        records = await self.server.query_audit_records(record_type=DIPLOMACY_AUDIT_TYPE)
+        generation = self.state.mission_generation
+        payload = next(
+            (
+                record.get("payload")
+                for record in reversed(records)
+                if isinstance(record.get("payload"), dict)
+                and int(record["payload"].get("mission_generation") or 0) == generation
+            ),
+            None,
+        )
+        if not isinstance(payload, dict):
+            return False
+        legacy_snapshot = (
+            int(payload.get("diplomacy_schema_version") or 1)
+            < DIPLOMACY_STATE_SCHEMA_VERSION
+        )
+        apply_diplomacy_state(payload, self.relationship, self.coalition_doctrines)
+        if legacy_snapshot:
+            await self.persist_diplomacy_state()
+        return True
+
+    def apply_diplomacy_events(self, events: Iterable[dict[str, Any]]) -> int:
+        """Apply retained bridge events and return the number of new incidents."""
+
+        before = len(self.relationship.incidents)
+        for event in events:
+            if str(event.get("event") or "") in {
+                "combat.kill",
+                "airbase.coalition_changed",
+                "opszone.owner_changed",
+                "opszone.coalition_changed",
+            }:
+                self._on_bridge_message(event)
+        return len(self.relationship.incidents) - before
+
+    def select_strategic_goal_portfolio(
+        self,
+        coalition: str,
+        *,
+        plans: Iterable[OperationalPlan] | None = None,
+        max_concurrent_goals: int | None = None,
+    ) -> StrategicGoalPortfolio:
+        """Select concurrently feasible goals without activating or approving them."""
+
+        return self.strategic_goal_selector.select(
+            coalition,
+            legions=self.state.legion_objects.values(),
+            cohorts=self.state.cohort_objects.values(),
+            mission_time=self._current_mission_time(),
+            plans=plans,
+            max_concurrent_goals=max_concurrent_goals,
+            relationship=self.relationship,
+            doctrine=self.coalition_doctrines.get(coalition),
+        )
+
+    async def apply_strategic_feedback_policy(
+        self,
+        event: StrategicFeedbackEvent,
+        *,
+        automatic_only: bool = True,
+    ) -> tuple[StrategicFeedbackDecision, ...]:
+        """Apply safe policy actions; replanning decisions never mutate a plan."""
+
+        decisions = self.strategic_feedback_decisions(event)
+        for decision in decisions:
+            if automatic_only and not decision.automatic:
+                continue
+            if decision.action is not StrategicFeedbackAction.ABORT or not decision.plan_id:
+                continue
+            plan = self.operational_plan(decision.plan_id)
+            if plan is None or plan.status not in {
+                OperationalPlanStatus.EXECUTING,
+                OperationalPlanStatus.BLOCKED,
+            }:
+                continue
+            try:
+                await self.abort_operational_plan(plan, reason=decision.reason)
+            except Exception as exc:
+                self.strategic_feedback.record_context_change(
+                    "feedback.policy_action_skipped",
+                    source="strategic_feedback_policy",
+                    mission_time=self._current_mission_time(),
+                    coalition=plan.coalition,
+                    goal_id=plan.goal_id,
+                    plan_id=plan.plan_id,
+                    details={"action": decision.action.value, "reason": str(exc)},
+                )
+            else:
+                self.strategic_feedback.record_context_change(
+                    "feedback.policy_action_applied",
+                    source="strategic_feedback_policy",
+                    mission_time=self._current_mission_time(),
+                    coalition=plan.coalition,
+                    goal_id=plan.goal_id,
+                    plan_id=plan.plan_id,
+                    details={"action": decision.action.value, "reason": decision.reason},
+                )
+        return decisions
+
+    def _on_strategic_feedback_policy_event(self, event: StrategicFeedbackEvent) -> None:
+        # The executor already consumes terminal goal events and owns their
+        # phase/plan outcome. Scheduling a second abort here would race it.
+        if event.event == "feedback.goal_status_changed":
+            return
+        if not any(decision.automatic for decision in self.strategic_feedback_decisions(event)):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self.apply_strategic_feedback_policy(event))
+        self._strategic_feedback_tasks.add(task)
+        task.add_done_callback(self._strategic_feedback_tasks.discard)
 
     def propose_capture_plan(
         self,
@@ -1432,6 +1728,139 @@ class MooseBridgeClient:
         if message_type == "event" and event_name == "mission.ended":
             self.reset_mission(reset_state=False)
             return
+        if message_type == "event" and event_name == "combat.kill" and feedback_message_is_new:
+            kill = KillEvent.from_message(message)
+            killer = normalize_coalition(kill.killer_coalition)
+            target = normalize_coalition(kill.target_coalition)
+            if (
+                kill.target_object_id.startswith("UNIT:")
+                and killer in {"blue", "red"}
+                and target in {"blue", "red"}
+                and killer != target
+            ):
+                self.record_escalation_incident(
+                    EscalationIncident(
+                        incident_id=f"INCIDENT:KILL:{message_id or kill.target_object_id}",
+                        incident_type=EscalationIncidentType.UNIT_DESTROYED,
+                        actor_coalition=killer,
+                        target_coalition=target,
+                        mission_time=kill.mission_time,
+                        reference_id=kill.target_object_id,
+                        details={
+                            "killer_object_id": kill.killer_object_id,
+                            "killer_group_id": kill.killer_group_id,
+                            "target_object_id": kill.target_object_id,
+                            "target_group_id": kill.target_group_id,
+                            "weapon_name": kill.weapon_name,
+                            "source_event": "combat.kill",
+                        },
+                    )
+                )
+        if message_type == "event" and event_name == "airbase.coalition_changed" and feedback_message_is_new:
+            payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+            airbase = payload.get("airbase") if isinstance(payload.get("airbase"), dict) else {}
+            previous = normalize_coalition(payload.get("previous_coalition"))
+            current = normalize_coalition(payload.get("coalition") or airbase.get("coalition"))
+            actor = normalize_coalition(payload.get("capturing_coalition")) or current
+            airbase_id = str(payload.get("airbase_id") or airbase.get("object_id") or "")
+            mission_time = _optional_float(message.get("mission_time"))
+            opponent = "red" if actor == "blue" else "blue" if actor == "red" else None
+            if (
+                airbase_id.startswith("AIRBASE:")
+                and current in {"blue", "red"}
+                and actor == current
+                and previous != current
+                and opponent is not None
+            ):
+                x = _optional_float(airbase.get("x"))
+                z = _optional_float(airbase.get("z"))
+                territory = _territory_at_point(self.state.territory_objects.values(), x, z)
+                multiplier, factors = airbase_capture_multiplier(
+                    previous_coalition=previous,
+                    capturing_coalition=actor,
+                    territory_coalition=territory.coalition if territory else None,
+                    category=str(airbase.get("category") or ""),
+                )
+                stable_source = message_id or f"{airbase_id}:{mission_time}"
+                self.record_escalation_incident(
+                    EscalationIncident(
+                        incident_id=f"INCIDENT:CAPTURE:{stable_source}",
+                        incident_type=EscalationIncidentType.OBJECTIVE_CAPTURED,
+                        actor_coalition=actor,
+                        target_coalition=previous if previous in {"blue", "red"} else opponent,
+                        mission_time=mission_time,
+                        reference_id=airbase_id,
+                        multiplier=multiplier,
+                        details={
+                            "airbase_id": airbase_id,
+                            "airbase_name": airbase.get("name") or airbase.get("dcs_name"),
+                            "previous_coalition": previous,
+                            "coalition": current,
+                            "capturing_unit_id": payload.get("capturing_unit_id"),
+                            "capturing_group_id": payload.get("capturing_group_id"),
+                            "territory_id": territory.object_id if territory else None,
+                            "territory_coalition": territory.coalition if territory else None,
+                            **factors,
+                            "source_event": "airbase.coalition_changed",
+                        },
+                    )
+                )
+        if (
+            message_type == "event"
+            and event_name in {"opszone.owner_changed", "opszone.coalition_changed"}
+            and feedback_message_is_new
+        ):
+            payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+            opszone = payload.get("opszone") if isinstance(payload.get("opszone"), dict) else {}
+            previous = normalize_coalition(
+                payload.get("previous_coalition") or opszone.get("owner_previous_name")
+            )
+            current = normalize_coalition(
+                payload.get("coalition") or opszone.get("owner_current_name")
+            )
+            actor = normalize_coalition(payload.get("capturing_coalition")) or current
+            opszone_id = str(payload.get("opszone_id") or opszone.get("object_id") or "")
+            mission_time = _optional_float(message.get("mission_time"))
+            opponent = "red" if actor == "blue" else "blue" if actor == "red" else None
+            if (
+                opszone_id.startswith("OPSZONE:")
+                and current in {"blue", "red"}
+                and actor == current
+                and previous != current
+                and opponent is not None
+            ):
+                x = _optional_float(opszone.get("x"))
+                z = _optional_float(opszone.get("z"))
+                territory = _territory_at_point(self.state.territory_objects.values(), x, z)
+                reference_points = self.relationship.get_opszone_capture_points(opszone_id)
+                multiplier, factors = opszone_capture_multiplier(
+                    reference_points=reference_points,
+                    previous_coalition=previous,
+                    capturing_coalition=actor,
+                    territory_coalition=territory.coalition if territory else None,
+                )
+                stable_source = message_id or f"{opszone_id}:{mission_time}"
+                self.record_escalation_incident(
+                    EscalationIncident(
+                        incident_id=f"INCIDENT:OPSZONE_CAPTURE:{stable_source}",
+                        incident_type=EscalationIncidentType.OPSZONE_CAPTURED,
+                        actor_coalition=actor,
+                        target_coalition=previous if previous in {"blue", "red"} else opponent,
+                        mission_time=mission_time,
+                        reference_id=opszone_id,
+                        multiplier=multiplier,
+                        details={
+                            "opszone_id": opszone_id,
+                            "opszone_name": opszone.get("name") or opszone.get("dcs_name"),
+                            "previous_coalition": previous,
+                            "coalition": current,
+                            "territory_id": territory.object_id if territory else None,
+                            "territory_coalition": territory.coalition if territory else None,
+                            **factors,
+                            "source_event": event_name,
+                        },
+                    )
+                )
         if (
             message_type == "event" and event_name.startswith("intel.")
             or message_type == "snapshot" and kind == "intel_contacts"
@@ -1458,6 +1887,8 @@ class MooseBridgeClient:
                 )
         if message_type == "heartbeat":
             self.goals.sync(mission_time=self._current_mission_time(), source="heartbeat")
+            self.sync_strategic_feedback(source="heartbeat")
+            self.sync_border_violations()
             return
         relevant_event = message_type == "event" and event_name in {
             "object.destroyed",
@@ -1501,6 +1932,8 @@ class MooseBridgeClient:
         )
         if should_reassess_plans:
             self.sync_strategic_feedback(source=event_name or f"snapshot.{kind}")
+        if message_type == "snapshot" and kind in {"groups", "territories"}:
+            self.sync_border_violations()
         if message_type == "event" and event_name == "auftrag.evaluated" and feedback_message_is_new:
             payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
             self.strategic_feedback.record_context_change(

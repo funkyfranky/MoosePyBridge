@@ -313,7 +313,11 @@ end
 function MOOSE_BRIDGE:RegisterOpsZone(opszone, name)
   if not opszone then return self end
   local zone_name = name or self:_SafeCall(opszone, "GetName") or opszone.Name or opszone.name
-  if zone_name then self.RegisteredOpsZones[safe_tostring(zone_name)] = opszone end
+  if zone_name then
+    zone_name = safe_tostring(zone_name)
+    self.RegisteredOpsZones[zone_name] = opszone
+    if self._AttachOpsZoneEventForwarder then self:_AttachOpsZoneEventForwarder(opszone, zone_name) end
+  end
   return self
 end
 

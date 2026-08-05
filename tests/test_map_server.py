@@ -82,6 +82,7 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "frontline_error": None,
         "recon_coverage_count": 0,
         "recon_coverage_error": None,
+        "diplomacy": None,
     }
 
 
@@ -92,6 +93,7 @@ def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:
     runtime._pressure_frontline_features.append({"type": "Feature"})
     runtime._incursion_features.append({"type": "Feature"})
     runtime._recon_features.append({"type": "Feature"})
+    runtime._diplomacy_event_cursor = "event-12"
 
     runtime.reset_mission(1)
 
@@ -102,6 +104,7 @@ def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:
     assert not runtime._pressure_frontline_features
     assert not runtime._incursion_features
     assert not runtime._recon_features
+    assert runtime._diplomacy_event_cursor is None
 
 
 def _moving_picture(mission_time: float, *, x: float = 0, z: float = 0, alive: bool = True) -> dict[str, object]:

@@ -8,6 +8,7 @@ from moosebridge import (
     AssetRole,
     DestroyedObjectEvent,
     InformationRequirement,
+    KillEvent,
     MissionIntent,
     MooseBridgeClient,
     MooseBridgeServer,
@@ -20,6 +21,9 @@ from moosebridge import (
     StrategicGoal,
     StrategicGoalAction,
     StrategicObjective,
+    EscalationIncidentType,
+    RelationshipState,
+    Territory,
 )
 from moosebridge.state import MooseBridgeState
 
@@ -75,6 +79,94 @@ def mission_ended_message() -> dict[str, object]:
     }
 
 
+def kill_message() -> dict[str, object]:
+    return {
+        "type": "event",
+        "id": "event-kill-1",
+        "event": "combat.kill",
+        "mission_time": 130.0,
+        "payload": {
+            "dcs_event_name": "S_EVENT_KILL",
+            "dcs_event_time": 129.8,
+            "killer_object_id": "UNIT:Blue Tank-1",
+            "killer_group_id": "GROUP:Blue Tank",
+            "killer_coalition": "blue",
+            "killer_type": "M-1 Abrams",
+            "target_object_id": "UNIT:Red Tank-1",
+            "target_group_id": "GROUP:Red Tank",
+            "target_coalition": "red",
+            "target_type": "T-72B",
+            "weapon_name": "M256",
+        },
+    }
+
+
+def airbase_captured_message() -> dict[str, object]:
+    return {
+        "type": "event",
+        "id": "event-base-captured-1",
+        "event": "airbase.coalition_changed",
+        "mission_time": 240.0,
+        "payload": {
+            "airbase_id": "AIRBASE:Tutow",
+            "previous_coalition": "red",
+            "coalition": "blue",
+            "capturing_coalition": "blue",
+            "capturing_unit_id": "UNIT:Blue Armor-1",
+            "capturing_group_id": "GROUP:Blue Armor",
+            "airbase": {
+                "object_id": "AIRBASE:Tutow",
+                "dcs_name": "Tutow",
+                "category": "Airdrome",
+                "coalition": "blue",
+                "x": 500,
+                "z": 500,
+            },
+        },
+    }
+
+
+def opszone_captured_message() -> dict[str, object]:
+    return {
+        "type": "event",
+        "id": "event-opszone-captured-1",
+        "event": "opszone.owner_changed",
+        "mission_time": 260.0,
+        "payload": {
+            "opszone_id": "OPSZONE:Town Fight",
+            "previous_coalition": "red",
+            "coalition": "blue",
+            "capturing_coalition": "blue",
+            "fsm_event": "Captured",
+            "opszone": {
+                "object_id": "OPSZONE:Town Fight",
+                "name": "Town Fight",
+                "owner_previous_name": "red",
+                "owner_current_name": "blue",
+                "x": 500,
+                "z": 500,
+            },
+        },
+    }
+
+
+def add_red_territory(bridge: MooseBridgeClient) -> None:
+    territory = Territory.from_payload(
+        {
+            "object_id": "TERRITORY:Red",
+            "dcs_name": "Red",
+            "coalition": "red",
+            "vertices": [
+                {"x": 0, "z": 0},
+                {"x": 1000, "z": 0},
+                {"x": 1000, "z": 1000},
+                {"x": 0, "z": 1000},
+            ],
+        }
+    )
+    bridge.state.territory_objects[territory.object_id] = territory
+
+
 def test_destroyed_object_event_model() -> None:
     event = DestroyedObjectEvent.from_message(destroyed_message())
 
@@ -84,6 +176,159 @@ def test_destroyed_object_event_model() -> None:
     assert event.mission_time == 125.5
     assert event.dcs_event_time == 125.25
     assert event.dcs_event_name == "S_EVENT_UNIT_LOST"
+
+
+def test_kill_event_model_and_diplomatic_incident_are_attributed_once() -> None:
+    event = KillEvent.from_message(kill_message())
+    assert event.killer_object_id == "UNIT:Blue Tank-1"
+    assert event.target_object_id == "UNIT:Red Tank-1"
+    assert event.killer_coalition == "blue"
+    assert event.target_coalition == "red"
+    assert event.weapon_name == "M256"
+
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    bridge._on_bridge_message(kill_message())
+    bridge._on_bridge_message(kill_message())
+
+    assert len(bridge.relationship.incidents) == 1
+    incident = bridge.relationship.incidents[0]
+    assert incident.actor_coalition == "blue"
+    assert incident.target_coalition == "red"
+    assert incident.reference_id == "UNIT:Red Tank-1"
+    assert bridge.relationship.escalation_score == 20
+    assert bridge.relationship.state is RelationshipState.TENSE
+    assert bridge.relationship.pending_transition is None
+
+
+def test_enemy_airbase_capture_is_one_strong_attributed_escalation() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    add_red_territory(bridge)
+
+    bridge._on_bridge_message(airbase_captured_message())
+    bridge._on_bridge_message(airbase_captured_message())
+
+    assert len(bridge.relationship.incidents) == 1
+    incident = bridge.relationship.incidents[0]
+    assert incident.incident_type is EscalationIncidentType.OBJECTIVE_CAPTURED
+    assert incident.actor_coalition == "blue"
+    assert incident.target_coalition == "red"
+    assert incident.reference_id == "AIRBASE:Tutow"
+    assert bridge.relationship.escalation_score == 60
+    assert bridge.relationship.state is RelationshipState.LIMITED_CONFLICT
+    assert bridge.relationship.pending_transition is None
+
+
+def test_airbase_capture_can_escalate_existing_tension_to_war() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    add_red_territory(bridge)
+    bridge._on_bridge_message(kill_message())
+    assert bridge.relationship.state is RelationshipState.TENSE
+
+    bridge._on_bridge_message(airbase_captured_message())
+
+    assert bridge.relationship.escalation_score == 80
+    assert bridge.relationship.state is RelationshipState.WAR
+    assert bridge.relationship.pending_transition is None
+
+
+def test_neutral_airbase_capture_in_no_mans_land_is_weak_escalation() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    message = airbase_captured_message()
+    message["payload"]["previous_coalition"] = "neutral"  # type: ignore[index]
+    message["payload"]["airbase"]["x"] = 5000  # type: ignore[index]
+
+    bridge._on_bridge_message(message)
+
+    assert len(bridge.relationship.incidents) == 1
+    assert bridge.relationship.escalation_score == 15
+    assert bridge.relationship.pending_transition is None
+    assert bridge.relationship.incidents[0].details["territory_context"] == "no_mans_land"
+    assert bridge.relationship.incidents[0].details["escalation_points"] == 15
+
+
+def test_enemy_farp_capture_is_quarter_of_equivalent_airdrome() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    add_red_territory(bridge)
+    message = airbase_captured_message()
+    message["payload"]["airbase"]["category"] = "Heliport"  # type: ignore[index]
+
+    bridge._on_bridge_message(message)
+
+    assert bridge.relationship.escalation_score == 15
+    assert bridge.relationship.pending_transition is None
+    assert bridge.relationship.incidents[0].details["escalation_points"] == 15
+
+
+def test_enemy_airdrome_capture_in_no_mans_land_scores_forty() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    message = airbase_captured_message()
+    message["payload"]["airbase"]["x"] = 5000  # type: ignore[index]
+
+    bridge._on_bridge_message(message)
+
+    assert bridge.relationship.escalation_score == 40
+    assert bridge.relationship.incidents[0].details["escalation_points"] == 40
+
+
+def test_neutral_airdrome_capture_in_opposing_territory_scores_thirty() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    add_red_territory(bridge)
+    message = airbase_captured_message()
+    message["payload"]["previous_coalition"] = "neutral"  # type: ignore[index]
+
+    bridge._on_bridge_message(message)
+
+    assert bridge.relationship.escalation_score == 30
+    assert bridge.relationship.incidents[0].details["escalation_points"] == 30
+
+
+def test_enemy_opszone_capture_uses_configurable_strategic_value_once() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    add_red_territory(bridge)
+    assert bridge.set_opszone_strategic_value("OPSZONE:Town Fight", 35) == 35
+
+    message = opszone_captured_message()
+    bridge._on_bridge_message(message)
+    bridge._on_bridge_message(message)
+
+    assert len(bridge.relationship.incidents) == 1
+    incident = bridge.relationship.incidents[0]
+    assert incident.incident_type is EscalationIncidentType.OPSZONE_CAPTURED
+    assert incident.actor_coalition == "blue"
+    assert incident.target_coalition == "red"
+    assert incident.reference_id == "OPSZONE:Town Fight"
+    assert incident.details["reference_points"] == 35
+    assert incident.details["escalation_points"] == 35
+    assert bridge.relationship.escalation_score == 35
+    assert bridge.relationship.state is RelationshipState.TENSE
+
+
+def test_neutral_opszone_capture_in_no_mans_land_uses_quarter_default_value() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    message = opszone_captured_message()
+    message["payload"]["previous_coalition"] = "neutral"  # type: ignore[index]
+    message["payload"]["opszone"]["owner_previous_name"] = "neutral"  # type: ignore[index]
+    message["payload"]["opszone"]["x"] = 5000  # type: ignore[index]
+
+    bridge._on_bridge_message(message)
+
+    assert bridge.relationship.escalation_score == 5
+    assert bridge.relationship.state is RelationshipState.PEACE
+    assert bridge.relationship.incidents[0].details["territory_context"] == "no_mans_land"
+    assert bridge.relationship.incidents[0].details["escalation_points"] == 5
+
+
+def test_neutral_farp_capture_in_no_mans_land_scores_five() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    message = airbase_captured_message()
+    message["payload"]["previous_coalition"] = "neutral"  # type: ignore[index]
+    message["payload"]["airbase"]["category"] = "Heliport"  # type: ignore[index]
+    message["payload"]["airbase"]["x"] = 5000  # type: ignore[index]
+
+    bridge._on_bridge_message(message)
+
+    assert bridge.relationship.escalation_score == 5
+    assert bridge.relationship.incidents[0].details["escalation_points"] == 5
 
 
 def test_object_destroyed_event_updates_state_without_snapshot() -> None:

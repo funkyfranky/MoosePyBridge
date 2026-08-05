@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MooseBridge Global Picture</title>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/assets/map.css?v=2">
+  <link rel="stylesheet" href="/assets/map.css?v=3">
 </head>
 <body>
   <main class="app-shell">
@@ -19,6 +19,14 @@
         <span class="separator" aria-hidden="true"></span>
         <span id="dcs-clock">DCS --</span>
         <span id="mission-clock">Mission --</span>
+      </div>
+      <div class="diplomacy-line" aria-label="Diplomatic state">
+        <span id="relationship-state" class="relationship-state" data-state="peace">Peace</span>
+        <span id="escalation-score" class="escalation-score">Escalation 0</span>
+        <span id="pending-transition" class="pending-transition" hidden></span>
+        <span class="separator" aria-hidden="true"></span>
+        <span id="blue-doctrine" class="doctrine is-blue">Blue balanced</span>
+        <span id="red-doctrine" class="doctrine is-red">Red balanced</span>
       </div>
       <button id="layers-toggle" class="icon-button" type="button" title="Toggle map layers" aria-controls="layer-panel" aria-expanded="true">
         <i data-lucide="layers-3"></i>
@@ -63,6 +71,6 @@
 
   <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script src="/assets/map.js?v=12"></script>
+  <script src="/assets/map.js?v=13"></script>
 </body>
 </html>

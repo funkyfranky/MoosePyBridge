@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 from .legions import Cohort, Legion
@@ -13,7 +14,37 @@ from .operational import (
     OperationalPlanRegistry,
     OperationalPlanStatus,
 )
-from .strategic import StrategicGoalEvent, StrategicGoalRegistry
+from .strategic import (
+    StrategicGoalAction,
+    StrategicGoalEvent,
+    StrategicGoalRegistry,
+    StrategicGoalStatus,
+    StrategicObjectiveRegistry,
+)
+
+
+class StrategicFeedbackAction(str, Enum):
+    """Deterministic response to one strategic feedback event."""
+
+    KEEP = "keep"
+    WAIT = "wait"
+    REPLAN = "replan"
+    ABORT = "abort"
+
+
+@dataclass(slots=True, frozen=True)
+class StrategicFeedbackDecision:
+    """Policy decision for one operational plan.
+
+    ``automatic`` is deliberately true only for terminal goals and unsafe
+    friendly-target situations. Replanning always remains an explicit action.
+    """
+
+    action: StrategicFeedbackAction
+    reason: str
+    plan_id: str | None = None
+    goal_id: str | None = None
+    automatic: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -56,12 +87,23 @@ class StrategicFeedbackMonitor:
         OperationalPlanStatus.CANCELLED,
     }
 
-    def __init__(self, goals: StrategicGoalRegistry, plans: OperationalPlanRegistry) -> None:
+    def __init__(
+        self,
+        goals: StrategicGoalRegistry,
+        plans: OperationalPlanRegistry,
+        *,
+        persistent_shortfall_s: float = 300.0,
+    ) -> None:
+        if persistent_shortfall_s <= 0:
+            raise ValueError("persistent_shortfall_s must be greater than zero")
         self.goals = goals
         self.plans = plans
+        self.persistent_shortfall_s = float(persistent_shortfall_s)
         self._events: list[StrategicFeedbackEvent] = []
         self._listeners: list[Callable[[StrategicFeedbackEvent], None]] = []
         self._plan_states: dict[str, _PlanFeedbackState] = {}
+        self._shortfall_since: dict[str, float] = {}
+        self._persistent_shortfalls_reported: set[str] = set()
         goals.add_listener(self._on_goal_event)
 
     @property
@@ -79,6 +121,8 @@ class StrategicFeedbackMonitor:
     def clear(self) -> None:
         self._events.clear()
         self._plan_states.clear()
+        self._shortfall_since.clear()
+        self._persistent_shortfalls_reported.clear()
 
     def filter(
         self,
@@ -125,6 +169,26 @@ class StrategicFeedbackMonitor:
             current = _assessment_state(assessment)
             previous = self._plan_states.get(plan.plan_id)
             self._plan_states[plan.plan_id] = current
+            if current.feasible:
+                self._shortfall_since.pop(plan.plan_id, None)
+                self._persistent_shortfalls_reported.discard(plan.plan_id)
+            elif mission_time is not None:
+                since = self._shortfall_since.setdefault(plan.plan_id, mission_time)
+                if (
+                    plan.plan_id not in self._persistent_shortfalls_reported
+                    and mission_time - since >= self.persistent_shortfall_s
+                ):
+                    emitted.append(
+                        self._plan_event(
+                            "feedback.asset_shortfall_persisted",
+                            plan,
+                            source,
+                            mission_time,
+                            current,
+                            reason=f"required asset shortfall persisted for {mission_time - since:.0f}s",
+                        )
+                    )
+                    self._persistent_shortfalls_reported.add(plan.plan_id)
             if previous is None:
                 emitted.append(self._plan_event("feedback.plan_assessed", plan, source, mission_time, current))
                 continue
@@ -152,6 +216,8 @@ class StrategicFeedbackMonitor:
                 emitted.append(self._plan_event("feedback.plan_issues_changed", plan, source, mission_time, current))
         for stale_plan_id in set(self._plan_states).difference(active_ids):
             del self._plan_states[stale_plan_id]
+            self._shortfall_since.pop(stale_plan_id, None)
+            self._persistent_shortfalls_reported.discard(stale_plan_id)
         for event in emitted:
             self._record(event)
         return tuple(emitted)
@@ -239,6 +305,127 @@ class StrategicFeedbackMonitor:
             listener(event)
 
 
+class StrategicFeedbackPolicy:
+    """Translate feedback into conservative operational actions."""
+
+    _TERMINAL_GOAL_STATUSES = {
+        StrategicGoalStatus.ACHIEVED.value,
+        StrategicGoalStatus.FAILED.value,
+        StrategicGoalStatus.CANCELLED.value,
+    }
+    _FRIENDLY_TARGET_ACTIONS = {
+        StrategicGoalAction.DESTROY,
+        StrategicGoalAction.DISABLE,
+        StrategicGoalAction.INTERDICT,
+    }
+
+    def __init__(
+        self,
+        objectives: StrategicObjectiveRegistry,
+        goals: StrategicGoalRegistry,
+        plans: OperationalPlanRegistry,
+    ) -> None:
+        self.objectives = objectives
+        self.goals = goals
+        self.plans = plans
+
+    def decide(
+        self,
+        event: StrategicFeedbackEvent,
+        *,
+        executing_plan_ids: Iterable[str] = (),
+    ) -> tuple[StrategicFeedbackDecision, ...]:
+        """Return deterministic decisions without mutating plans or DCS."""
+
+        executing = set(executing_plan_ids)
+        candidates = self._candidate_plans(event)
+        decisions: list[StrategicFeedbackDecision] = []
+        for plan in candidates:
+            goal = self.goals.get(plan.goal_id)
+            if goal is None:
+                continue
+            status = str(event.details.get("status") or "").lower()
+            if event.event == "feedback.goal_status_changed" and status in self._TERMINAL_GOAL_STATUSES:
+                decisions.append(
+                    StrategicFeedbackDecision(
+                        StrategicFeedbackAction.ABORT,
+                        f"strategic goal {status}; remaining missions are no longer required",
+                        plan.plan_id,
+                        goal.goal_id,
+                        automatic=True,
+                    )
+                )
+                continue
+            if event.event == "feedback.objective_changed":
+                objective = self.objectives.get(goal.objective_id)
+                if (
+                    objective is not None
+                    and objective.owner == plan.coalition
+                    and goal.action in self._FRIENDLY_TARGET_ACTIONS
+                ):
+                    decisions.append(
+                        StrategicFeedbackDecision(
+                            StrategicFeedbackAction.ABORT,
+                            "target objective is now friendly; continuing would be unsafe",
+                            plan.plan_id,
+                            goal.goal_id,
+                            automatic=True,
+                        )
+                    )
+                    continue
+            if event.event == "feedback.replanning_required":
+                action = StrategicFeedbackAction.WAIT if plan.plan_id in executing else StrategicFeedbackAction.REPLAN
+                reason = (
+                    "active MOOSE missions continue; the shortfall applies to later recruitment"
+                    if action is StrategicFeedbackAction.WAIT
+                    else "plan is infeasible before execution and requires revalidation"
+                )
+                decisions.append(StrategicFeedbackDecision(action, reason, plan.plan_id, goal.goal_id))
+                continue
+            if event.event == "feedback.asset_shortfall_persisted":
+                decisions.append(
+                    StrategicFeedbackDecision(
+                        StrategicFeedbackAction.REPLAN,
+                        "asset shortfall persisted beyond the configured DCS-time threshold",
+                        plan.plan_id,
+                        goal.goal_id,
+                    )
+                )
+                continue
+            if event.event == "feedback.plan_allocation_changed":
+                action = StrategicFeedbackAction.KEEP if plan.plan_id in executing else StrategicFeedbackAction.REPLAN
+                reason = (
+                    "retain running missions and use the new allocation on a later phase or plan"
+                    if action is StrategicFeedbackAction.KEEP
+                    else "allocation changed before execution; revalidate before approval or launch"
+                )
+                decisions.append(StrategicFeedbackDecision(action, reason, plan.plan_id, goal.goal_id))
+                continue
+            decisions.append(
+                StrategicFeedbackDecision(
+                    StrategicFeedbackAction.KEEP,
+                    "no destructive operational response is required",
+                    plan.plan_id,
+                    goal.goal_id,
+                )
+            )
+        return tuple(decisions)
+
+    def _candidate_plans(self, event: StrategicFeedbackEvent) -> tuple[OperationalPlan, ...]:
+        if event.plan_id:
+            plan = self.plans.get(event.plan_id)
+            return (plan,) if plan is not None else ()
+        if event.goal_id:
+            return tuple(plan for plan in self.plans.all() if plan.goal_id == event.goal_id)
+        if event.event == "feedback.objective_changed" and event.reference_id:
+            goal_ids = {
+                goal.goal_id
+                for goal in self.goals.filter(objective_id=event.reference_id)
+            }
+            return tuple(plan for plan in self.plans.all() if plan.goal_id in goal_ids)
+        return ()
+
+
 def _assessment_state(assessment: OperationalPlanAssessment) -> _PlanFeedbackState:
     allocations = tuple(
         (
@@ -256,4 +443,10 @@ def _assessment_state(assessment: OperationalPlanAssessment) -> _PlanFeedbackSta
     return _PlanFeedbackState(assessment.feasible, allocations, issues)
 
 
-__all__ = ["StrategicFeedbackEvent", "StrategicFeedbackMonitor"]
+__all__ = [
+    "StrategicFeedbackAction",
+    "StrategicFeedbackDecision",
+    "StrategicFeedbackEvent",
+    "StrategicFeedbackMonitor",
+    "StrategicFeedbackPolicy",
+]
