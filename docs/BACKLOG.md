@@ -12,13 +12,16 @@ Priorities:
 
 ## P1 - Decision and execution
 
-- [ ] **Add a minimal autonomous conflict controller.** Run one bounded Python
+- [x] **Add a minimal autonomous conflict controller.** Run one bounded Python
   decision loop per coalition: refresh the appropriate global or INTEL picture,
   generate CAPTURE/DEFEND/DESTROY candidates, apply relationship and doctrine
   constraints, select a capacity-feasible portfolio, submit approved plans
   through COMMANDER, and reassess on relevant events. Limit concurrency and
   decision frequency so the first scenario remains understandable and
-  auditable rather than becoming a full campaign engine.
+  auditable rather than becoming a full campaign engine. The first controller
+  supports one coalition, one selected goal per cycle, explicit scenario
+  objectives, automatic war initialization, and CAPTURE/DEFEND/DESTROY through
+  the existing portfolio, approval, COMMANDER execution, and audit paths.
 - [x] **Apply relationship constraints and doctrine to goal selection.** Block
   offensive goals that are politically invalid in peace or a ceasefire, bound
   limited-conflict goals to their authorized area/effects, and use doctrine

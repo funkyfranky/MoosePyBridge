@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 PLAN_EXECUTION_AUDIT_TYPE = "operational_plan.execution"
 RECON_POSITION_SAMPLE_INTERVAL_S = 10.0
+AUFTRAG_CANCEL_EVALUATION_GRACE_S = 2.0
 
 
 class PlanMissionStatus(str, Enum):
@@ -1555,6 +1556,7 @@ class OperationalPlanExecutor:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
         after_id: str | None = mission.event_cursor
+        cancel_evaluation_deadline: float | None = None
         seen_status_keys: set[tuple[str | None, str | None, str | None, str | None]] = set()
         while True:
             remaining = deadline - loop.time()
@@ -1564,6 +1566,8 @@ class OperationalPlanExecutor:
                 await self._mission_event(execution, mission, "mission.failed", on_event)
                 return False
             wait_timeout = min(remaining, RECON_POSITION_SAMPLE_INTERVAL_S) if mission.recon_intel_id else remaining
+            if cancel_evaluation_deadline is not None:
+                wait_timeout = min(wait_timeout, max(0.0, cancel_evaluation_deadline - loop.time()))
             try:
                 message = await self.client.server.wait_for_event(
                     "auftrag.*",
@@ -1572,6 +1576,11 @@ class OperationalPlanExecutor:
                     after_id=after_id,
                 )
             except TimeoutError:
+                if cancel_evaluation_deadline is not None:
+                    mission.status = PlanMissionStatus.CANCELLED
+                    mission.error = "AUFTRAG was cancelled"
+                    await self._mission_event(execution, mission, "mission.cancelled", on_event)
+                    return False
                 if mission.recon_intel_id:
                     await self._sample_recon_positions(mission)
                     continue
@@ -1607,10 +1616,10 @@ class OperationalPlanExecutor:
                 )
                 return mission.status is PlanMissionStatus.SUCCEEDED
             if (event.fsm_event or "").lower() == "cancel":
-                mission.status = PlanMissionStatus.CANCELLED
-                mission.error = "AUFTRAG was cancelled"
-                await self._mission_event(execution, mission, "mission.cancelled", on_event)
-                return False
+                # Some MOOSE mission types enter Cancel while evaluating their
+                # terminal state, then emit the authoritative Evaluated event.
+                cancel_evaluation_deadline = loop.time() + AUFTRAG_CANCEL_EVALUATION_GRACE_S
+                continue
             status_key = (event.fsm_event, event.status, event.from_state, event.to_state)
             if status_key in seen_status_keys:
                 continue

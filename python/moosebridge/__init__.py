@@ -307,6 +307,12 @@ from .strategic_selection import (
     StrategicGoalPortfolioSelector,
     StrategicGoalSelection,
 )
+from .conflict_controller import (
+    ConflictControllerConfig,
+    ConflictControllerCycle,
+    ConflictControllerIssue,
+    RuleBasedConflictController,
+)
 from .strategic import (
     CaptureBehavior,
     ComponentHealthEstimate,
@@ -466,6 +472,9 @@ __all__ = [
     "CoalitionDoctrinePreset",
     "CoalitionDoctrineRegistry",
     "CoalitionRelationship",
+    "ConflictControllerConfig",
+    "ConflictControllerCycle",
+    "ConflictControllerIssue",
     "ComponentHealthEstimate",
     "Cohort",
     "Commander",
@@ -590,6 +599,7 @@ __all__ = [
     "RestoredOperationalPlan",
     "RuleBasedOperationalPlanner",
     "RuleBasedPlannerConfig",
+    "RuleBasedConflictController",
     "SensorDetectionType",
     "SensorPlatformCategory",
     "SensorRangeProfile",

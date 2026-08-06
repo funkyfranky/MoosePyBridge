@@ -328,6 +328,14 @@ bridge.declare_war("blue", reason="Recover occupied territory")
 await bridge.persist_diplomacy_state()
 ```
 
+`examples/sdk/run_blue_conflict_controller.py` demonstrates one deliberately
+bounded autonomous cycle. It restores or declares war, uses blue INTEL, derives
+CAPTURE/DEFEND/DESTROY candidates only from explicitly registered objectives,
+admits at most one capacity-feasible plan, approves it, and executes it through
+the blue COMMANDER. Red DCS forces can serve as targets for this first scenario;
+red LEGIONs and COHORTs are required only when red should plan and execute its
+own MOOSE missions.
+
 Set `bridge.relationship.automatic_transitions = False` when a scenario should
 require explicit approval through `approve_relationship_transition()`.
 De-escalation remains explicit. Incident weights are

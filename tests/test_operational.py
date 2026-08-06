@@ -823,6 +823,73 @@ class _DuplicateStatusExecutionServer(_ExecutionServer):
         return event
 
 
+class _CancelBeforeEvaluatedExecutionServer(_ExecutionServer):
+    """Reproduce MOOSE's Done -> Cancel -> Evaluated terminal callback order."""
+
+    def __init__(self, *, evaluated: bool = True) -> None:
+        super().__init__()
+        self.evaluated = evaluated
+        self._event_steps: dict[str, int] = {}
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
+        step = self._event_steps.get(auftrag_id, 0)
+        self._event_steps[auftrag_id] = step + 1
+        if step >= 2 and not self.evaluated:
+            raise TimeoutError
+
+        self._event_number += 1
+        if step == 0:
+            event = {
+                "type": "event",
+                "id": f"event-{self._event_number}",
+                "event": "auftrag.status",
+                "payload": {
+                    "auftrag_id": auftrag_id,
+                    "auftrag_type": "CAPTUREZONE",
+                    "status": "done",
+                    "fsm_event": "Done",
+                    "from": "cancelled",
+                    "to": "done",
+                },
+            }
+        elif step == 1:
+            event = {
+                "type": "event",
+                "id": f"event-{self._event_number}",
+                "event": "auftrag.status",
+                "payload": {
+                    "auftrag_id": auftrag_id,
+                    "auftrag_type": "CAPTUREZONE",
+                    "status": "done",
+                    "fsm_event": "Cancel",
+                    "from": "started",
+                    "to": "cancelled",
+                },
+            }
+        else:
+            self._objective_updated = True
+            event = {
+                "type": "event",
+                "id": f"event-{self._event_number}",
+                "event": "auftrag.evaluated",
+                "payload": {
+                    "auftrag_id": auftrag_id,
+                    "auftrag_type": "CAPTUREZONE",
+                    "status": "done",
+                    "summary": {"success": True, "Ntargets0": 1, "Ntargets": 0},
+                },
+            }
+        self.event_history.append(event)
+        return event
+
+
 class _DisappearingStaticDestroyExecutionServer(_DestroyExecutionServer):
     """Execution server whose destroyed static vanishes from the complete snapshot."""
 
@@ -1704,6 +1771,43 @@ def test_execute_plan_deduplicates_repeated_auftrag_status_events() -> None:
 
         assert execution.status is OperationalPlanStatus.COMPLETED
         assert sum("Queued status=queued planned->queued" in item for item in observed) == 1
+
+    asyncio.run(scenario())
+
+
+def test_execute_plan_prefers_evaluated_outcome_after_nested_cancel_event() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_capture_plan()
+        server = _CancelBeforeEvaluatedExecutionServer()
+        server.state = bridge.state
+        bridge.server = server  # type: ignore[assignment]
+        observed: list[str] = []
+
+        execution = await bridge.execute_plan(plan, on_event=lambda event: observed.append(str(event)))
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert execution.missions[0].status is PlanMissionStatus.SUCCEEDED
+        assert execution.missions[0].outcome is not None
+        assert execution.missions[0].outcome.success is True
+        assert any("Done status=done cancelled->done" in item for item in observed)
+        assert any("mission.succeeded" in item for item in observed)
+        assert not any("mission.cancelled" in item for item in observed)
+
+    asyncio.run(scenario())
+
+
+def test_execute_plan_treats_cancel_without_evaluation_as_terminal() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_capture_plan()
+        server = _CancelBeforeEvaluatedExecutionServer(evaluated=False)
+        server.state = bridge.state
+        bridge.server = server  # type: ignore[assignment]
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert execution.missions[0].status is PlanMissionStatus.CANCELLED
+        assert execution.missions[0].error == "AUFTRAG was cancelled"
 
     asyncio.run(scenario())
 
