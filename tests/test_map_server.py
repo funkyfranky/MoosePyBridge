@@ -94,6 +94,7 @@ def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:
     runtime._incursion_features.append({"type": "Feature"})
     runtime._recon_features.append({"type": "Feature"})
     runtime._diplomacy_event_cursor = "event-12"
+    runtime._border_violation_signature = (("GROUP:Blue", "TERRITORY:Red", 10.0, True),)
 
     runtime.reset_mission(1)
 
@@ -105,6 +106,7 @@ def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:
     assert not runtime._incursion_features
     assert not runtime._recon_features
     assert runtime._diplomacy_event_cursor is None
+    assert runtime._border_violation_signature == ()
 
 
 def _moving_picture(mission_time: float, *, x: float = 0, z: float = 0, alive: bool = True) -> dict[str, object]:

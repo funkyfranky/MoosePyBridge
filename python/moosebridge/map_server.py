@@ -159,6 +159,7 @@ class GlobalMapRuntime:
     _recon_audit_signature: tuple[tuple[str, str], ...] = ()
     _recon_error: str | None = None
     _diplomacy_event_cursor: str | None = None
+    _border_violation_signature: tuple[tuple[str, str, float, bool], ...] = ()
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
 
@@ -226,6 +227,7 @@ class GlobalMapRuntime:
         self._recon_audit_signature = ()
         self._recon_error = None
         self._diplomacy_event_cursor = None
+        self._border_violation_signature = ()
         self._frontline_tracker.reset()
 
     def update_picture(self, picture: dict[str, Any]) -> dict[str, Any]:
@@ -837,7 +839,10 @@ class GlobalMapRuntime:
                     str(event_history.get("latest_event_id") or "") or self._diplomacy_event_cursor
                 )
                 border_incidents = bridge.sync_border_violations()
-                if incident_count or border_incidents:
+                border_signature = bridge.border_violations.active_violations
+                border_state_changed = border_signature != self._border_violation_signature
+                self._border_violation_signature = border_signature
+                if incident_count or border_incidents or border_state_changed:
                     await bridge.persist_diplomacy_state()
                 geojson.setdefault("properties", {})["diplomacy"] = bridge.diplomacy_status()
                 try:

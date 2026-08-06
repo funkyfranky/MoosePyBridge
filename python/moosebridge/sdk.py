@@ -273,6 +273,12 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
+def _incident_mission_time(value: float | None) -> str:
+    """Return stable DCS-time text for semantic incident identities."""
+
+    return "unknown" if value is None else f"{value:.3f}"
+
+
 def _territory_at_point(
     territories: Iterable[Territory],
     x: float | None,
@@ -993,6 +999,15 @@ class MooseBridgeClient:
 
         return self.relationship.approve_transition(proposal_id)
 
+    def declare_war(self, coalition: str, *, reason: str) -> EscalationIncident:
+        """Let one coalition explicitly declare war without prior incidents."""
+
+        return self.relationship.declare_war(
+            coalition,
+            reason=reason,
+            mission_time=self._current_mission_time(),
+        )
+
     def reject_relationship_transition(self, proposal_id: str) -> None:
         """Reject the pending relationship transition."""
 
@@ -1043,6 +1058,7 @@ class MooseBridgeClient:
             self.coalition_doctrines,
             mission_generation=self.state.mission_generation,
         )
+        payload["border_violations"] = self.border_violations.to_dict()
         return await self.server.append_audit_record(DIPLOMACY_AUDIT_TYPE, payload)
 
     async def refresh_diplomacy_state(self) -> bool:
@@ -1066,6 +1082,7 @@ class MooseBridgeClient:
             < DIPLOMACY_STATE_SCHEMA_VERSION
         )
         apply_diplomacy_state(payload, self.relationship, self.coalition_doctrines)
+        self.border_violations.restore(payload.get("border_violations"))
         if legacy_snapshot:
             await self.persist_diplomacy_state()
         return True
@@ -1740,7 +1757,10 @@ class MooseBridgeClient:
             ):
                 self.record_escalation_incident(
                     EscalationIncident(
-                        incident_id=f"INCIDENT:KILL:{message_id or kill.target_object_id}",
+                        incident_id=(
+                            f"INCIDENT:KILL:{kill.killer_object_id}:{kill.target_object_id}:"
+                            f"{_incident_mission_time(kill.mission_time)}"
+                        ),
                         incident_type=EscalationIncidentType.UNIT_DESTROYED,
                         actor_coalition=killer,
                         target_coalition=target,
@@ -1781,7 +1801,10 @@ class MooseBridgeClient:
                     territory_coalition=territory.coalition if territory else None,
                     category=str(airbase.get("category") or ""),
                 )
-                stable_source = message_id or f"{airbase_id}:{mission_time}"
+                stable_source = (
+                    f"{airbase_id}:{previous or 'unknown'}:{current}:"
+                    f"{_incident_mission_time(mission_time)}"
+                )
                 self.record_escalation_incident(
                     EscalationIncident(
                         incident_id=f"INCIDENT:CAPTURE:{stable_source}",
@@ -1839,7 +1862,10 @@ class MooseBridgeClient:
                     capturing_coalition=actor,
                     territory_coalition=territory.coalition if territory else None,
                 )
-                stable_source = message_id or f"{opszone_id}:{mission_time}"
+                stable_source = (
+                    f"{opszone_id}:{previous or 'unknown'}:{current}:"
+                    f"{_incident_mission_time(mission_time)}"
+                )
                 self.record_escalation_incident(
                     EscalationIncident(
                         incident_id=f"INCIDENT:OPSZONE_CAPTURE:{stable_source}",

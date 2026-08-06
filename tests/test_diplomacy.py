@@ -62,6 +62,42 @@ def test_relationship_supports_explicit_manual_transition_approval() -> None:
     assert relationship.pending_transition is None
 
 
+def test_coalition_can_declare_war_without_prior_escalation() -> None:
+    relationship = CoalitionRelationship(automatic_transitions=False)
+
+    incident = relationship.declare_war(
+        "blue",
+        reason="Recover occupied territory",
+        mission_time=12.5,
+    )
+
+    assert relationship.state is RelationshipState.WAR
+    assert relationship.escalation_score == 100.0
+    assert relationship.pending_transition is None
+    assert relationship.responsibility("blue") == 100.0
+    assert relationship.responsibility("red") == 0.0
+    assert incident.incident_type is EscalationIncidentType.WAR_DECLARED
+    assert incident.actor_coalition == "blue"
+    assert incident.target_coalition == "red"
+    assert incident.details["reason"] == "Recover occupied territory"
+
+
+def test_sdk_war_declaration_rejects_invalid_or_repeated_declarations() -> None:
+    client = MooseBridgeClient(MooseBridgeServer())
+
+    incident = client.declare_war("red", reason="Pre-emptive operation")
+
+    assert incident.actor_coalition == "red"
+    assert client.relationship.state is RelationshipState.WAR
+    for coalition, reason in (("neutral", "Invalid actor"), ("blue", "Already at war")):
+        try:
+            client.declare_war(coalition, reason=reason)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("expected invalid war declaration")
+
+
 def test_relationship_deduplicates_incidents_by_stable_id() -> None:
     relationship = CoalitionRelationship()
     incident = _incident(1, EscalationIncidentType.UNIT_DESTROYED)
@@ -148,6 +184,41 @@ def test_legacy_diplomacy_snapshot_migrates_to_automatic_transitions() -> None:
     assert target.relationship.pending_transition is None
 
 
+def test_schema_three_capture_incidents_migrate_from_event_ids_and_deduplicate() -> None:
+    source = MooseBridgeClient(MooseBridgeServer())
+    for incident_id in ("INCIDENT:CAPTURE:event-107", "INCIDENT:CAPTURE:event-387"):
+        source.record_escalation_incident(
+            EscalationIncident(
+                incident_id=incident_id,
+                incident_type=EscalationIncidentType.OBJECTIVE_CAPTURED,
+                actor_coalition="blue",
+                target_coalition="red",
+                mission_time=131.178,
+                reference_id="AIRBASE:Tutow",
+                details={
+                    "airbase_id": "AIRBASE:Tutow",
+                    "previous_coalition": "red",
+                    "coalition": "blue",
+                    "source_event": "airbase.coalition_changed",
+                },
+            )
+        )
+    payload = diplomacy_state_to_dict(
+        source.relationship,
+        source.coalition_doctrines,
+        mission_generation=1,
+    )
+    payload["diplomacy_schema_version"] = 3
+    target = MooseBridgeClient(MooseBridgeServer())
+
+    apply_diplomacy_state(payload, target.relationship, target.coalition_doctrines)
+
+    assert len(target.relationship.incidents) == 1
+    assert target.relationship.incidents[0].incident_id == (
+        "INCIDENT:CAPTURE:AIRBASE:Tutow:red:blue:131.178"
+    )
+
+
 def test_sdk_persists_and_restores_diplomacy_for_current_mission_generation() -> None:
     async def scenario() -> None:
         server = MooseBridgeServer()
@@ -155,12 +226,28 @@ def test_sdk_persists_and_restores_diplomacy_for_current_mission_generation() ->
         writer = MooseBridgeClient(server)
         writer.record_escalation_incident(_incident(1, EscalationIncidentType.UNIT_DESTROYED))
         writer.set_coalition_doctrine("red", CoalitionDoctrinePreset.AGGRESSIVE)
+        writer.border_violations.restore(
+            {
+                "last_mission_time": 90,
+                "active": [
+                    {
+                        "group_id": "GROUP:Blue Patrol",
+                        "territory_id": "TERRITORY:Red",
+                        "entered_mission_time": 10,
+                        "reported": True,
+                    }
+                ],
+            }
+        )
         await writer.persist_diplomacy_state()
 
         reader = MooseBridgeClient(server)
         assert await reader.refresh_diplomacy_state() is True
         assert reader.relationship.escalation_score == 20.0
         assert reader.coalition_doctrines.get("red").preset is CoalitionDoctrinePreset.AGGRESSIVE
+        assert reader.border_violations.active_violations == (
+            ("GROUP:Blue Patrol", "TERRITORY:Red", 10.0, True),
+        )
 
         server.state.mission_generation = 5
         reader.reset_mission(reset_state=False)
@@ -304,6 +391,39 @@ def test_border_violation_requires_continuous_default_tolerance_and_emits_once()
     second = tracker.update((inside,), (territory,), mission_time=180)
     assert len(second) == 1
     assert second[0].incident_id != incidents[0].incident_id
+
+
+def test_reported_border_violation_survives_tracker_restart_without_duplicate() -> None:
+    territory = Territory.from_payload(
+        {
+            "object_id": "TERRITORY:Red",
+            "dcs_name": "Red",
+            "coalition": "red",
+            "vertices": [
+                {"x": 0, "z": 0},
+                {"x": 1000, "z": 0},
+                {"x": 1000, "z": 1000},
+                {"x": 0, "z": 1000},
+            ],
+        }
+    )
+    group = {
+        "object_id": "GROUP:Blue Patrol",
+        "coalition": "blue",
+        "category": "Ground Unit",
+        "alive": True,
+        "active": True,
+        "x": 500,
+        "z": 500,
+    }
+    original = BorderViolationTracker(tolerance_s=0)
+    assert len(original.update((group,), (territory,), mission_time=10)) == 1
+
+    restored = BorderViolationTracker(tolerance_s=0)
+    restored.restore(original.to_dict())
+
+    assert restored.active_violations == original.active_violations
+    assert restored.update((group,), (territory,), mission_time=20) == ()
 
 
 def test_border_violation_ignores_aircraft_dead_and_inactive_groups() -> None:

@@ -319,6 +319,15 @@ incident = EscalationIncident(
 proposal = bridge.record_escalation_incident(incident)
 ```
 
+A coalition may also start a conflict explicitly without waiting for prior
+incidents. The declaration is attributed, immediately establishes the shared
+`war` state, and uses the normal diplomacy audit persistence:
+
+```python
+bridge.declare_war("blue", reason="Recover occupied territory")
+await bridge.persist_diplomacy_state()
+```
+
 Set `bridge.relationship.automatic_transitions = False` when a scenario should
 require explicit approval through `approve_relationship_transition()`.
 De-escalation remains explicit. Incident weights are
@@ -370,8 +379,16 @@ its ownership, territory, category, base score, and final score. Thus the
 60-point reference capture proposes `limited_conflict` from peace and can
 propose war when tension already exists.
 
-MOOSE `OPSZONE:OnAfterCaptured` is forwarded as `opszone.owner_changed` and
-creates a separate `OPSZONE_CAPTURED` incident. A strategic OPSZONE has a
+The bridge composes the public MOOSE `OPSZONE:OnAfterCaptured(...)` callback
+and forwards the completed transition as `opszone.owner_changed`. The internal
+`onafterCaptured` implementation and generated `Captured` transition remain
+untouched. An existing public callback is invoked first and errors remain
+visible. Register an OPSZONE after defining its own `OnAfterCaptured` callback
+when immediate forwarding is required. OPSZONEs discovered from
+`_DATABASE.OPSZONES` are attached when monitoring starts; their current owner
+forms the baseline, and earlier captures are intentionally not reconstructed as
+events. A later forwarded event creates a separate `OPSZONE_CAPTURED` incident.
+A strategic OPSZONE has a
 20-point reference value by default. Set a more important zone explicitly:
 
 ```python
@@ -390,8 +407,17 @@ Relationship state and both doctrines can be persisted as a mission-generation
 scoped daemon audit snapshot with `await bridge.persist_diplomacy_state()` and
 restored in another client with `await bridge.refresh_diplomacy_state()`. This
 keeps planning tools, diagnostics, and the browser map on the same shared state.
+Capture and Kill incidents use semantic identities based on involved objects,
+coalitions, and DCS mission time, so replay with a new daemon event id cannot
+score the same event twice. Active border crossings, including whether their
+incident was already reported, are persisted on entry, report, and exit; a map
+server restart therefore neither restarts the tolerance nor duplicates a
+continuous violation.
 `examples/sdk/monitor_relationship.py` provides a parameter-free monitor; its
 output includes the latest incidents and their individual point contributions.
+`examples/sdk/test_opszone_relationship.py` records current OPSZONE owners as a
+non-escalating baseline, waits for a later capture, and replays that event to
+verify deduplication without modifying the persisted map-server relationship.
 For a focused DCS test, edit `GROUP_ID` and `TERRITORY_ID` in
 `examples/sdk/test_border_violation.py`. The script uses only the global
 GROUP/TERRITORY mirror, displays the 60-second DCS-time countdown, and waits for

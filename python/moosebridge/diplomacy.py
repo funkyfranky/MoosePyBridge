@@ -11,7 +11,7 @@ from .strategic import StrategicGoalAction, StrategicObjective, normalize_coalit
 
 
 DIPLOMACY_AUDIT_TYPE = "strategic.diplomacy_state"
-DIPLOMACY_STATE_SCHEMA_VERSION = 3
+DIPLOMACY_STATE_SCHEMA_VERSION = 5
 
 
 class RelationshipState(str, Enum):
@@ -35,6 +35,7 @@ class EscalationIncidentType(str, Enum):
     OBJECTIVE_CAPTURED = "objective_captured"
     OPSZONE_CAPTURED = "opszone_captured"
     CEASEFIRE_VIOLATION = "ceasefire_violation"
+    WAR_DECLARED = "war_declared"
 
 
 DEFAULT_INCIDENT_WEIGHTS: dict[EscalationIncidentType, float] = {
@@ -46,6 +47,7 @@ DEFAULT_INCIDENT_WEIGHTS: dict[EscalationIncidentType, float] = {
     EscalationIncidentType.OBJECTIVE_CAPTURED: 60.0,
     EscalationIncidentType.OPSZONE_CAPTURED: 20.0,
     EscalationIncidentType.CEASEFIRE_VIOLATION: 40.0,
+    EscalationIncidentType.WAR_DECLARED: 100.0,
 }
 
 OPSZONE_CAPTURE_CONTEXT_MULTIPLIERS = {
@@ -307,6 +309,49 @@ class CoalitionRelationship:
             self.approve_transition(proposal.proposal_id)
         return proposal
 
+    def declare_war(
+        self,
+        coalition: str,
+        *,
+        reason: str,
+        mission_time: float | None = None,
+    ) -> EscalationIncident:
+        """Declare war immediately and retain the declaring coalition's responsibility."""
+
+        actor = normalize_coalition(coalition) or ""
+        if actor not in {self.coalition_a, self.coalition_b}:
+            raise ValueError("declaring coalition does not belong to this relationship")
+        if self.state is RelationshipState.WAR:
+            raise ValueError("relationship is already at war")
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("war declaration requires a reason")
+        target = self.coalition_b if actor == self.coalition_a else self.coalition_a
+        time_key = "unknown" if mission_time is None else f"{float(mission_time):.3f}"
+        incident = EscalationIncident(
+            incident_id=f"INCIDENT:WAR_DECLARATION:{actor}:{target}:{time_key}",
+            incident_type=EscalationIncidentType.WAR_DECLARED,
+            actor_coalition=actor,
+            target_coalition=target,
+            mission_time=mission_time,
+            details={
+                "reason": reason,
+                "source": "explicit_declaration",
+            },
+        )
+        self.record_incident(incident)
+        if self.state is not RelationshipState.WAR:
+            proposal = self.pending_transition
+            if proposal is None or proposal.to_state is not RelationshipState.WAR:
+                proposal = self.propose_transition(
+                    RelationshipState.WAR,
+                    reason=f"{actor} declared war: {reason}",
+                    mission_time=mission_time,
+                    automatic=True,
+                )
+            self.approve_transition(proposal.proposal_id)
+        return incident
+
     def propose_transition(
         self,
         to_state: RelationshipState | str,
@@ -559,10 +604,11 @@ def apply_diplomacy_state(
 ) -> None:
     """Replace local diplomacy objects from a validated daemon snapshot."""
 
+    schema_version = int(payload.get("diplomacy_schema_version") or 1)
     relation = payload.get("relationship") if isinstance(payload.get("relationship"), dict) else {}
     relationship.state = RelationshipState(relation.get("state", RelationshipState.PEACE.value))
     relationship.escalation_score = _bounded_score(float(relation.get("escalation_score") or 0.0))
-    if int(payload.get("diplomacy_schema_version") or 1) < 2:
+    if schema_version < 2:
         relationship.automatic_transitions = True
     else:
         relationship.automatic_transitions = bool(relation.get("automatic_transitions", True))
@@ -577,9 +623,18 @@ def apply_diplomacy_state(
             configured_opszones.items() if isinstance(configured_opszones, dict) else ()
         )
     }
-    relationship.incidents = [
-        EscalationIncident(
-            incident_id=str(item.get("incident_id") or ""),
+    incidents: list[EscalationIncident] = []
+    incident_ids: set[str] = set()
+    for item in relation.get("incidents", []):
+        if not isinstance(item, dict):
+            continue
+        incident_id = str(item.get("incident_id") or "")
+        if schema_version < 4:
+            incident_id = _migrated_incident_id(item, fallback=incident_id)
+        if incident_id in incident_ids:
+            continue
+        incident = EscalationIncident(
+            incident_id=incident_id,
             incident_type=EscalationIncidentType(item.get("incident_type")),
             actor_coalition=str(item.get("actor_coalition") or ""),
             target_coalition=str(item.get("target_coalition") or ""),
@@ -589,9 +644,9 @@ def apply_diplomacy_state(
             multiplier=float(item.get("multiplier", 1.0)),
             details=dict(item.get("details") or {}),
         )
-        for item in relation.get("incidents", [])
-        if isinstance(item, dict)
-    ]
+        incidents.append(incident)
+        incident_ids.add(incident_id)
+    relationship.incidents = incidents
     pending = relation.get("pending_transition")
     relationship.pending_transition = (
         RelationshipTransitionProposal(
@@ -746,6 +801,67 @@ class BorderViolationTracker:
         self._active.clear()
         self._last_mission_time = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize active crossing state for restart recovery."""
+
+        return {
+            "tolerance_s": self.tolerance_s,
+            "last_mission_time": self._last_mission_time,
+            "active": [
+                {
+                    "group_id": item.group_id,
+                    "territory_id": item.territory_id,
+                    "entered_mission_time": item.entered_mission_time,
+                    "reported": item.reported,
+                }
+                for item in sorted(
+                    self._active.values(),
+                    key=lambda value: (value.group_id, value.territory_id),
+                )
+            ],
+        }
+
+    def restore(self, payload: object) -> None:
+        """Restore active crossings while retaining configured tolerance."""
+
+        self.clear()
+        if not isinstance(payload, dict):
+            return
+        last_mission_time = payload.get("last_mission_time")
+        if last_mission_time is not None:
+            try:
+                value = float(last_mission_time)
+            except (TypeError, ValueError):
+                value = -1.0
+            if math.isfinite(value) and value >= 0:
+                self._last_mission_time = value
+        active = payload.get("active")
+        if not isinstance(active, list):
+            return
+        for item in active:
+            if not isinstance(item, dict):
+                continue
+            group_id = str(item.get("group_id") or "").strip()
+            territory_id = str(item.get("territory_id") or "").strip()
+            try:
+                entered = float(item.get("entered_mission_time"))
+            except (TypeError, ValueError):
+                continue
+            if (
+                not group_id.startswith("GROUP:")
+                or not territory_id.startswith("TERRITORY:")
+                or not math.isfinite(entered)
+                or entered < 0
+            ):
+                continue
+            state = _BorderViolationState(
+                group_id=group_id,
+                territory_id=territory_id,
+                entered_mission_time=entered,
+                reported=bool(item.get("reported", False)),
+            )
+            self._active[(group_id, territory_id)] = state
+
 
 def _territory_region(territory: Any) -> tuple[str, str, str, tuple[tuple[float, float], ...]] | None:
     territory_id = str(getattr(territory, "object_id", "") or "").strip()
@@ -788,6 +904,36 @@ def _capture_points(value: object, name: str) -> float:
     if not math.isfinite(points) or points < 0:
         raise ValueError(f"{name} must be a finite non-negative number")
     return points
+
+
+def _migrated_incident_id(item: dict[str, Any], *, fallback: str) -> str:
+    """Convert pre-v4 daemon-event identities to stable semantic identities."""
+
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    incident_type = str(item.get("incident_type") or "")
+    mission_time = item.get("mission_time")
+    try:
+        time_key = "unknown" if mission_time is None else f"{float(mission_time):.3f}"
+    except (TypeError, ValueError):
+        time_key = "unknown"
+    if incident_type == EscalationIncidentType.UNIT_DESTROYED.value:
+        killer = str(details.get("killer_object_id") or "")
+        target = str(details.get("target_object_id") or item.get("reference_id") or "")
+        if killer and target:
+            return f"INCIDENT:KILL:{killer}:{target}:{time_key}"
+    if incident_type == EscalationIncidentType.OBJECTIVE_CAPTURED.value:
+        airbase_id = str(details.get("airbase_id") or item.get("reference_id") or "")
+        previous = str(details.get("previous_coalition") or "unknown")
+        current = str(details.get("coalition") or "unknown")
+        if airbase_id:
+            return f"INCIDENT:CAPTURE:{airbase_id}:{previous}:{current}:{time_key}"
+    if incident_type == EscalationIncidentType.OPSZONE_CAPTURED.value:
+        opszone_id = str(details.get("opszone_id") or item.get("reference_id") or "")
+        previous = str(details.get("previous_coalition") or "unknown")
+        current = str(details.get("coalition") or "unknown")
+        if opszone_id:
+            return f"INCIDENT:OPSZONE_CAPTURE:{opszone_id}:{previous}:{current}:{time_key}"
+    return fallback
 
 
 def _opszone_id(object_id: object) -> str:

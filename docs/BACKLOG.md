@@ -12,23 +12,13 @@ Priorities:
 
 ## P1 - Decision and execution
 
-- [ ] **Connect incidents to DCS and strategic events.** Convert attributed
-  border incursions, weapon fire, hits, unit losses, strategic-object attacks,
-  captures, and ceasefire violations into the compact relationship model.
-  Deduplicate source events and retain confidence where the attacker is not
-  known. Do not add periodic DCS polling solely for diplomacy. Continuous
-  ground-border violations with a configurable 60-second tolerance are
-  complete, MOOSE `EVENTS.Kill` provides primary destruction attribution
-  through `combat.kill`, and hostile airbase captures create strongly weighted
-  attributed incidents. MOOSE `OPSZONE:OnAfterCaptured` now supplies
-  configurable, context-weighted OPSZONE capture incidents. Weapon-fire, other
-  strategic-object attacks, and ceasefire sources remain open.
-- [ ] **Validate Kill-event reliability in live DCS missions.** Confirm that
-  `EVENTS.Kill` consistently supplies killer and target coalition/object data
-  for relevant air, ground, and naval kills. Only if live evidence shows gaps,
-  add a bounded last-Hit cache and correlate it with UnitLost/Dead; keep that
-  fallback explicitly lower-confidence and avoid forwarding every Hit to
-  Python.
+- [ ] **Add a minimal autonomous conflict controller.** Run one bounded Python
+  decision loop per coalition: refresh the appropriate global or INTEL picture,
+  generate CAPTURE/DEFEND/DESTROY candidates, apply relationship and doctrine
+  constraints, select a capacity-feasible portfolio, submit approved plans
+  through COMMANDER, and reassess on relevant events. Limit concurrency and
+  decision frequency so the first scenario remains understandable and
+  auditable rather than becoming a full campaign engine.
 - [x] **Apply relationship constraints and doctrine to goal selection.** Block
   offensive goals that are politically invalid in peace or a ceasefire, bound
   limited-conflict goals to their authorized area/effects, and use doctrine
@@ -125,6 +115,26 @@ Priorities:
 - [ ] **Add historical analysis controls.** Allow inspection of losses, INTEL
   changes, frontline movement, objective ownership, and mission activity over
   a selected DCS-time window.
+
+## P2 - Deferred diplomacy
+
+- [ ] **Complete optional escalation sources.** Add weapon-fire,
+  strategic-object-attack, and ceasefire-violation incidents only where a
+  reliable DCS or MOOSE event provides attribution. Keep the current
+  event-driven design and deduplication; do not introduce polling solely for
+  diplomacy.
+- [ ] **Validate Kill-event reliability in live DCS missions.** Confirm that
+  `EVENTS.Kill` consistently supplies killer and target coalition/object data
+  for relevant air, ground, and naval kills. Only if live evidence shows gaps,
+  add a bounded last-Hit cache correlated with UnitLost/Dead and mark it as
+  lower-confidence evidence.
+- [ ] **Complete ceasefire and de-escalation policy.** Define how a ceasefire is
+  negotiated or imposed, how long it lasts, which violations terminate it, and
+  under which explicit conditions escalation can decrease. Avoid automatic
+  score decay until its strategic meaning is clear.
+- [ ] **Validate limited-conflict authorization in DCS.** Exercise geographic
+  and effect restrictions with simultaneous goals and confirm that Python
+  blocks out-of-scope offensive action while permitting defense.
 
 ## P3 - Platform hardening
 

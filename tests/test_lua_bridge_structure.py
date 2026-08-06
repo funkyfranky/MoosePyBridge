@@ -73,11 +73,17 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert "self:_FlushOutQueue()" in source
 
 
-def test_opszone_capture_fsm_event_is_forwarded_without_replacing_user_callback() -> None:
+def test_opszone_capture_fsm_event_composes_public_callback_without_touching_internal_fsm() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
 
-    assert "local previous_captured = opszone.OnAfterCaptured" in source
-    assert "pcall(previous_captured, opszone_self, From, Event, To, Coalition)" in source
+    assert "local user_callback = opszone.OnAfterCaptured" in source
+    assert "user_callback(opszone_self, From, Event, To, Coalition)" in source
+    assert "opszone.OnAfterCaptured = forwarder" in source
+    assert "opszone.onafterCaptured" not in source
+    assert "opszone.Captured =" not in source
+    assert "pcall(user_callback" not in source
+    assert "capture_event_callback_type=" in source
+    assert "capture_event_forwarder_attached=" in source
     assert 'bridge:SendEvent("opszone.owner_changed"' in source
     assert "previous_coalition=item.owner_previous_name" in source
     assert "capturing_coalition=bridge:_CoalitionToName(Coalition)" in source

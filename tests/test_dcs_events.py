@@ -188,7 +188,9 @@ def test_kill_event_model_and_diplomatic_incident_are_attributed_once() -> None:
 
     bridge = MooseBridgeClient(MooseBridgeServer())
     bridge._on_bridge_message(kill_message())
-    bridge._on_bridge_message(kill_message())
+    replay = kill_message()
+    replay["id"] = "event-kill-replayed"
+    bridge._on_bridge_message(replay)
 
     assert len(bridge.relationship.incidents) == 1
     incident = bridge.relationship.incidents[0]
@@ -205,7 +207,9 @@ def test_enemy_airbase_capture_is_one_strong_attributed_escalation() -> None:
     add_red_territory(bridge)
 
     bridge._on_bridge_message(airbase_captured_message())
-    bridge._on_bridge_message(airbase_captured_message())
+    replay = airbase_captured_message()
+    replay["id"] = "event-base-captured-replayed"
+    bridge._on_bridge_message(replay)
 
     assert len(bridge.relationship.incidents) == 1
     incident = bridge.relationship.incidents[0]
@@ -289,7 +293,9 @@ def test_enemy_opszone_capture_uses_configurable_strategic_value_once() -> None:
 
     message = opszone_captured_message()
     bridge._on_bridge_message(message)
-    bridge._on_bridge_message(message)
+    replay = opszone_captured_message()
+    replay["id"] = "event-opszone-captured-replayed"
+    bridge._on_bridge_message(replay)
 
     assert len(bridge.relationship.incidents) == 1
     incident = bridge.relationship.incidents[0]
@@ -316,6 +322,20 @@ def test_neutral_opszone_capture_in_no_mans_land_uses_quarter_default_value() ->
     assert bridge.relationship.state is RelationshipState.PEACE
     assert bridge.relationship.incidents[0].details["territory_context"] == "no_mans_land"
     assert bridge.relationship.incidents[0].details["escalation_points"] == 5
+
+
+def test_opszone_capture_at_mission_start_is_still_an_incident() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    add_red_territory(bridge)
+    message = opszone_captured_message()
+    message["mission_time"] = 1.0
+
+    bridge._on_bridge_message(message)
+
+    assert len(bridge.relationship.incidents) == 1
+    assert bridge.relationship.incidents[0].incident_type is EscalationIncidentType.OPSZONE_CAPTURED
+    assert bridge.relationship.escalation_score == 20
+    assert bridge.relationship.state is RelationshipState.TENSE
 
 
 def test_neutral_farp_capture_in_no_mans_land_scores_five() -> None:

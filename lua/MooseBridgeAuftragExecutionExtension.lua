@@ -336,23 +336,30 @@ function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
     threat_blue=opszone and opszone.Tblu or 0,
     threat_neutral=opszone and opszone.Tnut or 0,
     airbase_name=opszone and opszone.airbaseName and tostring(opszone.airbaseName) or nil,
+    capture_event_callback_type=opszone and type(opszone.OnAfterCaptured) or "nil",
+    capture_event_forwarder_attached=opszone and
+      opszone.MooseBridgeCapturedEventForwarder ~= nil and
+      opszone.OnAfterCaptured == opszone.MooseBridgeCapturedEventForwarder or false,
   }
   if point then self:_AddPointFields(item, point) end
   return item
 end
 
---- Forward the MOOSE OPSZONE Captured FSM event without replacing user logic.
+--- Forward the MOOSE OPSZONE Captured event through its public callback.
 -- @param Ops.OpsZone#OPSZONE opszone OPSZONE instance.
 -- @param #string zone_name Registered zone name.
 -- @return #MOOSE_BRIDGE self
 function MOOSE_BRIDGE:_AttachOpsZoneEventForwarder(opszone, zone_name)
-  if type(opszone) ~= "table" or opszone.MooseBridgeCapturedEventRegistered then return self end
-  opszone.MooseBridgeCapturedEventRegistered = true
+  if type(opszone) ~= "table" then return self end
+  if opszone.MooseBridgeCapturedEventForwarder and
+     opszone.OnAfterCaptured == opszone.MooseBridgeCapturedEventForwarder then
+    return self
+  end
   local bridge = self
-  local previous_captured = opszone.OnAfterCaptured
-  opszone.OnAfterCaptured = function(opszone_self, From, Event, To, Coalition)
-    if type(previous_captured) == "function" then
-      pcall(previous_captured, opszone_self, From, Event, To, Coalition)
+  local user_callback = opszone.OnAfterCaptured
+  local forwarder = function(opszone_self, From, Event, To, Coalition)
+    if type(user_callback) == "function" then
+      user_callback(opszone_self, From, Event, To, Coalition)
     end
     local item = bridge:_BuildOpsZoneSnapshotItem(zone_name, opszone_self, "event")
     if item and item.object_id then
@@ -368,6 +375,8 @@ function MOOSE_BRIDGE:_AttachOpsZoneEventForwarder(opszone, zone_name)
       })
     end
   end
+  opszone.OnAfterCaptured = forwarder
+  opszone.MooseBridgeCapturedEventForwarder = forwarder
   return self
 end
 

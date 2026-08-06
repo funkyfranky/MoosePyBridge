@@ -375,6 +375,10 @@ Current operational-planning baseline:
   Independently mutable coalition-doctrine presets
   expose only five behavior biases and do not change with relationship state
   unless Python deliberately changes them.
+- Either coalition may explicitly declare war without prior incidents. The
+  declaration is attributed as a 100-point political incident, immediately
+  establishes the shared war state even when automatic threshold transitions
+  are disabled, and persists through the normal diplomacy audit path.
 - Relationship constraints are applied before concurrent goal ranking. Peace,
   tension, and ceasefire permit defensive goals only; limited conflict requires
   explicit objective or territory authorization for offensive goals; war
@@ -394,7 +398,12 @@ Current operational-planning baseline:
   60 points in opposing territory and 40 in no man's land, neutral Airdromes at
   30 and 15, and a neutral FARP in no man's land at 5. Ownership, territorial
   context, category, base score, and final score remain auditable.
-- MOOSE `OPSZONE:OnAfterCaptured` is forwarded as `opszone.owner_changed` and
+- The public MOOSE `OPSZONE:OnAfterCaptured(...)` callback is composed to emit
+  `opszone.owner_changed`. Internal `onafterCaptured` logic and the generated
+  `Captured` transition remain untouched; an existing public callback runs
+  first and remains error-transparent. OPSZONEs discovered from
+  `_DATABASE.OPSZONES` are attached when monitoring starts. Their current owner
+  is the baseline; earlier captures are deliberately not reconstructed. A later event
   creates a deduplicated `OPSZONE_CAPTURED` incident. Python owns a persisted
   per-zone strategic value with a 20-point default and applies explicit
   ownership/territory context multipliers. Captures in own territory do not
@@ -405,6 +414,9 @@ Current operational-planning baseline:
   allowing independent SDK clients and the browser map to share relationship,
   transition, incident, and doctrine state. The map header exposes the compact
   political picture and the map runtime coordinates Kill and border incidents.
+  Semantic incident identities survive daemon event-id changes. Active border
+  crossings and their reported state survive map-server restarts, preventing
+  replayed captures, kills, and continuous incursions from being scored twice.
 - Plan snapshots retain explicit operator attribution and approval reasons.
   Submitted missions retain compact ACK ids, correlation ids, sequence numbers,
   and relevant results across daemon audit persistence and SDK restore.
