@@ -379,10 +379,12 @@ bridge.set_opszone_strategic_value("OPSZONE:Town Fight", 40)
 ```
 
 The full configured value applies when an enemy-owned OPSZONE is captured in
-the opponent's territory. Enemy captures in no man's land, neutral captures,
-and captures inside the actor's own territory receive smaller contextual
-multipliers. The configured values are part of the persisted mission diplomacy
-state. Processing is driven by the MOOSE FSM event and adds no periodic scan.
+the opponent's territory. The context multipliers are: enemy/opposing territory
+`100%`, neutral/opposing territory `75%`, enemy/no man's land `50%`, and
+neutral/no man's land `25%`. Capturing either a neutral or enemy-owned OPSZONE
+inside the actor's own territory causes no escalation. The configured values
+are part of the persisted mission diplomacy state. Processing is driven by the
+MOOSE FSM event and adds no periodic scan.
 
 Relationship state and both doctrines can be persisted as a mission-generation
 scoped daemon audit snapshot with `await bridge.persist_diplomacy_state()` and

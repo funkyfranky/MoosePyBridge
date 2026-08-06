@@ -397,8 +397,10 @@ Current operational-planning baseline:
 - MOOSE `OPSZONE:OnAfterCaptured` is forwarded as `opszone.owner_changed` and
   creates a deduplicated `OPSZONE_CAPTURED` incident. Python owns a persisted
   per-zone strategic value with a 20-point default and applies explicit
-  ownership/territory context multipliers without polling DCS or scanning the
-  zone itself.
+  ownership/territory context multipliers. Captures in own territory do not
+  escalate; neutral/no-man, enemy/no-man, neutral/opposing, and enemy/opposing
+  captures apply 25, 50, 75, and 100 percent respectively. This requires no
+  DCS polling or additional zone scan.
 - Diplomacy snapshots are mission-generation scoped in the daemon audit store,
   allowing independent SDK clients and the browser map to share relationship,
   transition, incident, and doctrine state. The map header exposes the compact

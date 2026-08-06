@@ -19,6 +19,7 @@ from moosebridge import (
     Territory,
     format_coalition_doctrine,
     format_relationship,
+    opszone_capture_multiplier,
 )
 from moosebridge.diplomacy import apply_diplomacy_state, diplomacy_state_to_dict
 
@@ -106,6 +107,26 @@ def test_opszone_strategic_value_rejects_invalid_ids_and_values() -> None:
             pass
         else:
             raise AssertionError(f"expected invalid OPSZONE strategic value: {object_id}, {points}")
+
+
+def test_opszone_capture_contexts_follow_the_escalation_order() -> None:
+    cases = (
+        ("neutral", None, 5.0),
+        ("neutral", "blue", 0.0),
+        ("neutral", "red", 15.0),
+        ("red", None, 10.0),
+        ("red", "blue", 0.0),
+        ("red", "red", 20.0),
+    )
+
+    for previous, territory, expected_points in cases:
+        _, details = opszone_capture_multiplier(
+            reference_points=20,
+            previous_coalition=previous,
+            capturing_coalition="blue",
+            territory_coalition=territory,
+        )
+        assert details["escalation_points"] == expected_points
 
 
 def test_legacy_diplomacy_snapshot_migrates_to_automatic_transitions() -> None:

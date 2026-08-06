@@ -50,11 +50,11 @@ DEFAULT_INCIDENT_WEIGHTS: dict[EscalationIncidentType, float] = {
 
 OPSZONE_CAPTURE_CONTEXT_MULTIPLIERS = {
     ("enemy_owned", "opposing_territory"): 1.0,
-    ("enemy_owned", "no_mans_land"): 2.0 / 3.0,
-    ("enemy_owned", "own_territory"): 0.5,
-    ("neutral", "opposing_territory"): 0.5,
+    ("enemy_owned", "no_mans_land"): 0.5,
+    ("enemy_owned", "own_territory"): 0.0,
+    ("neutral", "opposing_territory"): 0.75,
     ("neutral", "no_mans_land"): 0.25,
-    ("neutral", "own_territory"): 0.1,
+    ("neutral", "own_territory"): 0.0,
 }
 
 AIRBASE_CAPTURE_ESCALATION_POINTS = {
