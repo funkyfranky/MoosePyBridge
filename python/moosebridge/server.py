@@ -17,6 +17,7 @@ from .streams import close_stream_writer
 LOGGER = logging.getLogger(__name__)
 DEFAULT_PORT = 42000
 DEFAULT_READER_LIMIT = 16 * 1024 * 1024
+MISSION_CLOCK_ROLLBACK_TOLERANCE_S = 1.0
 
 
 class DcsBridgeConnectionError(ConnectionError):
@@ -252,6 +253,7 @@ class MooseBridgeServer:
             return
 
         LOGGER.debug("DCS -> Python: %s", message)
+        self._detect_mission_clock_reset(message)
         self.state.apply_message(message)
         for listener in tuple(self._message_listeners):
             try:
@@ -266,6 +268,51 @@ class MooseBridgeServer:
             self._resolve_ack(message)
         elif message.get("type") == "event":
             self._publish_event(message)
+
+    def _detect_mission_clock_reset(self, message: dict[str, Any]) -> None:
+        """Turn a DCS mission-clock rollback into the normal mission-end boundary."""
+
+        if event_name(message) == "mission.ended":
+            return
+        previous = self.state.clock.mission_time if self.state.clock else None
+        result = message.get("result") if isinstance(message.get("result"), dict) else {}
+        raw_current = message.get("mission_time", result.get("mission_time"))
+        try:
+            current = float(raw_current) if raw_current is not None else None
+        except (TypeError, ValueError):
+            current = None
+        if (
+            previous is None
+            or current is None
+            or current >= previous - MISSION_CLOCK_ROLLBACK_TOLERANCE_S
+        ):
+            return
+
+        boundary = {
+            "type": "event",
+            "source": "python",
+            "id": f"event-mission-clock-reset-{self.state.mission_generation + 1}",
+            "event": "mission.ended",
+            "payload": {
+                "reason": "mission_clock_reset",
+                "previous_mission_time": previous,
+                "new_mission_time": current,
+            },
+        }
+        LOGGER.info(
+            "DCS mission clock reset from %.3f to %.3f; starting mission generation %d",
+            previous,
+            current,
+            self.state.mission_generation + 1,
+        )
+        self.state.apply_message(boundary)
+        for listener in tuple(self._message_listeners):
+            try:
+                listener(boundary)
+            except Exception:
+                LOGGER.exception("Bridge message listener failed during mission reset")
+        self._fail_pending(DcsMissionEndedError("DCS mission clock reset"))
+        self._publish_event(boundary)
 
     def _publish_event(self, message: dict[str, Any]) -> None:
         """Store and publish one DCS event message."""

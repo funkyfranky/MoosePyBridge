@@ -218,6 +218,23 @@ class RuleBasedOperationalPlanner:
                 depends_on=("seize",),
                 intents=(
                     MissionIntent(
+                        intent_id="secure-zone",
+                        name="Secure and patrol the captured OPSZONE",
+                        auftrag_types=("PATROLZONE",),
+                        target_object_id=objective.control_object_id,
+                        asset_requirements=(
+                            AssetRequirement(
+                                requirement_id="REQ:Ground security",
+                                role=AssetRole.COMBAT,
+                                min_count=self.config.ground_defense_groups,
+                                max_count=self.config.ground_defense_groups,
+                                mission_types=("PATROLZONE",),
+                                performer_categories=("GROUND",),
+                            ),
+                        ),
+                        metadata={"persistent": True, "established_on": "Executing"},
+                    ),
+                    MissionIntent(
                         intent_id="establish-air-defense",
                         name="Establish local air defense",
                         auftrag_types=("AIRDEFENSE",),
@@ -286,7 +303,8 @@ class RuleBasedOperationalPlanner:
                 picture_mission_time=picture.clock.mission_time if picture.clock else None,
                 rationale=(
                     f"Conservative capture sequence for {objective.objective_id}. {defender_text} "
-                    "Ground seizure is required; air defense and ammunition supply are optional consolidation tasks."
+                    "Ground seizure and a persistent ground patrol are required; air defense and ammunition "
+                    "supply are optional consolidation tasks."
                 ),
             ),
             proposal_issues=proposal_issues,

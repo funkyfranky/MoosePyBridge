@@ -315,6 +315,8 @@ function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
   if not name then return nil end
   local point = self:_PointFromMooseObject(opszone)
   local state = self:_OpsState(opszone)
+  local n_red = opszone and tonumber(opszone.Nred) or 0
+  local n_blue = opszone and tonumber(opszone.Nblu) or 0
   local item = {
     object_id="OPSZONE:"..bridge_safe_tostring(name),
     dcs_name=bridge_safe_tostring(name),
@@ -328,9 +330,9 @@ function MOOSE_BRIDGE:_BuildOpsZoneSnapshotItem(zone_name, opszone, source)
     state=state and tostring(state) or nil,
     owner_current_name=self:_CoalitionToName(opszone and opszone.ownerCurrent),
     owner_previous_name=self:_CoalitionToName(opszone and opszone.ownerPrevious),
-    is_contested=self:_BoolOrFalse(opszone and opszone.isContested),
-    n_red=opszone and opszone.Nred or 0,
-    n_blue=opszone and opszone.Nblu or 0,
+    is_contested=n_red > 0 and n_blue > 0,
+    n_red=n_red,
+    n_blue=n_blue,
     n_neutral=opszone and opszone.Nnut or 0,
     threat_red=opszone and opszone.Tred or 0,
     threat_blue=opszone and opszone.Tblu or 0,

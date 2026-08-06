@@ -1602,6 +1602,31 @@ function MOOSE_BRIDGE:_CollectCohortWeaponRanges(cohort)
   return result
 end
 
+function MOOSE_BRIDGE:_AnalyzeCohortComposition(cohort)
+  if type(cohort) ~= "table" or type(cohort.assets) ~= "table" then return false, nil end
+  local expected_type = nil
+  local expected_count = nil
+  local uniform_count = true
+  local inspected = false
+  for _, asset in pairs(cohort.assets) do
+    local units = asset and asset.template and asset.template.units
+    if type(units) == "table" and #units > 0 then
+      local count = #units
+      if expected_count ~= nil and count ~= expected_count then uniform_count = false end
+      if expected_count == nil then expected_count = count end
+      for _, unit in ipairs(units) do
+        local unit_type = unit and (unit.type or unit.typeName)
+        if type(unit_type) ~= "string" or unit_type == "" then return false, nil end
+        if expected_type ~= nil and unit_type ~= expected_type then return false, nil end
+        expected_type = unit_type
+        inspected = true
+      end
+    end
+  end
+  if not inspected then return false, nil end
+  return true, uniform_count and expected_count or nil
+end
+
 function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
   local name = self:_CohortName(cohort, cohort_name)
   if not name then return nil end
@@ -1609,6 +1634,7 @@ function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
   local mission_types = self:_CollectMissionTypeNames(self:_SafeCall(cohort, "GetMissionTypes"))
   local opsgroups = self:_SafeCall(cohort, "GetOpsGroups")
   local point = self:_PointFromMooseObject(cohort)
+  local homogeneous, units_per_asset = self:_AnalyzeCohortComposition(cohort)
 
   local item = {
     object_id="COHORT:"..safe_tostring(name),
@@ -1626,6 +1652,9 @@ function MOOSE_BRIDGE:_BuildCohortSnapshotItem(cohort_name, cohort, source)
     mission_types=mission_types,
     mission_performance=self:_CollectMissionPerformance(cohort, mission_types),
     skill=cohort and cohort.skill or nil,
+    homogeneous=homogeneous,
+    configured_grouping=self:_NumberOrNil(cohort and cohort.ngrouping),
+    units_per_asset=units_per_asset,
     engage_range_m=self:_NumberOrNil(cohort and cohort.engageRange),
     mission_range_m=self:_NumberOrNil(self:_SafeCall(cohort, "GetMissionRange")),
     mission_ranges_by_weapon_type=self:_CollectCohortIndirectMissionRanges(cohort),

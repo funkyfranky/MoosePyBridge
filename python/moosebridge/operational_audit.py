@@ -450,6 +450,8 @@ def _mission_to_dict(mission: PlanMissionExecution) -> dict[str, Any]:
         "requirement_id": mission.requirement_id,
         "mission_type": mission.mission_type,
         "required": mission.required,
+        "persistent": mission.persistent,
+        "established_on": mission.established_on,
         "command": command,
         "weapon_range_ack": _ack_to_dict(mission.weapon_range_ack),
         "command_ack": (
@@ -491,6 +493,8 @@ def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
         requirement_id=str(data.get("requirement_id") or ""),
         mission_type=str(data.get("mission_type") or ""),
         required=bool(data.get("required", False)),
+        persistent=bool(data.get("persistent", False)),
+        established_on=_text(data.get("established_on")),
         command_snapshot=dict(data.get("command")) if isinstance(data.get("command"), dict) else {},
         weapon_range_ack=_ack_from_dict(weapon_range_ack_data),
         command_ack=(

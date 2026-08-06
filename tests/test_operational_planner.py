@@ -118,10 +118,24 @@ def test_rule_based_capture_proposal_uses_highest_threat_visible_nearby_defender
     assert plan.phases[1].depends_on == ("isolate",)
     assert plan.phases[1].intents[0].target_object_id == "OPSZONE:Town"
     assert plan.phases[1].intents[0].asset_requirements[0].min_count == 2
+    consolidate = plan.phases[2]
+    assert [intent.intent_id for intent in consolidate.intents] == [
+        "secure-zone",
+        "establish-air-defense",
+        "sustain-force",
+    ]
+    security = consolidate.intents[0]
+    assert security.required is True
+    assert security.auftrag_types == ("PATROLZONE",)
+    assert security.target_object_id == "OPSZONE:Town"
+    assert security.asset_requirements[0].min_count == 2
+    assert security.asset_requirements[0].max_count == 2
+    assert security.metadata == {"persistent": True, "established_on": "Executing"}
     assert plan.provenance is not None
     assert plan.provenance.source_type is PlanSourceType.RULE_ENGINE
     assert plan.provenance.picture_mission_time == 321.5
     assert "GROUP:High threat" in (plan.provenance.rationale or "")
+    assert "persistent ground patrol" in (plan.provenance.rationale or "")
     assert plan.proposal_issues == ()
 
 

@@ -63,7 +63,6 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 PLAN_EXECUTION_AUDIT_TYPE = "operational_plan.execution"
 RECON_POSITION_SAMPLE_INTERVAL_S = 10.0
-AUFTRAG_CANCEL_EVALUATION_GRACE_S = 2.0
 
 
 class PlanMissionStatus(str, Enum):
@@ -198,6 +197,8 @@ class PlanMissionExecution:
     mission_type: str
     required: bool
     command: AuftragCommand | None = field(default=None, repr=False)
+    persistent: bool = False
+    established_on: str | None = None
     command_snapshot: dict[str, Any] = field(default_factory=dict)
     weapon_range_ack: CommandAckReference | None = None
     command_ack: CommandAckReference | None = None
@@ -290,12 +291,16 @@ class OperationalPlanExecutor:
             plan_id=plan_id,
             latest_attempts=True,
         )
+        generation = self.client.state.mission_generation
         restored: list[OperationalPlanExecution] = []
         from .operational_audit import execution_from_dict
 
         for record in records:
             payload = record.get("payload") if isinstance(record, dict) else None
-            if isinstance(payload, dict):
+            if (
+                isinstance(payload, dict)
+                and int(payload.get("mission_generation") or 0) == generation
+            ):
                 try:
                     restored.append(execution_from_dict(payload))
                 except (TypeError, ValueError) as exc:
@@ -943,6 +948,8 @@ class OperationalPlanExecutor:
                         required,
                         command,
                     )
+                    mission.persistent = bool(intent.metadata.get("persistent", False))
+                    mission.established_on = str(intent.metadata.get("established_on") or "") or None
                     execution.missions.append(mission)
                     try:
                         recon_requirement_data = self._recon_requirement_data(phase, intent)
@@ -1556,7 +1563,6 @@ class OperationalPlanExecutor:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
         after_id: str | None = mission.event_cursor
-        cancel_evaluation_deadline: float | None = None
         seen_status_keys: set[tuple[str | None, str | None, str | None, str | None]] = set()
         while True:
             remaining = deadline - loop.time()
@@ -1566,8 +1572,6 @@ class OperationalPlanExecutor:
                 await self._mission_event(execution, mission, "mission.failed", on_event)
                 return False
             wait_timeout = min(remaining, RECON_POSITION_SAMPLE_INTERVAL_S) if mission.recon_intel_id else remaining
-            if cancel_evaluation_deadline is not None:
-                wait_timeout = min(wait_timeout, max(0.0, cancel_evaluation_deadline - loop.time()))
             try:
                 message = await self.client.server.wait_for_event(
                     "auftrag.*",
@@ -1576,11 +1580,6 @@ class OperationalPlanExecutor:
                     after_id=after_id,
                 )
             except TimeoutError:
-                if cancel_evaluation_deadline is not None:
-                    mission.status = PlanMissionStatus.CANCELLED
-                    mission.error = "AUFTRAG was cancelled"
-                    await self._mission_event(execution, mission, "mission.cancelled", on_event)
-                    return False
                 if mission.recon_intel_id:
                     await self._sample_recon_positions(mission)
                     continue
@@ -1615,17 +1614,25 @@ class OperationalPlanExecutor:
                     message=f"MOOSE AUFTRAG outcome success={mission.outcome.success}",
                 )
                 return mission.status is PlanMissionStatus.SUCCEEDED
-            if (event.fsm_event or "").lower() == "cancel":
-                # Some MOOSE mission types enter Cancel while evaluating their
-                # terminal state, then emit the authoritative Evaluated event.
-                cancel_evaluation_deadline = loop.time() + AUFTRAG_CANCEL_EVALUATION_GRACE_S
-                continue
             status_key = (event.fsm_event, event.status, event.from_state, event.to_state)
             if status_key in seen_status_keys:
                 continue
             seen_status_keys.add(status_key)
             mission.status = PlanMissionStatus.RUNNING
             await self._mission_event(execution, mission, "mission.status", on_event, message=str(event))
+            if (
+                mission.persistent
+                and mission.established_on
+                and (event.fsm_event or "").lower() == mission.established_on.lower()
+            ):
+                await self._mission_event(
+                    execution,
+                    mission,
+                    "mission.established",
+                    on_event,
+                    message=f"persistent AUFTRAG reached {event.fsm_event} and remains active",
+                )
+                return True
 
     async def _refresh_goal_control(self, objective_id: str) -> None:
         objective = self.client.strategic_objective(objective_id)
@@ -1927,7 +1934,9 @@ class OperationalPlanExecutor:
                     if objective is not None:
                         execution.objective_snapshot = objective_snapshot(objective)
 
-            await append(PLAN_EXECUTION_AUDIT_TYPE, execution_to_dict(execution))
+            payload = execution_to_dict(execution)
+            payload["mission_generation"] = self.client.state.mission_generation
+            await append(PLAN_EXECUTION_AUDIT_TYPE, payload)
         except Exception:
             LOGGER.warning("Could not persist operational execution %s", execution.attempt_id, exc_info=True)
 

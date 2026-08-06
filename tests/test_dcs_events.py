@@ -556,3 +556,40 @@ def test_mission_end_wakes_unrelated_event_waiters() -> None:
         assert not server._event_waiters
 
     asyncio.run(scenario())
+
+
+def test_mission_clock_rollback_uses_the_mission_end_reset_path() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Old",
+                name="Old objective",
+                kind=ObjectiveKind.FORCE,
+                control_object_id=None,
+                ownership_policy=OwnershipPolicy.FIXED,
+            )
+        )
+
+        await server._handle_line(json.dumps({
+            "type": "heartbeat",
+            "source": "dcs",
+            "mission_time": 900.0,
+        }))
+        await server._handle_line(json.dumps({
+            "type": "heartbeat",
+            "source": "dcs",
+            "mission_time": 3.0,
+        }))
+
+        assert server.state.mission_generation == 1
+        assert server.state.connected is True
+        assert server.state.mission_ended is False
+        assert server.state.clock is not None
+        assert server.state.clock.mission_time == 3.0
+        assert bridge.strategic_objectives() == ()
+        assert [event["event"] for event in server._event_history] == ["mission.ended"]
+        assert server._event_history[0]["payload"]["reason"] == "mission_clock_reset"
+
+    asyncio.run(scenario())

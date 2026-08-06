@@ -23,6 +23,20 @@ def test_ops_snapshots_use_moose_available_asset_counts() -> None:
     assert "skill=cohort and cohort.skill or nil" in source
 
 
+def test_cohort_snapshot_derives_homogeneous_grouping_from_asset_templates() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert "SetHomogeneous" not in source
+    assert "function MOOSE_BRIDGE:_AnalyzeCohortComposition(cohort)" in source
+    assert "local unit_type = unit and (unit.type or unit.typeName)" in source
+    assert "unit_type ~= expected_type" in source
+    assert "return true, uniform_count and expected_count or nil" in source
+    assert "local homogeneous, units_per_asset = self:_AnalyzeCohortComposition(cohort)" in source
+    assert "homogeneous=homogeneous" in source
+    assert "configured_grouping=self:_NumberOrNil(cohort and cohort.ngrouping)" in source
+    assert "units_per_asset=units_per_asset" in source
+
+
 def test_commander_tasking_uses_moose_recruitment_and_constraints() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
 
@@ -87,3 +101,12 @@ def test_opszone_capture_fsm_event_composes_public_callback_without_touching_int
     assert 'bridge:SendEvent("opszone.owner_changed"' in source
     assert "previous_coalition=item.owner_previous_name" in source
     assert "capturing_coalition=bridge:_CoalitionToName(Coalition)" in source
+
+
+def test_opszone_snapshot_derives_contested_from_current_scan_counts() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
+
+    assert "local n_red = opszone and tonumber(opszone.Nred) or 0" in source
+    assert "local n_blue = opszone and tonumber(opszone.Nblu) or 0" in source
+    assert "is_contested=n_red > 0 and n_blue > 0" in source
+    assert "is_contested=self:_BoolOrFalse(opszone and opszone.isContested)" not in source

@@ -569,7 +569,8 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
         requirement = f"{mission.phase_id}/{mission.intent_id}/{mission.requirement_id}"
         lines.append(
             f"  {requirement} type={mission.mission_type} required={mission.required} "
-            f"status={mission.status.value} auftrag={_text(mission.auftrag_id)}"
+            f"persistent={mission.persistent} status={mission.status.value} "
+            f"auftrag={_text(mission.auftrag_id)}"
         )
         if mission.command_ack:
             lines.append(
@@ -746,6 +747,9 @@ def format_cohort_assets(cohort: Cohort, mission_limit: int = 6) -> str:
         f"stock={_text(cohort.stock_asset_count)} "
         f"available={_text(cohort.available_asset_count)} "
         f"spawned={_text(cohort.spawned_asset_count)} "
+        f"homogeneous={cohort.homogeneous} "
+        f"units_per_asset={_text(cohort.units_per_asset)} "
+        f"available_units={_text(cohort.available_unit_capacity)} "
         f"missions=[{missions}]"
     )
 

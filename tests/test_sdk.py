@@ -1207,6 +1207,9 @@ def test_diagnostics_format_legion_status_uses_sdk_state() -> None:
                         "stock_asset_count": 2,
                         "available_asset_count": 1,
                         "spawned_asset_count": 1,
+                        "homogeneous": True,
+                        "configured_grouping": 4,
+                        "units_per_asset": 4,
                         "mission_types": ["BAI"],
                     }
                 ]
@@ -1235,8 +1238,14 @@ def test_diagnostics_format_legion_status_uses_sdk_state() -> None:
     mission = client.missions_of_legion("LEGION:Wing Parchim")[0]
 
     assert cohort is not None
+    assert cohort.homogeneous is True
+    assert cohort.configured_grouping == 4
+    assert cohort.units_per_asset == 4
+    assert cohort.available_unit_capacity == 4
     assert "stock=2" in format_cohort_assets(cohort)
     assert "available=1" in format_cohort_assets(cohort)
+    assert "homogeneous=True" in format_cohort_assets(cohort)
+    assert "available_units=4" in format_cohort_assets(cohort)
     assert "type=BAI" in format_mission_summary(mission)
     report = format_legion_status(client, "LEGION:Wing Parchim", timestamp=False)
     assert "LEGION:Wing Parchim" in report

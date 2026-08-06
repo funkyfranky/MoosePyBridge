@@ -262,6 +262,9 @@ class Cohort:
     mission_performance: dict[str, float] = field(default_factory=dict)
     mission_performance_keys: dict[str, float] = field(default_factory=dict)
     skill: str | float | None = None
+    homogeneous: bool = False
+    configured_grouping: int | None = None
+    units_per_asset: int | None = None
     payloads_by_mission: dict[str, Any] = field(default_factory=dict)
     payloads_by_mission_keys: dict[str, dict[str, Any]] = field(default_factory=dict)
     engage_range_m: float | None = None
@@ -280,6 +283,14 @@ class Cohort:
     latitude: float | None = None
     longitude: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    @property
+    def available_unit_capacity(self) -> int | None:
+        """Return available units when all asset templates are homogeneous."""
+
+        if not self.homogeneous or self.units_per_asset is None or self.available_asset_count is None:
+            return None
+        return self.units_per_asset * self.available_asset_count
 
     def mission_performance_for(self, mission_type: str) -> float | None:
         """Return mission performance for a mission type.
@@ -374,6 +385,9 @@ class Cohort:
             mission_performance=mission_performance,
             mission_performance_keys=_mission_performance_keys(mission_performance),
             skill=payload.get("skill") if isinstance(payload.get("skill"), (str, int, float)) else None,
+            homogeneous=_bool_or_false(payload.get("homogeneous")),
+            configured_grouping=_optional_int(payload.get("configured_grouping")),
+            units_per_asset=_optional_int(payload.get("units_per_asset")),
             payloads_by_mission=payloads_by_mission,
             payloads_by_mission_keys=_payloads_by_mission_keys(payloads_by_mission),
             engage_range_m=_optional_float(payload.get("engage_range_m")),

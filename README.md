@@ -440,6 +440,19 @@ platform category, payload availability, and `available_asset_count`. MOOSE
 calculates this value with `CountAvailableAssets()`, excluding assets already
 requested or reserved for another mission.
 
+An asset remains one MOOSE group even when `COHORT:SetGrouping()` changes the
+number of units spawned in that group:
+
+```lua
+platoonAbrams:SetGrouping(4)
+```
+
+The typed Python `Cohort` then exposes `homogeneous`, `configured_grouping`,
+`units_per_asset`, and the derived `available_unit_capacity`. The bridge derives
+homogeneity automatically by comparing the DCS type of every unit in all asset
+templates. Mixed templates such as SAM batteries are therefore never reduced
+to an unsafe unit-count multiplier.
+
 Assets are allocated conservatively: a COHORT's stock cannot satisfy two
 requirements in the same phase, but can be reused in a later phase. The result
 is a provisional feasibility assessment, not a reservation in MOOSE.

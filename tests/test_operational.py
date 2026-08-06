@@ -92,6 +92,32 @@ def test_plan_execution_event_formats_mission_type_without_duplicate_status() ->
     assert restored.events[0].mission_type == "BAI"
 
 
+def test_persistent_mission_execution_round_trips_through_audit_schema() -> None:
+    execution = OperationalPlanExecution(
+        plan_id="PLAN:Secure Town",
+        commander_id="COMMANDER:Blue",
+        missions=[
+            PlanMissionExecution(
+                phase_id="consolidate",
+                intent_id="secure-zone",
+                requirement_id="REQ:Ground security",
+                mission_type="PATROLZONE",
+                required=True,
+                persistent=True,
+                established_on="Executing",
+                status=PlanMissionStatus.RUNNING,
+                auftrag_id="AUFTRAG:2",
+            )
+        ],
+    )
+
+    restored = execution_from_dict(execution_to_dict(execution))
+
+    assert restored.missions[0].persistent is True
+    assert restored.missions[0].established_on == "Executing"
+    assert restored.missions[0].status is PlanMissionStatus.RUNNING
+
+
 def _apply_force_state(
     bridge: MooseBridgeClient,
     *,
@@ -823,12 +849,41 @@ class _DuplicateStatusExecutionServer(_ExecutionServer):
         return event
 
 
+class _PersistentMissionExecutionServer(_ExecutionServer):
+    """Execution server that establishes a persistent AUFTRAG without evaluating it."""
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._event_number += 1
+        auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
+        event = {
+            "type": "event",
+            "id": f"event-{self._event_number}",
+            "event": "auftrag.status",
+            "payload": {
+                "auftrag_id": auftrag_id,
+                "auftrag_type": "PATROLZONE",
+                "status": "executing",
+                "fsm_event": "Executing",
+                "from": "started",
+                "to": "executing",
+            },
+        }
+        self.event_history.append(event)
+        return event
+
+
 class _CancelBeforeEvaluatedExecutionServer(_ExecutionServer):
     """Reproduce MOOSE's Done -> Cancel -> Evaluated terminal callback order."""
 
-    def __init__(self, *, evaluated: bool = True) -> None:
+    def __init__(self, *, success: bool = True) -> None:
         super().__init__()
-        self.evaluated = evaluated
+        self.evaluated_success = success
         self._event_steps: dict[str, int] = {}
 
     async def wait_for_event(
@@ -841,9 +896,6 @@ class _CancelBeforeEvaluatedExecutionServer(_ExecutionServer):
         auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
         step = self._event_steps.get(auftrag_id, 0)
         self._event_steps[auftrag_id] = step + 1
-        if step >= 2 and not self.evaluated:
-            raise TimeoutError
-
         self._event_number += 1
         if step == 0:
             event = {
@@ -874,7 +926,7 @@ class _CancelBeforeEvaluatedExecutionServer(_ExecutionServer):
                 },
             }
         else:
-            self._objective_updated = True
+            self._objective_updated = self.evaluated_success
             event = {
                 "type": "event",
                 "id": f"event-{self._event_number}",
@@ -883,7 +935,7 @@ class _CancelBeforeEvaluatedExecutionServer(_ExecutionServer):
                     "auftrag_id": auftrag_id,
                     "auftrag_type": "CAPTUREZONE",
                     "status": "done",
-                    "summary": {"success": True, "Ntargets0": 1, "Ntargets": 0},
+                    "summary": {"success": self.evaluated_success, "Ntargets0": 1, "Ntargets": 0},
                 },
             }
         self.event_history.append(event)
@@ -1383,6 +1435,44 @@ def test_execute_capture_plan_uses_commander_events_and_confirms_goal() -> None:
     asyncio.run(scenario())
 
 
+def test_persistent_mission_is_established_at_executing_and_remains_running() -> None:
+    async def scenario() -> None:
+        server = _PersistentMissionExecutionServer()
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        execution = OperationalPlanExecution(
+            plan_id="PLAN:Secure Town",
+            commander_id="COMMANDER:Blue",
+        )
+        mission = PlanMissionExecution(
+            phase_id="consolidate",
+            intent_id="secure-zone",
+            requirement_id="REQ:Ground security",
+            mission_type="PATROLZONE",
+            required=True,
+            persistent=True,
+            established_on="Executing",
+            status=PlanMissionStatus.SUBMITTED,
+            auftrag_id="AUFTRAG:1",
+        )
+        observed: list[str] = []
+
+        established = await bridge.plan_executor._wait_for_mission(  # noqa: SLF001
+            execution,
+            mission,
+            timeout_s=1,
+            on_event=lambda event: observed.append(event.event),
+        )
+
+        assert established is True
+        assert mission.status is PlanMissionStatus.RUNNING
+        assert mission.outcome is None
+        assert mission.error is None
+        assert observed == ["mission.status", "mission.established"]
+        assert server.commands == []
+
+    asyncio.run(scenario())
+
+
 def test_execute_defend_plan_completes_from_deadline_goal_event() -> None:
     async def scenario() -> None:
         bridge, plan = _executable_defend_plan()
@@ -1790,24 +1880,26 @@ def test_execute_plan_prefers_evaluated_outcome_after_nested_cancel_event() -> N
         assert execution.missions[0].outcome is not None
         assert execution.missions[0].outcome.success is True
         assert any("Done status=done cancelled->done" in item for item in observed)
+        assert any("Cancel status=done started->cancelled" in item for item in observed)
         assert any("mission.succeeded" in item for item in observed)
         assert not any("mission.cancelled" in item for item in observed)
 
     asyncio.run(scenario())
 
 
-def test_execute_plan_treats_cancel_without_evaluation_as_terminal() -> None:
+def test_execute_plan_uses_failed_evaluation_after_cancel_event() -> None:
     async def scenario() -> None:
         bridge, plan = _executable_capture_plan()
-        server = _CancelBeforeEvaluatedExecutionServer(evaluated=False)
+        server = _CancelBeforeEvaluatedExecutionServer(success=False)
         server.state = bridge.state
         bridge.server = server  # type: ignore[assignment]
 
         execution = await bridge.execute_plan(plan)
 
         assert execution.status is OperationalPlanStatus.BLOCKED
-        assert execution.missions[0].status is PlanMissionStatus.CANCELLED
-        assert execution.missions[0].error == "AUFTRAG was cancelled"
+        assert execution.missions[0].status is PlanMissionStatus.FAILED
+        assert execution.missions[0].outcome is not None
+        assert execution.missions[0].outcome.success is False
 
     asyncio.run(scenario())
 
@@ -2176,6 +2268,26 @@ def test_execution_history_and_attempt_numbers_survive_sdk_restart(tmp_path) -> 
         assert second.attempt_number == 2
         assert second.attempt_id == "PLAN:Capture Town/ATTEMPT:2"
         assert [item.attempt_number for item in second_bridge.operational_plan_executions(second_plan)] == [1, 2]
+        second_bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+    asyncio.run(scenario())
+
+
+def test_execution_history_does_not_cross_dcs_mission_generations(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "operational-audit.jsonl"
+        first_bridge, first_plan = _executable_capture_plan(audit_path=path)
+        first = await first_bridge.execute_plan(first_plan)
+        assert first.attempt_number == 1
+        first_bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+        second_bridge, second_plan = _executable_capture_plan(audit_path=path)
+        second_bridge.server.state.mission_generation = 1  # type: ignore[attr-defined]
+
+        assert await second_bridge.refresh_operational_plan_executions(second_plan) == ()
+        second = await second_bridge.execute_plan(second_plan)
+        assert second.attempt_number == 1
+        assert second.attempt_id == "PLAN:Capture Town/ATTEMPT:1"
         second_bridge.server.audit_store.close()  # type: ignore[attr-defined]
 
     asyncio.run(scenario())
