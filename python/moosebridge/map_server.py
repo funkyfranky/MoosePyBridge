@@ -15,6 +15,7 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from .control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from .control_sdk import sdk_from_control_client
@@ -34,7 +35,7 @@ from .pictures import GlobalPicture
 from .operational_audit import execution_from_dict
 from .recon import ReconArea, build_recon_coverage_footprints
 from .recon import RECON_EXECUTION_AUDIT_TYPE
-from .topography import TheaterTopography, merge_topography_features
+from .topography import TheaterTopography
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_MAP_HOST = "127.0.0.1"
@@ -200,6 +201,11 @@ class GlobalMapRuntime:
             self.topography_path,
         )
         return self._topography
+
+    def topography_geojson(self) -> dict[str, Any]:
+        """Return the static theater data independently of mission updates."""
+
+        return self._topography.to_geojson() if self._topography is not None else empty_picture()
 
     def status_payload(self) -> dict[str, Any]:
         """Return the current browser-facing service status."""
@@ -894,7 +900,6 @@ class GlobalMapRuntime:
                     self._recon_error = recon_error
                     geojson["properties"]["recon_coverage_count"] = 0
                     geojson["properties"]["recon_coverage_error"] = recon_error
-                merge_topography_features(geojson, self._topography)
                 self.update_picture(geojson)
                 if not self.connected:
                     LOGGER.info("Global map connected to DCS")
@@ -976,6 +981,7 @@ def create_app(
             await runtime.stop()
 
     app = FastAPI(title="MooseBridge Global Map", lifespan=lifespan)
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.state.runtime = runtime
     app.mount("/assets", StaticFiles(directory=MAP_UI_DIR), name="assets")
 
@@ -990,6 +996,10 @@ def create_app(
     @app.get("/api/picture/global.geojson")
     async def global_picture() -> dict[str, Any]:
         return runtime.picture
+
+    @app.get("/api/topography/global.geojson")
+    async def global_topography() -> dict[str, Any]:
+        return runtime.topography_geojson()
 
     @app.websocket("/ws/global")
     async def global_updates(websocket: WebSocket) -> None:

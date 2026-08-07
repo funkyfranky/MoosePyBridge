@@ -44,24 +44,30 @@ def topography_from_overpass(
     payloads: Iterable[dict[str, Any]],
     *,
     theater_id: str,
-    reference_year: int | None,
+    scenario_reference_year: int | None,
     bounds: tuple[float, float, float, float],
 ) -> TheaterTopography:
     """Convert and deduplicate one or more tiled Overpass responses."""
 
+    payload_list = tuple(payloads)
     features: dict[str, TopographyFeature] = {}
-    for payload in payloads:
+    for payload in payload_list:
         elements = payload.get("elements")
         if not isinstance(elements, list):
             raise ValueError("Overpass payload does not contain an elements list")
         for element in elements:
             if not isinstance(element, dict):
                 continue
-            for feature in features_from_overpass_element(element, reference_year=reference_year):
+            for feature in features_from_overpass_element(
+                element,
+                scenario_reference_year=scenario_reference_year,
+                source_snapshot_date=_overpass_snapshot_date(payload),
+            ):
                 features[feature.object_id] = feature
     return TheaterTopography(
         theater_id=theater_id,
-        reference_year=reference_year,
+        scenario_reference_year=scenario_reference_year,
+        source_snapshot_date=next((_overpass_snapshot_date(payload) for payload in payload_list if _overpass_snapshot_date(payload)), None),
         generated_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         bounds=bounds,
         features=tuple(sorted(features.values(), key=lambda feature: feature.object_id)),
@@ -72,7 +78,8 @@ def topography_from_overpass(
 def features_from_overpass_element(
     element: dict[str, Any],
     *,
-    reference_year: int | None,
+    scenario_reference_year: int | None,
+    source_snapshot_date: str | None = None,
 ) -> tuple[TopographyFeature, ...]:
     """Map one OSM element to one or more semantic topography features."""
 
@@ -93,7 +100,8 @@ def features_from_overpass_element(
     common = {
         "source": "OpenStreetMap",
         "source_id": source_id,
-        "reference_year": reference_year,
+        "scenario_reference_year": scenario_reference_year,
+        "source_snapshot_date": source_snapshot_date,
         "valid_from": valid_from,
         "valid_to": valid_to,
         "dcs_verified": False,
@@ -119,6 +127,12 @@ def features_from_overpass_element(
         output.append(
             _feature(source_id, TopographyLayer.INFRASTRUCTURE, infrastructure_category, geometry, 0.45, tags, common)
         )
+    building = tags.get("building")
+    if building not in {None, "no"}:
+        output.append(_feature(source_id, TopographyLayer.BUILDINGS, str(building), geometry, 0.4, tags, common))
+    landuse = tags.get("landuse")
+    if landuse:
+        output.append(_feature(source_id, TopographyLayer.LANDUSE, str(landuse), geometry, 0.5, tags, common))
     return tuple(output)
 
 
@@ -199,3 +213,11 @@ def _tag_year(value: Any) -> int | None:
         return None
     match = _YEAR_PATTERN.search(str(value))
     return int(match.group(1)) if match else None
+
+
+def _overpass_snapshot_date(payload: dict[str, Any]) -> str | None:
+    metadata = payload.get("osm3s")
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get("timestamp_osm_base")
+    return str(value) if value else None

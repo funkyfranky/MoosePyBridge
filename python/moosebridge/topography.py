@@ -21,6 +21,8 @@ class TopographyLayer(StrEnum):
     RAILWAYS = "topography_railways"
     SETTLEMENTS = "topography_settlements"
     INFRASTRUCTURE = "topography_infrastructure"
+    BUILDINGS = "topography_buildings"
+    LANDUSE = "topography_landuse"
 
 
 @dataclass(slots=True, frozen=True)
@@ -35,7 +37,8 @@ class TopographyFeature:
     confidence: float
     name: str | None = None
     source_id: str | None = None
-    reference_year: int | None = None
+    scenario_reference_year: int | None = None
+    source_snapshot_date: str | None = None
     valid_from: int | None = None
     valid_to: int | None = None
     dcs_verified: bool = False
@@ -67,7 +70,8 @@ class TopographyFeature:
             "source": self.source,
             "source_id": self.source_id,
             "confidence": self.confidence,
-            "reference_year": self.reference_year,
+            "scenario_reference_year": self.scenario_reference_year,
+            "source_snapshot_date": self.source_snapshot_date,
             "valid_from": self.valid_from,
             "valid_to": self.valid_to,
             "dcs_verified": self.dcs_verified,
@@ -88,7 +92,7 @@ class TopographyFeature:
         properties = dict(feature.get("properties") or {})
         known = {
             "layer", "object_id", "name", "object_type", "category", "coordinate_system",
-            "source", "source_id", "confidence", "reference_year", "valid_from", "valid_to",
+            "source", "source_id", "confidence", "scenario_reference_year", "source_snapshot_date", "valid_from", "valid_to",
             "dcs_verified",
         }
         return cls(
@@ -100,7 +104,8 @@ class TopographyFeature:
             confidence=float(properties.get("confidence", 0)),
             name=str(properties["name"]) if properties.get("name") is not None else None,
             source_id=str(properties["source_id"]) if properties.get("source_id") is not None else None,
-            reference_year=_optional_int(properties.get("reference_year")),
+            scenario_reference_year=_optional_int(properties.get("scenario_reference_year")),
+            source_snapshot_date=str(properties["source_snapshot_date"]) if properties.get("source_snapshot_date") else None,
             valid_from=_optional_int(properties.get("valid_from")),
             valid_to=_optional_int(properties.get("valid_to")),
             dcs_verified=properties.get("dcs_verified") is True,
@@ -114,7 +119,8 @@ class TheaterTopography:
 
     theater_id: str
     schema_version: int = 1
-    reference_year: int | None = None
+    scenario_reference_year: int | None = None
+    source_snapshot_date: str | None = None
     generated_at: str | None = None
     bounds: tuple[float, float, float, float] | None = None
     features: tuple[TopographyFeature, ...] = ()
@@ -136,7 +142,8 @@ class TheaterTopography:
             "schema": "moosebridge.theater_topography",
             "schema_version": self.schema_version,
             "theater_id": self.theater_id,
-            "reference_year": self.reference_year,
+            "scenario_reference_year": self.scenario_reference_year,
+            "source_snapshot_date": self.source_snapshot_date,
             "generated_at": self.generated_at,
             "bounds": list(self.bounds) if self.bounds else None,
             "feature_count": len(self.features),
@@ -160,13 +167,14 @@ class TheaterTopography:
         raw_features = payload.get("features")
         if not isinstance(raw_features, list):
             raise ValueError("topography cache features must be a list")
-        known = {"schema", "schema_version", "theater_id", "reference_year", "generated_at", "bounds", "feature_count"}
+        known = {"schema", "schema_version", "theater_id", "scenario_reference_year", "source_snapshot_date", "generated_at", "bounds", "feature_count"}
         bounds = properties.get("bounds")
         parsed_bounds = tuple(float(value) for value in bounds) if isinstance(bounds, list) and len(bounds) == 4 else None
         return cls(
             theater_id=str(properties.get("theater_id") or ""),
             schema_version=int(properties.get("schema_version") or 1),
-            reference_year=_optional_int(properties.get("reference_year")),
+            scenario_reference_year=_optional_int(properties.get("scenario_reference_year")),
+            source_snapshot_date=str(properties["source_snapshot_date"]) if properties.get("source_snapshot_date") else None,
             generated_at=str(properties["generated_at"]) if properties.get("generated_at") else None,
             bounds=parsed_bounds,  # type: ignore[arg-type]
             features=tuple(TopographyFeature.from_geojson_feature(feature) for feature in raw_features),
@@ -215,12 +223,14 @@ def merge_topography_features(
     if topography is None:
         properties["topography_feature_count"] = 0
         properties.pop("topography_theater_id", None)
-        properties.pop("topography_reference_year", None)
+        properties.pop("topography_scenario_reference_year", None)
+        properties.pop("topography_source_snapshot_date", None)
         return picture
     features.extend(topography.features_for_map())
     properties["topography_feature_count"] = len(topography.features)
     properties["topography_theater_id"] = topography.theater_id
-    properties["topography_reference_year"] = topography.reference_year
+    properties["topography_scenario_reference_year"] = topography.scenario_reference_year
+    properties["topography_source_snapshot_date"] = topography.source_snapshot_date
     return picture
 
 

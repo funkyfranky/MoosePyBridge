@@ -12,6 +12,7 @@ from moosebridge.map_server import GlobalMapRuntime, create_app, empty_picture
 from moosebridge.models import Territory
 from moosebridge.pictures import GlobalPicture
 from moosebridge.sdk import GeographicPoint
+from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer
 from moosebridge.weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY
 
 
@@ -86,6 +87,29 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "topography_feature_count": 0,
         "diplomacy": None,
     }
+
+
+def test_map_runtime_serves_topography_separately_from_dynamic_picture() -> None:
+    runtime = GlobalMapRuntime()
+    runtime._topography = TheaterTopography(
+        theater_id="GermanyCW",
+        features=(
+            TopographyFeature(
+                object_id="TOPOGRAPHY:road/1",
+                layer=TopographyLayer.ROADS,
+                category="primary",
+                geometry={"type": "LineString", "coordinates": [[12.0, 54.0], [12.1, 54.1]]},
+                source="OpenStreetMap",
+                confidence=0.75,
+            ),
+        ),
+    )
+
+    payload = runtime.topography_geojson()
+
+    assert runtime.picture == empty_picture()
+    assert len(payload["features"]) == 1
+    assert payload["features"][0]["properties"]["layer"] == "topography_roads"
 
 
 def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:

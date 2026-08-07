@@ -63,7 +63,7 @@ def main() -> int:
     topography = topography_from_overpass(
         payloads,
         theater_id=str(config["theater_id"]),
-        reference_year=int(config["reference_year"]),
+        scenario_reference_year=int(config["scenario_reference_year"]),
         bounds=bounds,
     )
     topography.save(args.output)

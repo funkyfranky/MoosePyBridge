@@ -1327,22 +1327,39 @@ python -m moosebridge.map_server --history-seconds 1800 --history-max-points 360
 ```
 
 The `GermanyCW` theater can use an offline OpenStreetMap baseline for water,
-major roads, railways, cities, towns, and infrastructure candidates. Import the
-bounded pilot area once, outside the running DCS mission:
+major roads, railways, cities, towns, land use, and infrastructure candidates.
+The primary import downloads regional Geofabrik PBF extracts and filters them
+locally, outside the running DCS mission:
+
+```powershell
+python -m pip install -e ".[topography]"
+python tools/import_geofabrik_topography.py
+```
+
+PBF files and the normalized cache are written below `tmp/topography/`.
+Subsequent imports reuse the downloads unless `--refresh` is specified.
+Use repeated `--source <id>` arguments for a smaller regional development
+import; the source IDs are listed in `GermanyCW_topography.json`. Geometries are
+topology-preservingly simplified by 20 meters by default; override this with
+`--simplify-meters`, or use `--simplify-meters 0` for the original geometry.
+Individual building polygons are deliberately excluded from the browser cache
+by default; add `--include-buildings` when they are needed for a focused test.
+The map server loads `tmp/topography/GermanyCW.geojson` by default; use
+`--topography <path>` for a different cache. Static topography is fetched once
+from `/api/topography/global.geojson` and is not repeated in the five-second DCS
+picture stream. The external layers are disabled initially and grouped under
+`Topography` in the viewer.
+
+The Overpass importer remains available for small experiments and targeted
+updates:
 
 ```powershell
 python tools/import_osm_topography.py
 ```
 
-Raw Overpass tiles and the normalized cache are written below
-`tmp/topography/`. Subsequent imports reuse the raw responses unless
-`--refresh` is specified. The map server loads
-`tmp/topography/GermanyCW.geojson` by default; use `--topography <path>` for a
-different cache. The external layers are disabled initially and grouped under
-`Topography` in the viewer.
-
-Imported features retain their source, confidence, reference year, optional
-validity dates, and `dcs_verified` state. Current OpenStreetMap data is only a
+Imported features retain their source, confidence, scenario reference year,
+source snapshot date, optional validity dates, and `dcs_verified` state.
+Current OpenStreetMap data is only a
 baseline for the historically oriented DCS terrain. It must not be treated as
 DCS movement truth until targeted terrain and route verification has been
 added.

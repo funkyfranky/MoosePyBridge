@@ -31,6 +31,8 @@
     { key: "topography_railways", label: "Railways", color: "#4f5552", icon: "train-front", default: false },
     { key: "topography_settlements", label: "Settlements", color: "#9a694d", icon: "building-2", default: false },
     { key: "topography_infrastructure", label: "Infrastructure candidates", color: "#76578b", icon: "factory", default: false },
+    { key: "topography_landuse", label: "Land use", color: "#66835b", icon: "land-plot", default: false },
+    { key: "topography_buildings", label: "Buildings", color: "#77736c", icon: "building", default: false },
     {
       key: "recon_coverage", label: "RECON coverage", color: "#167c73", icon: "scan-search", default: true,
       children: [
@@ -65,7 +67,7 @@
     },
     {
       key: "topography", label: "Topography", icon: "map", color: "#3c7069",
-      layers: ["topography_water", "topography_roads", "topography_railways", "topography_settlements", "topography_infrastructure"],
+      layers: ["topography_water", "topography_roads", "topography_railways", "topography_settlements", "topography_infrastructure", "topography_landuse", "topography_buildings"],
     },
     {
       key: "operations", label: "Operations", icon: "target", color: "#ad3c76",
@@ -125,6 +127,7 @@
   const mapLayerIds = new Map();
   const mapLayerBaseFilters = new Map();
   let latestPicture = EMPTY;
+  let latestTopography = EMPTY;
   let fitted = false;
   let reconnectTimer = null;
   let selectedFeature = null;
@@ -329,10 +332,19 @@
     mapLayerIds.set(spec.key, existing);
   }
 
+  function isTopographyLayer(layer) {
+    return String(layer || "").startsWith("topography_");
+  }
+
+  function allFeatures() {
+    return [...latestPicture.features, ...latestTopography.features];
+  }
+
   async function initializeSourcesAndLayers() {
     await registerMapSymbols();
     map.addSource("picture", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("zone-areas", { type: "geojson", data: EMPTY, promoteId: "object_id" });
+    map.addSource("topography", { type: "geojson", data: EMPTY, promoteId: "object_id" });
 
     for (const spec of layerSpecs) {
       if (spec.key === "trajectories") {
@@ -466,11 +478,13 @@
       if (spec.key === "topography_water") {
         addMapLayer(spec, {
           type: "fill",
+          source: "topography",
           filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]]],
           paint: { "fill-color": spec.color, "fill-opacity": 0.2 },
         });
         addMapLayer(spec, {
           type: "line",
+          source: "topography",
           filter: ["==", ["get", "layer"], spec.key],
           paint: { "line-color": spec.color, "line-width": 1.6, "line-opacity": 0.88 },
         });
@@ -479,6 +493,7 @@
       if (spec.key === "topography_roads" || spec.key === "topography_railways") {
         addMapLayer(spec, {
           type: "line",
+          source: "topography",
           filter: ["==", ["get", "layer"], spec.key],
           paint: {
             "line-color": spec.color,
@@ -494,20 +509,36 @@
       if (spec.key === "topography_settlements" || spec.key === "topography_infrastructure") {
         addMapLayer(spec, {
           type: "fill",
+          source: "topography",
           filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]]],
           paint: { "fill-color": spec.color, "fill-opacity": 0.16 },
         });
         addMapLayer(spec, {
           type: "circle",
+          source: "topography",
           filter: ["all", ["==", ["get", "layer"], spec.key], ["==", ["geometry-type"], "Point"]],
           paint: { "circle-radius": spec.key === "topography_settlements" ? 5 : 4, "circle-color": spec.color, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2 },
         });
         addMapLayer(spec, {
           type: "symbol",
+          source: "topography",
           minzoom: 7,
           filter: ["==", ["get", "layer"], spec.key],
           layout: { "text-field": ["get", "name"], "text-size": 11, "text-offset": [0, 1.1], "text-allow-overlap": false },
           paint: { "text-color": "#313936", "text-halo-color": "rgba(255,255,255,0.92)", "text-halo-width": 1.2 },
+        });
+        continue;
+      }
+      if (spec.key === "topography_landuse" || spec.key === "topography_buildings") {
+        addMapLayer(spec, {
+          type: "fill",
+          source: "topography",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "fill-color": spec.color,
+            "fill-opacity": spec.key === "topography_buildings" ? 0.28 : 0.14,
+            "fill-outline-color": spec.color,
+          },
         });
         continue;
       }
@@ -584,15 +615,25 @@
     updateDiplomacy(picture.properties?.diplomacy);
     if (selectedObjectId) {
       selectionCandidates = selectionCandidates
-        .map((candidate) => latestPicture.features.find((feature) => feature.properties?.object_id === candidate.properties?.object_id))
+        .map((candidate) => allFeatures().find((feature) => feature.properties?.object_id === candidate.properties?.object_id))
         .filter(Boolean);
       selectionIndex = Math.max(0, selectionCandidates.findIndex((feature) => feature.properties?.object_id === selectedObjectId));
       const refreshed = selectionCandidates[selectionIndex]
-        || latestPicture.features.find((feature) => feature.properties?.object_id === selectedObjectId);
+        || allFeatures().find((feature) => feature.properties?.object_id === selectedObjectId);
       if (refreshed) showDetails(refreshed);
       else closeDetails();
     }
     if (!fitted) fitOperationalArea(latestPicture);
+  }
+
+
+  function setTopography(topography) {
+    if (!topography || topography.type !== "FeatureCollection") return;
+    latestTopography = decoratedPicture(topography);
+    const source = map.getSource("topography");
+    if (!source) return;
+    source.setData(latestTopography);
+    updateCounts();
   }
 
   function fitOperationalArea(picture) {
@@ -657,7 +698,7 @@
 
   function updateCounts() {
     const counts = new Map();
-    latestPicture.features.forEach((feature) => {
+    allFeatures().forEach((feature) => {
       const key = feature.properties?.layer;
       counts.set(key, (counts.get(key) || 0) + 1);
       if (feature.properties?.map_category) {
@@ -1066,11 +1107,13 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, topographyResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
+        fetch("/api/topography/global.geojson"),
         fetch("/api/health"),
       ]);
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
+      if (topographyResponse.ok) setTopography(await topographyResponse.json());
       if (healthResponse.ok) updateStatus(await healthResponse.json());
     } catch (error) {
       updateStatus({ connected: false, error: String(error) });
