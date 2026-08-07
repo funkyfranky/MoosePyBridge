@@ -112,6 +112,43 @@ class RoadPointMatch:
         )
 
 
+@dataclass(slots=True, frozen=True)
+class DcsSurfacePoint:
+    """Native DCS terrain classification for one WGS84 point."""
+
+    input_point: DebugMarkupPoint
+    input_x: float
+    input_z: float
+    surface_type: int
+    surface_name: str
+    is_water: bool
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "DcsSurfacePoint":
+        try:
+            latitude = float(payload["input_latitude"])
+            longitude = float(payload["input_longitude"])
+            input_x = float(payload["input_x"])
+            input_z = float(payload["input_z"])
+            surface_type = int(payload["surface_type"])
+            surface_name = str(payload["surface_name"])
+            is_water = payload["is_water"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("surface-type result is incomplete") from exc
+        if not all(math.isfinite(value) for value in (latitude, longitude, input_x, input_z)):
+            raise ValueError("surface-type result contains non-finite values")
+        if not surface_name or type(is_water) is not bool:
+            raise ValueError("surface-type result has invalid classification data")
+        return cls(
+            input_point=DebugMarkupPoint(latitude, longitude),
+            input_x=input_x,
+            input_z=input_z,
+            surface_type=surface_type,
+            surface_name=surface_name,
+            is_water=is_water,
+        )
+
+
 def validate_debug_overlay(
     overlay_id: str,
     features: Iterable[DebugMarkup],

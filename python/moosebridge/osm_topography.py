@@ -9,9 +9,12 @@ from typing import Any, Iterable
 from .topography import TheaterTopography, TopographyFeature, TopographyLayer
 
 
-ROAD_CLASSES = frozenset({"motorway", "trunk", "primary", "secondary"})
-RAIL_CLASSES = frozenset({"rail"})
-SETTLEMENT_CLASSES = frozenset({"city", "town"})
+ROAD_CLASSES = frozenset({
+    "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
+    "residential", "service", "living_street", "track",
+})
+RAIL_CLASSES = frozenset({"rail", "light_rail", "tram", "narrow_gauge"})
+SETTLEMENT_CLASSES = frozenset({"city", "town", "village", "hamlet"})
 _YEAR_PATTERN = re.compile(r"(?<!\d)(1[0-9]{3}|20[0-9]{2})(?!\d)")
 
 

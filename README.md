@@ -1333,8 +1333,27 @@ locally, outside the running DCS mission:
 
 ```powershell
 python -m pip install -e ".[topography]"
+python examples/sdk/capture_topography_coverage.py
 python tools/import_geofabrik_topography.py
 ```
+
+Before the full import, create mission-editor zones using this naming scheme:
+
+- `Topography All` encloses the complete usable DCS terrain. Multiple `All`
+  zones with a suffix are allowed when the terrain cannot be represented by a
+  single polygon.
+- `Topography Low <name>` marks broad operational areas. It adds primary and
+  secondary roads, towns, military/industrial land use, and bridges.
+- `Topography High <name>` marks focused areas. It additionally includes local
+  roads, villages, buildings, detailed land use, and minor railways.
+
+The capture example requests the current zone snapshot and writes
+`tmp/topography/GermanyCW-coverage.geojson`. Circle and polygon zones are both
+supported. The heavy PBF conversion then runs offline. `all` is deliberately a
+baseline coverage level rather than "all OSM objects": coastlines, water,
+motorways, trunk roads, main railways, cities, harbours, and power plants remain
+available across the complete terrain without making the browser cache
+unmanageably large. Higher levels include every lower level automatically.
 
 PBF files and the normalized cache are written below `tmp/topography/`.
 Subsequent imports reuse the downloads unless `--refresh` is specified.
@@ -1392,6 +1411,39 @@ DCS `land.getClosestPointOnRoads()` for the nearest native road. Green points
 are within 50 m, yellow points within 200 m, and red points have no close DCS
 road match. Yellow and red samples also draw a connector to the DCS result and
 the console reports median, 90th-percentile, and maximum displacement.
+
+Land/water agreement can be checked independently:
+
+```powershell
+python examples/sdk/verify_surface_alignment.py
+```
+
+The test builds balanced OSM land/water samples while excluding a configurable
+shoreline margin and oversampling the usually smaller water area, then
+classifies every point with DCS `land.getSurfaceType()`.
+Green marks are matching land (`LAND`, `ROAD`, or `RUNWAY`), cyan marks are
+matching water (`SHALLOW_WATER` or `WATER`), and red marks are disagreements.
+The console prints the complete coarse confusion matrix and native DCS surface
+type counts.
+
+Connected physical land and water components are generated offline from the
+directed OSM coastline and closed water polygons:
+
+```powershell
+python tools/build_surface_regions.py
+```
+
+The default 250 m analysis grid uses four-neighbor connectivity so regions
+that touch only at a corner remain separate. Output is written to
+`tmp/topography/GermanyCW-surface-regions.geojson` and records mainland,
+island, maritime, and inland-water components with area, source confidence,
+grid resolution, and source-completeness metadata. The map server loads this
+artifact by default; use `--surface-regions <path>` to select another file.
+Enable `Connected land` and `Connected water` under `Topography` in the browser
+map. These are physical components only: bridges and vessel-specific width or
+depth constraints belong to the later mobility graph. Output simplification is
+disabled by default because simplifying adjacent components independently can
+create overlaps along their shared coastline.
 
 The header shows the shared relationship, escalation score, pending transition,
 and blue/red doctrine. The map server is the default diplomacy incident

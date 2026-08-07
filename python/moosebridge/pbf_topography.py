@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping
 
 from .osm_topography import features_from_overpass_element
 from .topography import TheaterTopography, TopographyFeature, TopographyLayer
+from .topography_coverage import TheaterTopographyCoverage, TopographyDetailLevel
 
 
 PBF_TAG_FILTER: dict[str, Any] = {
@@ -28,6 +29,17 @@ PBF_TAG_COLUMNS = tuple(PBF_TAG_FILTER) + (
     "name", "name:en", "start_date", "end_date", "building", "water", "area",
 )
 
+DETAILED_PBF_TAG_FILTER: dict[str, Any] = {
+    **PBF_TAG_FILTER,
+    "highway": [
+        "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
+        "residential", "service", "living_street", "track",
+    ],
+    "railway": ["rail", "light_rail", "tram", "narrow_gauge"],
+    "place": ["city", "town", "village", "hamlet"],
+    "landuse": True,
+}
+
 
 def topography_from_pbf(
     paths: Iterable[str | Path],
@@ -38,6 +50,7 @@ def topography_from_pbf(
     source_snapshot_dates: Mapping[str, str] | None = None,
     include_buildings: bool = False,
     simplify_meters: float = 20.0,
+    coverage: TheaterTopographyCoverage | None = None,
 ) -> TheaterTopography:
     """Read bounded Geofabrik extracts with optional Pyrosm."""
 
@@ -48,12 +61,21 @@ def topography_from_pbf(
 
     source_dates = source_snapshot_dates or {}
     west, south, east, north = bounds[1], bounds[0], bounds[3], bounds[2]
-    custom_filter = dict(PBF_TAG_FILTER)
-    if include_buildings:
+    custom_filter = dict(DETAILED_PBF_TAG_FILTER if coverage is not None else PBF_TAG_FILTER)
+    coverage_has_high = coverage is not None and any(area.level is TopographyDetailLevel.HIGH for area in coverage.areas)
+    if include_buildings or coverage_has_high:
         custom_filter["building"] = True
     features: dict[str, TopographyFeature] = {}
     snapshots: list[str] = []
     sources: list[str] = []
+    coverage_masks: dict[TopographyDetailLevel, Any] = {}
+    shape_geometry = None
+    if coverage is not None:
+        try:
+            from shapely.geometry import shape as shape_geometry
+        except ImportError as exc:
+            raise RuntimeError('PBF import requires: python -m pip install -e "[topography]"') from exc
+        coverage_masks = {level: coverage.geometry_for_level(level) for level in TopographyDetailLevel}
     for raw_path in paths:
         path = Path(raw_path)
         if not path.is_file():
@@ -87,8 +109,22 @@ def topography_from_pbf(
                 record,
                 scenario_reference_year=scenario_reference_year,
                 source_snapshot_date=source_date,
-                include_buildings=include_buildings,
+                include_buildings=include_buildings or coverage_has_high,
             ):
+                if coverage is not None:
+                    required_level = topography_detail_level(feature)
+                    geometry = shape_geometry(feature.geometry)
+                    eligible_levels = {
+                        TopographyDetailLevel.ALL: TopographyDetailLevel,
+                        TopographyDetailLevel.LOW: (TopographyDetailLevel.LOW, TopographyDetailLevel.HIGH),
+                        TopographyDetailLevel.HIGH: (TopographyDetailLevel.HIGH,),
+                    }[required_level]
+                    if not any(
+                        coverage_masks[level] is not None and coverage_masks[level].intersects(geometry)
+                        for level in eligible_levels
+                    ):
+                        continue
+                    feature = _with_detail_level(feature, required_level)
                 features[feature.object_id] = feature
     source_snapshot_date = max(snapshots) if snapshots else None
     return TheaterTopography(
@@ -104,7 +140,55 @@ def topography_from_pbf(
             "dcs_verification": "pending",
             "buildings_included": include_buildings,
             "geometry_simplification_m": simplify_meters,
+            "coverage_levels": sorted({area.level.value for area in coverage.areas}) if coverage else None,
+            "coverage_area_count": len(coverage.areas) if coverage else 0,
         },
+    )
+
+
+def topography_detail_level(feature: TopographyFeature) -> TopographyDetailLevel:
+    """Return the minimum DCS-authored coverage level for one OSM feature."""
+
+    category = feature.category.lower()
+    if feature.layer is TopographyLayer.WATER:
+        return TopographyDetailLevel.ALL
+    if feature.layer is TopographyLayer.ROADS:
+        if category in {"motorway", "trunk"}:
+            return TopographyDetailLevel.ALL
+        if category in {"primary", "secondary"}:
+            return TopographyDetailLevel.LOW
+        return TopographyDetailLevel.HIGH
+    if feature.layer is TopographyLayer.RAILWAYS:
+        return TopographyDetailLevel.ALL if category == "rail" else TopographyDetailLevel.HIGH
+    if feature.layer is TopographyLayer.SETTLEMENTS:
+        if category == "city":
+            return TopographyDetailLevel.ALL
+        return TopographyDetailLevel.LOW if category == "town" else TopographyDetailLevel.HIGH
+    if feature.layer is TopographyLayer.BUILDINGS:
+        return TopographyDetailLevel.HIGH
+    if feature.layer is TopographyLayer.LANDUSE:
+        return TopographyDetailLevel.LOW if category in {"industrial", "military", "port"} else TopographyDetailLevel.HIGH
+    if feature.layer is TopographyLayer.INFRASTRUCTURE:
+        return TopographyDetailLevel.ALL if category in {"power_plant", "harbour"} else TopographyDetailLevel.LOW
+    return TopographyDetailLevel.HIGH
+
+
+def _with_detail_level(feature: TopographyFeature, level: TopographyDetailLevel) -> TopographyFeature:
+    return TopographyFeature(
+        object_id=feature.object_id,
+        layer=feature.layer,
+        category=feature.category,
+        geometry=feature.geometry,
+        source=feature.source,
+        confidence=feature.confidence,
+        name=feature.name,
+        source_id=feature.source_id,
+        scenario_reference_year=feature.scenario_reference_year,
+        source_snapshot_date=feature.source_snapshot_date,
+        valid_from=feature.valid_from,
+        valid_to=feature.valid_to,
+        dcs_verified=feature.dcs_verified,
+        properties={**feature.properties, "detail_level": level.value},
     )
 
 

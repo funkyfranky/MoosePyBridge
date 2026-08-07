@@ -161,8 +161,27 @@ from .topography import (
     feature_counts as topography_feature_counts,
     merge_topography_features,
 )
-from .debug_overlay import DebugMarkup, DebugMarkupPoint, MarkupColor, RoadPointMatch, rgba, validate_debug_overlay
-from .topography_overlay import build_road_verification_points, build_topography_debug_overlay
+from .topography_coverage import (
+    TheaterTopographyCoverage,
+    TopographyCoverageArea,
+    TopographyDetailLevel,
+    coverage_from_picture,
+)
+from .debug_overlay import DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, MarkupColor, RoadPointMatch, rgba, validate_debug_overlay
+from .topography_overlay import (
+    SurfaceVerificationPoint,
+    build_road_verification_points,
+    build_surface_verification_points,
+    build_topography_debug_overlay,
+)
+from .surface_regions import (
+    SurfaceClass,
+    SurfaceRegion,
+    SurfaceRegionKind,
+    TheaterSurfaceRegions,
+    build_surface_regions,
+    surface_region_counts,
+)
 from .models import (
     Auftrag,
     Intel,
@@ -733,13 +752,26 @@ __all__ = [
     "tactical_recommendation_from_auftrag",
     "target_type_values",
     "topography_feature_counts",
+    "TheaterTopographyCoverage",
+    "TopographyCoverageArea",
+    "TopographyDetailLevel",
+    "coverage_from_picture",
     "merge_topography_features",
     "DebugMarkup",
     "DebugMarkupPoint",
+    "DcsSurfacePoint",
     "RoadPointMatch",
+    "SurfaceVerificationPoint",
     "MarkupColor",
     "rgba",
     "validate_debug_overlay",
     "build_topography_debug_overlay",
     "build_road_verification_points",
+    "build_surface_verification_points",
+    "SurfaceClass",
+    "SurfaceRegion",
+    "SurfaceRegionKind",
+    "TheaterSurfaceRegions",
+    "build_surface_regions",
+    "surface_region_counts",
 ]

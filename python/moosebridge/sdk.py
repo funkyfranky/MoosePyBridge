@@ -12,7 +12,7 @@ from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, Weap
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .dcs_events import DestroyedObjectEvent, KillEvent
-from .debug_overlay import DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
+from .debug_overlay import DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
 from .diplomacy import (
     BorderViolationTracker,
     CoalitionDoctrine,
@@ -3708,6 +3708,40 @@ class MooseBridgeClient:
         ):
             raise ValueError("DCS returned an invalid closest-road result")
         return tuple(RoadPointMatch.from_payload(sample) for sample in samples)
+
+    async def surface_types(
+        self,
+        points: Iterable[DebugMarkupPoint],
+        *,
+        timeout: float = 30.0,
+    ) -> tuple[DcsSurfacePoint, ...]:
+        """Return native DCS coarse terrain classifications for WGS84 points."""
+
+        materialized = tuple(points)
+        if not materialized:
+            raise ValueError("surface-type lookup requires at least one point")
+        if len(materialized) > 500:
+            raise ValueError("surface-type lookup accepts at most 500 points")
+        if not all(isinstance(point, DebugMarkupPoint) for point in materialized):
+            raise TypeError("surface-type lookup points must be DebugMarkupPoint objects")
+        ack = require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="terrain.surface_types",
+                    params={"points": [point.to_payload() for point in materialized]},
+                ),
+                timeout=timeout,
+            )
+        )
+        result = ack.get("result")
+        samples = result.get("samples") if isinstance(result, Mapping) else None
+        if (
+            not isinstance(samples, list)
+            or len(samples) != len(materialized)
+            or not all(isinstance(sample, dict) for sample in samples)
+        ):
+            raise ValueError("DCS returned an invalid surface-type result")
+        return tuple(DcsSurfacePoint.from_payload(sample) for sample in samples)
 
     async def set_territory_coalition(
         self,

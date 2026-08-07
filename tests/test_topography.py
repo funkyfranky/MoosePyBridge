@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from moosebridge.osm_topography import build_overpass_query, features_from_overpass_element, topography_from_overpass
-from moosebridge.pbf_topography import features_from_pyrosm_record
+from moosebridge.pbf_topography import features_from_pyrosm_record, topography_detail_level
 from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer, merge_topography_features
 
 
@@ -152,3 +152,20 @@ def test_pyrosm_buildings_are_explicitly_optional() -> None:
     assert excluded == ()
     assert len(included) == 1
     assert included[0].layer is TopographyLayer.BUILDINGS
+
+
+def test_topography_detail_levels_keep_baseline_small_and_local_detail_rich() -> None:
+    def feature(layer: TopographyLayer, category: str) -> TopographyFeature:
+        return TopographyFeature(
+            object_id=f"TOPOGRAPHY:test:{layer.value}:{category}",
+            layer=layer,
+            category=category,
+            geometry={"type": "Point", "coordinates": [12.0, 54.0]},
+            source="test",
+            confidence=1.0,
+        )
+
+    assert topography_detail_level(feature(TopographyLayer.WATER, "lake")).value == "all"
+    assert topography_detail_level(feature(TopographyLayer.ROADS, "primary")).value == "low"
+    assert topography_detail_level(feature(TopographyLayer.ROADS, "residential")).value == "high"
+    assert topography_detail_level(feature(TopographyLayer.BUILDINGS, "industrial")).value == "high"

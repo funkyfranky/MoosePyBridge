@@ -36,6 +36,7 @@ from .operational_audit import execution_from_dict
 from .recon import ReconArea, build_recon_coverage_footprints
 from .recon import RECON_EXECUTION_AUDIT_TYPE
 from .topography import TheaterTopography
+from .surface_regions import TheaterSurfaceRegions
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_MAP_HOST = "127.0.0.1"
@@ -55,6 +56,7 @@ DEFAULT_PRESSURE_TERRITORY_RATIO = 0.08
 DEFAULT_INCURSION_SUPPORT_RADIUS_M = 30_000.0
 DEFAULT_LODGEMENT_MIN_FORCES = 3
 DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
+DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
 
@@ -143,6 +145,7 @@ class GlobalMapRuntime:
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES
     topography_path: Path | None = None
+    surface_regions_path: Path | None = None
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
     error: str | None = None
@@ -165,6 +168,7 @@ class GlobalMapRuntime:
     _diplomacy_event_cursor: str | None = None
     _border_violation_signature: tuple[tuple[str, str, float, bool], ...] = ()
     _topography: TheaterTopography | None = field(init=False, default=None)
+    _surface_regions: TheaterSurfaceRegions | None = field(init=False, default=None)
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
 
@@ -186,6 +190,7 @@ class GlobalMapRuntime:
             )
         )
         self.load_topography()
+        self.load_surface_regions()
 
     def load_topography(self) -> TheaterTopography | None:
         """Load the optional static theater cache without touching DCS."""
@@ -206,6 +211,28 @@ class GlobalMapRuntime:
         """Return the static theater data independently of mission updates."""
 
         return self._topography.to_geojson() if self._topography is not None else empty_picture()
+
+    def load_surface_regions(self) -> TheaterSurfaceRegions | None:
+        """Load optional static connected surface components."""
+
+        self._surface_regions = None
+        if self.surface_regions_path is None or not self.surface_regions_path.is_file():
+            return None
+        self._surface_regions = TheaterSurfaceRegions.load(self.surface_regions_path)
+        LOGGER.info(
+            "Loaded %d %s surface regions from %s",
+            len(self._surface_regions.regions),
+            self._surface_regions.theater_id,
+            self.surface_regions_path,
+        )
+        if not self._surface_regions.metadata.get("source_complete", True):
+            LOGGER.warning("Surface-region source coverage is incomplete: %s", self.surface_regions_path)
+        return self._surface_regions
+
+    def surface_regions_geojson(self) -> dict[str, Any]:
+        """Return connected static land/water components."""
+
+        return self._surface_regions.to_geojson() if self._surface_regions is not None else empty_picture()
 
     def status_payload(self) -> dict[str, Any]:
         """Return the current browser-facing service status."""
@@ -233,6 +260,10 @@ class GlobalMapRuntime:
             "recon_coverage_error": self._recon_error,
             "topography_theater_id": self._topography.theater_id if self._topography else None,
             "topography_feature_count": len(self._topography.features) if self._topography else 0,
+            "surface_region_count": len(self._surface_regions.regions) if self._surface_regions else 0,
+            "surface_regions_source_complete": (
+                self._surface_regions.metadata.get("source_complete") if self._surface_regions else None
+            ),
             "diplomacy": properties.get("diplomacy"),
         }
 
@@ -949,6 +980,7 @@ def create_app(
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M,
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES,
     topography_path: Path | None = DEFAULT_TOPOGRAPHY_PATH,
+    surface_regions_path: Path | None = DEFAULT_SURFACE_REGIONS_PATH,
 ) -> FastAPI:
     """Create the FastAPI map application."""
 
@@ -970,6 +1002,7 @@ def create_app(
         incursion_support_radius_m=incursion_support_radius_m,
         lodgement_min_forces=lodgement_min_forces,
         topography_path=topography_path,
+        surface_regions_path=surface_regions_path,
     )
 
     @asynccontextmanager
@@ -1008,6 +1041,10 @@ def create_app(
     @app.get("/api/topography/global.geojson")
     async def global_topography() -> dict[str, Any]:
         return runtime.topography_geojson()
+
+    @app.get("/api/surface-regions/global.geojson")
+    async def global_surface_regions() -> dict[str, Any]:
+        return runtime.surface_regions_geojson()
 
     @app.websocket("/ws/global")
     async def global_updates(websocket: WebSocket) -> None:
@@ -1048,6 +1085,12 @@ def main() -> None:
     parser.add_argument("--incursion-support-radius", type=float, default=DEFAULT_INCURSION_SUPPORT_RADIUS_M, help="Ground-force connection radius in meters.")
     parser.add_argument("--lodgement-min-forces", type=int, default=DEFAULT_LODGEMENT_MIN_FORCES, help="Connected hostile groups required to establish a lodgement.")
     parser.add_argument("--topography", type=Path, default=DEFAULT_TOPOGRAPHY_PATH, help="Static theater-topography GeoJSON cache.")
+    parser.add_argument(
+        "--surface-regions",
+        type=Path,
+        default=DEFAULT_SURFACE_REGIONS_PATH,
+        help="Connected static land/water surface-region GeoJSON cache.",
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -1078,6 +1121,7 @@ def main() -> None:
         incursion_support_radius_m=max(1.0, args.incursion_support_radius),
         lodgement_min_forces=max(1, args.lodgement_min_forces),
         topography_path=args.topography,
+        surface_regions_path=args.surface_regions,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 

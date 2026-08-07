@@ -147,6 +147,25 @@ class FakeSdkServer:
                     ],
                 },
             }
+        if command.action == "terrain.surface_types":
+            return {
+                "ok": True,
+                "result": {
+                    "action": command.action,
+                    "samples": [
+                        {
+                            "input_latitude": point["latitude"],
+                            "input_longitude": point["longitude"],
+                            "input_x": index * 100,
+                            "input_z": index * 200,
+                            "surface_type": 3 if index % 2 else 1,
+                            "surface_name": "WATER" if index % 2 else "LAND",
+                            "is_water": bool(index % 2),
+                        }
+                        for index, point in enumerate(command.params["points"])
+                    ],
+                },
+            }
         if command.action == "time.get":
             return {
                 "ok": True,
@@ -583,6 +602,28 @@ def test_sdk_closest_road_points_returns_typed_matches() -> None:
         assert timeout == 12.0
         assert len(matches) == 2
         assert matches[0].distance_m == pytest.approx(22.36)
+
+    asyncio.run(scenario())
+
+
+def test_sdk_surface_types_returns_typed_classifications() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        surfaces = await client.surface_types(
+            [DebugMarkupPoint(54.0, 12.0), DebugMarkupPoint(54.1, 12.1)],
+            timeout=12.0,
+        )
+
+        command, timeout = server.commands[0]
+        assert command.action == "terrain.surface_types"
+        assert len(command.params["points"]) == 2
+        assert timeout == 12.0
+        assert surfaces[0].surface_name == "LAND"
+        assert surfaces[0].is_water is False
+        assert surfaces[1].surface_name == "WATER"
+        assert surfaces[1].is_water is True
 
     asyncio.run(scenario())
 

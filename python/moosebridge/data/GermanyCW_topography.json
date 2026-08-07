@@ -14,6 +14,18 @@
   },
   "geofabrik_sources": [
     {
+      "id": "denmark",
+      "url": "https://download.geofabrik.de/europe/denmark-latest.osm.pbf"
+    },
+    {
+      "id": "netherlands",
+      "url": "https://download.geofabrik.de/europe/netherlands-latest.osm.pbf"
+    },
+    {
+      "id": "skane",
+      "url": "https://download.geofabrik.de/europe/sweden/skane-latest.osm.pbf"
+    },
+    {
       "id": "mecklenburg-vorpommern",
       "url": "https://download.geofabrik.de/europe/germany/mecklenburg-vorpommern-latest.osm.pbf"
     },
@@ -30,12 +42,72 @@
       "url": "https://download.geofabrik.de/europe/germany/niedersachsen-latest.osm.pbf"
     },
     {
+      "id": "bremen",
+      "url": "https://download.geofabrik.de/europe/germany/bremen-latest.osm.pbf"
+    },
+    {
+      "id": "nordrhein-westfalen",
+      "url": "https://download.geofabrik.de/europe/germany/nordrhein-westfalen-latest.osm.pbf"
+    },
+    {
+      "id": "hessen",
+      "url": "https://download.geofabrik.de/europe/germany/hessen-latest.osm.pbf"
+    },
+    {
+      "id": "rheinland-pfalz",
+      "url": "https://download.geofabrik.de/europe/germany/rheinland-pfalz-latest.osm.pbf"
+    },
+    {
+      "id": "saarland",
+      "url": "https://download.geofabrik.de/europe/germany/saarland-latest.osm.pbf"
+    },
+    {
+      "id": "baden-wuerttemberg",
+      "url": "https://download.geofabrik.de/europe/germany/baden-wuerttemberg-latest.osm.pbf"
+    },
+    {
+      "id": "bayern",
+      "url": "https://download.geofabrik.de/europe/germany/bayern-latest.osm.pbf"
+    },
+    {
+      "id": "thueringen",
+      "url": "https://download.geofabrik.de/europe/germany/thueringen-latest.osm.pbf"
+    },
+    {
+      "id": "sachsen-anhalt",
+      "url": "https://download.geofabrik.de/europe/germany/sachsen-anhalt-latest.osm.pbf"
+    },
+    {
+      "id": "sachsen",
+      "url": "https://download.geofabrik.de/europe/germany/sachsen-latest.osm.pbf"
+    },
+    {
+      "id": "berlin",
+      "url": "https://download.geofabrik.de/europe/germany/berlin-latest.osm.pbf"
+    },
+    {
       "id": "brandenburg",
       "url": "https://download.geofabrik.de/europe/germany/brandenburg-latest.osm.pbf"
     },
     {
       "id": "zachodniopomorskie",
       "url": "https://download.geofabrik.de/europe/poland/zachodniopomorskie-latest.osm.pbf"
+    },
+    {
+      "id": "lubuskie",
+      "url": "https://download.geofabrik.de/europe/poland/lubuskie-latest.osm.pbf"
+    },
+    {
+      "id": "dolnoslaskie",
+      "url": "https://download.geofabrik.de/europe/poland/dolnoslaskie-latest.osm.pbf"
+    },
+    {
+      "id": "wielkopolskie",
+      "url": "https://download.geofabrik.de/europe/poland/wielkopolskie-latest.osm.pbf"
+    },
+    {
+      "id": "czechia",
+      "url": "https://download.geofabrik.de/europe/czech-republic-latest.osm.pbf"
     }
   ]
 }

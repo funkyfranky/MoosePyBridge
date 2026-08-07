@@ -13,6 +13,12 @@ from moosebridge.models import Territory
 from moosebridge.pictures import GlobalPicture
 from moosebridge.sdk import GeographicPoint
 from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer
+from moosebridge.surface_regions import (
+    SurfaceClass,
+    SurfaceRegion,
+    SurfaceRegionKind,
+    TheaterSurfaceRegions,
+)
 from moosebridge.weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY
 
 
@@ -85,6 +91,8 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "recon_coverage_error": None,
         "topography_theater_id": None,
         "topography_feature_count": 0,
+        "surface_region_count": 0,
+        "surface_regions_source_complete": None,
         "diplomacy": None,
     }
 
@@ -110,6 +118,39 @@ def test_map_runtime_serves_topography_separately_from_dynamic_picture() -> None
     assert runtime.picture == empty_picture()
     assert len(payload["features"]) == 1
     assert payload["features"][0]["properties"]["layer"] == "topography_roads"
+
+
+def test_map_runtime_serves_surface_regions_separately_from_mission_state() -> None:
+    runtime = GlobalMapRuntime()
+    runtime._surface_regions = TheaterSurfaceRegions(
+        theater_id="GermanyCW",
+        bounds=(53.0, 10.0, 55.0, 14.0),
+        grid_spacing_m=250,
+        regions=(
+            SurfaceRegion(
+                region_id="SURFACE:GermanyCW:LAND:1",
+                surface_class=SurfaceClass.LAND,
+                kind=SurfaceRegionKind.MAINLAND,
+                geometry={
+                    "type": "Polygon",
+                    "coordinates": [[[12.0, 54.0], [12.1, 54.0], [12.1, 54.1], [12.0, 54.0]]],
+                },
+                area_m2=1_000_000,
+                cell_count=16,
+                confidence=0.75,
+                source="test",
+            ),
+        ),
+        metadata={"source_complete": False},
+    )
+
+    payload = runtime.surface_regions_geojson()
+    status = runtime.status_payload()
+
+    assert runtime.picture == empty_picture()
+    assert payload["features"][0]["properties"]["layer"] == "surface_land_regions"
+    assert status["surface_region_count"] == 1
+    assert status["surface_regions_source_complete"] is False
 
 
 def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:

@@ -118,6 +118,13 @@ Priorities:
 
 ## P2 - Tactical picture
 
+- [ ] **Complete and verify the GermanyCW multi-resolution import.** Capture
+  the DCS-authored `Topography All`, `Topography Low ...`, and `Topography High
+  ...` zones, download all intersecting Geofabrik extracts, build the complete
+  cache, and verify representative coast, road, and surface samples in every
+  detail region. The versioned coverage artifact and level-aware PBF filtering
+  are implemented; the exact mission-editor zones remain mission data.
+
 - [ ] **Verify the GermanyCW topography baseline against DCS.** The first
   versioned OSM import and browser layers cover water, major roads, railways,
   settlements, and infrastructure candidates. Add adaptive DCS surface,
@@ -165,9 +172,22 @@ Priorities:
 - [ ] **Add long-running DCS integration scenarios.** Exercise reconnects,
   mission restarts, multiple clients, audit restore, event ordering, and map
   updates over extended missions.
+- [ ] **Build platform-specific mobility graphs from surface regions.** Keep
+  physical components immutable, connect ground regions through verified road
+  bridges, and constrain naval regions by vessel class, water width, depth
+  evidence, and bridge clearance where such evidence exists. MOOSE/DCS remains
+  responsible for the final tactical route.
+- [ ] **Quantify coastline displacement against DCS.** Sample transects across
+  OSM shorelines and compare the DCS `land.getSurfaceType()` transition while
+  retaining uncertainty near complex harbour and shallow-water geometry.
 
 ## Recently completed
 
+- [x] Directed OSM coastline geometry and closed water polygons produce a
+  versioned 250 m `TheaterSurfaceRegions` artifact. Four-neighbor components
+  distinguish mainland, islands, maritime water, and inland water; source
+  completeness and pending DCS verification remain explicit. The browser map
+  exposes separate connected-land and connected-water layers.
 - [x] A passive event-driven strategic feedback monitor reports goal status,
   plan feasibility, predicted allocation, INTEL context, objective changes, and
   mission outcomes. It emits `replanning_required` on real asset shortfalls and

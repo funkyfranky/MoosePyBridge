@@ -17,6 +17,7 @@ if str(PYTHON_ROOT) not in sys.path:
 
 from moosebridge.pbf_topography import topography_from_pbf
 from moosebridge.topography import feature_counts
+from moosebridge.topography_coverage import TheaterTopographyCoverage
 
 
 def main() -> int:
@@ -24,6 +25,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=PYTHON_ROOT / "moosebridge" / "data" / "GermanyCW_topography.json")
     parser.add_argument("--download-dir", type=Path, default=REPO_ROOT / "tmp" / "topography" / "pbf")
     parser.add_argument("--output", type=Path, default=REPO_ROOT / "tmp" / "topography" / "GermanyCW.geojson")
+    parser.add_argument("--coverage", type=Path, default=REPO_ROOT / "tmp" / "topography" / "GermanyCW-coverage.geojson")
     parser.add_argument("--source", action="append", dest="sources", help="Import only the named source; repeat as needed.")
     parser.add_argument("--refresh", action="store_true", help="Redownload existing PBF files.")
     parser.add_argument("--download-only", action="store_true")
@@ -53,11 +55,17 @@ def main() -> int:
         print(f"Downloaded {len(paths)} PBF source file(s).")
         return 0
 
-    bounds_config = config["pilot_bounds"]
-    bounds = (
-        float(bounds_config["south"]), float(bounds_config["west"]),
-        float(bounds_config["north"]), float(bounds_config["east"]),
-    )
+    coverage = TheaterTopographyCoverage.load(args.coverage) if args.coverage.is_file() else None
+    if coverage is not None:
+        bounds = coverage.bounds
+        print(f"Using {len(coverage.areas)} DCS coverage zone(s): {args.coverage}")
+    else:
+        bounds_config = config["pilot_bounds"]
+        bounds = (
+            float(bounds_config["south"]), float(bounds_config["west"]),
+            float(bounds_config["north"]), float(bounds_config["east"]),
+        )
+        print(f"WARNING: coverage file not found; using legacy pilot bounds: {args.coverage}")
     topography = topography_from_pbf(
         paths,
         theater_id=str(config["theater_id"]),
@@ -66,6 +74,7 @@ def main() -> int:
         source_snapshot_dates=source_dates,
         include_buildings=args.include_buildings,
         simplify_meters=args.simplify_meters,
+        coverage=coverage,
     )
     topography.save(args.output)
     print(f"Wrote {len(topography.features)} features to {args.output}")

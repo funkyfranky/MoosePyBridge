@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from moosebridge.debug_overlay import DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
+from moosebridge.debug_overlay import DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
 from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer
-from moosebridge.topography_overlay import build_road_verification_points, build_topography_debug_overlay
+from moosebridge.topography_overlay import (
+    build_road_verification_points,
+    build_surface_verification_points,
+    build_topography_debug_overlay,
+)
 
 
 def test_polygon_markup_reports_native_segment_count() -> None:
@@ -167,3 +171,55 @@ def test_road_verification_samples_only_nearby_roads_and_honors_limit() -> None:
 
     assert len(points) == 7
     assert all(abs(point.longitude - 12.0) < 0.1 for point in points)
+
+
+def test_dcs_surface_point_parses_native_classification() -> None:
+    surface = DcsSurfacePoint.from_payload(
+        {
+            "input_latitude": 54.0,
+            "input_longitude": 12.0,
+            "input_x": 100,
+            "input_z": 200,
+            "surface_type": 2,
+            "surface_name": "SHALLOW_WATER",
+            "is_water": True,
+        }
+    )
+
+    assert surface.input_point == DebugMarkupPoint(54.0, 12.0)
+    assert surface.surface_type == 2
+    assert surface.is_water is True
+
+
+def test_surface_verification_balances_land_and_water_samples() -> None:
+    pytest.importorskip("pyproj")
+    pytest.importorskip("shapely")
+    topography = TheaterTopography(
+        theater_id="GermanyCW",
+        features=(
+            TopographyFeature(
+                object_id="TOPOGRAPHY:water/test",
+                layer=TopographyLayer.WATER,
+                category="water",
+                geometry={
+                    "type": "Polygon",
+                    "coordinates": [[[12.0, 53.98], [12.05, 53.98], [12.05, 54.02], [12.0, 54.02], [12.0, 53.98]]],
+                },
+                source="OpenStreetMap",
+                confidence=0.75,
+            ),
+        ),
+    )
+
+    samples = build_surface_verification_points(
+        topography,
+        latitude=54.0,
+        longitude=12.0,
+        radius_m=5_000,
+        spacing_m=500,
+        boundary_clearance_m=25,
+        max_points=20,
+    )
+
+    assert len(samples) == 20
+    assert {sample.expected_surface for sample in samples} == {"land", "water"}

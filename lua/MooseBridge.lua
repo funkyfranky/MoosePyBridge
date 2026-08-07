@@ -2045,6 +2045,42 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     return {action="terrain.closest_road_points", road_type=road_type, count=#samples, samples=samples}
   end)
 
+  self:RegisterCommand("terrain.surface_types", function(cmd)
+    local p = cmd.params or {}
+    if not land or not land.getSurfaceType then error("DCS land.getSurfaceType is not available") end
+    if type(p.points) ~= "table" or #p.points == 0 then error("terrain.surface_types requires points") end
+    if #p.points > 500 then error("terrain.surface_types accepts at most 500 points") end
+    local surface_names = {
+      [1]="LAND",
+      [2]="SHALLOW_WATER",
+      [3]="WATER",
+      [4]="ROAD",
+      [5]="RUNWAY",
+    }
+    local shallow_water = land.SurfaceType and land.SurfaceType.SHALLOW_WATER or 2
+    local water = land.SurfaceType and land.SurfaceType.WATER or 3
+    local samples = {}
+    for index, value in ipairs(p.points) do
+      local point = self:_DebugMarkupPoint(value)
+      local surface_type = land.getSurfaceType({x=point.x, y=point.z})
+      if type(surface_type) ~= "number" then
+        error("DCS returned no surface type at index " .. safe_tostring(index))
+      end
+      local coordinates = self:_CoordinatesForPoint(point, "ll")
+      samples[#samples + 1] = {
+        input_x=point.x,
+        input_y=point.y or 0,
+        input_z=point.z,
+        input_latitude=coordinates.latitude,
+        input_longitude=coordinates.longitude,
+        surface_type=surface_type,
+        surface_name=surface_names[surface_type] or "UNKNOWN",
+        is_water=surface_type == shallow_water or surface_type == water,
+      }
+    end
+    return {action="terrain.surface_types", count=#samples, samples=samples}
+  end)
+
   self:RegisterCommand("object.distance", function(cmd)
     local p = cmd.params or {}
     local object_id_a = self:_OptionalString(p.object_id_a)

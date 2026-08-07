@@ -26,6 +26,8 @@
     { key: "intel_contacts", label: "INTEL contacts", color: "#c44343", icon: "crosshair", size: 0.95, default: true },
     { key: "intel_clusters", label: "INTEL clusters", color: "#d06f27", icon: "radar", size: 1.05, default: true },
     { key: "loss_reports", label: "Loss reports", color: "#8f3434", icon: "shield-x", size: 1.0, default: true },
+    { key: "surface_land_regions", label: "Connected land", color: "#4f7a57", icon: "land-plot", default: false },
+    { key: "surface_water_regions", label: "Connected water", color: "#277c9d", icon: "waves", default: false },
     { key: "topography_water", label: "Water", color: "#3c83a5", icon: "waves", default: false },
     { key: "topography_roads", label: "Road network", color: "#6f675a", icon: "route", default: false },
     { key: "topography_railways", label: "Railways", color: "#4f5552", icon: "train-front", default: false },
@@ -67,7 +69,7 @@
     },
     {
       key: "topography", label: "Topography", icon: "map", color: "#3c7069",
-      layers: ["topography_water", "topography_roads", "topography_railways", "topography_settlements", "topography_infrastructure", "topography_landuse", "topography_buildings"],
+      layers: ["surface_land_regions", "surface_water_regions", "topography_water", "topography_roads", "topography_railways", "topography_settlements", "topography_infrastructure", "topography_landuse", "topography_buildings"],
     },
     {
       key: "operations", label: "Operations", icon: "target", color: "#ad3c76",
@@ -128,6 +130,7 @@
   const mapLayerBaseFilters = new Map();
   let latestPicture = EMPTY;
   let latestTopography = EMPTY;
+  let latestSurfaceRegions = EMPTY;
   let fitted = false;
   let reconnectTimer = null;
   let selectedFeature = null;
@@ -337,7 +340,7 @@
   }
 
   function allFeatures() {
-    return [...latestPicture.features, ...latestTopography.features];
+    return [...latestPicture.features, ...latestTopography.features, ...latestSurfaceRegions.features];
   }
 
   async function initializeSourcesAndLayers() {
@@ -345,6 +348,7 @@
     map.addSource("picture", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("zone-areas", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("topography", { type: "geojson", data: EMPTY, promoteId: "object_id" });
+    map.addSource("surface-regions", { type: "geojson", data: EMPTY, promoteId: "object_id" });
 
     for (const spec of layerSpecs) {
       if (spec.key === "trajectories") {
@@ -471,6 +475,28 @@
             "circle-stroke-color": "rgba(255,255,255,0.96)",
             "circle-stroke-width": 2.2,
             "circle-opacity": 0.96,
+          },
+        });
+        continue;
+      }
+      if (spec.key === "surface_land_regions" || spec.key === "surface_water_regions") {
+        addMapLayer(spec, {
+          type: "fill",
+          source: "surface-regions",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "fill-color": spec.color,
+            "fill-opacity": spec.key === "surface_land_regions" ? 0.12 : 0.2,
+          },
+        });
+        addMapLayer(spec, {
+          type: "line",
+          source: "surface-regions",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "line-color": spec.color,
+            "line-width": ["case", ["==", ["get", "region_kind"], "mainland"], 2.2, 1.4],
+            "line-opacity": 0.9,
           },
         });
         continue;
@@ -633,6 +659,15 @@
     const source = map.getSource("topography");
     if (!source) return;
     source.setData(latestTopography);
+    updateCounts();
+  }
+
+  function setSurfaceRegions(surfaceRegions) {
+    if (!surfaceRegions || surfaceRegions.type !== "FeatureCollection") return;
+    latestSurfaceRegions = decoratedPicture(surfaceRegions);
+    const source = map.getSource("surface-regions");
+    if (!source) return;
+    source.setData(latestSurfaceRegions);
     updateCounts();
   }
 
@@ -1107,13 +1142,15 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, topographyResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, topographyResponse, surfaceRegionsResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
         fetch("/api/topography/global.geojson"),
+        fetch("/api/surface-regions/global.geojson"),
         fetch("/api/health"),
       ]);
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
       if (topographyResponse.ok) setTopography(await topographyResponse.json());
+      if (surfaceRegionsResponse.ok) setSurfaceRegions(await surfaceRegionsResponse.json());
       if (healthResponse.ok) updateStatus(await healthResponse.json());
     } catch (error) {
       updateStatus({ connected: false, error: String(error) });
