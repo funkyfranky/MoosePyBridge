@@ -114,6 +114,9 @@ class RuleBasedConflictController:
             if self.client.strategic_objective(objective.objective_id) is None:
                 self.client.add_strategic_objective(objective, sync=False)
         await self.ensure_war()
+        # Planning and portfolio reservations must use current COHORT availability
+        # and group strength, especially after SetGrouping() changes in MOOSE.
+        await self.client.refresh_legion_state()
         self.client.sync_strategic_objectives(source=f"{self.config.controller_id}.cycle")
         self._cycle_number += 1
         generated_goals, generated_plans, issues = self._prepare_candidates(picture)

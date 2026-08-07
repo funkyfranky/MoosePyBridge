@@ -27,6 +27,7 @@ htmlcov/
 moosebridge_raw.jsonl
 tmp/frontline_prototype.geojson
 tmp/frontline_prototype.html
+tmp/topography/
 
 # Local environment files
 .env

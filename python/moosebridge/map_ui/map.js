@@ -26,6 +26,11 @@
     { key: "intel_contacts", label: "INTEL contacts", color: "#c44343", icon: "crosshair", size: 0.95, default: true },
     { key: "intel_clusters", label: "INTEL clusters", color: "#d06f27", icon: "radar", size: 1.05, default: true },
     { key: "loss_reports", label: "Loss reports", color: "#8f3434", icon: "shield-x", size: 1.0, default: true },
+    { key: "topography_water", label: "Water", color: "#3c83a5", icon: "waves", default: false },
+    { key: "topography_roads", label: "Road network", color: "#6f675a", icon: "route", default: false },
+    { key: "topography_railways", label: "Railways", color: "#4f5552", icon: "train-front", default: false },
+    { key: "topography_settlements", label: "Settlements", color: "#9a694d", icon: "building-2", default: false },
+    { key: "topography_infrastructure", label: "Infrastructure candidates", color: "#76578b", icon: "factory", default: false },
     {
       key: "recon_coverage", label: "RECON coverage", color: "#167c73", icon: "scan-search", default: true,
       children: [
@@ -57,6 +62,10 @@
     {
       key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#137f87",
       layers: ["airbases"],
+    },
+    {
+      key: "topography", label: "Topography", icon: "map", color: "#3c7069",
+      layers: ["topography_water", "topography_roads", "topography_railways", "topography_settlements", "topography_infrastructure"],
     },
     {
       key: "operations", label: "Operations", icon: "target", color: "#ad3c76",
@@ -451,6 +460,54 @@
             "circle-stroke-width": 2.2,
             "circle-opacity": 0.96,
           },
+        });
+        continue;
+      }
+      if (spec.key === "topography_water") {
+        addMapLayer(spec, {
+          type: "fill",
+          filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]]],
+          paint: { "fill-color": spec.color, "fill-opacity": 0.2 },
+        });
+        addMapLayer(spec, {
+          type: "line",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: { "line-color": spec.color, "line-width": 1.6, "line-opacity": 0.88 },
+        });
+        continue;
+      }
+      if (spec.key === "topography_roads" || spec.key === "topography_railways") {
+        addMapLayer(spec, {
+          type: "line",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "line-color": spec.color,
+            "line-width": spec.key === "topography_roads"
+              ? ["match", ["get", "category"], "motorway", 3.2, "trunk", 2.7, "primary", 2.2, 1.5]
+              : 1.8,
+            "line-dasharray": spec.key === "topography_railways" ? [2, 1.3] : [1, 0],
+            "line-opacity": 0.88,
+          },
+        });
+        continue;
+      }
+      if (spec.key === "topography_settlements" || spec.key === "topography_infrastructure") {
+        addMapLayer(spec, {
+          type: "fill",
+          filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]]],
+          paint: { "fill-color": spec.color, "fill-opacity": 0.16 },
+        });
+        addMapLayer(spec, {
+          type: "circle",
+          filter: ["all", ["==", ["get", "layer"], spec.key], ["==", ["geometry-type"], "Point"]],
+          paint: { "circle-radius": spec.key === "topography_settlements" ? 5 : 4, "circle-color": spec.color, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2 },
+        });
+        addMapLayer(spec, {
+          type: "symbol",
+          minzoom: 7,
+          filter: ["==", ["get", "layer"], spec.key],
+          layout: { "text-field": ["get", "name"], "text-size": 11, "text-offset": [0, 1.1], "text-allow-overlap": false },
+          paint: { "text-color": "#313936", "text-halo-color": "rgba(255,255,255,0.92)", "text-halo-width": 1.2 },
         });
         continue;
       }

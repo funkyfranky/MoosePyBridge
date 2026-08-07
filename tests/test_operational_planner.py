@@ -117,7 +117,10 @@ def test_rule_based_capture_proposal_uses_highest_threat_visible_nearby_defender
     assert plan.phases[0].intents[0].target_object_id == "GROUP:High threat"
     assert plan.phases[1].depends_on == ("isolate",)
     assert plan.phases[1].intents[0].target_object_id == "OPSZONE:Town"
-    assert plan.phases[1].intents[0].asset_requirements[0].min_count == 2
+    assault = plan.phases[1].intents[0].asset_requirements[0]
+    assert assault.min_count == 1
+    assert assault.max_count == 2
+    assert assault.min_unit_count == 2
     consolidate = plan.phases[2]
     assert [intent.intent_id for intent in consolidate.intents] == [
         "secure-zone",
@@ -128,8 +131,9 @@ def test_rule_based_capture_proposal_uses_highest_threat_visible_nearby_defender
     assert security.required is True
     assert security.auftrag_types == ("PATROLZONE",)
     assert security.target_object_id == "OPSZONE:Town"
-    assert security.asset_requirements[0].min_count == 2
+    assert security.asset_requirements[0].min_count == 1
     assert security.asset_requirements[0].max_count == 2
+    assert security.asset_requirements[0].min_unit_count == 2
     assert security.metadata == {"persistent": True, "established_on": "Executing"}
     assert plan.provenance is not None
     assert plan.provenance.source_type is PlanSourceType.RULE_ENGINE
@@ -306,7 +310,9 @@ def test_rule_based_defend_proposal_holds_zone_and_interdicts_visible_attacker()
     assert plan.phases[0].intents[0].target_object_id == "GROUP:High"
     hold = plan.phases[0].intents[1]
     assert hold.auftrag_types == ("PATROLZONE",)
-    assert hold.asset_requirements[0].min_count == 2
+    assert hold.asset_requirements[0].min_count == 1
+    assert hold.asset_requirements[0].max_count == 2
+    assert hold.asset_requirements[0].min_unit_count == 2
     assert plan.metadata["defense_deadline_mission_time"] == 1_200
     assert plan.proposal_issues == ()
 

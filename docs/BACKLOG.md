@@ -66,6 +66,12 @@ Priorities:
 
 ## P2 - Forces and sustainment
 
+- [ ] **Track remaining unit strength inside spawned asset groups.** Planning
+  now derives the initial unit count automatically for homogeneous COHORT
+  templates and respects `COHORT:SetGrouping()`. Extend the runtime force model
+  so casualties within a surviving group reduce its effective strength and can
+  trigger reinforcement, defense, and replanning decisions without treating
+  every surviving asset group as fully effective.
 - [ ] **Extend ammunition/range-aware ranking beyond artillery.** ARTY now uses
   weapon classification, DCS weapon flags, current ammunition, firing position,
   and min/max task ranges for feasibility. Apply current losses, readiness, and
@@ -112,6 +118,15 @@ Priorities:
 
 ## P2 - Tactical picture
 
+- [ ] **Verify the GermanyCW topography baseline against DCS.** The first
+  versioned OSM import and browser layers cover water, major roads, railways,
+  settlements, and infrastructure candidates. Add adaptive DCS surface,
+  seabed, road-route, and local scenery checks; retain corrections in the
+  theater cache instead of polling the complete terrain during missions.
+- [ ] **Add historical topography enrichment.** Evaluate GHSL 1990 settlement
+  footprints, OpenHistoricalMap, and dated Wikidata landmarks for GermanyCW.
+  Preserve provenance and uncertainty, and require explicit confirmation
+  before external infrastructure becomes a strategic objective.
 - [ ] **Expose goals and operational plans on the browser map.** Show objective
   status, coalition intent, active plan phase, assigned missions, warnings, and
   blocked reasons with coalition-appropriate visibility.

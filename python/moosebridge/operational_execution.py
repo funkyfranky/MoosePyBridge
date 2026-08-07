@@ -892,7 +892,12 @@ class OperationalPlanExecutor:
                                 f"{requirement.requirement_id} constrains COHORTs outside {commander.object_id}: "
                                 f"{sorted(invalid_cohorts)}"
                             )
-                        prepared[key] = build_plan_auftrag(plan, intent, requirement)
+                        prepared[key] = build_plan_auftrag(
+                            plan,
+                            intent,
+                            requirement,
+                            required_asset_count=(item.required_count if requirement.min_unit_count is not None else None),
+                        )
                 await self._preflight_targets(prepared.values())
             except Exception as exc:
                 return await self._block(plan, phase, execution, f"phase revalidation failed: {exc}", on_event)
@@ -2009,6 +2014,8 @@ def build_plan_auftrag(
     plan: OperationalPlan,
     intent: MissionIntent,
     requirement: AssetRequirement,
+    *,
+    required_asset_count: int | None = None,
 ) -> AuftragCommand:
     """Build one supported AUFTRAG command from an operational requirement."""
 
@@ -2086,7 +2093,10 @@ def build_plan_auftrag(
     else:
         raise ValueError(f"Operational execution does not yet map AUFTRAG type {mission_type}")
 
-    command.set_required_assets(requirement.min_count, requirement.max_count)
+    if required_asset_count is not None:
+        command.set_required_assets(required_asset_count, required_asset_count)
+    else:
+        command.set_required_assets(requirement.min_count, requirement.max_count)
     weapon_type = lifecycle.get("weapon_type")
     if weapon_type is None and mission_type == "ARTY":
         fire_support = intent.metadata.get("fire_support")

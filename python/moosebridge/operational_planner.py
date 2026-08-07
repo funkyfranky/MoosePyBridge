@@ -39,8 +39,10 @@ class RuleBasedPlannerConfig:
 
     source_id: str = "moosebridge.rule_based_operational.v1"
     isolation_distance_from_zone_m: float = 30_000.0
-    ground_assault_groups: int = 2
-    ground_defense_groups: int = 2
+    ground_assault_groups: int = 1
+    ground_assault_units: int = 2
+    ground_defense_groups: int = 1
+    ground_defense_units: int = 2
     contact_fresh_for_s: float = 120.0
     contact_stale_after_s: float = 600.0
     lost_contact_recon_window_s: float = 900.0
@@ -55,8 +57,12 @@ class RuleBasedPlannerConfig:
             raise ValueError("isolation distance must be finite and non-negative")
         if self.ground_assault_groups < 1:
             raise ValueError("ground assault groups must be at least one")
+        if self.ground_assault_units < self.ground_assault_groups:
+            raise ValueError("ground assault units must be at least the minimum group count")
         if self.ground_defense_groups < 1:
             raise ValueError("ground defense groups must be at least one")
+        if self.ground_defense_units < self.ground_defense_groups:
+            raise ValueError("ground defense units must be at least the minimum group count")
         if not math.isfinite(self.contact_fresh_for_s) or self.contact_fresh_for_s < 0:
             raise ValueError("contact fresh duration must be finite and non-negative")
         if not math.isfinite(self.contact_stale_after_s) or self.contact_stale_after_s <= self.contact_fresh_for_s:
@@ -202,7 +208,8 @@ class RuleBasedOperationalPlanner:
                                 requirement_id="REQ:Ground assault",
                                 role=AssetRole.COMBAT,
                                 min_count=self.config.ground_assault_groups,
-                                max_count=self.config.ground_assault_groups,
+                                max_count=max(self.config.ground_assault_groups, self.config.ground_assault_units),
+                                min_unit_count=self.config.ground_assault_units,
                                 mission_types=("CAPTUREZONE",),
                                 performer_categories=("GROUND",),
                             ),
@@ -227,7 +234,8 @@ class RuleBasedOperationalPlanner:
                                 requirement_id="REQ:Ground security",
                                 role=AssetRole.COMBAT,
                                 min_count=self.config.ground_defense_groups,
-                                max_count=self.config.ground_defense_groups,
+                                max_count=max(self.config.ground_defense_groups, self.config.ground_defense_units),
+                                min_unit_count=self.config.ground_defense_units,
                                 mission_types=("PATROLZONE",),
                                 performer_categories=("GROUND",),
                             ),
@@ -383,7 +391,8 @@ class RuleBasedOperationalPlanner:
                             requirement_id="REQ:Ground defense",
                             role=AssetRole.COMBAT,
                             min_count=self.config.ground_defense_groups,
-                            max_count=self.config.ground_defense_groups,
+                            max_count=max(self.config.ground_defense_groups, self.config.ground_defense_units),
+                            min_unit_count=self.config.ground_defense_units,
                             mission_types=("PATROLZONE",),
                             performer_categories=("GROUND",),
                         ),

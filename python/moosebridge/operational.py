@@ -123,6 +123,7 @@ class AssetRequirement:
     role: AssetRole
     min_count: int = 1
     max_count: int | None = None
+    min_unit_count: int | None = None
     mission_types: tuple[str, ...] = ()
     performer_categories: tuple[str, ...] = ()
     preferred_legion_ids: tuple[str, ...] = ()
@@ -137,6 +138,8 @@ class AssetRequirement:
             raise ValueError("requirement_id must not be empty")
         if self.min_count < 0:
             raise ValueError("asset min_count must be non-negative")
+        if self.min_unit_count is not None and self.min_unit_count < 1:
+            raise ValueError("asset min_unit_count must be at least one")
         maximum = self.min_count if self.max_count is None else self.max_count
         if maximum < self.min_count:
             raise ValueError("asset max_count must be greater than or equal to min_count")
@@ -273,6 +276,13 @@ class CohortAllocation:
     cohort_id: str
     legion_id: str
     count: int
+    units_per_asset: int = 1
+
+    @property
+    def unit_count(self) -> int:
+        """Return the conservative unit capacity represented by this allocation."""
+
+        return self.count * self.units_per_asset
 
 
 @dataclass(slots=True, frozen=True)
@@ -288,6 +298,10 @@ class RequirementAssessment:
     allocations: tuple[CohortAllocation, ...]
     feasible: bool
     shortfall: int
+    required_unit_count: int | None = None
+    available_unit_count: int | None = None
+    allocated_unit_count: int | None = None
+    unit_shortfall: int = 0
 
 
 @dataclass(slots=True, frozen=True)
@@ -433,34 +447,63 @@ class OperationalPlanRegistry:
                             cohort_priority.get(cohort.object_id, len(cohort_priority)),
                             0 if cohort.legion_id in preferred else 1,
                             -max((cohort.mission_performance_for(mission) or 0 for mission in mission_types), default=0),
+                            -_cohort_units_per_asset(cohort),
                             cohort.object_id,
                         )
                     )
                     available = sum(remaining.get(cohort.object_id, 0) for cohort in candidates)
-                    needed = requirement.min_count
+                    available_units = sum(
+                        remaining.get(cohort.object_id, 0) * _cohort_units_per_asset(cohort)
+                        for cohort in candidates
+                    )
+                    available_unit_sizes = [
+                        _cohort_units_per_asset(cohort)
+                        for cohort in candidates
+                        if remaining.get(cohort.object_id, 0) > 0
+                    ]
+                    conservative_units_per_asset = min(available_unit_sizes, default=1)
+                    unit_required_groups = (
+                        math.ceil(requirement.min_unit_count / conservative_units_per_asset)
+                        if requirement.min_unit_count is not None
+                        else 0
+                    )
+                    required_groups = max(requirement.min_count, unit_required_groups)
+                    needed = required_groups
+                    allocation_slots = requirement.max_count
+                    allocated_units = 0
                     allocations: list[CohortAllocation] = []
                     for cohort in candidates:
-                        if needed <= 0:
+                        if needed <= 0 or allocation_slots <= 0:
                             break
                         capacity = remaining.get(cohort.object_id, 0)
-                        assigned = min(capacity, needed)
+                        assigned = min(capacity, needed, allocation_slots)
                         if assigned <= 0:
                             continue
-                        allocations.append(CohortAllocation(cohort.object_id, cohort.legion_id or "", assigned))
+                        units_per_asset = _cohort_units_per_asset(cohort)
+                        allocations.append(
+                            CohortAllocation(cohort.object_id, cohort.legion_id or "", assigned, units_per_asset)
+                        )
                         remaining[cohort.object_id] = capacity - assigned
                         needed -= assigned
-                    feasible = needed == 0
+                        allocation_slots -= assigned
+                        allocated_units += assigned * units_per_asset
+                    unit_shortfall = max(0, (requirement.min_unit_count or 0) - allocated_units)
+                    feasible = needed == 0 and unit_shortfall == 0
                     results.append(
                         RequirementAssessment(
                             phase_id=phase.phase_id,
                             intent_id=intent.intent_id,
                             requirement_id=requirement.requirement_id,
-                            required_count=requirement.min_count,
+                            required_count=required_groups,
                             available_count=available,
                             candidate_cohort_ids=tuple(cohort.object_id for cohort in candidates),
                             allocations=tuple(allocations),
                             feasible=feasible,
                             shortfall=needed,
+                            required_unit_count=requirement.min_unit_count,
+                            available_unit_count=available_units if requirement.min_unit_count is not None else None,
+                            allocated_unit_count=allocated_units if requirement.min_unit_count is not None else None,
+                            unit_shortfall=unit_shortfall,
                         )
                     )
                     if not feasible and (intent.required and not phase.optional):
@@ -468,7 +511,7 @@ class OperationalPlanRegistry:
                             PlanValidationIssue(
                                 "error",
                                 "asset_shortfall",
-                                f"Requires {requirement.min_count} asset group(s), shortfall {needed}",
+                                _requirement_shortfall_message(required_groups, needed, requirement, unit_shortfall),
                                 requirement.requirement_id,
                             )
                         )
@@ -477,7 +520,13 @@ class OperationalPlanRegistry:
                             PlanValidationIssue(
                                 "warning",
                                 "optional_asset_shortfall",
-                                f"Optional requirement shortfall {needed}",
+                                _requirement_shortfall_message(
+                                    required_groups,
+                                    needed,
+                                    requirement,
+                                    unit_shortfall,
+                                    optional=True,
+                                ),
                                 requirement.requirement_id,
                             )
                         )
@@ -566,3 +615,30 @@ def _cohort_matches_requirement(
     if requirement.require_payload and not any(cohort.has_payload_for(mission) is True for mission in supported):
         return False
     return True
+
+
+def _cohort_units_per_asset(cohort: Cohort) -> int:
+    """Return safe planning strength for one asset group."""
+
+    if not cohort.homogeneous or cohort.units_per_asset is None or cohort.units_per_asset < 1:
+        return 1
+    return cohort.units_per_asset
+
+
+def _requirement_shortfall_message(
+    required_groups: int,
+    group_shortfall: int,
+    requirement: AssetRequirement,
+    unit_shortfall: int,
+    *,
+    optional: bool = False,
+) -> str:
+    prefix = "Optional requirement needs" if optional else "Requires"
+    if requirement.min_unit_count is None:
+        if optional:
+            return f"{prefix} shortfall {group_shortfall} asset group(s)"
+        return f"{prefix} {required_groups} asset group(s), shortfall {group_shortfall}"
+    return (
+        f"{prefix} {required_groups} asset group(s) for {requirement.min_unit_count} unit(s), "
+        f"group shortfall {group_shortfall}, unit shortfall {unit_shortfall}"
+    )

@@ -457,6 +457,15 @@ Assets are allocated conservatively: a COHORT's stock cannot satisfy two
 requirements in the same phase, but can be reused in a later phase. The result
 is a provisional feasibility assessment, not a reservation in MOOSE.
 
+Ground assault and defense requirements distinguish minimum groups from minimum
+unit capacity. With the default requirement of at least one group and two
+combat units, two one-unit assets are requested while one homogeneous group of
+four units is sufficient. Because the coalition `COMMANDER` chooses cohorts by
+default, unconstrained plans use the smallest known group strength among all
+currently available eligible cohorts. Explicit cohort restrictions allow the
+planner to use that cohort's exact homogeneous group size. The resolved group
+count is sent to MOOSE through `AUFTRAG:SetRequiredAssets()`.
+
 ```python
 assessment = await bridge.refresh_and_validate_operational_plan(plan)
 print(format_operational_plan_assessment(plan, assessment))
@@ -1316,6 +1325,27 @@ update interval, command timeout, or movement history limits. The viewer keeps
 ```powershell
 python -m moosebridge.map_server --history-seconds 1800 --history-max-points 360
 ```
+
+The `GermanyCW` theater can use an offline OpenStreetMap baseline for water,
+major roads, railways, cities, towns, and infrastructure candidates. Import the
+bounded pilot area once, outside the running DCS mission:
+
+```powershell
+python tools/import_osm_topography.py
+```
+
+Raw Overpass tiles and the normalized cache are written below
+`tmp/topography/`. Subsequent imports reuse the raw responses unless
+`--refresh` is specified. The map server loads
+`tmp/topography/GermanyCW.geojson` by default; use `--topography <path>` for a
+different cache. The external layers are disabled initially and grouped under
+`Topography` in the viewer.
+
+Imported features retain their source, confidence, reference year, optional
+validity dates, and `dcs_verified` state. Current OpenStreetMap data is only a
+baseline for the historically oriented DCS terrain. It must not be treated as
+DCS movement truth until targeted terrain and route verification has been
+added.
 
 The header shows the shared relationship, escalation score, pending transition,
 and blue/red doctrine. The map server is the default diplomacy incident

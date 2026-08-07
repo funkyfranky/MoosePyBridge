@@ -1,0 +1,15 @@
+{
+  "theater_id": "GermanyCW",
+  "reference_year": 1999,
+  "pilot_bounds": {
+    "south": 53.0,
+    "west": 10.0,
+    "north": 55.25,
+    "east": 14.75
+  },
+  "source_policy": {
+    "physical_constraints": "DCS verification required",
+    "external_baseline": "OpenStreetMap",
+    "historical_settlement_epoch": 1990
+  }
+}

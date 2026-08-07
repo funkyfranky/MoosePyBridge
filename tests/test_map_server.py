@@ -82,6 +82,8 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "frontline_error": None,
         "recon_coverage_count": 0,
         "recon_coverage_error": None,
+        "topography_theater_id": None,
+        "topography_feature_count": 0,
         "diplomacy": None,
     }
 

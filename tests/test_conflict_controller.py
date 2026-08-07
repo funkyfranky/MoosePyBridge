@@ -116,8 +116,16 @@ def test_first_snapshot_preserves_configured_objectives_and_declares_war_after_r
         async def refresh_tactical_picture(coalition: str, intel_id: str) -> TacticalPicture:
             return TacticalPicture(coalition=coalition, intel_id=intel_id)
 
+        legion_refreshes = 0
+
+        async def refresh_legion_state() -> object:
+            nonlocal legion_refreshes
+            legion_refreshes += 1
+            return client.state
+
         client.snapshot_statics = snapshot_statics  # type: ignore[method-assign]
         client.refresh_tactical_picture = refresh_tactical_picture  # type: ignore[method-assign]
+        client.refresh_legion_state = refresh_legion_state  # type: ignore[method-assign]
         controller = RuleBasedConflictController(client)
 
         cycle = await controller.run_cycle(execute=False)
@@ -125,6 +133,7 @@ def test_first_snapshot_preserves_configured_objectives_and_declares_war_after_r
         assert client.strategic_objective(objective.objective_id) is objective
         assert client.relationship.state is RelationshipState.WAR
         assert client.relationship.incidents[-1].incident_type.value == "war_declared"
+        assert legion_refreshes == 1
         assert cycle.portfolio.selected == ()
 
     asyncio.run(scenario())

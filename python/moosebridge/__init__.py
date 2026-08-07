@@ -154,6 +154,13 @@ from .intents import (
     tactical_recommendation_from_auftrag,
 )
 from .legions import Cohort, CohortSummary, Commander, Legion
+from .topography import (
+    TheaterTopography,
+    TopographyFeature,
+    TopographyLayer,
+    feature_counts as topography_feature_counts,
+    merge_topography_features,
+)
 from .models import (
     Auftrag,
     Intel,
@@ -641,6 +648,9 @@ __all__ = [
     "TacticalIntent",
     "TacticalPicture",
     "TacticalRecommendation",
+    "TheaterTopography",
+    "TopographyFeature",
+    "TopographyLayer",
     "TaskWeaponSelection",
     "UnitAmmunition",
     "UnitCapabilities",
@@ -720,4 +730,6 @@ __all__ = [
     "select_task_weapon",
     "tactical_recommendation_from_auftrag",
     "target_type_values",
+    "topography_feature_counts",
+    "merge_topography_features",
 ]

@@ -165,6 +165,7 @@ def plan_from_snapshot(data: Mapping[str, Any]) -> OperationalPlan:
                         role=AssetRole(requirement_data.get("role") or AssetRole.COMBAT.value),
                         min_count=int(requirement_data.get("min_count") or 0),
                         max_count=_int(requirement_data.get("max_count")),
+                        min_unit_count=_int(requirement_data.get("min_unit_count")),
                         mission_types=tuple(str(item) for item in requirement_data.get("mission_types", ())),
                         performer_categories=tuple(str(item) for item in requirement_data.get("performer_categories", ())),
                         preferred_legion_ids=tuple(str(item) for item in requirement_data.get("preferred_legion_ids", ())),
@@ -379,11 +380,21 @@ def assessment_snapshot(assessment: OperationalPlanAssessment) -> dict[str, Any]
                 "available_count": item.available_count,
                 "candidate_cohort_ids": list(item.candidate_cohort_ids),
                 "allocations": [
-                    {"cohort_id": allocation.cohort_id, "legion_id": allocation.legion_id, "count": allocation.count}
+                    {
+                        "cohort_id": allocation.cohort_id,
+                        "legion_id": allocation.legion_id,
+                        "count": allocation.count,
+                        "units_per_asset": allocation.units_per_asset,
+                        "unit_count": allocation.unit_count,
+                    }
                     for allocation in item.allocations
                 ],
                 "feasible": item.feasible,
                 "shortfall": item.shortfall,
+                "required_unit_count": item.required_unit_count,
+                "available_unit_count": item.available_unit_count,
+                "allocated_unit_count": item.allocated_unit_count,
+                "unit_shortfall": item.unit_shortfall,
             }
             for item in assessment.requirements
         ],
@@ -421,6 +432,7 @@ def _phase_to_dict(phase: PlanPhase) -> dict[str, Any]:
                         "role": requirement.role.value,
                         "min_count": requirement.min_count,
                         "max_count": requirement.max_count,
+                        "min_unit_count": requirement.min_unit_count,
                         "mission_types": list(requirement.mission_types),
                         "performer_categories": list(requirement.performer_categories),
                         "preferred_legion_ids": list(requirement.preferred_legion_ids),

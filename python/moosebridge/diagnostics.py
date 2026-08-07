@@ -435,7 +435,11 @@ def format_operational_plan_assessment(
             current_phase = requirement.phase_id
             lines.append(f"  phase {current_phase}: {phase_names.get(current_phase, current_phase)}")
         allocations = ", ".join(
-            f"{item.cohort_id} x{item.count} ({item.legion_id})"
+            (
+                f"{item.cohort_id} x{item.count}/{item.unit_count}u ({item.legion_id})"
+                if requirement.required_unit_count is not None
+                else f"{item.cohort_id} x{item.count} ({item.legion_id})"
+            )
             for item in requirement.allocations
         ) or "-"
         lines.append(
@@ -444,6 +448,13 @@ def format_operational_plan_assessment(
             f"required={requirement.required_count} available={requirement.available_count} "
             f"shortfall={requirement.shortfall} allocation=[{allocations}]"
         )
+        if requirement.required_unit_count is not None:
+            lines.append(
+                f"      units required={requirement.required_unit_count} "
+                f"available={requirement.available_unit_count} "
+                f"allocated={requirement.allocated_unit_count} "
+                f"shortfall={requirement.unit_shortfall}"
+            )
         estimated_s = estimated_effect_times.get(
             (requirement.phase_id, requirement.intent_id, requirement.requirement_id)
         )

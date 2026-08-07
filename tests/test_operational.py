@@ -42,7 +42,7 @@ from moosebridge.audit import AuditStore, latest_attempt_records
 from moosebridge.control import ControlClientIdentity
 from moosebridge.protocol import BridgeCommand
 from moosebridge.operational_execution import build_plan_auftrag
-from moosebridge.operational_audit import execution_from_dict, execution_to_dict
+from moosebridge.operational_audit import execution_from_dict, execution_to_dict, plan_from_snapshot, plan_snapshot
 from moosebridge.pictures import TacticalPicture
 from moosebridge.state import MooseBridgeState
 
@@ -125,6 +125,7 @@ def _apply_force_state(
     ground_stock: int = 3,
     air_available: int | None = None,
     ground_available: int | None = None,
+    ground_units_per_asset: int | None = None,
 ) -> None:
     air_available = air_stock if air_available is None else air_available
     ground_available = ground_stock if ground_available is None else ground_available
@@ -166,6 +167,8 @@ def _apply_force_state(
                         "is_ground": True,
                         "stock_asset_count": ground_stock,
                         "available_asset_count": ground_available,
+                        "homogeneous": ground_units_per_asset is not None,
+                        "units_per_asset": ground_units_per_asset,
                         "mission_types": ["CAPTUREZONE", "AIRDEFENSE", "AMMOSUPPLY"],
                     },
                     {
@@ -266,6 +269,66 @@ def test_plan_validation_does_not_allocate_requested_or_reserved_stock() -> None
     assert assessment.requirements[0].available_count == 0
     assert assessment.requirements[0].shortfall == 1
     assert assessment.feasible is False
+
+
+def test_plan_validation_converts_homogeneous_unit_strength_to_asset_groups() -> None:
+    def assess(units_per_asset: int | None) -> tuple[OperationalPlan, Any]:
+        bridge = _bridge_with_goal()
+        _apply_force_state(
+            bridge,
+            ground_stock=3,
+            ground_available=3,
+            ground_units_per_asset=units_per_asset,
+        )
+        requirement = AssetRequirement(
+            requirement_id="REQ:Ground assault",
+            role=AssetRole.COMBAT,
+            min_count=1,
+            max_count=2,
+            min_unit_count=2,
+            mission_types=("CAPTUREZONE",),
+            performer_categories=("GROUND",),
+        )
+        intent = MissionIntent(
+            "capture-zone",
+            "Capture zone",
+            ("CAPTUREZONE",),
+            (requirement,),
+            target_object_id="OPSZONE:Town",
+        )
+        plan = bridge.add_operational_plan(
+            OperationalPlan(
+                f"PLAN:Strength {units_per_asset}",
+                "Unit-aware strength",
+                "GOAL:Capture Town",
+                "blue",
+                (PlanPhase("seize", "Seize", (intent,)),),
+            )
+        )
+        return plan, bridge.validate_operational_plan(plan)
+
+    homogeneous_plan, homogeneous = assess(4)
+    _, conservative = assess(None)
+
+    strong = homogeneous.requirements[0]
+    assert strong.required_count == 1
+    assert strong.required_unit_count == 2
+    assert strong.available_unit_count == 12
+    assert strong.allocated_unit_count == 4
+    assert strong.allocations[0].count == 1
+    assert strong.allocations[0].units_per_asset == 4
+    assert strong.allocations[0].unit_count == 4
+    assert strong.feasible is True
+
+    fallback = conservative.requirements[0]
+    assert fallback.required_count == 2
+    assert fallback.available_unit_count == 3
+    assert fallback.allocated_unit_count == 2
+    assert fallback.allocations[0].count == 2
+
+    restored = plan_from_snapshot(plan_snapshot(homogeneous_plan))
+    restored_requirement = restored.phases[0].intents[0].asset_requirements[0]
+    assert restored_requirement.min_unit_count == 2
 
 
 def test_plan_validation_reuses_assets_in_later_phases_and_can_be_approved() -> None:
@@ -427,6 +490,37 @@ def test_operational_execution_builds_recon_auftrag() -> None:
         "randomly": False,
     }
     assert command.required_assets_min == 1
+
+
+def test_operational_execution_uses_resolved_unit_aware_asset_count() -> None:
+    requirement = AssetRequirement(
+        "REQ:Ground security",
+        AssetRole.COMBAT,
+        min_count=1,
+        max_count=4,
+        min_unit_count=4,
+        mission_types=("PATROLZONE",),
+        performer_categories=("GROUND",),
+    )
+    intent = MissionIntent(
+        "secure-zone",
+        "Secure zone",
+        ("PATROLZONE",),
+        (requirement,),
+        target_object_id="OPSZONE:Town",
+    )
+    plan = OperationalPlan(
+        "PLAN:Secure",
+        "Secure",
+        "GOAL:Capture Town",
+        "blue",
+        (PlanPhase("consolidate", "Consolidate", (intent,)),),
+    )
+
+    command = build_plan_auftrag(plan, intent, requirement, required_asset_count=1)
+
+    assert command.required_assets_min == 1
+    assert command.required_assets_max == 1
 
 
 def test_operational_execution_builds_resolved_object_attack_types() -> None:
@@ -1256,6 +1350,8 @@ def _executable_capture_plan(
     approved_by: str | None = None,
     approval_reason: str | None = None,
     client_identity: ControlClientIdentity | None = None,
+    units_per_asset: int | None = None,
+    min_unit_count: int | None = None,
 ) -> tuple[MooseBridgeClient, OperationalPlan]:
     server = _ExecutionServer(success=success, final_owner=final_owner, audit_path=audit_path)
     if client_identity is not None:
@@ -1313,6 +1409,8 @@ def _executable_capture_plan(
                         "legion_id": "LEGION:Blue Brigade",
                         "is_ground": True,
                         "available_asset_count": 3,
+                        "homogeneous": units_per_asset is not None,
+                        "units_per_asset": units_per_asset,
                         "mission_types": ["CAPTUREZONE"],
                     }
                 ]
@@ -1339,8 +1437,9 @@ def _executable_capture_plan(
                                 AssetRequirement(
                                     requirement_id="REQ:Ground assault",
                                     role=AssetRole.COMBAT,
-                                    min_count=2,
-                                    max_count=3,
+                                    min_count=1 if min_unit_count is not None else 2,
+                                    max_count=2 if min_unit_count is not None else 3,
+                                    min_unit_count=min_unit_count,
                                     mission_types=("CAPTUREZONE",),
                                     performer_categories=("GROUND",),
                                 ),
@@ -1431,6 +1530,23 @@ def test_execute_capture_plan_uses_commander_events_and_confirms_goal() -> None:
         assert "approved_by=operator" in rendered
         assert "ack=ack-1" in rendered
         assert f"correlation={command.id}" in rendered
+
+    asyncio.run(scenario())
+
+
+def test_execute_capture_plan_sends_unit_aware_group_count_to_moose() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_capture_plan(units_per_asset=4, min_unit_count=2)
+        assessment = bridge.plans.assessment(plan.plan_id)
+
+        execution = await bridge.execute_plan(plan)
+
+        assert assessment is not None
+        assert assessment.requirements[0].required_count == 1
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        command = bridge.server.commands[0]  # type: ignore[attr-defined]
+        assert command.params["required_assets_min"] == 1
+        assert command.params["required_assets_max"] == 1
 
     asyncio.run(scenario())
 

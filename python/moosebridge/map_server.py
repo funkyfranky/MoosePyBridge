@@ -34,6 +34,7 @@ from .pictures import GlobalPicture
 from .operational_audit import execution_from_dict
 from .recon import ReconArea, build_recon_coverage_footprints
 from .recon import RECON_EXECUTION_AUDIT_TYPE
+from .topography import TheaterTopography, merge_topography_features
 
 LOGGER = logging.getLogger(__name__)
 DEFAULT_MAP_HOST = "127.0.0.1"
@@ -52,6 +53,7 @@ DEFAULT_TERRITORY_TRANSITION_M = 20_000.0
 DEFAULT_PRESSURE_TERRITORY_RATIO = 0.08
 DEFAULT_INCURSION_SUPPORT_RADIUS_M = 30_000.0
 DEFAULT_LODGEMENT_MIN_FORCES = 3
+DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
 
@@ -139,6 +141,7 @@ class GlobalMapRuntime:
     pressure_territory_ratio: float = DEFAULT_PRESSURE_TERRITORY_RATIO
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES
+    topography_path: Path | None = None
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
     error: str | None = None
@@ -160,6 +163,7 @@ class GlobalMapRuntime:
     _recon_error: str | None = None
     _diplomacy_event_cursor: str | None = None
     _border_violation_signature: tuple[tuple[str, str, float, bool], ...] = ()
+    _topography: TheaterTopography | None = field(init=False, default=None)
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
 
@@ -180,6 +184,22 @@ class GlobalMapRuntime:
                 incursion_lodgement_min_forces=self.lodgement_min_forces,
             )
         )
+        self.load_topography()
+
+    def load_topography(self) -> TheaterTopography | None:
+        """Load the optional static theater cache without touching DCS."""
+
+        self._topography = None
+        if self.topography_path is None or not self.topography_path.is_file():
+            return None
+        self._topography = TheaterTopography.load(self.topography_path)
+        LOGGER.info(
+            "Loaded %d %s topography features from %s",
+            len(self._topography.features),
+            self._topography.theater_id,
+            self.topography_path,
+        )
+        return self._topography
 
     def status_payload(self) -> dict[str, Any]:
         """Return the current browser-facing service status."""
@@ -205,6 +225,8 @@ class GlobalMapRuntime:
             "frontline_error": self._frontline_error,
             "recon_coverage_count": len(self._recon_features),
             "recon_coverage_error": self._recon_error,
+            "topography_theater_id": self._topography.theater_id if self._topography else None,
+            "topography_feature_count": len(self._topography.features) if self._topography else 0,
             "diplomacy": properties.get("diplomacy"),
         }
 
@@ -872,6 +894,7 @@ class GlobalMapRuntime:
                     self._recon_error = recon_error
                     geojson["properties"]["recon_coverage_count"] = 0
                     geojson["properties"]["recon_coverage_error"] = recon_error
+                merge_topography_features(geojson, self._topography)
                 self.update_picture(geojson)
                 if not self.connected:
                     LOGGER.info("Global map connected to DCS")
@@ -920,6 +943,7 @@ def create_app(
     pressure_territory_ratio: float = DEFAULT_PRESSURE_TERRITORY_RATIO,
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M,
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES,
+    topography_path: Path | None = DEFAULT_TOPOGRAPHY_PATH,
 ) -> FastAPI:
     """Create the FastAPI map application."""
 
@@ -940,6 +964,7 @@ def create_app(
         pressure_territory_ratio=pressure_territory_ratio,
         incursion_support_radius_m=incursion_support_radius_m,
         lodgement_min_forces=lodgement_min_forces,
+        topography_path=topography_path,
     )
 
     @asynccontextmanager
@@ -1004,6 +1029,7 @@ def main() -> None:
     parser.add_argument("--pressure-territory-ratio", type=float, default=DEFAULT_PRESSURE_TERRITORY_RATIO, help="Weak territory prior used by the force pressure line.")
     parser.add_argument("--incursion-support-radius", type=float, default=DEFAULT_INCURSION_SUPPORT_RADIUS_M, help="Ground-force connection radius in meters.")
     parser.add_argument("--lodgement-min-forces", type=int, default=DEFAULT_LODGEMENT_MIN_FORCES, help="Connected hostile groups required to establish a lodgement.")
+    parser.add_argument("--topography", type=Path, default=DEFAULT_TOPOGRAPHY_PATH, help="Static theater-topography GeoJSON cache.")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -1033,6 +1059,7 @@ def main() -> None:
         pressure_territory_ratio=max(0.0, args.pressure_territory_ratio),
         incursion_support_radius_m=max(1.0, args.incursion_support_radius),
         lodgement_min_forces=max(1, args.lodgement_min_forces),
+        topography_path=args.topography,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 
