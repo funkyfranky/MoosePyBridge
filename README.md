@@ -1364,6 +1364,35 @@ baseline for the historically oriented DCS terrain. It must not be treated as
 DCS movement truth until targeted terrain and route verification has been
 added.
 
+For a bounded visual comparison on the native DCS F10 map, load the current
+`MooseBridge.lua` into the mission and run:
+
+```powershell
+python examples/sdk/verify_topography_overlay.py
+```
+
+The example has no command-line parameters. Its constants select the cache,
+center airbase, radius, layers, simplification, and safety limits. Python clips
+the WGS84 features around the selected DCS object; Lua converts them through
+`coord.LLtoLO` and draws native circles and line segments with
+`trigger.action.circleToAll` and `trigger.action.lineToAll`. Press Enter after inspection to remove every mark
+belonging to the named overlay. The SDK methods are `draw_debug_overlay()` and
+`clear_debug_overlay()`; batches are limited to 200 geometry parts, 2,000
+points, and 500 native DCS markups.
+
+For a quantitative road comparison, load the current `MooseBridge.lua`, start
+the mission, and run:
+
+```powershell
+python examples/sdk/verify_road_alignment.py
+```
+
+The script samples OSM road centerlines around the configured object and asks
+DCS `land.getClosestPointOnRoads()` for the nearest native road. Green points
+are within 50 m, yellow points within 200 m, and red points have no close DCS
+road match. Yellow and red samples also draw a connector to the DCS result and
+the console reports median, 90th-percentile, and maximum displacement.
+
 The header shows the shared relationship, escalation score, pending transition,
 and blue/red doctrine. The map server is the default diplomacy incident
 coordinator while it runs: it consumes retained `combat.kill` events, evaluates

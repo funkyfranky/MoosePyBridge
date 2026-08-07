@@ -161,6 +161,8 @@ from .topography import (
     feature_counts as topography_feature_counts,
     merge_topography_features,
 )
+from .debug_overlay import DebugMarkup, DebugMarkupPoint, MarkupColor, RoadPointMatch, rgba, validate_debug_overlay
+from .topography_overlay import build_road_verification_points, build_topography_debug_overlay
 from .models import (
     Auftrag,
     Intel,
@@ -732,4 +734,12 @@ __all__ = [
     "target_type_values",
     "topography_feature_counts",
     "merge_topography_features",
+    "DebugMarkup",
+    "DebugMarkupPoint",
+    "RoadPointMatch",
+    "MarkupColor",
+    "rgba",
+    "validate_debug_overlay",
+    "build_topography_debug_overlay",
+    "build_road_verification_points",
 ]

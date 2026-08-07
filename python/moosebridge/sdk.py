@@ -12,6 +12,7 @@ from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, Weap
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .dcs_events import DestroyedObjectEvent, KillEvent
+from .debug_overlay import DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
 from .diplomacy import (
     BorderViolationTracker,
     CoalitionDoctrine,
@@ -3623,6 +3624,90 @@ class MooseBridgeClient:
             }
         )
         return require_ok(await self.server.send_command(BridgeCommand(action="zone.draw", params=params), timeout=timeout))
+
+    async def draw_debug_overlay(
+        self,
+        overlay_id: str,
+        features: Iterable[DebugMarkup],
+        *,
+        coalition: str | int = "all",
+        line_type: str | int = "solid",
+        replace: bool = True,
+        read_only: bool = True,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        """Draw a bounded diagnostic overlay with native DCS F10 markups.
+
+        WGS84 points are converted by DCS using ``coord.LLtoLO``. Lines and
+        polygon outlines are emitted as individual native line segments so
+        complex OSM geometries remain predictable.
+        """
+
+        materialized = validate_debug_overlay(overlay_id, features)
+        params = {
+            "overlay_id": overlay_id,
+            "features": [feature.to_payload() for feature in materialized],
+            "coalition": validate_draw_zone_coalition(coalition),
+            "line_type": normalize_draw_zone_line_type(line_type),
+            "replace": bool(replace),
+            "read_only": bool(read_only),
+        }
+        return require_ok(
+            await self.server.send_command(BridgeCommand(action="map.overlay.draw", params=params), timeout=timeout)
+        )
+
+    async def clear_debug_overlay(self, overlay_id: str | None = None, *, timeout: float = 10.0) -> dict[str, Any]:
+        """Remove one named diagnostic overlay, or all overlays when omitted."""
+
+        if overlay_id is not None and (not overlay_id.strip() or len(overlay_id) > 96):
+            raise ValueError("overlay_id must contain 1..96 non-whitespace characters")
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="map.overlay.clear", params=clean_params({"overlay_id": overlay_id})),
+                timeout=timeout,
+            )
+        )
+
+    async def closest_road_points(
+        self,
+        points: Iterable[DebugMarkupPoint],
+        *,
+        road_type: str = "roads",
+        timeout: float = 30.0,
+    ) -> tuple[RoadPointMatch, ...]:
+        """Return the nearest native DCS road position for WGS84 points."""
+
+        materialized = tuple(points)
+        if not materialized:
+            raise ValueError("closest-road lookup requires at least one point")
+        if len(materialized) > 500:
+            raise ValueError("closest-road lookup accepts at most 500 points")
+        if not all(isinstance(point, DebugMarkupPoint) for point in materialized):
+            raise TypeError("closest-road lookup points must be DebugMarkupPoint objects")
+        normalized_type = road_type.strip().lower()
+        if normalized_type not in {"roads", "railroads"}:
+            raise ValueError("road_type must be roads or railroads")
+        ack = require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="terrain.closest_road_points",
+                    params={
+                        "road_type": normalized_type,
+                        "points": [point.to_payload() for point in materialized],
+                    },
+                ),
+                timeout=timeout,
+            )
+        )
+        result = ack.get("result")
+        samples = result.get("samples") if isinstance(result, Mapping) else None
+        if (
+            not isinstance(samples, list)
+            or len(samples) != len(materialized)
+            or not all(isinstance(sample, dict) for sample in samples)
+        ):
+            raise ValueError("DCS returned an invalid closest-road result")
+        return tuple(RoadPointMatch.from_payload(sample) for sample in samples)
 
     async def set_territory_coalition(
         self,

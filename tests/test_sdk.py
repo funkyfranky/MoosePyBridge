@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from moosebridge.ammunition import DcsWeaponFlag
 from moosebridge.auftraege import (
     Auftrag_ARTY,
@@ -44,6 +46,7 @@ from moosebridge.auftraege import (
     ZoneSet,
 )
 from moosebridge.protocol import BridgeCommand
+from moosebridge.debug_overlay import DebugMarkup, DebugMarkupPoint
 from moosebridge.recon import ReconRequirement, ReconSpatialCoverage, ReconTrackSample
 from moosebridge.diagnostics import (
     format_cohort_assets,
@@ -119,6 +122,28 @@ class FakeSdkServer:
                             "longitude": 12 + point["x"] / 100_000,
                         }
                         for point in command.params["points"]
+                    ],
+                },
+            }
+        if command.action == "terrain.closest_road_points":
+            return {
+                "ok": True,
+                "result": {
+                    "action": command.action,
+                    "road_type": command.params["road_type"],
+                    "samples": [
+                        {
+                            "input_latitude": point["latitude"],
+                            "input_longitude": point["longitude"],
+                            "road_latitude": point["latitude"] + 0.0001,
+                            "road_longitude": point["longitude"] + 0.0001,
+                            "input_x": index * 100,
+                            "input_z": index * 200,
+                            "road_x": index * 100 + 10,
+                            "road_z": index * 200 + 20,
+                            "distance_m": 22.36,
+                        }
+                        for index, point in enumerate(command.params["points"])
                     ],
                 },
             }
@@ -505,6 +530,59 @@ def test_sdk_draw_zone_validates_and_sends_flat_params() -> None:
         command = server.commands[0][0]
         assert command.action == "zone.draw"
         assert command.params == {"object_id": "ZONE:Town Fight", "coalition": "blue", "color": "red", "line_type": 2}
+
+    asyncio.run(scenario())
+
+
+def test_sdk_draw_and_clear_debug_overlay_send_bounded_native_markup_commands() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        feature = DebugMarkup(
+            "line",
+            (DebugMarkupPoint(54.0, 12.0), DebugMarkupPoint(54.1, 12.1)),
+            color=(0.75, 0.42, 0.12, 0.95),
+        )
+
+        await client.draw_debug_overlay("roads-test", [feature], coalition="blue", line_type="dashed")
+        await client.clear_debug_overlay("roads-test")
+
+        draw, draw_timeout = server.commands[0]
+        assert draw.action == "map.overlay.draw"
+        assert draw.params["overlay_id"] == "roads-test"
+        assert draw.params["coalition"] == "blue"
+        assert draw.params["line_type"] == 2
+        assert draw.params["features"][0]["points"][0] == {
+            "latitude": 54.0,
+            "longitude": 12.0,
+            "altitude": 0.0,
+        }
+        assert draw_timeout == 30.0
+        clear, clear_timeout = server.commands[1]
+        assert clear.action == "map.overlay.clear"
+        assert clear.params == {"overlay_id": "roads-test"}
+        assert clear_timeout == 10.0
+
+    asyncio.run(scenario())
+
+
+def test_sdk_closest_road_points_returns_typed_matches() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        matches = await client.closest_road_points(
+            [DebugMarkupPoint(54.0, 12.0), DebugMarkupPoint(54.1, 12.1)],
+            timeout=12.0,
+        )
+
+        command, timeout = server.commands[0]
+        assert command.action == "terrain.closest_road_points"
+        assert command.params["road_type"] == "roads"
+        assert len(command.params["points"]) == 2
+        assert timeout == 12.0
+        assert len(matches) == 2
+        assert matches[0].distance_m == pytest.approx(22.36)
 
     asyncio.run(scenario())
 

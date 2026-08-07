@@ -983,6 +983,14 @@ def create_app(
     app = FastAPI(title="MooseBridge Global Map", lifespan=lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.state.runtime = runtime
+
+    @app.middleware("http")
+    async def revalidate_map_ui(request: Any, call_next: Any) -> Any:
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     app.mount("/assets", StaticFiles(directory=MAP_UI_DIR), name="assets")
 
     @app.get("/", include_in_schema=False)

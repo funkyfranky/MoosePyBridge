@@ -60,7 +60,7 @@ function MOOSE_BRIDGE:New(host, port)
   self.Scheduler = nil
   self.Connected = false
   self.Sequence = 0
-  self.MarkId = 10000
+  self.DebugOverlays = {}
   self.OutQueue = {}
   self.CommandHandlers = {}
   self.RegisteredZones = {}
@@ -92,6 +92,7 @@ end
 
 function MOOSE_BRIDGE:Stop()
   if self._StopDcsEventForwarding then self:_StopDcsEventForwarding() end
+  if self._ClearDebugOverlays then self:_ClearDebugOverlays() end
   if self.Scheduler then self.Scheduler:Stop(); self.Scheduler = nil end
   if self.Socket then self.Socket:close(); self.Socket = nil end
   self.Connected = false
@@ -126,8 +127,8 @@ function MOOSE_BRIDGE:_NextId(prefix)
 end
 
 function MOOSE_BRIDGE:_NextMarkId()
-  self.MarkId = self.MarkId + 1
-  return self.MarkId
+  if not UTILS or not UTILS.GetMarkID then error("MOOSE UTILS.GetMarkID is not available") end
+  return UTILS.GetMarkID()
 end
 
 function MOOSE_BRIDGE:_BaseMessage(message_type)
@@ -827,6 +828,165 @@ function MOOSE_BRIDGE:_BuildGroupSnapshotItem(group_name, group)
   local item = {object_id="GROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="GROUP",category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active),unit_count=self:_NumberOrZero(unit_count),alive_unit_count=self:_NumberOrZero(alive_unit_count)}
   if point then self:_AddPointFields(item, point) end
   return item
+end
+
+function MOOSE_BRIDGE:_DebugMarkupCoalition(value)
+  return self:_DrawZoneCoalition(value)
+end
+
+function MOOSE_BRIDGE:_DebugMarkupColor(value, default)
+  local color = value or default
+  if type(color) ~= "table" or (#color ~= 3 and #color ~= 4) then
+    error("Markup color must contain RGB or RGBA values")
+  end
+  local result = {}
+  for index = 1, 4 do
+    local component = color[index]
+    if component == nil and index == 4 then component = 1 end
+    component = tonumber(component)
+    if component == nil or component < 0 or component > 1 then
+      error("Markup color components must be in range 0..1")
+    end
+    result[index] = component
+  end
+  return result
+end
+
+function MOOSE_BRIDGE:_DebugMarkupPoint(value)
+  if type(value) ~= "table" then error("Markup point must be a table") end
+  if type(value.latitude) == "number" and type(value.longitude) == "number" then
+    if not coord or not coord.LLtoLO then error("DCS coord.LLtoLO is not available") end
+    local point = coord.LLtoLO(value.latitude, value.longitude, tonumber(value.altitude) or 0)
+    if not point then error("DCS could not convert markup latitude/longitude") end
+    return {x=point.x, y=point.y or 0, z=point.z}
+  end
+  if type(value.x) == "number" and type(value.z) == "number" then
+    return {x=value.x, y=tonumber(value.y) or 0, z=value.z}
+  end
+  error("Markup point requires latitude/longitude or x/z")
+end
+
+function MOOSE_BRIDGE:_RemoveDebugMarkIds(ids)
+  if type(ids) ~= "table" or not trigger or not trigger.action or not trigger.action.removeMark then return 0 end
+  local removed = 0
+  for _, mark_id in ipairs(ids) do
+    local ok = pcall(function() trigger.action.removeMark(mark_id) end)
+    if ok then removed = removed + 1 end
+  end
+  return removed
+end
+
+function MOOSE_BRIDGE:_ClearDebugOverlay(overlay_id)
+  local key = tostring(overlay_id or "")
+  local ids = self.DebugOverlays and self.DebugOverlays[key]
+  local removed = self:_RemoveDebugMarkIds(ids)
+  if self.DebugOverlays then self.DebugOverlays[key] = nil end
+  return removed
+end
+
+function MOOSE_BRIDGE:_ClearDebugOverlays()
+  local removed = 0
+  for overlay_id, _ in pairs(self.DebugOverlays or {}) do
+    removed = removed + self:_ClearDebugOverlay(overlay_id)
+  end
+  return removed
+end
+
+function MOOSE_BRIDGE:_DrawDebugOverlay(params)
+  if not trigger or not trigger.action or not trigger.action.lineToAll or not trigger.action.circleToAll then
+    error("DCS trigger.action.lineToAll/circleToAll is not available")
+  end
+  local overlay_id = self:_OptionalString(params.overlay_id)
+  if not overlay_id or overlay_id == "" then error("map.overlay.draw requires overlay_id") end
+  if #overlay_id > 96 then error("overlay_id accepts at most 96 characters") end
+  local features = params.features
+  if type(features) ~= "table" or #features == 0 then error("map.overlay.draw requires features") end
+  if #features > 200 then error("map.overlay.draw accepts at most 200 features") end
+
+  local coalition_id = self:_DebugMarkupCoalition(params.coalition or "all")
+  local line_type = self:_DrawZoneLineType(params.line_type) or 1
+  local read_only = params.read_only ~= false
+  local normalized = {}
+  local point_count = 0
+  local mark_count = 0
+  local bounds = nil
+  for index, feature in ipairs(features) do
+    if type(feature) ~= "table" then error("Invalid markup feature at index " .. safe_tostring(index)) end
+    local kind = string.lower(tostring(feature.kind or ""))
+    if kind ~= "point" and kind ~= "line" and kind ~= "polygon" then
+      error("Unsupported markup kind at index " .. safe_tostring(index) .. ": " .. safe_tostring(kind))
+    end
+    local points = feature.points
+    if type(points) ~= "table" then error("Markup feature points must be a table at index " .. safe_tostring(index)) end
+    local minimum = kind == "point" and 1 or kind == "line" and 2 or 3
+    if #points < minimum then error("Markup feature has too few points at index " .. safe_tostring(index)) end
+    local converted = {}
+    for _, point in ipairs(points) do
+      local converted_point = self:_DebugMarkupPoint(point)
+      converted[#converted + 1] = converted_point
+      if not bounds then
+        bounds = {min_x=converted_point.x, max_x=converted_point.x, min_z=converted_point.z, max_z=converted_point.z}
+      else
+        bounds.min_x = math.min(bounds.min_x, converted_point.x)
+        bounds.max_x = math.max(bounds.max_x, converted_point.x)
+        bounds.min_z = math.min(bounds.min_z, converted_point.z)
+        bounds.max_z = math.max(bounds.max_z, converted_point.z)
+      end
+    end
+    point_count = point_count + #converted
+    local feature_marks = kind == "point" and 1 or (#converted - 1)
+    if kind == "polygon" then
+      local first, last = converted[1], converted[#converted]
+      if first.x ~= last.x or first.z ~= last.z then feature_marks = feature_marks + 1 end
+    end
+    mark_count = mark_count + feature_marks
+    normalized[#normalized + 1] = {
+      kind=kind,
+      points=converted,
+      radius=tonumber(feature.radius_m) or 100,
+      color=self:_DebugMarkupColor(feature.color, {0,1,0,1}),
+      fill_color=self:_DebugMarkupColor(feature.fill_color, {0,1,0,0.12}),
+      line_type=self:_DrawZoneLineType(feature.line_type) or line_type,
+    }
+  end
+  if point_count > 2000 then error("map.overlay.draw accepts at most 2000 points") end
+  if mark_count > 500 then error("map.overlay.draw would create more than 500 DCS markups") end
+
+  if params.replace ~= false then self:_ClearDebugOverlay(overlay_id) end
+  if self.DebugOverlays[overlay_id] then error("Debug overlay already exists: " .. overlay_id) end
+  local ids = {}
+  local function draw(method, ...)
+    local mark_id = self:_NextMarkId()
+    local arguments = {coalition_id, mark_id}
+    local values = {...}
+    for _, value in ipairs(values) do arguments[#arguments + 1] = value end
+    local ok, err = pcall(function() method(unpack(arguments)) end)
+    if not ok then error(err) end
+    ids[#ids + 1] = mark_id
+  end
+  local ok, draw_error = pcall(function()
+    for _, feature in ipairs(normalized) do
+      if feature.kind == "point" then
+        draw(trigger.action.circleToAll, feature.points[1], feature.radius, feature.color, feature.fill_color, feature.line_type, read_only, "")
+      else
+        for point_index = 1, #feature.points - 1 do
+          draw(trigger.action.lineToAll, feature.points[point_index], feature.points[point_index + 1], feature.color, feature.line_type, read_only, "")
+        end
+        if feature.kind == "polygon" then
+          local first, last = feature.points[1], feature.points[#feature.points]
+          if first.x ~= last.x or first.z ~= last.z then
+            draw(trigger.action.lineToAll, last, first, feature.color, feature.line_type, read_only, "")
+          end
+        end
+      end
+    end
+  end)
+  if not ok then
+    self:_RemoveDebugMarkIds(ids)
+    error(draw_error)
+  end
+  self.DebugOverlays[overlay_id] = ids
+  return {action="map.overlay.draw", overlay_id=overlay_id, feature_count=#normalized, point_count=point_count, mark_count=#ids, coalition=coalition_id, dcs_bounds=bounds}
 end
 
 function MOOSE_BRIDGE:BuildGroupSnapshot()
@@ -1808,6 +1968,17 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     return self:_MarkPoint(point, p.text or "MOOSE Bridge mark")
   end)
 
+  self:RegisterCommand("map.overlay.draw", function(cmd)
+    return self:_DrawDebugOverlay(cmd.params or {})
+  end)
+
+  self:RegisterCommand("map.overlay.clear", function(cmd)
+    local p = cmd.params or {}
+    local overlay_id = self:_OptionalString(p.overlay_id)
+    local removed = overlay_id and self:_ClearDebugOverlay(overlay_id) or self:_ClearDebugOverlays()
+    return {action="map.overlay.clear", overlay_id=overlay_id, removed=removed}
+  end)
+
   self:RegisterCommand("object.coords", function(cmd)
     local p = cmd.params or {}
     local object_id = self:_OptionalString(p.object_id)
@@ -1837,6 +2008,41 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
       }
     end
     return {action="coordinates.convert_points", count=#points, points=points}
+  end)
+
+  self:RegisterCommand("terrain.closest_road_points", function(cmd)
+    local p = cmd.params or {}
+    if not land or not land.getClosestPointOnRoads then error("DCS land.getClosestPointOnRoads is not available") end
+    if type(p.points) ~= "table" or #p.points == 0 then error("terrain.closest_road_points requires points") end
+    if #p.points > 500 then error("terrain.closest_road_points accepts at most 500 points") end
+    local road_type = string.lower(tostring(p.road_type or "roads"))
+    if road_type ~= "roads" and road_type ~= "railroads" then error("road_type must be roads or railroads") end
+    local samples = {}
+    for index, value in ipairs(p.points) do
+      local point = self:_DebugMarkupPoint(value)
+      local road_x, road_z = land.getClosestPointOnRoads(road_type, point.x, point.z)
+      if type(road_x) ~= "number" or type(road_z) ~= "number" then
+        error("DCS returned no closest road point at index " .. safe_tostring(index))
+      end
+      local road_y = land.getHeight and land.getHeight({x=road_x, y=road_z}) or 0
+      local nearest = {x=road_x, y=road_y or 0, z=road_z}
+      local input_coordinates = self:_CoordinatesForPoint(point, "ll")
+      local nearest_coordinates = self:_CoordinatesForPoint(nearest, "ll")
+      samples[#samples + 1] = {
+        input_x=point.x,
+        input_y=point.y or 0,
+        input_z=point.z,
+        input_latitude=input_coordinates.latitude,
+        input_longitude=input_coordinates.longitude,
+        road_x=nearest.x,
+        road_y=nearest.y,
+        road_z=nearest.z,
+        road_latitude=nearest_coordinates.latitude,
+        road_longitude=nearest_coordinates.longitude,
+        distance_m=math.sqrt((road_x - point.x) ^ 2 + (road_z - point.z) ^ 2),
+      }
+    end
+    return {action="terrain.closest_road_points", road_type=road_type, count=#samples, samples=samples}
   end)
 
   self:RegisterCommand("object.distance", function(cmd)
