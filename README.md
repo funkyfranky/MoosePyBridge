@@ -1338,6 +1338,12 @@ airbases, operations, events, movement history, and RECON coverage. Its
 `/qa/mobile` page embeds the same viewer in a real 390-pixel viewport for
 responsive layout checks.
 
+`Layers > Map appearance` selects OpenStreetMap, CARTO Light, or CARTO Dark and
+controls basemap, territory, and topography opacity independently. These
+display-only preferences are stored locally by the browser and survive page
+reloads; they do not change layer visibility, filters, or situation-picture
+data.
+
 The `GermanyCW` theater can use an offline OpenStreetMap baseline for water,
 major roads, railways, cities, towns, land use, and infrastructure candidates.
 The primary import downloads regional Geofabrik PBF extracts and filters them
@@ -1561,12 +1567,14 @@ the strategic graph confirms connectivity, the SDK requests one bounded native
 `land.findPathOnRoads` route from DCS. The console reports both results and the
 refined DCS road route is drawn in magenta on the F10 map. Native road routing
 can now be compared with an additional compact Python/OSM graph. Build the
-regional Mecklenburg-Vorpommern prototype once and run the comparison or
-latency benchmark:
+full GermanyCW graph once. The resumable builder clips and caches each configured
+Geofabrik region in an isolated worker process before merging global OSM IDs:
 
 ```powershell
 python -m pip install -e ".[routing]"
 python tools/build_road_routing.py
+python tools/validate_road_routing.py
+python tools/validate_hierarchical_road_routing.py
 python examples/sdk/inspect_ground_route.py
 python examples/sdk/benchmark_road_routing.py
 ```
@@ -1577,6 +1585,17 @@ Road class affects estimated speed; bridges are retained as metadata without
 weight or access restrictions. The F10 comparison draws native DCS in magenta
 and Python/OSM in cyan. DCS returns both `findPathOnRoads` CPU time and total Lua
 command CPU time when the current bridge version is loaded.
+
+The complete graph is a 1.48-GiB reference artifact with about 32.0 million
+nodes and 34.2 million edges. Cross-region validation connects Hamburg, Berlin,
+Frankfurt, and Amsterdam. The SDK's `HierarchicalRoadRouter` first computes a
+coarse strategic route, selects occupied 25-km cells in a configurable corridor,
+and then assembles and caches only the required detailed OSM graph. The default
+50-km corridor reproduces the full-graph validation distances. Laage to Gross
+Mohrdorf uses about 348,000 nodes and takes roughly 2.7 seconds cold or 0.4
+seconds warm on the development system. Continental warm routes currently take
+about 2-27 seconds; prebuilt spatial graph tiles remain the next performance
+step for interactive theater-wide routing.
 
 Native road routing is intentionally used only for selected corridors because DCS calculates it
 synchronously and can return many points.

@@ -204,6 +204,15 @@ from .road_routing import (
     RoadVehicleProfile,
     build_road_routing_network,
     format_python_road_route,
+    merge_road_routing_artifacts,
+)
+from .hierarchical_routing import (
+    HierarchicalRoadRoute,
+    HierarchicalRoadRouter,
+    RoadRoutingShard,
+    RoadRoutingShardIndex,
+    build_road_routing_shard_index,
+    format_hierarchical_road_route,
 )
 from .models import (
     Auftrag,
@@ -817,4 +826,11 @@ __all__ = [
     "LOGISTICS_ROAD_PROFILE",
     "build_road_routing_network",
     "format_python_road_route",
+    "merge_road_routing_artifacts",
+    "RoadRoutingShard",
+    "RoadRoutingShardIndex",
+    "HierarchicalRoadRoute",
+    "HierarchicalRoadRouter",
+    "build_road_routing_shard_index",
+    "format_hierarchical_road_route",
 ]

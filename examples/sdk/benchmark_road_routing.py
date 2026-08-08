@@ -14,14 +14,21 @@ LOCAL_PYTHON_DIR = REPO_ROOT / "python"
 if LOCAL_PYTHON_DIR.exists():
     sys.path.insert(0, str(LOCAL_PYTHON_DIR))
 
-from moosebridge import RoadRoutingNetwork, TRACKED_ROAD_PROFILE
+from moosebridge import (
+    GroundMobilityNetwork,
+    HierarchicalRoadRouter,
+    RoadRoutingShardIndex,
+    TRACKED_ROAD_PROFILE,
+)
 from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
-NETWORK_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-road-routing-mv.npz"
+STRATEGIC_NETWORK_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
+ROAD_SHARD_INDEX_PATH = REPO_ROOT / "tmp" / "topography" / "road_routing_cache" / "manifest.json"
+ROAD_CORRIDOR_BUFFER_M = 50_000.0
 START_OBJECT_ID = "AIRBASE:Laage"
 END_OBJECT_ID = "AIRBASE:Gross Mohrdorf"
 RUNS = 5
@@ -34,8 +41,9 @@ def _metrics(values: list[float]) -> str:
 
 
 async def run() -> int:
-    if not NETWORK_PATH.is_file():
-        print(f"Python road graph not found: {NETWORK_PATH}")
+    missing = tuple(path for path in (STRATEGIC_NETWORK_PATH, ROAD_SHARD_INDEX_PATH) if not path.is_file())
+    if missing:
+        print(f"Python routing artifact not found: {missing[0]}")
         print("Run: python tools/build_road_routing.py")
         return 4
     control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
@@ -52,19 +60,27 @@ async def run() -> int:
         return 5
 
     load_started = perf_counter()
-    network = RoadRoutingNetwork.load(NETWORK_PATH)
+    strategic_network = GroundMobilityNetwork.load(STRATEGIC_NETWORK_PATH)
+    router = HierarchicalRoadRouter(
+        strategic_network,
+        RoadRoutingShardIndex.load(ROAD_SHARD_INDEX_PATH),
+        corridor_buffer_m=ROAD_CORRIDOR_BUFFER_M,
+    )
     load_ms = (perf_counter() - load_started) * 1_000
     cold_started = perf_counter()
-    python_route = network.route(*coordinates, profile=TRACKED_ROAD_PROFILE)  # type: ignore[arg-type]
+    hierarchical_route = router.route(*coordinates, road_profile=TRACKED_ROAD_PROFILE)  # type: ignore[arg-type]
     cold_ms = (perf_counter() - cold_started) * 1_000
-    if python_route is None:
+    if hierarchical_route is None:
         print("Python found no connected road route.")
         return 6
+    python_route = hierarchical_route.detailed_route
     python_ms: list[float] = []
     for _ in range(RUNS):
         started = perf_counter()
-        python_route = network.route(*coordinates, profile=TRACKED_ROAD_PROFILE)  # type: ignore[arg-type]
+        hierarchical_route = router.route(*coordinates, road_profile=TRACKED_ROAD_PROFILE)  # type: ignore[arg-type]
         python_ms.append((perf_counter() - started) * 1_000)
+    assert hierarchical_route is not None
+    python_route = hierarchical_route.detailed_route
 
     roundtrip_ms: list[float] = []
     dcs_path_ms: list[float] = []
@@ -85,8 +101,12 @@ async def run() -> int:
     print("=" * 88)
     print(f"Route        : {START_OBJECT_ID} -> {END_OBJECT_ID}")
     print(f"Runs         : {RUNS}")
-    print(f"Graph load   : {load_ms:.2f}ms ({network.node_count} nodes, {network.edge_count} edges)")
-    print(f"Python cold  : {cold_ms:.2f}ms (includes spatial-index construction)")
+    print(f"Index load   : {load_ms:.2f}ms")
+    print(
+        f"Corridor graph: {hierarchical_route.detailed_node_count} nodes, "
+        f"{hierarchical_route.detailed_edge_count} edges, buffer={ROAD_CORRIDOR_BUFFER_M / 1000:.0f}km"
+    )
+    print(f"Python cold  : {cold_ms:.2f}ms (includes corridor graph assembly)")
     print(f"Python warm  : {_metrics(python_ms)}")
     print(f"Python route : {python_route.distance_m / 1000:.1f}km, {python_route.edge_count} edges")
     print(f"DCS roundtrip: {_metrics(roundtrip_ms)}")

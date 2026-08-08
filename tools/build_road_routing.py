@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 from pathlib import Path
+import subprocess
 import sys
 from time import perf_counter
 
@@ -13,50 +16,90 @@ PYTHON_ROOT = REPO_ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from moosebridge import build_road_routing_network
+from moosebridge import build_road_routing_network, build_road_routing_shard_index, merge_road_routing_artifacts
 
 
-DEFAULT_PBF = REPO_ROOT / "tmp" / "topography" / "pbf" / "mecklenburg-vorpommern-latest.osm.pbf"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-road-routing-mv.npz"
+DEFAULT_CONFIG = PYTHON_ROOT / "moosebridge" / "data" / "GermanyCW_topography.json"
+DEFAULT_COVERAGE = REPO_ROOT / "tmp" / "topography" / "GermanyCW-coverage.geojson"
+DEFAULT_PBF_DIR = REPO_ROOT / "tmp" / "topography" / "pbf"
+DEFAULT_CACHE_DIR = REPO_ROOT / "tmp" / "topography" / "road_routing_cache"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-road-routing.npz"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build a compact unrestricted military road graph")
     parser.add_argument("--pbf", type=Path, action="append")
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE)
+    parser.add_argument("--pbf-dir", type=Path, default=DEFAULT_PBF_DIR)
+    parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE_DIR)
+    parser.add_argument("--refresh-cache", action="store_true")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--theater", default="GermanyCW")
+    parser.add_argument("--worker-pbf", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--worker-output", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--worker-empty", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
-    paths = tuple(args.pbf or (DEFAULT_PBF,))
+    if args.worker_pbf is not None:
+        if args.worker_output is None or args.worker_empty is None:
+            raise ValueError("worker mode requires output and empty marker paths")
+        return _build_partial(
+            args.worker_pbf,
+            args.worker_output,
+            args.worker_empty,
+            coverage_path=args.coverage,
+            theater_id=args.theater,
+        )
+    paths = tuple(args.pbf or _configured_pbf_paths(args.config, args.pbf_dir))
     missing = [path for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError(", ".join(str(path) for path in missing))
     try:
-        import pandas as pd
-        from pyrosm import OSM
+        from shapely.geometry import shape
     except ImportError as exc:
         raise RuntimeError('road routing requires: python -m pip install -e ".[routing]"') from exc
 
-    frames = []
-    node_frames = []
-    started = perf_counter()
-    for path in paths:
-        print(f"Reading driving network: {path}", flush=True)
-        nodes, edges = OSM(str(path)).get_network(
-            network_type="driving",
-            nodes=True,
-            extra_attributes=["bridge"],
-        )
-        node_frames.append(nodes)
-        frames.append(edges)
-    nodes = pd.concat(node_frames, ignore_index=True).drop_duplicates(subset="id")
-    edges = pd.concat(frames, ignore_index=True)
-    imported = perf_counter()
-    network = build_road_routing_network(
-        theater_id=args.theater,
-        nodes=nodes,
-        edges=edges,
-        source_names=(path.name for path in paths),
+    coverage_payload = json.loads(args.coverage.read_text(encoding="utf-8"))
+    all_feature = next(
+        feature for feature in coverage_payload.get("features") or ()
+        if (feature.get("properties") or {}).get("detail_level") == "all"
     )
+    coverage_geometry = shape(all_feature["geometry"])
+    coverage_hash = hashlib.sha256(coverage_geometry.wkb).hexdigest()[:12]
+    args.cache_dir.mkdir(parents=True, exist_ok=True)
+    started = perf_counter()
+    partials: list[Path] = []
+    for index, path in enumerate(paths, start=1):
+        cache_path = args.cache_dir / f"{path.stem}-{coverage_hash}.npz"
+        empty_path = args.cache_dir / f"{path.stem}-{coverage_hash}.empty"
+        if cache_path.is_file() and not args.refresh_cache:
+            print(f"Cache {index}/{len(paths)}: {cache_path.name}", flush=True)
+            partials.append(cache_path)
+            continue
+        if empty_path.is_file() and not args.refresh_cache:
+            print(f"Cache {index}/{len(paths)}: {empty_path.name} (no roads in coverage)", flush=True)
+            continue
+        print(f"Import {index}/{len(paths)}: {path.name}", flush=True)
+        completed = subprocess.run(
+            (
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--worker-pbf", str(path),
+                "--worker-output", str(cache_path),
+                "--worker-empty", str(empty_path),
+                "--coverage", str(args.coverage),
+                "--theater", args.theater,
+            ),
+            check=False,
+        )
+        if completed.returncode:
+            return completed.returncode
+        if cache_path.is_file():
+            partials.append(cache_path)
+    imported = perf_counter()
+    index_path = args.cache_dir / "manifest.json"
+    build_road_routing_shard_index(partials, index_path, theater_id=args.theater)
+    network = merge_road_routing_artifacts(partials, theater_id=args.theater)
     compiled = perf_counter()
     output = network.save(args.output)
     saved = perf_counter()
@@ -65,7 +108,66 @@ def main() -> int:
     print(f"  edges: {network.edge_count} (undirected; oneway/access ignored)")
     print(f"  bridges: {int(network.edge_bridge.sum())} (metadata only)")
     print(f"  artifact: {output.stat().st_size / 1024 / 1024:.1f} MiB")
+    print(f"  shard index: {index_path}")
     print(f"  import/compile/save: {imported-started:.1f}s / {compiled-imported:.1f}s / {saved-compiled:.1f}s")
+    return 0
+
+
+def _configured_pbf_paths(config_path: Path, pbf_dir: Path) -> tuple[Path, ...]:
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    return tuple(
+        pbf_dir / str(source["url"]).rsplit("/", 1)[-1]
+        for source in config.get("geofabrik_sources") or ()
+    )
+
+
+def _build_partial(
+    path: Path,
+    output: Path,
+    empty_marker: Path,
+    *,
+    coverage_path: Path,
+    theater_id: str,
+) -> int:
+    try:
+        import numpy as np
+        from pyrosm import OSM
+        from shapely.geometry import shape
+    except ImportError as exc:
+        raise RuntimeError('road routing requires: python -m pip install -e ".[routing]"') from exc
+    coverage_payload = json.loads(coverage_path.read_text(encoding="utf-8"))
+    all_feature = next(
+        feature for feature in coverage_payload.get("features") or ()
+        if (feature.get("properties") or {}).get("detail_level") == "all"
+    )
+    coverage_geometry = shape(all_feature["geometry"])
+    nodes, edges = OSM(str(path)).get_network(
+        network_type="driving",
+        nodes=True,
+        extra_attributes=["bridge"],
+    )
+    if nodes is None or edges is None or nodes.empty or edges.empty:
+        print("  no road features inside theater coverage", flush=True)
+        empty_marker.touch()
+        return 0
+    edges = edges[edges.geometry.intersects(coverage_geometry)].copy()
+    if edges.empty:
+        print("  no road features inside theater coverage", flush=True)
+        empty_marker.touch()
+        return 0
+    used_node_ids = np.unique(np.concatenate((
+        edges["u"].astype("int64").to_numpy(),
+        edges["v"].astype("int64").to_numpy(),
+    )))
+    nodes = nodes[nodes["id"].astype("int64").isin(used_node_ids)].copy()
+    partial = build_road_routing_network(
+        theater_id=theater_id,
+        nodes=nodes,
+        edges=edges,
+        source_names=(path.name,),
+    )
+    partial.save(output)
+    print(f"  cached {partial.node_count} nodes, {partial.edge_count} edges: {output.name}", flush=True)
     return 0
 
 

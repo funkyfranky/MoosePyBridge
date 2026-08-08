@@ -175,9 +175,15 @@ Priorities:
   bridges, and constrain naval regions by vessel class, water width, depth
   evidence, and bridge clearance where such evidence exists. MOOSE/DCS remains
   responsible for the final tactical route.
-- [ ] **Extend the compact Python road graph across the complete GermanyCW
-  theater.** Merge the already downloaded regional Geofabrik PBF extracts,
-  deduplicate overlap nodes and ways, and verify cross-border connectivity.
+- [ ] **Prebuild detailed road-graph tiles for interactive continental
+  routing.** The hierarchical router already filters regional shards to occupied
+  corridor cells, but cold queries must still decompress their source shards.
+  Persisting independently loadable 25-km graph tiles should reduce both cold
+  assembly and warm A* time for long routes.
+- [ ] **Pre-clip large PBF sources before Pyrosm network extraction.** Worker
+  isolation prevents cumulative memory growth, but Pyrosm still decodes each
+  complete source; an osmium/GDAL clipping stage should reduce the high peak
+  memory of sources such as Czechia without changing the resulting graph.
 - [ ] **Calibrate Python road speeds and connector handling against DCS.** Use
   representative wheeled, tracked, and logistics movements; keep all roads
   bidirectional and unrestricted, with bridges retained as metadata only.
@@ -190,6 +196,17 @@ Priorities:
   ground or naval connection.
 ## Recently completed
 
+- [x] Hierarchical road routing now combines the coarse ground-mobility graph,
+  a 25-km occupied-cell shard index, configurable corridor filtering, and an
+  in-memory detailed-graph cache. A 50-km corridor reproduced all four
+  full-graph validation distances while reducing Laage-Gross Mohrdorf to about
+  348,000 detailed nodes (2.7 seconds cold, 0.4 seconds warm).
+- [x] The complete GermanyCW road graph now merges 29 non-empty Geofabrik
+  regions through global OSM node IDs. Per-PBF worker isolation bounds retained
+  memory, resumable caches record both populated and empty sources, and the
+  resulting 1.48-GiB artifact contains 32,019,466 nodes and 34,235,737 edges.
+  Validation found connected routes within MV and across Hamburg-Berlin,
+  Frankfurt-Berlin, and Amsterdam-Berlin.
 - [x] A compact Pyrosm-derived Python road router now complements native DCS
   routing. Its NumPy/CSR graph uses unrestricted bidirectional military access,
   A* travel-time routing, typed vehicle profiles, persistent NPZ artifacts, and

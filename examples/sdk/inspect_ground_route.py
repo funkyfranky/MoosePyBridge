@@ -20,12 +20,13 @@ from moosebridge import (
     DebugMarkup,
     DebugMarkupPoint,
     GroundMobilityNetwork,
+    HierarchicalRoadRouter,
     MooseBridgeClient,
-    RoadRoutingNetwork,
+    RoadRoutingShardIndex,
     TRACKED_ROAD_PROFILE,
     TRACKED_GROUND_PROFILE,
     format_ground_route,
-    format_python_road_route,
+    format_hierarchical_road_route,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
@@ -36,7 +37,8 @@ CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 
 NETWORK_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
-ROAD_NETWORK_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-road-routing-mv.npz"
+ROAD_SHARD_INDEX_PATH = REPO_ROOT / "tmp" / "topography" / "road_routing_cache" / "manifest.json"
+ROAD_CORRIDOR_BUFFER_M = 50_000.0
 START_OBJECT_ID = "AIRBASE:Laage"
 END_OBJECT_ID = "AIRBASE:Gross Mohrdorf"
 PROFILE = TRACKED_GROUND_PROFILE
@@ -93,18 +95,24 @@ async def run() -> int:
         return 6
 
     python_route = None
-    if ROAD_NETWORK_PATH.is_file():
-        road_network = RoadRoutingNetwork.load(ROAD_NETWORK_PATH)
-        python_route = road_network.route(
+    if ROAD_SHARD_INDEX_PATH.is_file():
+        road_router = HierarchicalRoadRouter(
+            network,
+            RoadRoutingShardIndex.load(ROAD_SHARD_INDEX_PATH),
+            corridor_buffer_m=ROAD_CORRIDOR_BUFFER_M,
+        )
+        hierarchical_route = road_router.route(
             start.latitude,
             start.longitude,
             end.latitude,
             end.longitude,
-            profile=TRACKED_ROAD_PROFILE,
+            road_profile=TRACKED_ROAD_PROFILE,
         )
-        print(format_python_road_route(python_route))
+        print(format_hierarchical_road_route(hierarchical_route))
+        if hierarchical_route is not None:
+            python_route = hierarchical_route.detailed_route
     else:
-        print(f"Python road graph not found: {ROAD_NETWORK_PATH}")
+        print(f"Python road shard index not found: {ROAD_SHARD_INDEX_PATH}")
 
     dcs_route = await bridge.road_route(
         START_OBJECT_ID,

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MooseBridge Global Picture</title>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/assets/map.css?v=3">
+  <link rel="stylesheet" href="/assets/map.css?v=4">
 </head>
 <body>
   <main class="app-shell">
@@ -42,7 +42,40 @@
         <button id="layers-tab" class="panel-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="layer-controls">Layers</button>
         <button id="filters-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="filter-controls">Filters</button>
       </div>
-      <div id="layer-controls" class="layer-controls" role="tabpanel" aria-labelledby="layers-tab"></div>
+      <div id="layer-controls" class="layer-controls" role="tabpanel" aria-labelledby="layers-tab">
+        <section class="map-appearance" aria-labelledby="map-appearance-heading">
+          <div id="map-appearance-heading" class="map-appearance-heading"><i data-lucide="palette"></i>Map appearance</div>
+          <label class="map-appearance-select">
+            <span>Basemap</span>
+            <select id="basemap-style">
+              <option value="osm">OpenStreetMap</option>
+              <option value="carto-light">CARTO Light</option>
+              <option value="carto-dark">CARTO Dark</option>
+            </select>
+          </label>
+          <div class="map-opacity-control">
+            <div class="map-opacity-heading">
+              <label for="basemap-opacity">Basemap opacity</label>
+              <output id="basemap-opacity-value" for="basemap-opacity">100%</output>
+            </div>
+            <input id="basemap-opacity" type="range" min="0" max="100" step="5" value="100">
+          </div>
+          <div class="map-opacity-control">
+            <div class="map-opacity-heading">
+              <label for="territory-opacity">Territories</label>
+              <output id="territory-opacity-value" for="territory-opacity">100%</output>
+            </div>
+            <input id="territory-opacity" type="range" min="0" max="100" step="5" value="100">
+          </div>
+          <div class="map-opacity-control">
+            <div class="map-opacity-heading">
+              <label for="topography-opacity">Topography</label>
+              <output id="topography-opacity-value" for="topography-opacity">100%</output>
+            </div>
+            <input id="topography-opacity" type="range" min="0" max="100" step="5" value="100">
+          </div>
+        </section>
+      </div>
       <div id="filter-controls" class="filter-controls" role="tabpanel" aria-labelledby="filters-tab" hidden></div>
     </aside>
 
@@ -71,6 +104,6 @@
 
   <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script src="/assets/map.js?v=19"></script>
+  <script src="/assets/map.js?v=21"></script>
 </body>
 </html>

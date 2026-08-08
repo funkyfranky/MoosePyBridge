@@ -128,6 +128,7 @@
   };
   const mapLayerIds = new Map();
   const mapLayerBaseFilters = new Map();
+  const mapLayerBaseOpacities = new Map();
   let latestPicture = EMPTY;
   let latestTopography = EMPTY;
   let latestSurfaceRegions = EMPTY;
@@ -139,6 +140,30 @@
   let selectionCandidates = [];
   let selectionIndex = 0;
   let countUpdateTimer = null;
+  const mapAppearanceStorageKeys = {
+    basemap: "moosebridge.basemap",
+    basemapOpacity: "moosebridge.basemapOpacity",
+    territoryOpacity: "moosebridge.territoryOpacity",
+    topographyOpacity: "moosebridge.topographyOpacity",
+  };
+  const basemaps = {
+    osm: "basemap-osm",
+    "carto-light": "basemap-carto-light",
+    "carto-dark": "basemap-carto-dark",
+  };
+
+  function storedOpacity(key) {
+    const stored = window.localStorage.getItem(key);
+    if (stored === null) return 1;
+    const value = Number(stored);
+    return Number.isFinite(value) && value >= 0 && value <= 1 ? value : 1;
+  }
+
+  const storedBasemap = window.localStorage.getItem(mapAppearanceStorageKeys.basemap);
+  let selectedBasemap = Object.hasOwn(basemaps, storedBasemap) ? storedBasemap : "osm";
+  let basemapOpacity = storedOpacity(mapAppearanceStorageKeys.basemapOpacity);
+  let territoryOpacity = storedOpacity(mapAppearanceStorageKeys.territoryOpacity);
+  let topographyOpacity = storedOpacity(mapAppearanceStorageKeys.topographyOpacity);
 
   const map = new maplibregl.Map({
     container: "map",
@@ -149,15 +174,45 @@
       version: 8,
       glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
       sources: {
-        osm: {
+        "basemap-osm": {
           type: "raster",
           tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
           tileSize: 256,
           maxzoom: 19,
           attribution: "© OpenStreetMap contributors",
         },
+        "basemap-carto-light": {
+          type: "raster",
+          tiles: [
+            "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+            "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+            "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+            "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
+          ],
+          tileSize: 256,
+          maxzoom: 20,
+          attribution: "© OpenStreetMap contributors © CARTO",
+        },
+        "basemap-carto-dark": {
+          type: "raster",
+          tiles: [
+            "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+            "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+            "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+            "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
+          ],
+          tileSize: 256,
+          maxzoom: 20,
+          attribution: "© OpenStreetMap contributors © CARTO",
+        },
       },
-      layers: [{ id: "osm", type: "raster", source: "osm" }],
+      layers: Object.entries(basemaps).map(([key, id]) => ({
+        id,
+        type: "raster",
+        source: id,
+        layout: { visibility: key === selectedBasemap ? "visible" : "none" },
+        paint: { "raster-opacity": basemapOpacity },
+      })),
     },
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
@@ -176,6 +231,13 @@
     blueDoctrine: document.getElementById("blue-doctrine"),
     redDoctrine: document.getElementById("red-doctrine"),
     featureCount: document.getElementById("feature-count"),
+    basemapStyle: document.getElementById("basemap-style"),
+    basemapOpacity: document.getElementById("basemap-opacity"),
+    basemapOpacityValue: document.getElementById("basemap-opacity-value"),
+    territoryOpacity: document.getElementById("territory-opacity"),
+    territoryOpacityValue: document.getElementById("territory-opacity-value"),
+    topographyOpacity: document.getElementById("topography-opacity"),
+    topographyOpacityValue: document.getElementById("topography-opacity-value"),
     layerPanel: document.getElementById("layer-panel"),
     layerControls: document.getElementById("layer-controls"),
     filterControls: document.getElementById("filter-controls"),
@@ -336,6 +398,15 @@
     const id = `${spec.key}-${definition.type}-${existing.length}`;
     map.addLayer({ id, source: definition.source || "picture", ...definition });
     mapLayerBaseFilters.set(id, definition.filter);
+    const opacityProperties = {
+      fill: ["fill-opacity"],
+      line: ["line-opacity"],
+      circle: ["circle-opacity", "circle-stroke-opacity"],
+      symbol: ["icon-opacity", "text-opacity"],
+    }[definition.type] || [];
+    mapLayerBaseOpacities.set(id, Object.fromEntries(
+      opacityProperties.map((property) => [property, definition.paint?.[property] ?? 1]),
+    ));
     existing.push(id);
     mapLayerIds.set(spec.key, existing);
   }
@@ -946,6 +1017,56 @@
     });
   }
 
+  function normalizedOpacity(value) {
+    return Math.max(0, Math.min(1, Number(value)));
+  }
+
+  function opacityExpression(base, factor) {
+    if (factor === 1) return base;
+    return typeof base === "number" ? base * factor : ["*", base, factor];
+  }
+
+  function applyLayerOpacity(layerKeys, factor) {
+    for (const layerKey of layerKeys) {
+      for (const id of mapLayerIds.get(layerKey) || []) {
+        if (!map.getLayer(id)) continue;
+        for (const [property, base] of Object.entries(mapLayerBaseOpacities.get(id) || {})) {
+          map.setPaintProperty(id, property, opacityExpression(base, factor));
+        }
+      }
+    }
+  }
+
+  function setBasemapStyle(value) {
+    selectedBasemap = Object.hasOwn(basemaps, value) ? value : "osm";
+    elements.basemapStyle.value = selectedBasemap;
+    window.localStorage.setItem(mapAppearanceStorageKeys.basemap, selectedBasemap);
+    for (const [key, id] of Object.entries(basemaps)) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", key === selectedBasemap ? "visible" : "none");
+    }
+  }
+
+  function setOpacityControl(kind, value) {
+    const opacity = normalizedOpacity(value);
+    const input = elements[`${kind}Opacity`];
+    const output = elements[`${kind}OpacityValue`];
+    input.value = String(Math.round(opacity * 100));
+    output.value = `${Math.round(opacity * 100)}%`;
+    window.localStorage.setItem(mapAppearanceStorageKeys[`${kind}Opacity`], String(opacity));
+    if (kind === "basemap") {
+      basemapOpacity = opacity;
+      for (const id of Object.values(basemaps)) {
+        if (map.getLayer(id)) map.setPaintProperty(id, "raster-opacity", opacity);
+      }
+    } else if (kind === "territory") {
+      territoryOpacity = opacity;
+      applyLayerOpacity(["territories"], opacity);
+    } else if (kind === "topography") {
+      topographyOpacity = opacity;
+      applyLayerOpacity(layerSections.find((section) => section.key === "topography").layers, opacity);
+    }
+  }
+
   function updateParentLayerControl(layerKey) {
     const parent = document.querySelector(`[data-layer="${layerKey}"]`);
     const children = [...document.querySelectorAll(`[data-parent-layer="${layerKey}"]`)];
@@ -1247,6 +1368,20 @@
 
   buildLayerControls();
   buildFilterControls();
+  setBasemapStyle(selectedBasemap);
+  setOpacityControl("basemap", basemapOpacity);
+  setOpacityControl("territory", territoryOpacity);
+  setOpacityControl("topography", topographyOpacity);
+  elements.basemapStyle.addEventListener("change", (event) => setBasemapStyle(event.target.value));
+  elements.basemapOpacity.addEventListener("input", (event) => {
+    setOpacityControl("basemap", Number(event.target.value) / 100);
+  });
+  elements.territoryOpacity.addEventListener("input", (event) => {
+    setOpacityControl("territory", Number(event.target.value) / 100);
+  });
+  elements.topographyOpacity.addEventListener("input", (event) => {
+    setOpacityControl("topography", Number(event.target.value) / 100);
+  });
   function showSettingsTab(tab) {
     const showLayers = tab === "layers";
     elements.layerControls.hidden = !showLayers;
@@ -1289,6 +1424,8 @@
       topographyViewportAvailable = false;
     }
     await initializeSourcesAndLayers();
+    setOpacityControl("territory", territoryOpacity);
+    setOpacityControl("topography", topographyOpacity);
     loadInitialPicture();
     connect();
   });

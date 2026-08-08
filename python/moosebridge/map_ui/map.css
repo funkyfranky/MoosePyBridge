@@ -99,6 +99,14 @@ button, input { font: inherit; letter-spacing: 0; }
 .panel-tab.is-active { color: var(--text); border-bottom-color: var(--blue); font-weight: 600; }
 .layer-controls[hidden], .filter-controls[hidden] { display: none; }
 .layer-controls { display: grid; gap: 4px; }
+.map-appearance { display: grid; gap: 7px; padding: 2px 4px 10px; border-bottom: 1px solid var(--border); }
+.map-appearance-heading { display: flex; align-items: center; gap: 9px; font-weight: 600; }
+.map-appearance-heading svg { width: 16px; height: 16px; color: #3c7069; stroke-width: 2.2; }
+.map-appearance-select { display: grid; grid-template-columns: 1fr minmax(0, 124px); align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.map-appearance-select select { min-width: 0; height: 28px; padding: 2px 5px; color: var(--text); background: #fff; border: 1px solid var(--border); border-radius: 4px; }
+.map-opacity-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 12px; }
+.map-opacity-control output { font-variant-numeric: tabular-nums; }
+.map-opacity-control input[type="range"] { width: 100%; height: 18px; margin: 0; accent-color: var(--blue); cursor: pointer; }
 .layer-section + .layer-section { padding-top: 3px; border-top: 1px solid var(--border); }
 .layer-control { min-height: 30px; display: flex; align-items: center; gap: 9px; padding: 3px 4px; cursor: pointer; }
 .layer-control input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }

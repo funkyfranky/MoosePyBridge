@@ -365,7 +365,6 @@ def build_road_routing_network(
     x, y = Transformer.from_crs("EPSG:4326", "EPSG:3035", always_xy=True).transform(
         node_longitudes, node_latitudes,
     )
-
     highway_values = sorted({str(value) for value in edges["highway"].dropna().unique()})
     highway_classes = tuple(highway_values + (["unknown"] if "unknown" not in highway_values else []))
     highway_codes = {value: index for index, value in enumerate(highway_classes)}
@@ -448,6 +447,166 @@ def build_road_routing_network(
             "bridge_restrictions": False,
         },
     )
+
+
+def merge_road_routing_artifacts(
+    paths: Iterable[str | Path],
+    *,
+    theater_id: str,
+    allowed_cells: Iterable[tuple[int, int]] | None = None,
+    cell_size_m: float | None = None,
+) -> RoadRoutingNetwork:
+    """Merge compact regional graphs through their globally stable OSM node IDs."""
+
+    sources = tuple(Path(path) for path in paths)
+    if not sources:
+        raise ValueError("at least one road-routing artifact is required")
+    allowed_cell_values = tuple(allowed_cells) if allowed_cells is not None else None
+    if allowed_cell_values is not None and (cell_size_m is None or cell_size_m <= 0):
+        raise ValueError("filtered road merge requires a positive cell size")
+    allowed_keys = (
+        np.asarray(sorted(_routing_cell_key(column, row) for column, row in allowed_cell_values), dtype=np.int64)
+        if allowed_cell_values is not None else None
+    )
+    node_chunks: list[np.ndarray] = []
+    highway_values: set[str] = set()
+    edge_count = 0
+    geometry_count = 0
+    source_names: list[str] = []
+    for path in sources:
+        with np.load(path, allow_pickle=False) as payload:
+            metadata = json.loads(str(payload["metadata"]))
+            selected_edges = _selected_routing_edges(payload, allowed_keys, cell_size_m)
+            local_u = payload["edge_u"][selected_edges]
+            local_v = payload["edge_v"][selected_edges]
+            selected_nodes = np.unique(np.concatenate((local_u, local_v)))
+            node_chunks.append(payload["node_osm_ids"][selected_nodes])
+            edge_count += len(selected_edges)
+            offsets = payload["geometry_offsets"]
+            geometry_count += int(np.sum(offsets[selected_edges + 1] - offsets[selected_edges]))
+            highway_values.update(str(value) for value in metadata.get("highway_classes") or ())
+            source_names.extend(str(value) for value in (metadata.get("metadata") or {}).get("source_names") or ())
+    if edge_count == 0:
+        raise ValueError("selected road-routing corridor contains no edges")
+    node_ids = np.unique(np.concatenate(node_chunks))
+    del node_chunks
+    node_count = len(node_ids)
+    node_longitudes = np.full(node_count, np.nan, dtype=np.float64)
+    node_latitudes = np.full(node_count, np.nan, dtype=np.float64)
+    node_x = np.full(node_count, np.nan, dtype=np.float64)
+    node_y = np.full(node_count, np.nan, dtype=np.float64)
+    edge_u = np.empty(edge_count, dtype=np.int32)
+    edge_v = np.empty(edge_count, dtype=np.int32)
+    edge_lengths = np.empty(edge_count, dtype=np.float32)
+    edge_highways = np.empty(edge_count, dtype=np.uint16)
+    edge_bridges = np.empty(edge_count, dtype=np.bool_)
+    geometry_offsets = np.empty(edge_count + 1, dtype=np.int64)
+    geometry_longitudes = np.empty(geometry_count, dtype=np.float32)
+    geometry_latitudes = np.empty(geometry_count, dtype=np.float32)
+    highway_classes = tuple(sorted(highway_values))
+    highway_codes = {value: index for index, value in enumerate(highway_classes)}
+    edge_cursor = 0
+    geometry_cursor = 0
+    for path in sources:
+        with np.load(path, allow_pickle=False) as payload:
+            metadata = json.loads(str(payload["metadata"]))
+            local_ids = payload["node_osm_ids"]
+            selected_edges = _selected_routing_edges(payload, allowed_keys, cell_size_m)
+            local_u = payload["edge_u"][selected_edges]
+            local_v = payload["edge_v"][selected_edges]
+            selected_local_nodes = np.unique(np.concatenate((local_u, local_v)))
+            selected_global_nodes = np.searchsorted(node_ids, local_ids[selected_local_nodes])
+            empty = np.isnan(node_longitudes[selected_global_nodes])
+            local_to_fill = selected_local_nodes[empty]
+            global_to_fill = selected_global_nodes[empty]
+            node_longitudes[global_to_fill] = payload["node_longitudes"][local_to_fill]
+            node_latitudes[global_to_fill] = payload["node_latitudes"][local_to_fill]
+            node_x[global_to_fill] = payload["node_x"][local_to_fill]
+            node_y[global_to_fill] = payload["node_y"][local_to_fill]
+            count = len(local_u)
+            finish = edge_cursor + count
+            edge_u[edge_cursor:finish] = np.searchsorted(node_ids, local_ids[local_u])
+            edge_v[edge_cursor:finish] = np.searchsorted(node_ids, local_ids[local_v])
+            edge_lengths[edge_cursor:finish] = payload["edge_lengths_m"][selected_edges]
+            local_classes = tuple(str(value) for value in metadata.get("highway_classes") or ())
+            code_map = np.asarray([highway_codes[value] for value in local_classes], dtype=np.uint16)
+            edge_highways[edge_cursor:finish] = code_map[payload["edge_highway_codes"][selected_edges]]
+            edge_bridges[edge_cursor:finish] = payload["edge_bridge"][selected_edges]
+            local_offsets = payload["geometry_offsets"]
+            lengths = local_offsets[selected_edges + 1] - local_offsets[selected_edges]
+            local_geometry_count = int(np.sum(lengths))
+            geometry_finish = geometry_cursor + local_geometry_count
+            selected_offsets = np.zeros(count + 1, dtype=np.int64)
+            np.cumsum(lengths, out=selected_offsets[1:])
+            geometry_offsets[edge_cursor:finish + 1] = selected_offsets + geometry_cursor
+            if local_geometry_count:
+                repeated_starts = np.repeat(local_offsets[selected_edges] - selected_offsets[:-1], lengths)
+                geometry_indices = np.arange(local_geometry_count, dtype=np.int64) + repeated_starts
+                geometry_longitudes[geometry_cursor:geometry_finish] = payload["geometry_longitudes"][geometry_indices]
+                geometry_latitudes[geometry_cursor:geometry_finish] = payload["geometry_latitudes"][geometry_indices]
+            edge_cursor = finish
+            geometry_cursor = geometry_finish
+    if np.isnan(node_longitudes).any():
+        raise ValueError("merged road graph contains nodes without coordinates")
+    counts = np.bincount(np.concatenate((edge_u, edge_v)), minlength=node_count)
+    adjacency_offsets = np.zeros(node_count + 1, dtype=np.int64)
+    np.cumsum(counts, out=adjacency_offsets[1:])
+    adjacency_edges = np.empty(edge_count * 2, dtype=np.int32)
+    cursor = adjacency_offsets[:-1].copy()
+    for edge_index, (u, v) in enumerate(zip(edge_u, edge_v)):
+        adjacency_edges[cursor[u]] = edge_index
+        cursor[u] += 1
+        adjacency_edges[cursor[v]] = edge_index
+        cursor[v] += 1
+    return RoadRoutingNetwork(
+        theater_id=theater_id,
+        node_osm_ids=node_ids,
+        node_longitudes=node_longitudes,
+        node_latitudes=node_latitudes,
+        node_x=node_x,
+        node_y=node_y,
+        edge_u=edge_u,
+        edge_v=edge_v,
+        edge_lengths_m=edge_lengths,
+        edge_highway_codes=edge_highways,
+        edge_bridge=edge_bridges,
+        geometry_offsets=geometry_offsets,
+        geometry_longitudes=geometry_longitudes,
+        geometry_latitudes=geometry_latitudes,
+        adjacency_offsets=adjacency_offsets,
+        adjacency_edges=adjacency_edges,
+        highway_classes=highway_classes,
+        metadata={
+            "method": "pyrosm_compact_undirected_merged",
+            "source_names": list(dict.fromkeys(source_names)),
+            "partial_artifact_count": len(sources),
+            "oneway_ignored": True,
+            "access_ignored": True,
+            "bridge_restrictions": False,
+            "corridor_filtered": allowed_keys is not None,
+        },
+    )
+
+
+def _routing_cell_key(column: int, row: int) -> int:
+    return (int(column) << 32) ^ (int(row) & 0xFFFFFFFF)
+
+
+def _selected_routing_edges(
+    payload: Any,
+    allowed_keys: np.ndarray | None,
+    cell_size_m: float | None,
+) -> np.ndarray:
+    edge_count = len(payload["edge_u"])
+    if allowed_keys is None:
+        return np.arange(edge_count, dtype=np.int64)
+    assert cell_size_m is not None
+    columns = np.floor(payload["node_x"] / cell_size_m).astype(np.int64)
+    rows = np.floor(payload["node_y"] / cell_size_m).astype(np.int64)
+    node_keys = (columns << 32) ^ (rows & 0xFFFFFFFF)
+    allowed_nodes = np.isin(node_keys, allowed_keys, assume_unique=False)
+    mask = allowed_nodes[payload["edge_u"]] | allowed_nodes[payload["edge_v"]]
+    return np.flatnonzero(mask)
 
 
 def format_python_road_route(route: PythonRoadRoute | None) -> str:
