@@ -167,7 +167,7 @@ from .topography_coverage import (
     TopographyDetailLevel,
     coverage_from_picture,
 )
-from .debug_overlay import DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, MarkupColor, RoadPointMatch, rgba, validate_debug_overlay
+from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, MarkupColor, RoadPointMatch, rgba, validate_debug_overlay
 from .topography_overlay import (
     SurfaceVerificationPoint,
     build_road_verification_points,
@@ -181,6 +181,19 @@ from .surface_regions import (
     TheaterSurfaceRegions,
     build_surface_regions,
     surface_region_counts,
+)
+from .ground_mobility import (
+    GroundMobilityEdge,
+    GroundMobilityNetwork,
+    GroundMobilityNode,
+    GroundMobilityProfile,
+    GroundRoute,
+    GroundTransportFeature,
+    RoadClass,
+    TRACKED_GROUND_PROFILE,
+    WHEELED_GROUND_PROFILE,
+    build_ground_mobility_network,
+    format_ground_route,
 )
 from .models import (
     Auftrag,
@@ -759,6 +772,7 @@ __all__ = [
     "merge_topography_features",
     "DebugMarkup",
     "DebugMarkupPoint",
+    "DcsRoadRoute",
     "DcsSurfacePoint",
     "RoadPointMatch",
     "SurfaceVerificationPoint",
@@ -774,4 +788,15 @@ __all__ = [
     "TheaterSurfaceRegions",
     "build_surface_regions",
     "surface_region_counts",
+    "RoadClass",
+    "GroundTransportFeature",
+    "GroundMobilityProfile",
+    "GroundMobilityNode",
+    "GroundMobilityEdge",
+    "GroundMobilityNetwork",
+    "GroundRoute",
+    "TRACKED_GROUND_PROFILE",
+    "WHEELED_GROUND_PROFILE",
+    "build_ground_mobility_network",
+    "format_ground_route",
 ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -92,6 +93,9 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "topography_theater_id": None,
         "topography_feature_count": 0,
         "topography_load_warning": None,
+        "topography_viewport_available": False,
+        "topography_viewport_feature_count": 0,
+        "topography_viewport_error": None,
         "surface_region_count": 0,
         "surface_regions_source_complete": None,
         "diplomacy": None,
@@ -484,3 +488,13 @@ def test_map_app_exposes_runtime() -> None:
     assert runtime.control_port == 52001
     assert runtime.interval == 2.5
     assert runtime.timeout == 7
+    assert app.state.topography_tile_concurrency == 1
+
+
+def test_map_ui_does_not_apply_tactical_filters_to_topography() -> None:
+    map_script = (
+        Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui" / "map.js"
+    ).read_text(encoding="utf-8")
+
+    assert "const tacticalFilters = isTopographyLayer(checkbox.dataset.layer)" in map_script
+    assert "[mapLayerBaseFilters.get(id), ...tacticalFilters]" in map_script

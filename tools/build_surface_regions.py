@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from dataclasses import replace
 import json
 from pathlib import Path
 import re
@@ -41,10 +42,45 @@ def main() -> int:
         type=Path,
         default=REPO_ROOT / "tmp" / "topography" / "GermanyCW-surface-source.geojson",
     )
+    parser.add_argument(
+        "--natural-earth-land",
+        type=Path,
+        default=REPO_ROOT / "tmp" / "topography" / "naturalearth" / "ne_10m_land.shp",
+        help="Natural Earth 1:10m land polygons used as the global land/water baseline.",
+    )
+    parser.add_argument(
+        "--natural-earth-minor-islands",
+        type=Path,
+        default=REPO_ROOT / "tmp" / "topography" / "naturalearth" / "ne_10m_minor_islands.shp",
+        help="Natural Earth 1:10m minor-island polygons added to the land baseline.",
+    )
+    parser.add_argument(
+        "--baseline",
+        choices=("natural-earth", "osm"),
+        default="osm",
+        help="External coastline polygon baseline. The OSM option uses prepared osmcoastline output.",
+    )
+    parser.add_argument(
+        "--osm-land",
+        type=Path,
+        default=REPO_ROOT / "tmp" / "topography" / "osmcoastline" / "land_polygons.shp",
+    )
+    parser.add_argument(
+        "--osm-water",
+        type=Path,
+        default=REPO_ROOT / "tmp" / "topography" / "osmcoastline" / "water_polygons.shp",
+    )
     parser.add_argument("--refresh-surface-source", action="store_true", help="Rebuild the compact surface source from checkpoints.")
     parser.add_argument("--grid-spacing", type=float, default=500.0, help="Analysis grid spacing in meters.")
     parser.add_argument("--minimum-area-km2", type=float, default=0.25, help="Discard smaller components.")
     parser.add_argument("--simplify-meters", type=float, default=0.0, help="Optional output simplification; zero preserves shared boundaries.")
+    parser.add_argument(
+        "--bounds",
+        type=float,
+        nargs=4,
+        metavar=("SOUTH", "WEST", "NORTH", "EAST"),
+        help="Optional WGS84 comparison subset; defaults to the complete theater bounds.",
+    )
     args = parser.parse_args()
 
     if not args.topography.is_file():
@@ -71,12 +107,38 @@ def main() -> int:
     else:
         print(f"Loading topography: {args.topography}", flush=True)
         topography = TheaterTopography.load(args.topography)
+    if args.bounds:
+        requested_bounds = tuple(args.bounds)
+        if requested_bounds[0] >= requested_bounds[2] or requested_bounds[1] >= requested_bounds[3]:
+            raise ValueError("bounds must be SOUTH WEST NORTH EAST")
+        topography = replace(topography, bounds=requested_bounds)
+    if args.baseline == "osm":
+        baseline_water = _load_polygon_baseline((args.osm_water,), topography.bounds, "OSM water")
+        baseline_land = None
+        baseline_land_source = "GermanyCW bounds minus OpenStreetMap prepared sea polygons"
+        baseline_water_source = "OpenStreetMap prepared sea polygons"
+        refine_baseline = False
+    else:
+        baseline_land = _load_polygon_baseline(
+            (args.natural_earth_land, args.natural_earth_minor_islands),
+            topography.bounds,
+            "Natural Earth land",
+        )
+        baseline_water = None
+        baseline_land_source = "Natural Earth 1:10m land and minor islands"
+        baseline_water_source = None
+        refine_baseline = True
     print(
         f"Building {topography.theater_id} surface regions at {args.grid_spacing:.0f} m resolution ...",
         flush=True,
     )
     regions = build_surface_regions(
         topography,
+        baseline_land_geometry=baseline_land,
+        baseline_land_source=baseline_land_source,
+        baseline_water_geometry=baseline_water,
+        baseline_water_source=baseline_water_source,
+        refine_baseline_with_coastlines=refine_baseline,
         grid_spacing_m=args.grid_spacing,
         minimum_region_area_m2=args.minimum_area_km2 * 1_000_000,
         simplify_meters=args.simplify_meters,
@@ -93,6 +155,70 @@ def main() -> int:
             f"{len(regions.metadata.get('source_files') or [])}/{expected_source_count} configured PBF sources."
         )
     return 0
+
+
+def _load_polygon_baseline(
+    paths: tuple[Path, ...],
+    bounds: tuple[float, float, float, float] | None,
+    label: str,
+) -> object:
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        joined = ", ".join(str(path) for path in missing)
+        raise FileNotFoundError(
+            f"{label} baseline missing: {joined}. "
+            "Run the corresponding coastline-data downloader first."
+        )
+    if bounds is None:
+        raise ValueError("topography bounds are required to load the land baseline")
+    try:
+        import pyogrio
+        import shapely
+        from pyproj import Transformer
+    except ImportError as exc:
+        raise RuntimeError('surface regions require: python -m pip install -e ".[topography]"') from exc
+
+    south, west, north, east = bounds
+    geometries = []
+    for path in paths:
+        info = pyogrio.read_info(path)
+        source_crs = info.get("crs")
+        if not source_crs:
+            raise ValueError(f"{path} has no coordinate reference system")
+        if str(source_crs).upper() == "EPSG:4326":
+            source_bbox = (west, south, east, north)
+        else:
+            transformer = Transformer.from_crs("EPSG:4326", source_crs, always_xy=True)
+            x_values, y_values = transformer.transform(
+                [west, east, east, west],
+                [south, south, north, north],
+            )
+            source_bbox = (min(x_values), min(y_values), max(x_values), max(y_values))
+        frame = pyogrio.read_dataframe(path, bbox=source_bbox, columns=[])
+        if str(frame.crs).upper() != "EPSG:4326":
+            frame = frame.to_crs("EPSG:4326")
+        geometries.extend(geometry for geometry in frame.geometry if geometry is not None and not geometry.is_empty)
+    if not geometries:
+        raise ValueError(f"{label} baseline does not intersect the topography bounds")
+    return shapely.union_all(geometries)
+
+
+def _land_complement(
+    water_geometry: dict,
+    bounds: tuple[float, float, float, float] | None,
+) -> dict:
+    if bounds is None:
+        raise ValueError("topography bounds are required to derive the land complement")
+    try:
+        import shapely
+        from shapely.geometry import box, mapping, shape
+    except ImportError as exc:
+        raise RuntimeError('surface regions require: python -m pip install -e ".[topography]"') from exc
+    south, west, north, east = bounds
+    land = shapely.make_valid(box(west, south, east, north).difference(shape(water_geometry)))
+    if land.is_empty:
+        raise ValueError("OSM sea polygons cover the complete topography bounds")
+    return mapping(land)
 
 
 def _surface_topography_from_cache(cache_dir: Path) -> TheaterTopography:

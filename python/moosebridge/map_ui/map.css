@@ -82,7 +82,14 @@ button, input { font: inherit; letter-spacing: 0; }
   box-shadow: var(--shadow);
 }
 
-.layer-panel { left: 12px; width: 236px; padding: 12px; }
+.layer-panel {
+  left: 12px;
+  width: 236px;
+  max-height: calc(100% - 96px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px;
+}
 .detail-panel { right: 12px; width: min(410px, calc(100% - 24px)); max-height: calc(100% - 96px); overflow: auto; padding: 14px; }
 .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-weight: 600; }
 .muted { color: var(--muted); font-weight: 400; }
@@ -162,6 +169,6 @@ button, input { font: inherit; letter-spacing: 0; }
   .status-line { width: 100%; overflow: hidden; white-space: nowrap; }
   .diplomacy-line { width: 100%; overflow-x: auto; padding-bottom: 1px; white-space: nowrap; }
   #mission-clock, .separator { display: none; }
-  .layer-panel, .detail-panel { top: 126px; }
+  .layer-panel, .detail-panel { top: 126px; max-height: calc(100% - 150px); }
   .layer-panel { width: min(236px, calc(100% - 24px)); }
 }

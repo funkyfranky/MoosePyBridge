@@ -1326,6 +1326,18 @@ update interval, command timeout, or movement history limits. The viewer keeps
 python -m moosebridge.map_server --history-seconds 1800 --history-max-points 360
 ```
 
+For deterministic browser QA without a running DCS mission, start the all-layer
+fixture and open `http://127.0.0.1:8012`:
+
+```powershell
+python tools/run_map_fixture_server.py
+```
+
+The fixture includes representative forces, territorial control, zones, INTEL,
+airbases, operations, events, movement history, and RECON coverage. Its
+`/qa/mobile` page embeds the same viewer in a real 390-pixel viewport for
+responsive layout checks.
+
 The `GermanyCW` theater can use an offline OpenStreetMap baseline for water,
 major roads, railways, cities, towns, land use, and infrastructure candidates.
 The primary import downloads regional Geofabrik PBF extracts and filters them
@@ -1335,6 +1347,7 @@ locally, outside the running DCS mission:
 python -m pip install -e ".[topography]"
 python examples/sdk/capture_topography_coverage.py
 python tools/import_geofabrik_topography.py
+python tools/build_topography_viewport_cache.py
 ```
 
 Before the full import, create mission-editor zones using this naming scheme:
@@ -1370,14 +1383,26 @@ topology-preservingly simplified by 20 meters by default; override this with
 Individual building polygons are deliberately excluded from the browser cache
 by default; add `--include-buildings` when they are needed for a focused test.
 The complete GermanyCW import currently contains more than 4.5 million features
-and is an offline analysis source, not a browser payload. The map server refuses
-to load a static GeoJSON larger than 256 MiB by default and exposes the reason in
-`/api/health`; use `--max-topography-mb` to change the guard. A deliberately
-bounded cache can still be selected with `--topography <path>`. Static
-topography is fetched from `/api/topography/global.geojson` and is not repeated
-in the five-second DCS picture stream. Viewport or vector-tile delivery for the
-complete cache is planned. The external layers are disabled initially and
-grouped under `Topography` in the viewer.
+and is an offline analysis source, not a single browser payload. The viewport
+builder converts each non-empty import checkpoint to spatially indexed
+FlatGeobuf and writes `tmp/topography/viewport/manifest.json`. It is incremental:
+unchanged source shards are reused unless `--refresh` is specified.
+
+The map server discovers that manifest by default. The browser consumes one
+Mapbox Vector Tile source per enabled topography layer from
+`/api/topography/tiles/{layer}/{z}/{x}/{y}.pbf`, so roads, water, land use, and
+other layers can be loaded independently. Zoom levels below 6 use the `all`
+baseline, zoom 6 adds `low`, and zoom 10 adds `high`. Interactive vector tiles
+start at zoom 8, omit large raw OSM tag dictionaries, and are cached by the
+server and browser. The bounded `/api/topography/viewport.geojson` endpoint
+remains available for diagnostics and exports; it limits responses to 20,000
+features by default and reports `properties.truncated=true` when necessary.
+The server refuses to load a static GeoJSON larger than 256 MiB by default and
+exposes the reason in `/api/health`; use `--max-topography-mb` to change the
+guard. A deliberately bounded legacy cache can still be selected with
+`--topography <path>`. Static data is independent of the five-second DCS picture
+stream. The external layers are disabled initially and grouped under
+`Topography` in the viewer.
 
 The Overpass importer remains available for small experiments and targeted
 updates:
@@ -1436,10 +1461,14 @@ matching water (`SHALLOW_WATER` or `WATER`), and red marks are disagreements.
 The console prints the complete coarse confusion matrix and native DCS surface
 type counts.
 
-Connected physical land and water components are generated offline from the
-directed OSM coastline and closed water polygons:
+Connected physical land and water components use prepared OSMCoastline sea
+polygons as the production baseline. Land is their exact complement inside the
+GermanyCW bounds, while closed regional OSM water polygons add the detailed
+inland-water network. Download the prepared polygons once, then build the
+regions offline:
 
 ```powershell
+python tools/download_osm_coastline_data.py
 python tools/build_surface_regions.py
 ```
 
@@ -1457,7 +1486,82 @@ create overlaps along their shared coastline. For a complete large import the
 builder first creates and subsequently reuses
 `GermanyCW-surface-source.geojson`, which contains only directed coastlines and
 closed water polygons; use `--refresh-surface-source` after replacing import
-checkpoints.
+checkpoints. The Natural Earth files are stored below
+`tmp/topography/osmcoastline/` and are reused unless the download command is
+called with `--refresh`. Natural Earth remains available through
+`--baseline natural-earth` as an independent comparison reference.
+
+The downloader defaults to the official simplified OSMCoastline Mercator
+datasets, whose detail is appropriate for the 500 m strategic grid; the
+full-resolution global archives remain optional because each is currently
+close to 1 GB. Natural Earth and OSMCoastline can be compared on a bounded area
+without replacing the production artifact:
+
+```powershell
+python tools/download_osm_coastline_data.py
+python tools/build_surface_regions.py --baseline natural-earth --bounds 53 9 56 16 --grid-spacing 1000 --minimum-area-km2 25 --output tmp/topography/GermanyCW-surface-regions-naturalearth-test.geojson
+python tools/build_surface_regions.py --baseline osm --bounds 53 9 56 16 --grid-spacing 1000 --minimum-area-km2 25 --output tmp/topography/GermanyCW-surface-regions-osm-test.geojson
+python tools/compare_surface_regions.py --reference tmp/topography/GermanyCW-surface-regions-naturalearth-test.geojson --candidate tmp/topography/GermanyCW-surface-regions-osm-test.geojson
+```
+
+The OSM mode loads the spatially split sea polygons and derives land as their
+exact complement inside the requested theater bounds. Detailed inland water
+continues to come from the regional Geofabrik imports. The comparison writes
+every sampled disagreement to
+`tmp/topography/GermanyCW-surface-comparison.geojson` for inspection in a GIS.
+The initial north-Germany and western-Baltic comparison agreed at 99.67% of
+6,055 independent 5 km samples, with 20 changed classifications.
+
+With the daemon and a GermanyCW mission running, validate exactly those changed
+points against native DCS terrain data:
+
+```powershell
+python examples/sdk/verify_coastline_baselines.py
+```
+
+The script calls DCS `land.getSurfaceType()` for every disagreement, prints
+which baseline matches DCS, and draws the points on the F10 map. Green means
+the prepared OSMCoastline result matches DCS; orange means the current
+Natural Earth/local-coastline reference matches DCS. The production surface
+artifact is not changed by this diagnostic.
+
+To inspect the prepared OSMCoastline geometry directly on the native DCS F10
+map, run:
+
+```powershell
+python examples/sdk/draw_coastline_overlay.py
+```
+
+The example clips the coastline around the configured DCS object, removes
+internal polygon joins, and increases simplification only as needed to stay
+within the native DCS markup budget. The cyan line remains visible until Enter
+is pressed.
+
+Build the strategic ground-mobility graph after updating either the connected
+surface artifact or the indexed OSM topography:
+
+```powershell
+python tools/build_ground_mobility.py
+```
+
+The 5 km graph treats OSMCoastline land/water as a hard constraint, uses
+motorway, trunk, primary, and secondary roads to estimate travel time, and
+creates explicit links across OSM-tagged bridge heads. Wheeled and tracked
+profiles apply different conservative road and off-road speeds. The graph is
+used for fast strategic feasibility and cost estimates; it is not sufficiently
+detailed to define tactical waypoints. A live DCS route diagnostic is available
+through:
+
+```powershell
+python examples/sdk/inspect_ground_route.py
+```
+
+Edit the two object IDs and movement profile at the top of the example. After
+the strategic graph confirms connectivity, the SDK requests one bounded native
+`land.findPathOnRoads` route from DCS. The console reports both results and the
+refined DCS road route is drawn in magenta on the F10 map. Native road routing
+is intentionally used only for selected corridors because DCS calculates it
+synchronously and can return many points.
 
 The header shows the shared relationship, escalation score, pending transition,
 and blue/red doctrine. The map server is the default diplomacy incident

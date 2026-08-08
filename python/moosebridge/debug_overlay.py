@@ -113,6 +113,53 @@ class RoadPointMatch:
 
 
 @dataclass(slots=True, frozen=True)
+class DcsRoadRoute:
+    """One bounded route returned by native DCS road topology."""
+
+    start_object_id: str
+    end_object_id: str
+    road_type: str
+    points: tuple[DebugMarkupPoint, ...]
+    distance_m: float
+    raw_point_count: int
+    sample_spacing_m: float
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "DcsRoadRoute":
+        """Build and validate a native road route result."""
+
+        raw_points = payload.get("points")
+        if not isinstance(raw_points, list) or len(raw_points) < 2:
+            raise ValueError("DCS road route requires at least two points")
+        try:
+            points = tuple(
+                DebugMarkupPoint(float(point["latitude"]), float(point["longitude"]))
+                for point in raw_points
+                if isinstance(point, dict)
+            )
+            distance_m = float(payload["distance_m"])
+            raw_point_count = int(payload["raw_point_count"])
+            sample_spacing_m = float(payload["sample_spacing_m"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("DCS road route result is incomplete") from exc
+        if len(points) != len(raw_points):
+            raise ValueError("DCS road route contains an invalid point")
+        if not all(math.isfinite(value) for value in (distance_m, sample_spacing_m)):
+            raise ValueError("DCS road route contains non-finite values")
+        if distance_m < 0 or raw_point_count < len(points) or sample_spacing_m < 0:
+            raise ValueError("DCS road route contains invalid metrics")
+        return cls(
+            start_object_id=str(payload.get("start_object_id") or ""),
+            end_object_id=str(payload.get("end_object_id") or ""),
+            road_type=str(payload.get("road_type") or "roads"),
+            points=points,
+            distance_m=distance_m,
+            raw_point_count=raw_point_count,
+            sample_spacing_m=sample_spacing_m,
+        )
+
+
+@dataclass(slots=True, frozen=True)
 class DcsSurfacePoint:
     """Native DCS terrain classification for one WGS84 point."""
 

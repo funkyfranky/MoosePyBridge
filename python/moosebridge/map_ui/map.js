@@ -131,12 +131,14 @@
   let latestPicture = EMPTY;
   let latestTopography = EMPTY;
   let latestSurfaceRegions = EMPTY;
+  let topographyViewportAvailable = false;
   let fitted = false;
   let reconnectTimer = null;
   let selectedFeature = null;
   let selectedObjectId = null;
   let selectionCandidates = [];
   let selectionIndex = 0;
+  let countUpdateTimer = null;
 
   const map = new maplibregl.Map({
     container: "map",
@@ -159,6 +161,9 @@
     },
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+  map.on("error", (event) => {
+    console.error("Map rendering error:", event.error?.message || event.error || event);
+  });
 
   const elements = {
     connectionDot: document.getElementById("connection-dot"),
@@ -339,8 +344,40 @@
     return String(layer || "").startsWith("topography_");
   }
 
+  function loadedVectorTopographyFeatures() {
+    if (!topographyViewportAvailable || !map.isStyleLoaded()) return [];
+    const features = [];
+    const seen = new Set();
+    for (const spec of layerSpecs.filter((item) => isTopographyLayer(item.key))) {
+      const sourceId = `topography-${spec.key}`;
+      if (!map.getSource(sourceId)) continue;
+      for (const feature of map.querySourceFeatures(sourceId, { sourceLayer: spec.key })) {
+        const objectId = feature.properties?.object_id;
+        if (objectId && seen.has(objectId)) continue;
+        if (objectId) seen.add(objectId);
+        features.push(feature.toJSON ? feature.toJSON() : feature);
+      }
+    }
+    return features;
+  }
+
   function allFeatures() {
-    return [...latestPicture.features, ...latestTopography.features, ...latestSurfaceRegions.features];
+    const topography = topographyViewportAvailable ? loadedVectorTopographyFeatures() : latestTopography.features;
+    return [...latestPicture.features, ...topography, ...latestSurfaceRegions.features];
+  }
+
+  function topographySource(spec) {
+    return topographyViewportAvailable
+      ? { source: `topography-${spec.key}`, "source-layer": spec.key }
+      : { source: "topography" };
+  }
+
+  function topographyFilter(spec, conditions = []) {
+    const filters = topographyViewportAvailable
+      ? [...conditions]
+      : [["==", ["get", "layer"], spec.key], ...conditions];
+    if (!filters.length) return {};
+    return { filter: filters.length === 1 ? filters[0] : ["all", ...filters] };
   }
 
   async function initializeSourcesAndLayers() {
@@ -348,6 +385,17 @@
     map.addSource("picture", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("zone-areas", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("topography", { type: "geojson", data: EMPTY, promoteId: "object_id" });
+    if (topographyViewportAvailable) {
+      for (const spec of layerSpecs.filter((item) => isTopographyLayer(item.key))) {
+        map.addSource(`topography-${spec.key}`, {
+          type: "vector",
+          tiles: [`${location.origin}/api/topography/tiles/${spec.key}/{z}/{x}/{y}.pbf`],
+          minzoom: 8,
+          maxzoom: 14,
+          promoteId: "object_id",
+        });
+      }
+    }
     map.addSource("surface-regions", { type: "geojson", data: EMPTY, promoteId: "object_id" });
 
     for (const spec of layerSpecs) {
@@ -492,7 +540,9 @@
         addMapLayer(spec, {
           type: "line",
           source: "surface-regions",
-          filter: ["==", ["get", "layer"], spec.key],
+          filter: spec.key === "surface_water_regions"
+            ? ["all", ["==", ["get", "layer"], spec.key], ["!=", ["get", "region_kind"], "maritime"]]
+            : ["==", ["get", "layer"], spec.key],
           paint: {
             "line-color": spec.color,
             "line-width": ["case", ["==", ["get", "region_kind"], "mainland"], 2.2, 1.4],
@@ -504,29 +554,41 @@
       if (spec.key === "topography_water") {
         addMapLayer(spec, {
           type: "fill",
-          source: "topography",
-          filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]]],
-          paint: { "fill-color": spec.color, "fill-opacity": 0.2 },
+          ...topographySource(spec),
+          ...topographyFilter(spec, [["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]]]),
+          paint: { "fill-color": spec.color, "fill-opacity": 0.34 },
         });
         addMapLayer(spec, {
           type: "line",
-          source: "topography",
-          filter: ["==", ["get", "layer"], spec.key],
-          paint: { "line-color": spec.color, "line-width": 1.6, "line-opacity": 0.88 },
+          ...topographySource(spec),
+          ...topographyFilter(spec),
+          paint: { "line-color": "#176f98", "line-width": 2.2, "line-opacity": 0.96 },
         });
         continue;
       }
       if (spec.key === "topography_roads" || spec.key === "topography_railways") {
         addMapLayer(spec, {
           type: "line",
-          source: "topography",
-          filter: ["==", ["get", "layer"], spec.key],
+          ...topographySource(spec),
+          ...topographyFilter(spec),
+          paint: {
+            "line-color": "rgba(255,255,255,0.82)",
+            "line-width": spec.key === "topography_roads"
+              ? ["match", ["get", "category"], "motorway", 5.6, "trunk", 5.0, "primary", 4.5, 3.6]
+              : 4.0,
+            "line-opacity": 0.9,
+          },
+        });
+        addMapLayer(spec, {
+          type: "line",
+          ...topographySource(spec),
+          ...topographyFilter(spec),
           paint: {
             "line-color": spec.color,
             "line-width": spec.key === "topography_roads"
-              ? ["match", ["get", "category"], "motorway", 3.2, "trunk", 2.7, "primary", 2.2, 1.5]
-              : 1.8,
-            "line-dasharray": spec.key === "topography_railways" ? [2, 1.3] : [1, 0],
+              ? ["match", ["get", "category"], "motorway", 3.8, "trunk", 3.2, "primary", 2.8, 2.2]
+              : 2.4,
+            ...(spec.key === "topography_railways" ? { "line-dasharray": [2, 1.3] } : {}),
             "line-opacity": 0.88,
           },
         });
@@ -535,21 +597,21 @@
       if (spec.key === "topography_settlements" || spec.key === "topography_infrastructure") {
         addMapLayer(spec, {
           type: "fill",
-          source: "topography",
-          filter: ["all", ["==", ["get", "layer"], spec.key], ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]]],
+          ...topographySource(spec),
+          ...topographyFilter(spec, [["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]]]),
           paint: { "fill-color": spec.color, "fill-opacity": 0.16 },
         });
         addMapLayer(spec, {
           type: "circle",
-          source: "topography",
-          filter: ["all", ["==", ["get", "layer"], spec.key], ["==", ["geometry-type"], "Point"]],
+          ...topographySource(spec),
+          ...topographyFilter(spec, [["==", ["geometry-type"], "Point"]]),
           paint: { "circle-radius": spec.key === "topography_settlements" ? 5 : 4, "circle-color": spec.color, "circle-stroke-color": "#ffffff", "circle-stroke-width": 1.2 },
         });
         addMapLayer(spec, {
           type: "symbol",
-          source: "topography",
+          ...topographySource(spec),
           minzoom: 7,
-          filter: ["==", ["get", "layer"], spec.key],
+          ...topographyFilter(spec),
           layout: { "text-field": ["get", "name"], "text-size": 11, "text-offset": [0, 1.1], "text-allow-overlap": false },
           paint: { "text-color": "#313936", "text-halo-color": "rgba(255,255,255,0.92)", "text-halo-width": 1.2 },
         });
@@ -558,8 +620,8 @@
       if (spec.key === "topography_landuse" || spec.key === "topography_buildings") {
         addMapLayer(spec, {
           type: "fill",
-          source: "topography",
-          filter: ["==", ["get", "layer"], spec.key],
+          ...topographySource(spec),
+          ...topographyFilter(spec),
           paint: {
             "fill-color": spec.color,
             "fill-opacity": spec.key === "topography_buildings" ? 0.28 : 0.14,
@@ -728,6 +790,8 @@
     elements.connectionText.textContent = connected ? "DCS connected" : "DCS disconnected";
     elements.errorBanner.hidden = !status?.error;
     elements.errorBanner.textContent = status?.error ? "DCS bridge unavailable. Waiting for reconnection." : "";
+    const viewportAvailable = Boolean(status?.topography_viewport_available);
+    topographyViewportAvailable = viewportAvailable;
     updateDiplomacy(status?.diplomacy);
   }
 
@@ -748,7 +812,23 @@
       ? `${latestPicture.features.length - trajectoryCount} objects · ${trajectoryCount} tracks`
       : `${latestPicture.features.length} objects`;
     document.querySelectorAll("[data-layer-count]").forEach((node) => {
-      node.textContent = String(counts.get(node.dataset.layerCount) || 0);
+      const layer = node.dataset.layerCount;
+      if (topographyViewportAvailable && isTopographyLayer(layer)) {
+        const control = document.querySelector(`input[data-layer="${layer}"]`);
+        const source = map.getSource(`topography-${layer}`);
+        if (!control?.checked || map.getZoom() < 8) {
+          node.textContent = "–";
+          node.title = map.getZoom() < 8 ? "Available from zoom level 8" : "Layer disabled";
+          return;
+        }
+        if (source && !map.isSourceLoaded(`topography-${layer}`)) {
+          node.textContent = "…";
+          node.title = "Loading visible map tiles";
+          return;
+        }
+      }
+      node.textContent = String(counts.get(layer) || 0);
+      node.title = "Visible features";
     });
     document.querySelectorAll("[data-layer-category-count]").forEach((node) => {
       node.textContent = String(counts.get(`${node.dataset.layerCategoryCount}:${node.dataset.category}`) || 0);
@@ -932,10 +1012,13 @@
     const statusFilter = ["in", ["get", "map_status"], ["literal", selectedFilterValues("status")]];
     document.querySelectorAll("[data-layer]").forEach((checkbox) => {
       const visibility = checkbox.checked ? "visible" : "none";
+      const tacticalFilters = isTopographyLayer(checkbox.dataset.layer)
+        ? []
+        : [coalitionFilter, statusFilter];
       for (const id of mapLayerIds.get(checkbox.dataset.layer) || []) {
         if (!map.getLayer(id)) continue;
         map.setLayoutProperty(id, "visibility", visibility);
-        const filters = [mapLayerBaseFilters.get(id), coalitionFilter, statusFilter].filter(Boolean);
+        const filters = [mapLayerBaseFilters.get(id), ...tacticalFilters].filter(Boolean);
         const children = [...document.querySelectorAll(`[data-parent-layer="${checkbox.dataset.layer}"]:checked`)];
         if (children.length || document.querySelector(`[data-parent-layer="${checkbox.dataset.layer}"]`)) {
           const categories = children.map((child) => child.dataset.category);
@@ -1142,16 +1225,21 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, topographyResponse, surfaceRegionsResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, surfaceRegionsResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
-        fetch("/api/topography/global.geojson"),
         fetch("/api/surface-regions/global.geojson"),
         fetch("/api/health"),
       ]);
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
-      if (topographyResponse.ok) setTopography(await topographyResponse.json());
       if (surfaceRegionsResponse.ok) setSurfaceRegions(await surfaceRegionsResponse.json());
-      if (healthResponse.ok) updateStatus(await healthResponse.json());
+      if (healthResponse.ok) {
+        const status = await healthResponse.json();
+        updateStatus(status);
+        if (!status.topography_viewport_available) {
+          const topographyResponse = await fetch("/api/topography/global.geojson");
+          if (topographyResponse.ok) setTopography(await topographyResponse.json());
+        }
+      }
     } catch (error) {
       updateStatus({ connected: false, error: String(error) });
     }
@@ -1194,9 +1282,21 @@
   document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeDetails(); });
 
   map.on("load", async () => {
+    try {
+      const healthResponse = await fetch("/api/health");
+      if (healthResponse.ok) updateStatus(await healthResponse.json());
+    } catch (_) {
+      topographyViewportAvailable = false;
+    }
     await initializeSourcesAndLayers();
     loadInitialPicture();
     connect();
+  });
+  map.on("idle", updateCounts);
+  map.on("sourcedata", (event) => {
+    if (!String(event.sourceId || "").startsWith("topography-")) return;
+    clearTimeout(countUpdateTimer);
+    countUpdateTimer = setTimeout(updateCounts, 120);
   });
   map.on("click", (event) => {
     const layers = [...mapLayerIds.values()].flat().filter((id) => map.getLayer(id));

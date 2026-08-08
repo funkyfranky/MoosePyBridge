@@ -12,7 +12,7 @@ from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, Weap
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .dcs_events import DestroyedObjectEvent, KillEvent
-from .debug_overlay import DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
+from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
 from .diplomacy import (
     BorderViolationTracker,
     CoalitionDoctrine,
@@ -3708,6 +3708,51 @@ class MooseBridgeClient:
         ):
             raise ValueError("DCS returned an invalid closest-road result")
         return tuple(RoadPointMatch.from_payload(sample) for sample in samples)
+
+    async def road_route(
+        self,
+        start_object_id: str,
+        end_object_id: str,
+        *,
+        road_type: str = "roads",
+        sample_spacing_m: float = 100.0,
+        max_points: int = 500,
+        timeout: float = 60.0,
+    ) -> DcsRoadRoute:
+        """Resolve a bounded route through the native DCS road network.
+
+        This is intended to refine a selected strategic corridor, not for
+        periodic bulk routing. DCS performs the topology search synchronously.
+        """
+
+        if not start_object_id.strip() or not end_object_id.strip():
+            raise ValueError("road route object ids must not be empty")
+        normalized_type = road_type.strip().lower()
+        if normalized_type not in {"roads", "rails"}:
+            raise ValueError("road_type must be roads or rails")
+        if not math.isfinite(sample_spacing_m) or not 0 <= sample_spacing_m <= 5000:
+            raise ValueError("sample_spacing_m must be in range 0..5000")
+        if type(max_points) is not int or not 2 <= max_points <= 2000:
+            raise ValueError("max_points must be an integer in range 2..2000")
+        ack = require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="terrain.road_route",
+                    params={
+                        "start_object_id": start_object_id,
+                        "end_object_id": end_object_id,
+                        "road_type": normalized_type,
+                        "sample_spacing_m": float(sample_spacing_m),
+                        "max_points": max_points,
+                    },
+                ),
+                timeout=timeout,
+            )
+        )
+        result = ack.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("DCS returned an invalid road route result")
+        return DcsRoadRoute.from_payload(result)
 
     async def surface_types(
         self,

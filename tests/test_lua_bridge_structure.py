@@ -11,6 +11,29 @@ def test_bridge_constructor_preserves_moose_base_inheritance() -> None:
     assert "if not BASE then setmetatable(self, { __index = MOOSE_BRIDGE }) end" in source
 
 
+def test_bridge_transport_resumes_partial_nonblocking_io() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert 'self.ReadBuffer = ""' in source
+    assert 'line = (self.ReadBuffer or "") .. line' in source
+    assert 'self.ReadBuffer = (self.ReadBuffer or "") .. partial' in source
+    assert "self.OutQueueOffset = 1" in source
+    assert "local payload = self.OutQueue[1]" in source
+    assert "self.Socket:send(payload, offset)" in source
+    assert 'elseif err == "timeout" then' in source
+    assert "self.OutQueueOffset = final_byte + 1" in source
+    assert "table.remove(self.OutQueue, 1)" in source
+
+
+def test_bridge_exposes_bounded_native_dcs_road_routing() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert 'self:RegisterCommand("terrain.road_route"' in source
+    assert "land.findPathOnRoads(" in source
+    assert "max_points must be in range 2..2000" in source
+    assert "sample_spacing_m=effective_spacing" in source
+
+
 def test_ops_snapshots_use_moose_available_asset_counts() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
 

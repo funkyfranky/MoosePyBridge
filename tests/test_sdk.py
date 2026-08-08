@@ -46,7 +46,7 @@ from moosebridge.auftraege import (
     ZoneSet,
 )
 from moosebridge.protocol import BridgeCommand
-from moosebridge.debug_overlay import DebugMarkup, DebugMarkupPoint
+from moosebridge.debug_overlay import DcsRoadRoute, DebugMarkup, DebugMarkupPoint
 from moosebridge.recon import ReconRequirement, ReconSpatialCoverage, ReconTrackSample
 from moosebridge.diagnostics import (
     format_cohort_assets,
@@ -144,6 +144,25 @@ class FakeSdkServer:
                             "distance_m": 22.36,
                         }
                         for index, point in enumerate(command.params["points"])
+                    ],
+                },
+            }
+        if command.action == "terrain.road_route":
+            return {
+                "ok": True,
+                "result": {
+                    "action": command.action,
+                    "start_object_id": command.params["start_object_id"],
+                    "end_object_id": command.params["end_object_id"],
+                    "road_type": command.params["road_type"],
+                    "distance_m": 12500,
+                    "raw_point_count": 42,
+                    "sample_spacing_m": 100,
+                    "count": 3,
+                    "points": [
+                        {"latitude": 54.0, "longitude": 12.0},
+                        {"latitude": 54.05, "longitude": 12.05},
+                        {"latitude": 54.1, "longitude": 12.1},
                     ],
                 },
             }
@@ -312,6 +331,31 @@ def test_sdk_coords_returns_typed_result() -> None:
         assert command.action == "object.coords"
         assert command.params == {"object_id": "ZONE:Town Fight", "format": "mgrs"}
         assert timeout == 4.0
+
+    asyncio.run(scenario())
+
+
+def test_sdk_road_route_returns_bounded_native_dcs_path() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        route = await client.road_route("AIRBASE:Laage", "AIRBASE:Gross Mohrdorf", max_points=400)
+
+        assert isinstance(route, DcsRoadRoute)
+        assert route.distance_m == 12500
+        assert route.raw_point_count == 42
+        assert len(route.points) == 3
+        command, timeout = server.commands[0]
+        assert command.action == "terrain.road_route"
+        assert command.params == {
+            "start_object_id": "AIRBASE:Laage",
+            "end_object_id": "AIRBASE:Gross Mohrdorf",
+            "road_type": "roads",
+            "sample_spacing_m": 100.0,
+            "max_points": 400,
+        }
+        assert timeout == 60.0
 
     asyncio.run(scenario())
 

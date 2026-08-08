@@ -181,6 +181,11 @@ class TheaterSurfaceRegions:
 def build_surface_regions(
     topography: TheaterTopography,
     *,
+    baseline_land_geometry: dict[str, Any] | None = None,
+    baseline_land_source: str | None = None,
+    baseline_water_geometry: dict[str, Any] | None = None,
+    baseline_water_source: str | None = None,
+    refine_baseline_with_coastlines: bool = True,
     grid_spacing_m: float = 250.0,
     coastline_sample_spacing_m: float | None = None,
     minimum_region_area_m2: float = 250_000.0,
@@ -210,8 +215,18 @@ def build_surface_regions(
     to_wgs84_transformer = Transformer.from_crs("EPSG:3035", "EPSG:4326", always_xy=True)
     envelope = transform(to_local_transformer.transform, box(west, south, east, north))
     sample_spacing = coastline_sample_spacing_m or grid_spacing_m
+    min_x, min_y, max_x, max_y = envelope.bounds
+    x_coordinates = np.arange(min_x, max_x + grid_spacing_m, grid_spacing_m, dtype=np.float64)
+    y_coordinates = np.arange(min_y, max_y + grid_spacing_m, grid_spacing_m, dtype=np.float64)
+    grid_x = x_coordinates[np.newaxis, :]
+    grid_y = y_coordinates[:, np.newaxis]
+    inside = shapely.contains_xy(envelope, grid_x, grid_y)
+    inland_water = np.zeros_like(inside)
+
+    need_directed_coastline = baseline_water_geometry is None and (
+        baseline_land_geometry is None or refine_baseline_with_coastlines
+    )
     coastline_samples: list[tuple[float, float, float, float]] = []
-    inland_water_parts: list[Any] = []
     coastline_feature_count = 0
     water_polygon_count = 0
     repaired_water_polygon_count = 0
@@ -219,9 +234,11 @@ def build_surface_regions(
     for feature in topography.features:
         if feature.layer is not TopographyLayer.WATER:
             continue
-        geometry = transform(to_local_transformer.transform, shape(feature.geometry))
         if feature.category == "coastline":
             coastline_feature_count += 1
+            if not need_directed_coastline:
+                continue
+            geometry = transform(to_local_transformer.transform, shape(feature.geometry))
             for line in _surface_lines(geometry):
                 coordinates = np.asarray(line.coords, dtype=np.float64)
                 for first, second in zip(coordinates[:-1], coordinates[1:]):
@@ -234,7 +251,9 @@ def build_surface_regions(
                     for index in range(count):
                         midpoint = first + delta * ((index + 0.5) / count)
                         coastline_samples.append((midpoint[0], midpoint[1], direction[0], direction[1]))
-        elif geometry.geom_type in {"Polygon", "MultiPolygon"}:
+        else:
+            geometry = transform(to_local_transformer.transform, shape(feature.geometry))
+        if feature.category != "coastline" and geometry.geom_type in {"Polygon", "MultiPolygon"}:
             if not geometry.is_valid:
                 geometry = shapely.make_valid(geometry)
                 repaired_water_polygon_count += 1
@@ -243,38 +262,100 @@ def build_surface_regions(
                 continue
             clipped = shapely.union_all(polygon_parts).intersection(envelope)
             if not clipped.is_empty:
-                inland_water_parts.append(clipped)
+                _rasterize_geometry(
+                    inland_water,
+                    clipped,
+                    x_coordinates,
+                    y_coordinates,
+                    shapely_module=shapely,
+                )
                 water_polygon_count += 1
 
-    if not coastline_samples:
+    if need_directed_coastline and not coastline_samples:
         raise ValueError("topography contains no directed coastline geometry")
 
-    min_x, min_y, max_x, max_y = envelope.bounds
-    x_coordinates = np.arange(min_x, max_x + grid_spacing_m, grid_spacing_m, dtype=np.float64)
-    y_coordinates = np.arange(min_y, max_y + grid_spacing_m, grid_spacing_m, dtype=np.float64)
-    grid_x, grid_y = np.meshgrid(x_coordinates, y_coordinates)
-    inside = shapely.contains_xy(envelope, grid_x, grid_y)
+    distances = None
+    distance_grid = None
+    directed_maritime = None
+    if need_directed_coastline:
+        coastline_array = np.asarray(coastline_samples, dtype=np.float64)
+        tree = cKDTree(coastline_array[:, :2])
+        point_count = len(x_coordinates) * len(y_coordinates)
+        nearest = np.empty(point_count, dtype=np.int64)
+        distances = np.empty(point_count, dtype=np.float64)
+        chunk_size = 250_000
+        for start in range(0, point_count, chunk_size):
+            stop = min(point_count, start + chunk_size)
+            indices = np.arange(start, stop)
+            rows, columns = np.divmod(indices, len(x_coordinates))
+            points = np.column_stack((x_coordinates[columns], y_coordinates[rows]))
+            chunk_distances, chunk_nearest = tree.query(points, workers=-1)
+            distances[start:stop] = chunk_distances
+            nearest[start:stop] = chunk_nearest
+        closest = coastline_array[nearest]
+        rows, columns = np.divmod(np.arange(point_count), len(x_coordinates))
+        cross = (
+            closest[:, 2] * (y_coordinates[rows] - closest[:, 1])
+            - closest[:, 3] * (x_coordinates[columns] - closest[:, 0])
+        )
+        distance_grid = distances.reshape(inside.shape)
+        directed_maritime = (cross.reshape(inside.shape) < 0) & inside
 
-    coastline_array = np.asarray(coastline_samples, dtype=np.float64)
-    tree = cKDTree(coastline_array[:, :2])
-    flat_points = np.column_stack((grid_x.ravel(), grid_y.ravel()))
-    nearest = np.empty(len(flat_points), dtype=np.int64)
-    distances = np.empty(len(flat_points), dtype=np.float64)
-    chunk_size = 250_000
-    for start in range(0, len(flat_points), chunk_size):
-        stop = min(len(flat_points), start + chunk_size)
-        chunk_distances, chunk_nearest = tree.query(flat_points[start:stop], workers=-1)
-        distances[start:stop] = chunk_distances
-        nearest[start:stop] = chunk_nearest
-    closest = coastline_array[nearest]
-    cross = closest[:, 2] * (flat_points[:, 1] - closest[:, 1]) - closest[:, 3] * (flat_points[:, 0] - closest[:, 0])
-    maritime = (cross.reshape(grid_x.shape) < 0) & inside
-
-    if inland_water_parts:
-        inland_geometry = shapely.union_all(inland_water_parts)
-        inland_water = shapely.intersects_xy(inland_geometry, grid_x, grid_y) & inside
+    if baseline_water_geometry is not None:
+        baseline_water = transform(
+            to_local_transformer.transform,
+            _as_shapely_geometry(baseline_water_geometry, shape),
+        )
+        baseline_water_mask = shapely.intersects_xy(baseline_water, grid_x, grid_y) & inside
+        if baseline_land_geometry is not None:
+            baseline_land = transform(
+                to_local_transformer.transform,
+                _as_shapely_geometry(baseline_land_geometry, shape),
+            )
+            baseline_land_mask = shapely.intersects_xy(baseline_land, grid_x, grid_y) & inside
+            unclassified = inside & ~baseline_land_mask & ~baseline_water_mask
+            maritime = baseline_water_mask | unclassified
+            classification_method = "external_land_water_polygons"
+        else:
+            maritime = baseline_water_mask
+            classification_method = "external_water_polygons"
+        coastline_refinement_distance = None
+        coastline_partition_count = 0
+        ambiguous_partition_count = 0
+        coastline_barrier_cells = 0
+    elif baseline_land_geometry is not None:
+        baseline_land = transform(
+            to_local_transformer.transform,
+            _as_shapely_geometry(baseline_land_geometry, shape),
+        )
+        baseline_land_mask = shapely.intersects_xy(baseline_land, grid_x, grid_y) & inside
+        maritime = inside & ~baseline_land_mask
+        classification_method = "baseline_land_with_local_osm_coastline"
+        if refine_baseline_with_coastlines and distance_grid is not None and directed_maritime is not None:
+            coastline_refinement_distance = max(2.0 * grid_spacing_m, sample_spacing)
+            coastline_refinement = inside & (distance_grid <= coastline_refinement_distance)
+            maritime[coastline_refinement] = directed_maritime[coastline_refinement]
+        else:
+            coastline_refinement_distance = None
+        coastline_partition_count = 0
+        ambiguous_partition_count = 0
+        coastline_barrier_cells = 0
     else:
-        inland_water = np.zeros_like(inside)
+        maritime, coastline_partition_count, ambiguous_partition_count, coastline_barrier_cells = (
+            _classify_coastline_partitions(
+                directed_maritime,
+                distance_grid,
+                inside,
+                grid_spacing_m=grid_spacing_m,
+                coastline_sample_spacing_m=sample_spacing,
+                label_function=label,
+                structure=generate_binary_structure(2, 1),
+            )
+        )
+        coastline_refinement_distance = None
+        classification_method = "coastline_barrier_raster_components"
+
+    inland_water &= inside
     water_mask = maritime | inland_water
     land_mask = inside & ~water_mask
 
@@ -338,21 +419,87 @@ def build_surface_regions(
         bounds=topography.bounds,
         grid_spacing_m=grid_spacing_m,
         metadata={
-            "method": "directed_osm_coastline_raster_components",
+            "method": classification_method,
+            "baseline_land_source": baseline_land_source,
+            "baseline_water_source": baseline_water_source,
+            "baseline_coastline_refinement": refine_baseline_with_coastlines,
+            "coastline_refinement_distance_m": coastline_refinement_distance,
             "connectivity": 4,
             "minimum_region_area_m2": minimum_region_area_m2,
             "simplify_meters": simplify_meters,
             "coastline_feature_count": coastline_feature_count,
             "coastline_sample_count": len(coastline_samples),
+            "coastline_partition_count": coastline_partition_count,
+            "ambiguous_coastline_partition_count": ambiguous_partition_count,
+            "coastline_barrier_cell_count": coastline_barrier_cells,
             "water_polygon_count": water_polygon_count,
             "repaired_water_polygon_count": repaired_water_polygon_count,
             "source_files": source_files,
             "source_complete": source_complete,
             "expected_source_count": expected_source_count,
-            "maximum_coastline_distance_m": float(distances[inside.ravel()].max(initial=0)),
+            "maximum_coastline_distance_m": (
+                float(distances[inside.ravel()].max(initial=0))
+                if distances is not None
+                else None
+            ),
             "dcs_verification": "pending",
         },
     )
+
+
+def _classify_coastline_partitions(
+    directed_maritime: Any,
+    coastline_distance: Any,
+    inside: Any,
+    *,
+    grid_spacing_m: float,
+    coastline_sample_spacing_m: float,
+    label_function: Any,
+    structure: Any,
+) -> tuple[Any, int, int, int]:
+    """Propagate directed coastline evidence only within coast-bounded areas."""
+
+    import numpy as np
+
+    barrier_distance = max(grid_spacing_m, coastline_sample_spacing_m) * 0.9
+    coastline_barrier = inside & (coastline_distance <= barrier_distance)
+    open_cells = inside & ~coastline_barrier
+    partitions, partition_count = label_function(open_cells, structure=structure)
+    if partition_count == 0:
+        return directed_maritime.copy(), 0, 0, int(np.count_nonzero(coastline_barrier))
+
+    evidence_distance = barrier_distance + 2.0 * grid_spacing_m
+    evidence = open_cells & (coastline_distance <= evidence_distance)
+    water_votes = np.bincount(
+        partitions[evidence & directed_maritime],
+        minlength=partition_count + 1,
+    )
+    land_votes = np.bincount(
+        partitions[evidence & ~directed_maritime],
+        minlength=partition_count + 1,
+    )
+
+    # A complete coastline barrier normally gives each partition evidence from
+    # only one side. Fall back to the local directed classification solely for
+    # partitions that do not reach the evidence band or receive equal votes.
+    fallback_water = np.bincount(
+        partitions[open_cells & directed_maritime],
+        minlength=partition_count + 1,
+    )
+    fallback_land = np.bincount(
+        partitions[open_cells & ~directed_maritime],
+        minlength=partition_count + 1,
+    )
+    partition_is_water = water_votes > land_votes
+    unresolved = (water_votes + land_votes == 0) | (water_votes == land_votes)
+    partition_is_water[unresolved] = fallback_water[unresolved] > fallback_land[unresolved]
+    partition_is_water[0] = False
+
+    maritime = np.zeros_like(inside, dtype=bool)
+    maritime[open_cells] = partition_is_water[partitions[open_cells]]
+    maritime[coastline_barrier] = directed_maritime[coastline_barrier]
+    ambiguous = int(np.count_nonzero((water_votes[1:] > 0) & (land_votes[1:] > 0)))
+    return maritime, int(partition_count), ambiguous, int(np.count_nonzero(coastline_barrier))
 
 
 def _surface_lines(geometry: Any) -> list[Any]:
@@ -363,6 +510,39 @@ def _surface_lines(geometry: Any) -> list[Any]:
     if hasattr(geometry, "geoms"):
         return [line for part in geometry.geoms for line in _surface_lines(part)]
     return []
+
+
+def _as_shapely_geometry(geometry: Any, shape_function: Any) -> Any:
+    """Accept either a GeoJSON mapping or an already materialized geometry."""
+
+    return geometry if hasattr(geometry, "geom_type") else shape_function(geometry)
+
+
+def _rasterize_geometry(
+    target: Any,
+    geometry: Any,
+    x_coordinates: Any,
+    y_coordinates: Any,
+    *,
+    shapely_module: Any,
+) -> None:
+    """Burn one geometry into the smallest intersecting grid window."""
+
+    import numpy as np
+
+    min_x, min_y, max_x, max_y = geometry.bounds
+    column_start = max(0, int(np.searchsorted(x_coordinates, min_x, side="left")))
+    column_stop = min(len(x_coordinates), int(np.searchsorted(x_coordinates, max_x, side="right")))
+    row_start = max(0, int(np.searchsorted(y_coordinates, min_y, side="left")))
+    row_stop = min(len(y_coordinates), int(np.searchsorted(y_coordinates, max_y, side="right")))
+    if column_start >= column_stop or row_start >= row_stop:
+        return
+    window = shapely_module.intersects_xy(
+        geometry,
+        x_coordinates[np.newaxis, column_start:column_stop],
+        y_coordinates[row_start:row_stop, np.newaxis],
+    )
+    target[row_start:row_stop, column_start:column_stop] |= window
 
 
 def _regions_from_labels(

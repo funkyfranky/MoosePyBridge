@@ -12,9 +12,10 @@ import logging
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
 from .control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
@@ -36,6 +37,7 @@ from .operational_audit import execution_from_dict
 from .recon import ReconArea, build_recon_coverage_footprints
 from .recon import RECON_EXECUTION_AUDIT_TYPE
 from .topography import TheaterTopography
+from .topography_viewport import DEFAULT_VIEWPORT_FEATURE_LIMIT, TopographyViewportStore
 from .surface_regions import TheaterSurfaceRegions
 
 LOGGER = logging.getLogger(__name__)
@@ -57,6 +59,7 @@ DEFAULT_INCURSION_SUPPORT_RADIUS_M = 30_000.0
 DEFAULT_LODGEMENT_MIN_FORCES = 3
 DEFAULT_MAX_TOPOGRAPHY_BYTES = 256 * 1024 * 1024
 DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
+DEFAULT_TOPOGRAPHY_VIEWPORT_PATH = Path("tmp/topography/viewport/manifest.json")
 DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
@@ -147,6 +150,7 @@ class GlobalMapRuntime:
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES
     topography_path: Path | None = None
     max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES
+    topography_viewport_path: Path | None = None
     surface_regions_path: Path | None = None
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
@@ -171,6 +175,8 @@ class GlobalMapRuntime:
     _border_violation_signature: tuple[tuple[str, str, float, bool], ...] = ()
     _topography: TheaterTopography | None = field(init=False, default=None)
     _topography_load_warning: str | None = field(init=False, default=None)
+    _topography_viewport: TopographyViewportStore | None = field(init=False, default=None)
+    _topography_viewport_error: str | None = field(init=False, default=None)
     _surface_regions: TheaterSurfaceRegions | None = field(init=False, default=None)
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
@@ -193,6 +199,7 @@ class GlobalMapRuntime:
             )
         )
         self.load_topography()
+        self.load_topography_viewport()
         self.load_surface_regions()
 
     def load_topography(self) -> TheaterTopography | None:
@@ -224,6 +231,48 @@ class GlobalMapRuntime:
         """Return the static theater data independently of mission updates."""
 
         return self._topography.to_geojson() if self._topography is not None else empty_picture()
+
+    def load_topography_viewport(self) -> TopographyViewportStore | None:
+        """Load the optional indexed topography manifest without reading its shards."""
+
+        self._topography_viewport = None
+        self._topography_viewport_error = None
+        if self.topography_viewport_path is None or not self.topography_viewport_path.is_file():
+            return None
+        try:
+            self._topography_viewport = TopographyViewportStore(self.topography_viewport_path)
+        except (OSError, ValueError) as exc:
+            self._topography_viewport_error = str(exc)
+            LOGGER.warning("Could not load topography viewport manifest %s: %s", self.topography_viewport_path, exc)
+            return None
+        LOGGER.info(
+            "Loaded %d-feature %s topography viewport index from %s",
+            self._topography_viewport.feature_count,
+            self._topography_viewport.theater_id,
+            self.topography_viewport_path,
+        )
+        return self._topography_viewport
+
+    def topography_viewport_geojson(
+        self,
+        bounds: tuple[float, float, float, float],
+        *,
+        zoom: float,
+        layers: list[str] | None = None,
+        limit: int = DEFAULT_VIEWPORT_FEATURE_LIMIT,
+    ) -> dict[str, Any]:
+        """Return indexed topography for one visible browser extent."""
+
+        if self._topography_viewport is None:
+            return empty_picture()
+        return self._topography_viewport.query(bounds, zoom=zoom, layers=layers, limit=limit)
+
+    def topography_vector_tile(self, layer: str, zoom: int, x: int, y: int) -> tuple[bytes, dict[str, Any]]:
+        """Return one cached MVT tile and its diagnostics."""
+
+        if self._topography_viewport is None:
+            return b"", {"feature_count": 0, "truncated": False}
+        return self._topography_viewport.vector_tile(layer, zoom, x, y)
 
     def load_surface_regions(self) -> TheaterSurfaceRegions | None:
         """Load optional static connected surface components."""
@@ -274,6 +323,9 @@ class GlobalMapRuntime:
             "topography_theater_id": self._topography.theater_id if self._topography else None,
             "topography_feature_count": len(self._topography.features) if self._topography else 0,
             "topography_load_warning": self._topography_load_warning,
+            "topography_viewport_available": self._topography_viewport is not None,
+            "topography_viewport_feature_count": self._topography_viewport.feature_count if self._topography_viewport else 0,
+            "topography_viewport_error": self._topography_viewport_error,
             "surface_region_count": len(self._surface_regions.regions) if self._surface_regions else 0,
             "surface_regions_source_complete": (
                 self._surface_regions.metadata.get("source_complete") if self._surface_regions else None
@@ -995,6 +1047,7 @@ def create_app(
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES,
     topography_path: Path | None = DEFAULT_TOPOGRAPHY_PATH,
     max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES,
+    topography_viewport_path: Path | None = DEFAULT_TOPOGRAPHY_VIEWPORT_PATH,
     surface_regions_path: Path | None = DEFAULT_SURFACE_REGIONS_PATH,
 ) -> FastAPI:
     """Create the FastAPI map application."""
@@ -1018,6 +1071,7 @@ def create_app(
         lodgement_min_forces=lodgement_min_forces,
         topography_path=topography_path,
         max_topography_bytes=max_topography_bytes,
+        topography_viewport_path=topography_viewport_path,
         surface_regions_path=surface_regions_path,
     )
 
@@ -1032,6 +1086,11 @@ def create_app(
     app = FastAPI(title="MooseBridge Global Map", lifespan=lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.state.runtime = runtime
+    # GDAL/FlatGeobuf reads become dramatically slower when many MapLibre tile
+    # requests hit the same large shards concurrently. A single worker keeps
+    # generation predictable; completed tiles remain covered by both caches.
+    topography_tile_semaphore = asyncio.Semaphore(1)
+    app.state.topography_tile_concurrency = 1
 
     @app.middleware("http")
     async def revalidate_map_ui(request: Any, call_next: Any) -> Any:
@@ -1057,6 +1116,45 @@ def create_app(
     @app.get("/api/topography/global.geojson")
     async def global_topography() -> dict[str, Any]:
         return runtime.topography_geojson()
+
+    @app.get("/api/topography/viewport.geojson")
+    async def viewport_topography(
+        west: float,
+        south: float,
+        east: float,
+        north: float,
+        zoom: float,
+        layers: str = "",
+        limit: int = DEFAULT_VIEWPORT_FEATURE_LIMIT,
+    ) -> dict[str, Any]:
+        selected_layers = [value for value in layers.split(",") if value] or None
+        try:
+            return await run_in_threadpool(
+                runtime.topography_viewport_geojson,
+                (west, south, east, north),
+                zoom=zoom,
+                layers=selected_layers,
+                limit=limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/topography/tiles/{layer}/{zoom}/{x}/{y}.pbf")
+    async def topography_vector_tile(layer: str, zoom: int, x: int, y: int) -> Response:
+        try:
+            async with topography_tile_semaphore:
+                payload, diagnostics = await run_in_threadpool(runtime.topography_vector_tile, layer, zoom, x, y)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return Response(
+            content=payload,
+            media_type="application/vnd.mapbox-vector-tile",
+            headers={
+                "Cache-Control": "public, max-age=3600",
+                "X-Feature-Count": str(diagnostics.get("feature_count", 0)),
+                "X-Source-Truncated": str(bool(diagnostics.get("truncated"))).lower(),
+            },
+        )
 
     @app.get("/api/surface-regions/global.geojson")
     async def global_surface_regions() -> dict[str, Any]:
@@ -1108,6 +1206,12 @@ def main() -> None:
         help="Maximum static GeoJSON size loaded into memory; zero disables the guard.",
     )
     parser.add_argument(
+        "--topography-viewport",
+        type=Path,
+        default=DEFAULT_TOPOGRAPHY_VIEWPORT_PATH,
+        help="Indexed topography viewport manifest.",
+    )
+    parser.add_argument(
         "--surface-regions",
         type=Path,
         default=DEFAULT_SURFACE_REGIONS_PATH,
@@ -1144,6 +1248,7 @@ def main() -> None:
         lodgement_min_forces=max(1, args.lodgement_min_forces),
         topography_path=args.topography,
         max_topography_bytes=max(0, int(args.max_topography_mb * 1024 * 1024)),
+        topography_viewport_path=args.topography_viewport,
         surface_regions_path=args.surface_regions,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
