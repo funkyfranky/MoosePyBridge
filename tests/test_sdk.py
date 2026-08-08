@@ -158,6 +158,8 @@ class FakeSdkServer:
                     "distance_m": 12500,
                     "raw_point_count": 42,
                     "sample_spacing_m": 100,
+                    "pathfinding_cpu_ms": 12.5,
+                    "total_cpu_ms": 18.75,
                     "count": 3,
                     "points": [
                         {"latitude": 54.0, "longitude": 12.0},
@@ -346,6 +348,8 @@ def test_sdk_road_route_returns_bounded_native_dcs_path() -> None:
         assert route.distance_m == 12500
         assert route.raw_point_count == 42
         assert len(route.points) == 3
+        assert route.pathfinding_cpu_ms == 12.5
+        assert route.total_cpu_ms == 18.75
         command, timeout = server.commands[0]
         assert command.action == "terrain.road_route"
         assert command.params == {

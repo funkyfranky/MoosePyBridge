@@ -32,6 +32,8 @@ def test_bridge_exposes_bounded_native_dcs_road_routing() -> None:
     assert "land.findPathOnRoads(" in source
     assert "max_points must be in range 2..2000" in source
     assert "sample_spacing_m=effective_spacing" in source
+    assert "pathfinding_cpu_ms=pathfinding_cpu_ms" in source
+    assert "total_cpu_ms=total_cpu_ms" in source
 
 
 def test_ops_snapshots_use_moose_available_asset_counts() -> None:

@@ -195,6 +195,16 @@ from .ground_mobility import (
     build_ground_mobility_network,
     format_ground_route,
 )
+from .road_routing import (
+    LOGISTICS_ROAD_PROFILE,
+    TRACKED_ROAD_PROFILE,
+    WHEELED_ROAD_PROFILE,
+    PythonRoadRoute,
+    RoadRoutingNetwork,
+    RoadVehicleProfile,
+    build_road_routing_network,
+    format_python_road_route,
+)
 from .models import (
     Auftrag,
     Intel,
@@ -799,4 +809,12 @@ __all__ = [
     "WHEELED_GROUND_PROFILE",
     "build_ground_mobility_network",
     "format_ground_route",
+    "RoadVehicleProfile",
+    "PythonRoadRoute",
+    "RoadRoutingNetwork",
+    "TRACKED_ROAD_PROFILE",
+    "WHEELED_ROAD_PROFILE",
+    "LOGISTICS_ROAD_PROFILE",
+    "build_road_routing_network",
+    "format_python_road_route",
 ]

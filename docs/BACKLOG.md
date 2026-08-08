@@ -175,6 +175,12 @@ Priorities:
   bridges, and constrain naval regions by vessel class, water width, depth
   evidence, and bridge clearance where such evidence exists. MOOSE/DCS remains
   responsible for the final tactical route.
+- [ ] **Extend the compact Python road graph across the complete GermanyCW
+  theater.** Merge the already downloaded regional Geofabrik PBF extracts,
+  deduplicate overlap nodes and ways, and verify cross-border connectivity.
+- [ ] **Calibrate Python road speeds and connector handling against DCS.** Use
+  representative wheeled, tracked, and logistics movements; keep all roads
+  bidirectional and unrestricted, with bridges retained as metadata only.
 - [ ] **Quantify coastline displacement against DCS.** Sample transects across
   OSM shorelines and compare the DCS `land.getSurfaceType()` transition while
   retaining uncertainty near complex harbour and shallow-water geometry.
@@ -184,6 +190,11 @@ Priorities:
   ground or naval connection.
 ## Recently completed
 
+- [x] A compact Pyrosm-derived Python road router now complements native DCS
+  routing. Its NumPy/CSR graph uses unrestricted bidirectional military access,
+  A* travel-time routing, typed vehicle profiles, persistent NPZ artifacts, and
+  side-by-side DCS/Python timing and F10 diagnostics. The initial MV artifact
+  contains 562,053 nodes and 580,866 edges in 25.7 MiB.
 - [x] A versioned 5 km GermanyCW ground-mobility graph combines connected land
   regions, four strategic OSM road classes, and explicit bridge-head links.
   A* routing supports conservative wheeled and tracked speed profiles while

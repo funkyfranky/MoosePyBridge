@@ -2050,6 +2050,7 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   end)
 
   self:RegisterCommand("terrain.road_route", function(cmd)
+    local total_cpu_started = os and os.clock and os.clock() or nil
     local p = cmd.params or {}
     if not land or not land.findPathOnRoads then error("DCS land.findPathOnRoads is not available") end
     local start_id = self:_OptionalString(p.start_object_id)
@@ -2064,6 +2065,7 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
 
     local start_point = self:_PointForObjectId(start_id)
     local end_point = self:_PointForObjectId(end_id)
+    local pathfinding_cpu_started = os and os.clock and os.clock() or nil
     local raw_path = land.findPathOnRoads(
       road_type,
       start_point.x,
@@ -2071,6 +2073,7 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
       end_point.x,
       end_point.z
     )
+    local pathfinding_cpu_ms = pathfinding_cpu_started and (os.clock() - pathfinding_cpu_started) * 1000 or nil
     if type(raw_path) ~= "table" or #raw_path < 2 then error("DCS returned no connected road route") end
 
     local distance = 0
@@ -2109,6 +2112,7 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
       end
     end
     append_route_point(raw_path[#raw_path])
+    local total_cpu_ms = total_cpu_started and (os.clock() - total_cpu_started) * 1000 or nil
     return {
       action="terrain.road_route",
       road_type=road_type,
@@ -2118,6 +2122,8 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
       raw_point_count=#raw_path,
       sample_spacing_m=effective_spacing,
       count=#points,
+      pathfinding_cpu_ms=pathfinding_cpu_ms,
+      total_cpu_ms=total_cpu_ms,
       points=points,
     }
   end)

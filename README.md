@@ -1560,7 +1560,25 @@ Edit the two object IDs and movement profile at the top of the example. After
 the strategic graph confirms connectivity, the SDK requests one bounded native
 `land.findPathOnRoads` route from DCS. The console reports both results and the
 refined DCS road route is drawn in magenta on the F10 map. Native road routing
-is intentionally used only for selected corridors because DCS calculates it
+can now be compared with an additional compact Python/OSM graph. Build the
+regional Mecklenburg-Vorpommern prototype once and run the comparison or
+latency benchmark:
+
+```powershell
+python -m pip install -e ".[routing]"
+python tools/build_road_routing.py
+python examples/sdk/inspect_ground_route.py
+python examples/sdk/benchmark_road_routing.py
+```
+
+The Python graph deliberately treats every imported road as bidirectional and
+ignores OSM access restrictions, matching permissive DCS military movement.
+Road class affects estimated speed; bridges are retained as metadata without
+weight or access restrictions. The F10 comparison draws native DCS in magenta
+and Python/OSM in cyan. DCS returns both `findPathOnRoads` CPU time and total Lua
+command CPU time when the current bridge version is loaded.
+
+Native road routing is intentionally used only for selected corridors because DCS calculates it
 synchronously and can return many points.
 
 The header shows the shared relationship, escalation score, pending transition,

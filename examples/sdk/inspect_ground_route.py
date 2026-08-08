@@ -18,10 +18,14 @@ if LOCAL_PYTHON_DIR.exists():
 
 from moosebridge import (
     DebugMarkup,
+    DebugMarkupPoint,
     GroundMobilityNetwork,
     MooseBridgeClient,
+    RoadRoutingNetwork,
+    TRACKED_ROAD_PROFILE,
     TRACKED_GROUND_PROFILE,
     format_ground_route,
+    format_python_road_route,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
 from moosebridge.control_sdk import sdk_from_control_client
@@ -32,11 +36,22 @@ CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 
 NETWORK_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
+ROAD_NETWORK_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-road-routing-mv.npz"
 START_OBJECT_ID = "AIRBASE:Laage"
 END_OBJECT_ID = "AIRBASE:Gross Mohrdorf"
 PROFILE = TRACKED_GROUND_PROFILE
 OVERLAY_ID = "ground-mobility-route"
 ROUTE_COLOR = (1.0, 0.0, 0.85, 1.0)
+PYTHON_ROUTE_COLOR = (0.0, 0.85, 1.0, 1.0)
+
+
+def _sample_points(points: tuple[tuple[float, float], ...], maximum: int = 450) -> tuple[DebugMarkupPoint, ...]:
+    if len(points) <= maximum:
+        selected = points
+    else:
+        indexes = [round(index * (len(points) - 1) / (maximum - 1)) for index in range(maximum)]
+        selected = tuple(points[index] for index in indexes)
+    return tuple(DebugMarkupPoint(latitude, longitude) for latitude, longitude in selected)
 
 
 async def run() -> int:
@@ -77,6 +92,20 @@ async def run() -> int:
     if route is None:
         return 6
 
+    python_route = None
+    if ROAD_NETWORK_PATH.is_file():
+        road_network = RoadRoutingNetwork.load(ROAD_NETWORK_PATH)
+        python_route = road_network.route(
+            start.latitude,
+            start.longitude,
+            end.latitude,
+            end.longitude,
+            profile=TRACKED_ROAD_PROFILE,
+        )
+        print(format_python_road_route(python_route))
+    else:
+        print(f"Python road graph not found: {ROAD_NETWORK_PATH}")
+
     dcs_route = await bridge.road_route(
         START_OBJECT_ID,
         END_OBJECT_ID,
@@ -89,18 +118,26 @@ async def run() -> int:
         f"points={len(dcs_route.points)}/{dcs_route.raw_point_count} "
         f"spacing={dcs_route.sample_spacing_m:.0f}m"
     )
+    if dcs_route.pathfinding_cpu_ms is not None:
+        print(
+            f"Native DCS CPU: pathfinding={dcs_route.pathfinding_cpu_ms:.2f}ms "
+            f"total={dcs_route.total_cpu_ms:.2f}ms"
+        )
     drawn = False
     try:
+        markups = [DebugMarkup("line", dcs_route.points, color=ROUTE_COLOR)]
+        if python_route is not None:
+            markups.append(DebugMarkup("line", _sample_points(python_route.points), color=PYTHON_ROUTE_COLOR))
         ack = await bridge.draw_debug_overlay(
             OVERLAY_ID,
-            (DebugMarkup("line", dcs_route.points, color=ROUTE_COLOR),),
+            tuple(markups),
             replace=True,
             timeout=COMMAND_TIMEOUT_SECONDS,
         )
         drawn = True
         print(f"DCS overlay: {ack.get('result') or ack}")
-        print("The magenta line follows the native DCS road topology.")
-        await asyncio.to_thread(input, "Inspect the magenta route, then press Enter to remove it ... ")
+        print("Magenta=native DCS road route; cyan=local Python/OSM road route.")
+        await asyncio.to_thread(input, "Inspect both routes, then press Enter to remove them ... ")
     finally:
         if drawn:
             ack = await bridge.clear_debug_overlay(

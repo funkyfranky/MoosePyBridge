@@ -123,6 +123,8 @@ class DcsRoadRoute:
     distance_m: float
     raw_point_count: int
     sample_spacing_m: float
+    pathfinding_cpu_ms: float | None = None
+    total_cpu_ms: float | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "DcsRoadRoute":
@@ -148,6 +150,13 @@ class DcsRoadRoute:
             raise ValueError("DCS road route contains non-finite values")
         if distance_m < 0 or raw_point_count < len(points) or sample_spacing_m < 0:
             raise ValueError("DCS road route contains invalid metrics")
+        cpu_values: list[float | None] = []
+        for key in ("pathfinding_cpu_ms", "total_cpu_ms"):
+            value = payload.get(key)
+            parsed = None if value is None else float(value)
+            if parsed is not None and (not math.isfinite(parsed) or parsed < 0):
+                raise ValueError("DCS road route contains invalid CPU metrics")
+            cpu_values.append(parsed)
         return cls(
             start_object_id=str(payload.get("start_object_id") or ""),
             end_object_id=str(payload.get("end_object_id") or ""),
@@ -156,6 +165,8 @@ class DcsRoadRoute:
             distance_m=distance_m,
             raw_point_count=raw_point_count,
             sample_spacing_m=sample_spacing_m,
+            pathfinding_cpu_ms=cpu_values[0],
+            total_cpu_ms=cpu_values[1],
         )
 
 
