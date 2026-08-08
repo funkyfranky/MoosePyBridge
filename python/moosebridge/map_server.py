@@ -55,6 +55,7 @@ DEFAULT_TERRITORY_TRANSITION_M = 20_000.0
 DEFAULT_PRESSURE_TERRITORY_RATIO = 0.08
 DEFAULT_INCURSION_SUPPORT_RADIUS_M = 30_000.0
 DEFAULT_LODGEMENT_MIN_FORCES = 3
+DEFAULT_MAX_TOPOGRAPHY_BYTES = 256 * 1024 * 1024
 DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
 DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
@@ -145,6 +146,7 @@ class GlobalMapRuntime:
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES
     topography_path: Path | None = None
+    max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES
     surface_regions_path: Path | None = None
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
@@ -168,6 +170,7 @@ class GlobalMapRuntime:
     _diplomacy_event_cursor: str | None = None
     _border_violation_signature: tuple[tuple[str, str, float, bool], ...] = ()
     _topography: TheaterTopography | None = field(init=False, default=None)
+    _topography_load_warning: str | None = field(init=False, default=None)
     _surface_regions: TheaterSurfaceRegions | None = field(init=False, default=None)
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
@@ -196,7 +199,17 @@ class GlobalMapRuntime:
         """Load the optional static theater cache without touching DCS."""
 
         self._topography = None
+        self._topography_load_warning = None
         if self.topography_path is None or not self.topography_path.is_file():
+            return None
+        size_bytes = self.topography_path.stat().st_size
+        if self.max_topography_bytes > 0 and size_bytes > self.max_topography_bytes:
+            self._topography_load_warning = (
+                f"Static topography cache is {size_bytes / (1024 * 1024):.1f} MiB; "
+                f"the configured in-memory limit is {self.max_topography_bytes / (1024 * 1024):.1f} MiB. "
+                "Use a bounded cache or viewport/tile delivery."
+            )
+            LOGGER.warning("Skipping %s: %s", self.topography_path, self._topography_load_warning)
             return None
         self._topography = TheaterTopography.load(self.topography_path)
         LOGGER.info(
@@ -260,6 +273,7 @@ class GlobalMapRuntime:
             "recon_coverage_error": self._recon_error,
             "topography_theater_id": self._topography.theater_id if self._topography else None,
             "topography_feature_count": len(self._topography.features) if self._topography else 0,
+            "topography_load_warning": self._topography_load_warning,
             "surface_region_count": len(self._surface_regions.regions) if self._surface_regions else 0,
             "surface_regions_source_complete": (
                 self._surface_regions.metadata.get("source_complete") if self._surface_regions else None
@@ -980,6 +994,7 @@ def create_app(
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M,
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES,
     topography_path: Path | None = DEFAULT_TOPOGRAPHY_PATH,
+    max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES,
     surface_regions_path: Path | None = DEFAULT_SURFACE_REGIONS_PATH,
 ) -> FastAPI:
     """Create the FastAPI map application."""
@@ -1002,6 +1017,7 @@ def create_app(
         incursion_support_radius_m=incursion_support_radius_m,
         lodgement_min_forces=lodgement_min_forces,
         topography_path=topography_path,
+        max_topography_bytes=max_topography_bytes,
         surface_regions_path=surface_regions_path,
     )
 
@@ -1086,6 +1102,12 @@ def main() -> None:
     parser.add_argument("--lodgement-min-forces", type=int, default=DEFAULT_LODGEMENT_MIN_FORCES, help="Connected hostile groups required to establish a lodgement.")
     parser.add_argument("--topography", type=Path, default=DEFAULT_TOPOGRAPHY_PATH, help="Static theater-topography GeoJSON cache.")
     parser.add_argument(
+        "--max-topography-mb",
+        type=float,
+        default=DEFAULT_MAX_TOPOGRAPHY_BYTES / (1024 * 1024),
+        help="Maximum static GeoJSON size loaded into memory; zero disables the guard.",
+    )
+    parser.add_argument(
         "--surface-regions",
         type=Path,
         default=DEFAULT_SURFACE_REGIONS_PATH,
@@ -1121,6 +1143,7 @@ def main() -> None:
         incursion_support_radius_m=max(1.0, args.incursion_support_radius),
         lodgement_min_forces=max(1, args.lodgement_min_forces),
         topography_path=args.topography,
+        max_topography_bytes=max(0, int(args.max_topography_mb * 1024 * 1024)),
         surface_regions_path=args.surface_regions,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())

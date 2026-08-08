@@ -91,6 +91,7 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "recon_coverage_error": None,
         "topography_theater_id": None,
         "topography_feature_count": 0,
+        "topography_load_warning": None,
         "surface_region_count": 0,
         "surface_regions_source_complete": None,
         "diplomacy": None,
@@ -118,6 +119,17 @@ def test_map_runtime_serves_topography_separately_from_dynamic_picture() -> None
     assert runtime.picture == empty_picture()
     assert len(payload["features"]) == 1
     assert payload["features"][0]["properties"]["layer"] == "topography_roads"
+
+
+def test_map_runtime_skips_topography_above_memory_limit(tmp_path) -> None:
+    cache = tmp_path / "large.geojson"
+    cache.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+
+    runtime = GlobalMapRuntime(topography_path=cache, max_topography_bytes=8)
+
+    assert runtime.topography_geojson() == empty_picture()
+    assert runtime.status_payload()["topography_feature_count"] == 0
+    assert "configured in-memory limit" in runtime.status_payload()["topography_load_warning"]
 
 
 def test_map_runtime_serves_surface_regions_separately_from_mission_state() -> None:

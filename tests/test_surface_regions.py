@@ -88,3 +88,46 @@ def test_surface_region_geojson_round_trip(tmp_path) -> None:
     assert restored.grid_spacing_m == original.grid_spacing_m
     assert len(restored.regions) == len(original.regions)
     assert restored.to_geojson()["properties"]["schema"] == "moosebridge.theater_surface_regions"
+
+
+def test_surface_region_builder_repairs_invalid_water_polygon() -> None:
+    pytest.importorskip("contourpy")
+    pytest.importorskip("scipy")
+    pytest.importorskip("shapely")
+    topography = TheaterTopography(
+        theater_id="TestTheater",
+        bounds=(53.9, 11.9, 54.1, 12.1),
+        features=(
+            TopographyFeature(
+                object_id="TOPOGRAPHY:coast",
+                layer=TopographyLayer.WATER,
+                category="coastline",
+                geometry={"type": "LineString", "coordinates": [[12.0, 53.9], [12.0, 54.1]]},
+                source="OpenStreetMap",
+                confidence=0.75,
+            ),
+            TopographyFeature(
+                object_id="TOPOGRAPHY:invalid-water",
+                layer=TopographyLayer.WATER,
+                category="lake",
+                geometry={
+                    "type": "Polygon",
+                    "coordinates": [[
+                        [11.92, 53.94], [11.98, 54.00], [11.92, 54.00],
+                        [11.98, 53.94], [11.92, 53.94],
+                    ]],
+                },
+                source="OpenStreetMap",
+                confidence=0.75,
+            ),
+        ),
+    )
+
+    result = build_surface_regions(
+        topography,
+        grid_spacing_m=1_000,
+        minimum_region_area_m2=100_000,
+    )
+
+    assert result.metadata["repaired_water_polygon_count"] == 1
+    assert any(region.kind is SurfaceRegionKind.INLAND_WATER for region in result.regions)

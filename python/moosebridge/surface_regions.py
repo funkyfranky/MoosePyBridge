@@ -214,6 +214,7 @@ def build_surface_regions(
     inland_water_parts: list[Any] = []
     coastline_feature_count = 0
     water_polygon_count = 0
+    repaired_water_polygon_count = 0
 
     for feature in topography.features:
         if feature.layer is not TopographyLayer.WATER:
@@ -234,7 +235,13 @@ def build_surface_regions(
                         midpoint = first + delta * ((index + 0.5) / count)
                         coastline_samples.append((midpoint[0], midpoint[1], direction[0], direction[1]))
         elif geometry.geom_type in {"Polygon", "MultiPolygon"}:
-            clipped = geometry.intersection(envelope)
+            if not geometry.is_valid:
+                geometry = shapely.make_valid(geometry)
+                repaired_water_polygon_count += 1
+            polygon_parts = _surface_polygons(geometry)
+            if not polygon_parts:
+                continue
+            clipped = shapely.union_all(polygon_parts).intersection(envelope)
             if not clipped.is_empty:
                 inland_water_parts.append(clipped)
                 water_polygon_count += 1
@@ -338,6 +345,7 @@ def build_surface_regions(
             "coastline_feature_count": coastline_feature_count,
             "coastline_sample_count": len(coastline_samples),
             "water_polygon_count": water_polygon_count,
+            "repaired_water_polygon_count": repaired_water_polygon_count,
             "source_files": source_files,
             "source_complete": source_complete,
             "expected_source_count": expected_source_count,

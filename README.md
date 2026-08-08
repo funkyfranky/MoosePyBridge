@@ -1369,11 +1369,15 @@ topology-preservingly simplified by 20 meters by default; override this with
 `--simplify-meters`, or use `--simplify-meters 0` for the original geometry.
 Individual building polygons are deliberately excluded from the browser cache
 by default; add `--include-buildings` when they are needed for a focused test.
-The map server loads `tmp/topography/GermanyCW.geojson` by default; use
-`--topography <path>` for a different cache. Static topography is fetched once
-from `/api/topography/global.geojson` and is not repeated in the five-second DCS
-picture stream. The external layers are disabled initially and grouped under
-`Topography` in the viewer.
+The complete GermanyCW import currently contains more than 4.5 million features
+and is an offline analysis source, not a browser payload. The map server refuses
+to load a static GeoJSON larger than 256 MiB by default and exposes the reason in
+`/api/health`; use `--max-topography-mb` to change the guard. A deliberately
+bounded cache can still be selected with `--topography <path>`. Static
+topography is fetched from `/api/topography/global.geojson` and is not repeated
+in the five-second DCS picture stream. Viewport or vector-tile delivery for the
+complete cache is planned. The external layers are disabled initially and
+grouped under `Topography` in the viewer.
 
 The Overpass importer remains available for small experiments and targeted
 updates:
@@ -1439,7 +1443,7 @@ directed OSM coastline and closed water polygons:
 python tools/build_surface_regions.py
 ```
 
-The default 250 m analysis grid uses four-neighbor connectivity so regions
+The default 500 m full-theater analysis grid uses four-neighbor connectivity so regions
 that touch only at a corner remain separate. Output is written to
 `tmp/topography/GermanyCW-surface-regions.geojson` and records mainland,
 island, maritime, and inland-water components with area, source confidence,
@@ -1449,7 +1453,11 @@ Enable `Connected land` and `Connected water` under `Topography` in the browser
 map. These are physical components only: bridges and vessel-specific width or
 depth constraints belong to the later mobility graph. Output simplification is
 disabled by default because simplifying adjacent components independently can
-create overlaps along their shared coastline.
+create overlaps along their shared coastline. For a complete large import the
+builder first creates and subsequently reuses
+`GermanyCW-surface-source.geojson`, which contains only directed coastlines and
+closed water polygons; use `--refresh-surface-source` after replacing import
+checkpoints.
 
 The header shows the shared relationship, escalation score, pending transition,
 and blue/red doctrine. The map server is the default diplomacy incident

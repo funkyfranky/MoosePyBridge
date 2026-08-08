@@ -77,6 +77,22 @@ def test_overpass_element_can_supply_transport_and_bridge_layers() -> None:
     assert all(feature.valid_from == 1938 for feature in features)
 
 
+def test_inconsistent_osm_validity_dates_do_not_abort_theater_import() -> None:
+    features = features_from_overpass_element(
+        {
+            "type": "way",
+            "id": 43,
+            "tags": {"railway": "rail", "start_date": "2020", "end_date": "1980"},
+            "geometry": [{"lon": 12.0, "lat": 54.0}, {"lon": 12.01, "lat": 54.01}],
+        },
+        scenario_reference_year=1999,
+    )
+
+    assert len(features) == 1
+    assert features[0].valid_from is None
+    assert features[0].valid_to is None
+
+
 def test_tiled_overpass_payloads_are_deduplicated() -> None:
     element = {
         "type": "node",

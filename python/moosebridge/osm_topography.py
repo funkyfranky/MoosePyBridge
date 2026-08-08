@@ -100,6 +100,9 @@ def features_from_overpass_element(
     name = str(tags.get("name") or tags.get("name:en") or "") or None
     valid_from = _tag_year(tags.get("start_date"))
     valid_to = _tag_year(tags.get("end_date"))
+    if valid_from is not None and valid_to is not None and valid_from > valid_to:
+        valid_from = None
+        valid_to = None
     common = {
         "source": "OpenStreetMap",
         "source_id": source_id,

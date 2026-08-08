@@ -118,12 +118,12 @@ Priorities:
 
 ## P2 - Tactical picture
 
-- [ ] **Complete and verify the GermanyCW multi-resolution import.** Capture
-  the DCS-authored `Topography All`, `Topography Low ...`, and `Topography High
-  ...` zones, download all intersecting Geofabrik extracts, build the complete
-  cache, and verify representative coast, road, and surface samples in every
-  detail region. The versioned coverage artifact and level-aware PBF filtering
-  are implemented; the exact mission-editor zones remain mission data.
+- [ ] **Serve complete topography by viewport or vector tile.** The complete
+  GermanyCW analysis cache contains more than 4.5 million features and must not
+  be sent to every browser as one GeoJSON document. Build bounded spatial
+  queries or vector tiles from the versioned import shards, apply zoom-dependent
+  detail levels, and retain the existing static endpoint for small development
+  caches only.
 
 - [ ] **Verify the GermanyCW topography baseline against DCS.** The first
   versioned OSM import and browser layers cover water, major roads, railways,
@@ -183,8 +183,14 @@ Priorities:
 
 ## Recently completed
 
+- [x] The DCS-authored `Topography All`, `Topography Low`, and `Topography High`
+  coverage was captured for GermanyCW. All 36 intersecting Geofabrik sources
+  were downloaded and imported into a checkpointed 4.5-million-feature analysis
+  cache. The complete 500 m surface build records one mainland, 854 islands,
+  524 maritime components, and 17,512 inland-water components with complete
+  source metadata.
 - [x] Directed OSM coastline geometry and closed water polygons produce a
-  versioned 250 m `TheaterSurfaceRegions` artifact. Four-neighbor components
+  versioned `TheaterSurfaceRegions` artifact. Four-neighbor components
   distinguish mainland, islands, maritime water, and inland water; source
   completeness and pending DCS verification remain explicit. The browser map
   exposes separate connected-land and connected-water layers.
