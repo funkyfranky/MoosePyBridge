@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from moosebridge.osm_topography import build_overpass_query, features_from_overpass_element, topography_from_overpass
-from moosebridge.pbf_topography import features_from_pyrosm_record, topography_detail_level
+from moosebridge.pbf_topography import (
+    _normalize_ogr_record,
+    features_from_pyrosm_record,
+    topography_detail_level,
+)
 from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer, merge_topography_features
 
 
@@ -169,3 +173,29 @@ def test_topography_detail_levels_keep_baseline_small_and_local_detail_rich() ->
     assert topography_detail_level(feature(TopographyLayer.ROADS, "primary")).value == "low"
     assert topography_detail_level(feature(TopographyLayer.ROADS, "residential")).value == "high"
     assert topography_detail_level(feature(TopographyLayer.BUILDINGS, "industrial")).value == "high"
+
+
+def test_ogr_record_normalization_preserves_coastline_tags_and_way_identity() -> None:
+    normalized = _normalize_ogr_record(
+        {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": [[12.0, 54.0], [12.1, 54.1]]},
+            "properties": {
+                "osm_id": "42",
+                "name": "Coast",
+                "highway": None,
+                "other_tags": '"natural"=>"coastline","source"=>"survey"',
+            },
+        },
+        "lines",
+    )
+    features = features_from_pyrosm_record(
+        normalized,
+        scenario_reference_year=1999,
+        source_snapshot_date=None,
+        include_buildings=False,
+    )
+
+    assert len(features) == 1
+    assert features[0].category == "coastline"
+    assert features[0].source_id == "OSM:way/42"

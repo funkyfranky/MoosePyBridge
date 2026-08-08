@@ -22,8 +22,56 @@
       "url": "https://download.geofabrik.de/europe/netherlands-latest.osm.pbf"
     },
     {
-      "id": "skane",
-      "url": "https://download.geofabrik.de/europe/sweden/skane-latest.osm.pbf"
+      "id": "belgium",
+      "url": "https://download.geofabrik.de/europe/belgium-latest.osm.pbf"
+    },
+    {
+      "id": "luxembourg",
+      "url": "https://download.geofabrik.de/europe/luxembourg-latest.osm.pbf"
+    },
+    {
+      "id": "switzerland",
+      "url": "https://download.geofabrik.de/europe/switzerland-latest.osm.pbf"
+    },
+    {
+      "id": "austria",
+      "url": "https://download.geofabrik.de/europe/austria-latest.osm.pbf"
+    },
+    {
+      "id": "nord-pas-de-calais",
+      "url": "https://download.geofabrik.de/europe/france/nord-pas-de-calais-latest.osm.pbf"
+    },
+    {
+      "id": "picardie",
+      "url": "https://download.geofabrik.de/europe/france/picardie-latest.osm.pbf"
+    },
+    {
+      "id": "ile-de-france",
+      "url": "https://download.geofabrik.de/europe/france/ile-de-france-latest.osm.pbf"
+    },
+    {
+      "id": "champagne-ardenne",
+      "url": "https://download.geofabrik.de/europe/france/champagne-ardenne-latest.osm.pbf"
+    },
+    {
+      "id": "lorraine",
+      "url": "https://download.geofabrik.de/europe/france/lorraine-latest.osm.pbf"
+    },
+    {
+      "id": "alsace",
+      "url": "https://download.geofabrik.de/europe/france/alsace-latest.osm.pbf"
+    },
+    {
+      "id": "bourgogne",
+      "url": "https://download.geofabrik.de/europe/france/bourgogne-latest.osm.pbf"
+    },
+    {
+      "id": "franche-comte",
+      "url": "https://download.geofabrik.de/europe/france/franche-comte-latest.osm.pbf"
+    },
+    {
+      "id": "sweden",
+      "url": "https://download.geofabrik.de/europe/sweden-latest.osm.pbf"
     },
     {
       "id": "mecklenburg-vorpommern",

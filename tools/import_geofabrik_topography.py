@@ -16,7 +16,7 @@ if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
 from moosebridge.pbf_topography import topography_from_pbf
-from moosebridge.topography import feature_counts
+from moosebridge.topography import TheaterTopography, feature_counts
 from moosebridge.topography_coverage import TheaterTopographyCoverage
 
 
@@ -24,6 +24,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Import a Geofabrik PBF baseline for a DCS theater")
     parser.add_argument("--config", type=Path, default=PYTHON_ROOT / "moosebridge" / "data" / "GermanyCW_topography.json")
     parser.add_argument("--download-dir", type=Path, default=REPO_ROOT / "tmp" / "topography" / "pbf")
+    parser.add_argument("--cache-dir", type=Path, default=REPO_ROOT / "tmp" / "topography" / "import_cache")
     parser.add_argument("--output", type=Path, default=REPO_ROOT / "tmp" / "topography" / "GermanyCW.geojson")
     parser.add_argument("--coverage", type=Path, default=REPO_ROOT / "tmp" / "topography" / "GermanyCW-coverage.geojson")
     parser.add_argument("--source", action="append", dest="sources", help="Import only the named source; repeat as needed.")
@@ -31,6 +32,7 @@ def main() -> int:
     parser.add_argument("--download-only", action="store_true")
     parser.add_argument("--include-buildings", action="store_true", help="Include individual buildings in the browser cache.")
     parser.add_argument("--simplify-meters", type=float, default=20.0, help="Topology-preserving output simplification; use 0 to disable.")
+    parser.add_argument("--refresh-cache", action="store_true", help="Rebuild per-source conversion checkpoints.")
     args = parser.parse_args()
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
@@ -66,21 +68,67 @@ def main() -> int:
             float(bounds_config["north"]), float(bounds_config["east"]),
         )
         print(f"WARNING: coverage file not found; using legacy pilot bounds: {args.coverage}")
-    topography = topography_from_pbf(
-        paths,
+    args.cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_key = _conversion_cache_key(
+        coverage_path=args.coverage if coverage is not None else None,
+        simplify_meters=args.simplify_meters,
+        include_buildings=args.include_buildings,
+    )
+    shards: list[TheaterTopography] = []
+    for index, path in enumerate(paths, start=1):
+        cache_path = args.cache_dir / f"{path.stem}-{cache_key}.geojson"
+        if cache_path.is_file() and not args.refresh_cache:
+            shard = TheaterTopography.load(cache_path)
+            print(f"Cache {index}/{len(paths)}: {path.name} ({len(shard.features)} features)", flush=True)
+        else:
+            print(f"Import {index}/{len(paths)}: {path.name}", flush=True)
+            shard = topography_from_pbf(
+                [path],
+                theater_id=str(config["theater_id"]),
+                scenario_reference_year=int(config["scenario_reference_year"]),
+                bounds=bounds,
+                source_snapshot_dates=source_dates,
+                include_buildings=args.include_buildings,
+                simplify_meters=args.simplify_meters,
+                coverage=coverage,
+            )
+            shard.save(cache_path)
+            print(f"  cached {len(shard.features)} features: {cache_path.name}", flush=True)
+        shards.append(shard)
+
+    features = {feature.object_id: feature for shard in shards for feature in shard.features}
+    snapshots = [shard.source_snapshot_date for shard in shards if shard.source_snapshot_date]
+    topography = TheaterTopography(
         theater_id=str(config["theater_id"]),
         scenario_reference_year=int(config["scenario_reference_year"]),
+        source_snapshot_date=max(snapshots) if snapshots else None,
+        generated_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         bounds=bounds,
-        source_snapshot_dates=source_dates,
-        include_buildings=args.include_buildings,
-        simplify_meters=args.simplify_meters,
-        coverage=coverage,
+        features=tuple(sorted(features.values(), key=lambda feature: feature.object_id)),
+        metadata={
+            "external_source": "OpenStreetMap Geofabrik PBF",
+            "source_files": [path.name for path in paths],
+            "dcs_verification": "pending",
+            "buildings_included": args.include_buildings,
+            "geometry_simplification_m": args.simplify_meters,
+            "coverage_levels": sorted({area.level.value for area in coverage.areas}) if coverage else None,
+            "coverage_area_count": len(coverage.areas) if coverage else 0,
+            "conversion_cache_key": cache_key,
+        },
     )
     topography.save(args.output)
     print(f"Wrote {len(topography.features)} features to {args.output}")
     for layer, count in sorted(feature_counts(topography.features).items()):
         print(f"  {layer}: {count}")
     return 0
+
+
+def _conversion_cache_key(*, coverage_path: Path | None, simplify_meters: float, include_buildings: bool) -> str:
+    digest = hashlib.sha256()
+    digest.update(f"v3-ogr|simplify={simplify_meters:g}|buildings={include_buildings}".encode("ascii"))
+    if coverage_path is not None:
+        digest.update(coverage_path.read_bytes())
+    return digest.hexdigest()[:12]
 
 
 def _ensure_source(source: dict[str, object], directory: Path, *, refresh: bool) -> tuple[Path, str | None]:

@@ -1,4 +1,4 @@
-"""Offline Geofabrik PBF conversion into normalized theater topography."""
+"""Streaming Geofabrik PBF conversion into normalized theater topography."""
 
 from __future__ import annotations
 
@@ -33,11 +33,30 @@ DETAILED_PBF_TAG_FILTER: dict[str, Any] = {
     **PBF_TAG_FILTER,
     "highway": [
         "motorway", "trunk", "primary", "secondary", "tertiary", "unclassified",
-        "residential", "service", "living_street", "track",
     ],
     "railway": ["rail", "light_rail", "tram", "narrow_gauge"],
     "place": ["city", "town", "village", "hamlet"],
-    "landuse": True,
+    "landuse": ["industrial", "commercial", "residential", "retail", "military", "port"],
+}
+
+OGR_LAYER_FILTERS: dict[str, str] = {
+    "points": (
+        "place IN ('city','town','village','hamlet') OR "
+        "man_made IN ('works','water_works','wastewater_plant','storage_tank','silo') OR "
+        "other_tags LIKE '%\"power\"=>\"plant\"%' OR other_tags LIKE '%\"harbour\"=>\"yes\"%'"
+    ),
+    "lines": (
+        "highway IN ('motorway','trunk','primary','secondary','tertiary','unclassified') OR "
+        "waterway IN ('river','canal') OR railway IN ('rail','light_rail','tram','narrow_gauge') OR "
+        "other_tags LIKE '%\"natural\"=>\"coastline\"%' OR other_tags LIKE '%\"bridge\"%'"
+    ),
+    "multipolygons": (
+        "natural = 'water' OR place IN ('city','town','village','hamlet') OR "
+        "landuse IN ('industrial','commercial','residential','retail','military','port') OR "
+        "man_made IN ('works','water_works','wastewater_plant','storage_tank','silo') OR "
+        "military IS NOT NULL OR other_tags LIKE '%\"power\"=>\"plant\"%' OR "
+        "other_tags LIKE '%\"harbour\"=>\"yes\"%'"
+    ),
 }
 
 
@@ -52,19 +71,15 @@ def topography_from_pbf(
     simplify_meters: float = 20.0,
     coverage: TheaterTopographyCoverage | None = None,
 ) -> TheaterTopography:
-    """Read bounded Geofabrik extracts with optional Pyrosm."""
+    """Read bounded Geofabrik extracts with GDAL/OGR through Pyogrio."""
 
     try:
-        from pyrosm import OSM
+        import pyogrio
     except ImportError as exc:
         raise RuntimeError('PBF import requires: python -m pip install -e ".[topography]"') from exc
 
     source_dates = source_snapshot_dates or {}
     west, south, east, north = bounds[1], bounds[0], bounds[3], bounds[2]
-    custom_filter = dict(DETAILED_PBF_TAG_FILTER if coverage is not None else PBF_TAG_FILTER)
-    coverage_has_high = coverage is not None and any(area.level is TopographyDetailLevel.HIGH for area in coverage.areas)
-    if include_buildings or coverage_has_high:
-        custom_filter["building"] = True
     features: dict[str, TopographyFeature] = {}
     snapshots: list[str] = []
     sources: list[str] = []
@@ -76,6 +91,10 @@ def topography_from_pbf(
         except ImportError as exc:
             raise RuntimeError('PBF import requires: python -m pip install -e "[topography]"') from exc
         coverage_masks = {level: coverage.geometry_for_level(level) for level in TopographyDetailLevel}
+        import shapely
+        for mask in coverage_masks.values():
+            if mask is not None:
+                shapely.prepare(mask)
     for raw_path in paths:
         path = Path(raw_path)
         if not path.is_file():
@@ -84,48 +103,47 @@ def topography_from_pbf(
         source_date = source_dates.get(path.name)
         if source_date:
             snapshots.append(source_date)
-        reader = OSM(
-            str(path),
-            bounding_box=[west, south, east, north],
-            keep_metadata=False,
-            complete_relations=True,
-        )
-        frame = reader.get_data_by_custom_criteria(
-            custom_filter=custom_filter,
-            tags_as_columns=list(PBF_TAG_COLUMNS),
-            keep_nodes=True,
-            keep_ways=True,
-            keep_relations=True,
-        )
-        if frame is None or frame.empty:
-            continue
-        if simplify_meters > 0:
-            source_crs = frame.crs or "EPSG:4326"
-            frame = frame.to_crs("EPSG:3035")
-            frame.geometry = frame.geometry.simplify(simplify_meters, preserve_topology=True)
-            frame = frame.to_crs(source_crs)
-        for record in frame.iterfeatures():
-            for feature in features_from_pyrosm_record(
-                record,
-                scenario_reference_year=scenario_reference_year,
-                source_snapshot_date=source_date,
-                include_buildings=include_buildings or coverage_has_high,
-            ):
-                if coverage is not None:
-                    required_level = topography_detail_level(feature)
-                    geometry = shape_geometry(feature.geometry)
-                    eligible_levels = {
-                        TopographyDetailLevel.ALL: TopographyDetailLevel,
-                        TopographyDetailLevel.LOW: (TopographyDetailLevel.LOW, TopographyDetailLevel.HIGH),
-                        TopographyDetailLevel.HIGH: (TopographyDetailLevel.HIGH,),
-                    }[required_level]
-                    if not any(
-                        coverage_masks[level] is not None and coverage_masks[level].intersects(geometry)
-                        for level in eligible_levels
-                    ):
-                        continue
-                    feature = _with_detail_level(feature, required_level)
-                features[feature.object_id] = feature
+        layer_filters = dict(OGR_LAYER_FILTERS)
+        if include_buildings:
+            layer_filters["multipolygons"] += " OR building IS NOT NULL"
+        for layer_name, where in layer_filters.items():
+            frame = pyogrio.read_dataframe(
+                path,
+                layer=layer_name,
+                bbox=(west, south, east, north),
+                where=where,
+                use_arrow=True,
+            )
+            if frame is None or frame.empty:
+                continue
+            if simplify_meters > 0:
+                source_crs = frame.crs or "EPSG:4326"
+                frame = frame.to_crs("EPSG:3035")
+                frame.geometry = frame.geometry.simplify(simplify_meters, preserve_topology=True)
+                frame = frame.to_crs(source_crs)
+            for record in frame.iterfeatures():
+                normalized = _normalize_ogr_record(record, layer_name)
+                for feature in features_from_pyrosm_record(
+                    normalized,
+                    scenario_reference_year=scenario_reference_year,
+                    source_snapshot_date=source_date,
+                    include_buildings=include_buildings,
+                ):
+                    if coverage is not None:
+                        required_level = topography_detail_level(feature)
+                        geometry = shape_geometry(feature.geometry)
+                        eligible_levels = {
+                            TopographyDetailLevel.ALL: TopographyDetailLevel,
+                            TopographyDetailLevel.LOW: (TopographyDetailLevel.LOW, TopographyDetailLevel.HIGH),
+                            TopographyDetailLevel.HIGH: (TopographyDetailLevel.HIGH,),
+                        }[required_level]
+                        if not any(
+                            coverage_masks[level] is not None and coverage_masks[level].intersects(geometry)
+                            for level in eligible_levels
+                        ):
+                            continue
+                        feature = _with_detail_level(feature, required_level)
+                    features[feature.object_id] = feature
     source_snapshot_date = max(snapshots) if snapshots else None
     return TheaterTopography(
         theater_id=theater_id,
@@ -255,6 +273,45 @@ def features_from_pyrosm_record(
     if not include_buildings:
         features = [feature for feature in features if feature.layer is not TopographyLayer.BUILDINGS]
     return tuple(features)
+
+
+def _normalize_ogr_record(record: dict[str, Any], layer_name: str) -> dict[str, Any]:
+    """Convert one OGR OSM layer record to the existing normalized converter input."""
+
+    properties = dict(record.get("properties") or {})
+    tags = _parse_ogr_other_tags(properties.pop("other_tags", None))
+    for key, value in properties.items():
+        if key not in {"osm_id", "osm_way_id", "z_order", "type"} and _has_value(value):
+            tags[key] = value
+    osm_way_id = properties.get("osm_way_id")
+    osm_id = osm_way_id if _has_value(osm_way_id) else properties.get("osm_id")
+    osm_type = "node" if layer_name == "points" else "way"
+    if layer_name == "multipolygons" and not _has_value(osm_way_id):
+        osm_type = "relation"
+    return {
+        "type": "Feature",
+        "geometry": record.get("geometry"),
+        "properties": {
+            "id": osm_id,
+            "osm_type": osm_type,
+            "tags": json.dumps(tags, ensure_ascii=True),
+        },
+    }
+
+
+def _parse_ogr_other_tags(value: Any) -> dict[str, str]:
+    """Parse GDAL's escaped hstore-like representation of additional OSM tags."""
+
+    if not isinstance(value, str) or not value:
+        return {}
+    import re
+
+    output: dict[str, str] = {}
+    for match in re.finditer(r'"((?:\\.|[^"\\])*)"=>"((?:\\.|[^"\\])*)"', value):
+        key = bytes(match.group(1), "utf-8").decode("unicode_escape")
+        item = bytes(match.group(2), "utf-8").decode("unicode_escape")
+        output[key] = item
+    return output
 
 
 def _geometry_center(geometry: Any) -> dict[str, float] | None:

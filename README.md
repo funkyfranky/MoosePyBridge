@@ -1344,8 +1344,14 @@ Before the full import, create mission-editor zones using this naming scheme:
   single polygon.
 - `Topography Low <name>` marks broad operational areas. It adds primary and
   secondary roads, towns, military/industrial land use, and bridges.
-- `Topography High <name>` marks focused areas. It additionally includes local
-  roads, villages, buildings, detailed land use, and minor railways.
+- `Topography High <name>` marks focused areas. It additionally includes
+  tertiary and unclassified roads, villages, detailed land use, and minor
+  railways. Generic residential/service roads and individual buildings remain
+  excluded from the theater-wide browser cache; `--include-buildings` is
+  reserved for deliberately small focused imports. Detailed land use remains
+  limited to operationally useful residential, commercial, industrial,
+  military, retail, and port areas; arbitrary OSM land-use polygons are not
+  imported theater-wide.
 
 The capture example requests the current zone snapshot and writes
 `tmp/topography/GermanyCW-coverage.geojson`. Circle and polygon zones are both
