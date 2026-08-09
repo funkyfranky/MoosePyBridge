@@ -26,6 +26,10 @@
     { key: "intel_contacts", label: "INTEL contacts", color: "#c44343", icon: "crosshair", size: 0.95, default: true },
     { key: "intel_clusters", label: "INTEL clusters", color: "#d06f27", icon: "radar", size: 1.05, default: true },
     { key: "loss_reports", label: "Loss reports", color: "#8f3434", icon: "shield-x", size: 1.0, default: true },
+    { key: "transport_bridges", label: "Bridges", color: "#a56a27", icon: "construction", default: false },
+    { key: "transport_junctions", label: "Transport junctions", color: "#176f77", icon: "network", default: false },
+    { key: "energy_sites", label: "Energy sites", color: "#b38416", icon: "factory", default: false },
+    { key: "military_sites", label: "Military sites", color: "#6c5b48", icon: "shield", default: false },
     { key: "surface_land_regions", label: "Connected land", color: "#4f7a57", icon: "land-plot", default: false },
     { key: "surface_water_regions", label: "Connected water", color: "#277c9d", icon: "waves", default: false },
     { key: "topography_water", label: "Water", color: "#3c83a5", icon: "waves", default: false },
@@ -65,7 +69,7 @@
     },
     {
       key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#137f87",
-      layers: ["airbases"],
+      layers: ["airbases", "transport_bridges", "transport_junctions", "energy_sites", "military_sites"],
     },
     {
       key: "topography", label: "Topography", icon: "map", color: "#3c7069",
@@ -132,6 +136,8 @@
   let latestPicture = EMPTY;
   let latestTopography = EMPTY;
   let latestSurfaceRegions = EMPTY;
+  let latestTransportInfrastructure = EMPTY;
+  let latestInfrastructureSites = EMPTY;
   let topographyViewportAvailable = false;
   let fitted = false;
   let reconnectTimer = null;
@@ -415,6 +421,15 @@
     return String(layer || "").startsWith("topography_");
   }
 
+  function infrastructureVisibilityOpacity() {
+    return [
+      "step", ["zoom"],
+      ["match", ["get", "importance_tier"], "critical", 0.96, "high", 0.9, 0],
+      9, ["match", ["get", "importance_tier"], "critical", 0.96, "high", 0.92, "medium", 0.82, 0],
+      11, ["match", ["get", "importance_tier"], "critical", 0.96, "high", 0.92, "medium", 0.86, 0.72],
+    ];
+  }
+
   function loadedVectorTopographyFeatures() {
     if (!topographyViewportAvailable || !map.isStyleLoaded()) return [];
     const features = [];
@@ -434,7 +449,13 @@
 
   function allFeatures() {
     const topography = topographyViewportAvailable ? loadedVectorTopographyFeatures() : latestTopography.features;
-    return [...latestPicture.features, ...topography, ...latestSurfaceRegions.features];
+    return [
+      ...latestPicture.features,
+      ...topography,
+      ...latestSurfaceRegions.features,
+      ...latestTransportInfrastructure.features,
+      ...latestInfrastructureSites.features,
+    ];
   }
 
   function topographySource(spec) {
@@ -468,6 +489,8 @@
       }
     }
     map.addSource("surface-regions", { type: "geojson", data: EMPTY, promoteId: "object_id" });
+    map.addSource("transport-infrastructure", { type: "geojson", data: EMPTY, promoteId: "object_id" });
+    map.addSource("infrastructure-sites", { type: "geojson", data: EMPTY, promoteId: "object_id" });
 
     for (const spec of layerSpecs) {
       if (spec.key === "trajectories") {
@@ -618,6 +641,68 @@
             "line-color": spec.color,
             "line-width": ["case", ["==", ["get", "region_kind"], "mainland"], 2.2, 1.4],
             "line-opacity": 0.9,
+          },
+        });
+        continue;
+      }
+      if (spec.key === "transport_bridges") {
+        addMapLayer(spec, {
+          type: "circle",
+          source: "transport-infrastructure",
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "circle-radius": [
+              "interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1],
+              1, 5, 3, 6.5, 8, 8,
+            ],
+            "circle-color": [
+              "match", ["get", "importance_tier"],
+              "critical", "#b83232", "high", "#d17822", "medium", spec.color, "#7d8581",
+            ],
+            "circle-stroke-color": "rgba(255,255,255,0.96)",
+            "circle-stroke-width": 1.8,
+            "circle-opacity": infrastructureVisibilityOpacity(),
+            "circle-stroke-opacity": infrastructureVisibilityOpacity(),
+          },
+        });
+        continue;
+      }
+      if (spec.key === "transport_junctions") {
+        addMapLayer(spec, {
+          type: "circle",
+          source: "transport-infrastructure",
+          minzoom: 8,
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "circle-radius": [
+              "+",
+              ["match", ["get", "junction_kind"], "interchange", 6, "major_junction", 5, 4],
+              ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 0, 4, 1.5, 12, 3],
+            ],
+            "circle-color": [
+              "match", ["get", "importance_tier"],
+              "critical", "#b83232", "high", "#d17822", "medium", spec.color, "#7d8581",
+            ],
+            "circle-stroke-color": "rgba(255,255,255,0.96)",
+            "circle-stroke-width": 1.8,
+            "circle-opacity": infrastructureVisibilityOpacity(),
+            "circle-stroke-opacity": infrastructureVisibilityOpacity(),
+          },
+        });
+        continue;
+      }
+      if (spec.key === "energy_sites" || spec.key === "military_sites") {
+        addMapLayer(spec, {
+          type: "circle",
+          source: "infrastructure-sites",
+          minzoom: 5,
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 2.5, 9, 5, 13, 7],
+            "circle-color": spec.color,
+            "circle-stroke-color": "rgba(255,255,255,0.96)",
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 10, 1.5],
+            "circle-opacity": 0.94,
           },
         });
         continue;
@@ -801,6 +886,24 @@
     const source = map.getSource("surface-regions");
     if (!source) return;
     source.setData(latestSurfaceRegions);
+    updateCounts();
+  }
+
+  function setTransportInfrastructure(infrastructure) {
+    if (!infrastructure || infrastructure.type !== "FeatureCollection") return;
+    latestTransportInfrastructure = decoratedPicture(infrastructure);
+    const source = map.getSource("transport-infrastructure");
+    if (!source) return;
+    source.setData(latestTransportInfrastructure);
+    updateCounts();
+  }
+
+  function setInfrastructureSites(infrastructure) {
+    if (!infrastructure || infrastructure.type !== "FeatureCollection") return;
+    latestInfrastructureSites = decoratedPicture(infrastructure);
+    const source = map.getSource("infrastructure-sites");
+    if (!source) return;
+    source.setData(latestInfrastructureSites);
     updateCounts();
   }
 
@@ -1346,13 +1449,17 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, surfaceRegionsResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, surfaceRegionsResponse, transportResponse, infrastructureResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
         fetch("/api/surface-regions/global.geojson"),
+        fetch("/api/transport-infrastructure/global.geojson"),
+        fetch("/api/infrastructure-sites/global.geojson"),
         fetch("/api/health"),
       ]);
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
       if (surfaceRegionsResponse.ok) setSurfaceRegions(await surfaceRegionsResponse.json());
+      if (transportResponse.ok) setTransportInfrastructure(await transportResponse.json());
+      if (infrastructureResponse.ok) setInfrastructureSites(await infrastructureResponse.json());
       if (healthResponse.ok) {
         const status = await healthResponse.json();
         updateStatus(status);

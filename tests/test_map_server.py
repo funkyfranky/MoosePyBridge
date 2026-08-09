@@ -21,6 +21,17 @@ from moosebridge.surface_regions import (
     SurfaceRegionKind,
     TheaterSurfaceRegions,
 )
+from moosebridge.transport_infrastructure import (
+    TheaterTransportInfrastructure,
+    TransportJunction,
+    TransportJunctionKind,
+)
+from moosebridge.infrastructure_sites import (
+    EnergySite,
+    EnergySource,
+    InfrastructureSiteKind,
+    TheaterInfrastructureSites,
+)
 from moosebridge.weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY
 
 
@@ -99,6 +110,9 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "topography_viewport_error": None,
         "surface_region_count": 0,
         "surface_regions_source_complete": None,
+        "transport_bridge_count": 0,
+        "transport_junction_count": 0,
+        "infrastructure_site_count": 0,
         "diplomacy": None,
     }
 
@@ -168,6 +182,61 @@ def test_map_runtime_serves_surface_regions_separately_from_mission_state() -> N
     assert payload["features"][0]["properties"]["layer"] == "surface_land_regions"
     assert status["surface_region_count"] == 1
     assert status["surface_regions_source_complete"] is False
+
+
+def test_map_runtime_serves_transport_infrastructure_separately_from_mission_state() -> None:
+    runtime = GlobalMapRuntime()
+    runtime._transport_infrastructure = TheaterTransportInfrastructure(
+        theater_id="GermanyCW",
+        bridges=(),
+        junctions=(
+            TransportJunction(
+                junction_id="JUNCTION:OSM:123",
+                kind=TransportJunctionKind.MAJOR_JUNCTION,
+                latitude=54.0,
+                longitude=12.0,
+                osm_node_id=123,
+                arm_count=3,
+                highway_classes=("primary", "secondary"),
+                bridge_adjacent=False,
+            ),
+        ),
+    )
+
+    payload = runtime.transport_infrastructure_geojson()
+    status = runtime.status_payload()
+
+    assert runtime.picture == empty_picture()
+    assert payload["features"][0]["properties"]["layer"] == "transport_junctions"
+    assert status["transport_bridge_count"] == 0
+    assert status["transport_junction_count"] == 1
+
+
+def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
+    runtime = GlobalMapRuntime()
+    runtime._infrastructure_sites = TheaterInfrastructureSites(
+        theater_id="GermanyCW",
+        sites=(EnergySite(
+            site_id="ENERGY_SITE:test",
+            kind=InfrastructureSiteKind.ENERGY,
+            geometry={
+                "type": "Polygon",
+                "coordinates": [[[11.9, 53.9], [12.1, 53.9], [12.1, 54.1], [11.9, 53.9]]],
+            },
+            latitude=54.0,
+            longitude=12.0,
+            source="test",
+            confidence=0.8,
+            energy_sources=(EnergySource.COAL,),
+        ),),
+    )
+
+    payload = runtime.infrastructure_sites_geojson()
+
+    assert payload["features"][0]["properties"]["layer"] == "energy_sites"
+    assert payload["features"][0]["properties"]["source_geometry_type"] == "Polygon"
+    assert payload["features"][0]["geometry"] == {"type": "Point", "coordinates": [12.0, 54.0]}
+    assert runtime.status_payload()["infrastructure_site_count"] == 1
 
 
 def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:

@@ -85,6 +85,84 @@ Priorities:
   attributes, life, active state, ammunition availability, weapon reach, and a
   small logistics contribution for territorial control and planning.
 
+## P2 - Strategic infrastructure
+
+- [x] **Inventory current infrastructure candidates and DCS representation.**
+  The initial inventory is documented in `INFRASTRUCTURE_CANDIDATES.md`. It
+  separates raw OSM features, normalized operational sites, bounded DCS
+  scenery verification, and scenario-approved strategic objectives. Power
+  generation is the recommended first site category.
+- [ ] **Bring the remaining infrastructure candidates to the transport-cache
+  standard.** Define a small, typed taxonomy for energy, fuel and storage,
+  industrial sites, ports and harbours, rail facilities, communications, and
+  other operationally relevant infrastructure. Convert raw OSM features into
+  stable point or site objects with source identifiers, provenance, geometry,
+  member counts, and reproducible versioned artifacts. Keep the taxonomy
+  theater-aware: the first `EnergySite` model and GermanyCW policy exclude
+  modern wind, solar, biogas, and battery sites without imposing that choice
+  on other maps. `MilitarySite` is a separate type on the shared site base.
+  The normalized energy cache, SDK representation, browser markers, and
+  bounded DCS scenery-survey example are implemented. Fuel/storage,
+  industrial, port, rail, and communications site builders, clustering, and
+  persisted DCS verification remain open. Keep the model extensible, but do
+  not retain every available OSM tag in the operational model.
+- [ ] **Cluster infrastructure features into meaningful sites.** Group related
+  buildings, tanks, yards, platforms, terminals, and equipment into one
+  operational location where they represent the same real facility. Use
+  category-specific clustering and preserve membership for diagnostics so a
+  refinery, power station, port, or rail yard is not represented by hundreds of
+  independent target markers.
+- [ ] **Add category-specific importance and dependency analysis.** Rank sites
+  with transparent evidence appropriate to their role: capacity and network
+  position for energy, storage and distribution role for fuel, production and
+  facility extent for industry, connected transport modes for ports, and graph
+  centrality or detour impact for rail facilities. Record uncertainty and the
+  reason for every tier; avoid applying the road-junction score unchanged to
+  unrelated infrastructure.
+- [ ] **Expose typed infrastructure through the SDK and browser map.** Give each
+  category a bounded map representation, useful detail panel, importance-based
+  styling, zoom-dependent density, and filters for category and
+  critical/high/medium/low importance. Large raw source layers remain optional
+  topographic context; the strategic infrastructure layer contains only
+  normalized sites.
+- [ ] **Validate infrastructure against the GermanyCW DCS theater.** Compare
+  high-value candidates with the DCS F10 map, Mission Editor, local scenery,
+  and available historical sources. Retain `confirmed`, `approximate`,
+  `historically_uncertain`, and `not_represented_in_dcs` evidence instead of
+  silently treating modern OSM as authoritative for the DCS era.
+- [ ] **Derive strategic objectives only after infrastructure normalization.**
+  Add an explicit policy that selects confirmed or scenario-approved sites and
+  converts them into multi-component `StrategicObjective` objects. Objective
+  value, ownership, desired effect, targetability, and component weights must
+  remain scenario/Python decisions; discovering an OSM facility must never
+  create an attack goal automatically.
+- [ ] **Model infrastructure state and effects separately from geography.**
+  Associate known DCS statics, map objects, airbases, zones, or scenario
+  components with a normalized site and derive operational, damaged, disabled,
+  destroyed, repaired, or captured state from events and snapshots. Keep the
+  immutable source site intact so damage and coalition control do not rewrite
+  the geographic cache.
+
+## P2 - Deferred transport infrastructure
+
+- [ ] **Add importance filters for bridges and transport junctions.** Allow
+  critical, high, medium, and low locations to be shown independently without
+  changing their current zoom-dependent level of detail.
+- [ ] **Validate strategic bridge and junction locations against DCS.** Sample
+  representative motorway interchanges, urban junction complexes, water
+  crossings, and the mainland-Rugen corridor. Store bounded theater corrections
+  where DCS road topology materially differs from OSM rather than increasing
+  global clustering radii.
+- [ ] **Connect transport locations to runtime disruption state.** Associate a
+  bridge or junction with scenario-defined DCS objects or destruction zones,
+  retain intact/damaged/blocked/repaired state, and invalidate affected cached
+  routes when that state changes. OSM geometry remains immutable and a DCS
+  object loss must not imply a blocked corridor without explicit association.
+- [ ] **Use transport criticality in later strategic reasoning.** Let Python
+  propose protection, interdiction, repair, or rerouting decisions from route
+  dependency and current state. Keep importance as planning evidence rather
+  than automatically turning every high-tier bridge or junction into a goal.
+
 ## P2 - Deferred COHORT ranking
 
 - [ ] **Calibrate COHORT score assumptions with live DCS scenarios.** Validate
@@ -180,6 +258,12 @@ Priorities:
   corridor cells, but cold queries must still decompress their source shards.
   Persisting independently loadable 25-km graph tiles should reduce both cold
   assembly and warm A* time for long routes.
+- [ ] **Scale transport criticality to the complete theater through routing
+  shards.** Regional graphs now calculate bounded bridge/junction detours and
+  transparent importance scores, but the 94-second MV run must not be applied
+  naively to the 32-million-node graph. Analyze occupied routing corridors or
+  prebuilt graph tiles and distinguish "no route inside the analysis limit"
+  from proven graph disconnection.
 - [ ] **Pre-clip large PBF sources before Pyrosm network extraction.** Worker
   isolation prevents cumulative memory growth, but Pyrosm still decodes each
   complete source; an osmium/GDAL clipping stage should reduce the high peak
@@ -196,6 +280,18 @@ Priorities:
   ground or naval connection.
 ## Recently completed
 
+- [x] Detailed road graphs now produce a versioned strategic transport cache.
+  Connected and nearby OSM bridge structures are grouped into stable point-like
+  `TransportBridge` locations with source IDs, approaches, and road classes,
+  while degree-filtered motorway through
+  secondary-road nodes become typed `TransportJunction` objects. Both are
+  exposed through the SDK, a reproducible builder, a dedicated map endpoint,
+  and independent browser layers. OSM topology is retained separately from
+  future DCS damage state and military bridge-capacity assumptions.
+- [x] Regional transport caches can now be enriched with bounded route-impact
+  analysis. Blocking each abstract location yields road-hierarchy importance,
+  alternative distance, added detour, ratio, and a transparent four-tier score;
+  the map visualizes high and critical infrastructure distinctly.
 - [x] Hierarchical road routing now combines the coarse ground-mobility graph,
   a 25-km occupied-cell shard index, configurable corridor filtering, and an
   in-memory detailed-graph cache. A 50-km corridor reproduced all four

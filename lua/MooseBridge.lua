@@ -2014,6 +2014,61 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     return {action="coordinates.convert_points", count=#points, points=points}
   end)
 
+  self:RegisterCommand("scenery.search", function(cmd)
+    local p = cmd.params or {}
+    if not world or not world.searchObjects or not world.VolumeType then
+      error("DCS world.searchObjects is not available")
+    end
+    if not Object or not Object.Category or Object.Category.SCENERY == nil then
+      error("DCS scenery object category is not available")
+    end
+    local center = self:_DebugMarkupPoint(p)
+    local radius = tonumber(p.radius_m) or 500
+    local max_results = math.floor(tonumber(p.max_results) or 250)
+    if radius <= 0 or radius > 5000 then error("radius_m must be in range 0..5000") end
+    if max_results <= 0 or max_results > 2000 then error("max_results must be in range 1..2000") end
+    local objects = {}
+    local truncated = false
+    local volume = {id=world.VolumeType.SPHERE, params={point=center, radius=radius}}
+    world.searchObjects(Object.Category.SCENERY, volume, function(object)
+      if #objects >= max_results then
+        truncated = true
+        return false
+      end
+      local point = self:_DcsPoint(object)
+      if point then
+        local coordinates = self:_CoordinatesForPoint(point, "ll")
+        local descriptor = self:_DcsCall(object, "getDesc")
+        local name = self:_DcsCall(object, "getName")
+        local type_name = self:_DcsCall(object, "getTypeName")
+        objects[#objects + 1] = {
+          object_id="SCENERY:" .. safe_tostring(name or (#objects + 1)),
+          name=name and safe_tostring(name) or nil,
+          type_name=type_name and safe_tostring(type_name) or nil,
+          display_name=type(descriptor) == "table" and descriptor.displayName or nil,
+          life=tonumber(self:_DcsCall(object, "getLife")),
+          exists=self:_DcsCall(object, "isExist"),
+          x=coordinates.x,
+          y=coordinates.y,
+          z=coordinates.z,
+          latitude=coordinates.latitude,
+          longitude=coordinates.longitude,
+        }
+      end
+      return true
+    end)
+    local center_coordinates = self:_CoordinatesForPoint(center, "ll")
+    return {
+      action="scenery.search",
+      radius_m=radius,
+      max_results=max_results,
+      count=#objects,
+      truncated=truncated,
+      center=center_coordinates,
+      objects=objects,
+    }
+  end)
+
   self:RegisterCommand("terrain.closest_road_points", function(cmd)
     local p = cmd.params or {}
     if not land or not land.getClosestPointOnRoads then error("DCS land.getClosestPointOnRoads is not available") end

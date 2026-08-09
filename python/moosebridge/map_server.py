@@ -38,6 +38,8 @@ from .recon import ReconArea, build_recon_coverage_footprints
 from .recon import RECON_EXECUTION_AUDIT_TYPE
 from .topography import TheaterTopography
 from .topography_viewport import DEFAULT_VIEWPORT_FEATURE_LIMIT, TopographyViewportStore
+from .transport_infrastructure import TheaterTransportInfrastructure
+from .infrastructure_sites import TheaterInfrastructureSites
 from .surface_regions import TheaterSurfaceRegions
 
 LOGGER = logging.getLogger(__name__)
@@ -61,6 +63,8 @@ DEFAULT_MAX_TOPOGRAPHY_BYTES = 256 * 1024 * 1024
 DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
 DEFAULT_TOPOGRAPHY_VIEWPORT_PATH = Path("tmp/topography/viewport/manifest.json")
 DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
+DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-transport-infrastructure.geojson")
+DEFAULT_INFRASTRUCTURE_SITES_PATH = Path("tmp/topography/GermanyCW-infrastructure-sites.geojson")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
 
@@ -152,6 +156,8 @@ class GlobalMapRuntime:
     max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES
     topography_viewport_path: Path | None = None
     surface_regions_path: Path | None = None
+    transport_infrastructure_path: Path | None = None
+    infrastructure_sites_path: Path | None = None
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
     error: str | None = None
@@ -178,6 +184,8 @@ class GlobalMapRuntime:
     _topography_viewport: TopographyViewportStore | None = field(init=False, default=None)
     _topography_viewport_error: str | None = field(init=False, default=None)
     _surface_regions: TheaterSurfaceRegions | None = field(init=False, default=None)
+    _transport_infrastructure: TheaterTransportInfrastructure | None = field(init=False, default=None)
+    _infrastructure_sites: TheaterInfrastructureSites | None = field(init=False, default=None)
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
 
@@ -201,6 +209,8 @@ class GlobalMapRuntime:
         self.load_topography()
         self.load_topography_viewport()
         self.load_surface_regions()
+        self.load_transport_infrastructure()
+        self.load_infrastructure_sites()
 
     def load_topography(self) -> TheaterTopography | None:
         """Load the optional static theater cache without touching DCS."""
@@ -296,6 +306,60 @@ class GlobalMapRuntime:
 
         return self._surface_regions.to_geojson() if self._surface_regions is not None else empty_picture()
 
+    def load_transport_infrastructure(self) -> TheaterTransportInfrastructure | None:
+        """Load optional static bridges and strategic road junctions."""
+
+        self._transport_infrastructure = None
+        if self.transport_infrastructure_path is None or not self.transport_infrastructure_path.is_file():
+            return None
+        self._transport_infrastructure = TheaterTransportInfrastructure.load(self.transport_infrastructure_path)
+        LOGGER.info(
+            "Loaded %d bridges and %d strategic junctions for %s from %s",
+            len(self._transport_infrastructure.bridges),
+            len(self._transport_infrastructure.junctions),
+            self._transport_infrastructure.theater_id,
+            self.transport_infrastructure_path,
+        )
+        return self._transport_infrastructure
+
+    def transport_infrastructure_geojson(self) -> dict[str, Any]:
+        """Return static bridge and junction features."""
+
+        return (
+            self._transport_infrastructure.to_geojson()
+            if self._transport_infrastructure is not None else empty_picture()
+        )
+
+    def load_infrastructure_sites(self) -> TheaterInfrastructureSites | None:
+        """Load optional normalized energy and military infrastructure sites."""
+
+        self._infrastructure_sites = None
+        if self.infrastructure_sites_path is None or not self.infrastructure_sites_path.is_file():
+            return None
+        self._infrastructure_sites = TheaterInfrastructureSites.load(self.infrastructure_sites_path)
+        LOGGER.info(
+            "Loaded %d normalized infrastructure sites for %s from %s",
+            len(self._infrastructure_sites.sites),
+            self._infrastructure_sites.theater_id,
+            self.infrastructure_sites_path,
+        )
+        return self._infrastructure_sites
+
+    def infrastructure_sites_geojson(self) -> dict[str, Any]:
+        """Return stable site markers while retaining full geometry in the SDK artifact."""
+
+        if not self._infrastructure_sites:
+            return empty_picture()
+        payload = self._infrastructure_sites.to_geojson()
+        for site, feature in zip(self._infrastructure_sites.sites, payload["features"], strict=True):
+            source_geometry = feature.get("geometry") or {}
+            feature["geometry"] = {
+                "type": "Point",
+                "coordinates": [site.longitude, site.latitude],
+            }
+            feature.setdefault("properties", {})["source_geometry_type"] = source_geometry.get("type")
+        return payload
+
     def status_payload(self) -> dict[str, Any]:
         """Return the current browser-facing service status."""
 
@@ -330,6 +394,13 @@ class GlobalMapRuntime:
             "surface_regions_source_complete": (
                 self._surface_regions.metadata.get("source_complete") if self._surface_regions else None
             ),
+            "transport_bridge_count": (
+                len(self._transport_infrastructure.bridges) if self._transport_infrastructure else 0
+            ),
+            "transport_junction_count": (
+                len(self._transport_infrastructure.junctions) if self._transport_infrastructure else 0
+            ),
+            "infrastructure_site_count": len(self._infrastructure_sites.sites) if self._infrastructure_sites else 0,
             "diplomacy": properties.get("diplomacy"),
         }
 
@@ -1055,6 +1126,8 @@ def create_app(
     max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES,
     topography_viewport_path: Path | None = DEFAULT_TOPOGRAPHY_VIEWPORT_PATH,
     surface_regions_path: Path | None = DEFAULT_SURFACE_REGIONS_PATH,
+    transport_infrastructure_path: Path | None = DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH,
+    infrastructure_sites_path: Path | None = DEFAULT_INFRASTRUCTURE_SITES_PATH,
 ) -> FastAPI:
     """Create the FastAPI map application."""
 
@@ -1079,6 +1152,8 @@ def create_app(
         max_topography_bytes=max_topography_bytes,
         topography_viewport_path=topography_viewport_path,
         surface_regions_path=surface_regions_path,
+        transport_infrastructure_path=transport_infrastructure_path,
+        infrastructure_sites_path=infrastructure_sites_path,
     )
 
     @asynccontextmanager
@@ -1166,6 +1241,14 @@ def create_app(
     async def global_surface_regions() -> dict[str, Any]:
         return runtime.surface_regions_geojson()
 
+    @app.get("/api/transport-infrastructure/global.geojson")
+    async def global_transport_infrastructure() -> dict[str, Any]:
+        return runtime.transport_infrastructure_geojson()
+
+    @app.get("/api/infrastructure-sites/global.geojson")
+    async def global_infrastructure_sites() -> dict[str, Any]:
+        return runtime.infrastructure_sites_geojson()
+
     @app.websocket("/ws/global")
     async def global_updates(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -1223,6 +1306,18 @@ def main() -> None:
         default=DEFAULT_SURFACE_REGIONS_PATH,
         help="Connected static land/water surface-region GeoJSON cache.",
     )
+    parser.add_argument(
+        "--transport-infrastructure",
+        type=Path,
+        default=DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH,
+        help="Static strategic bridge and road-junction GeoJSON cache.",
+    )
+    parser.add_argument(
+        "--infrastructure-sites",
+        type=Path,
+        default=DEFAULT_INFRASTRUCTURE_SITES_PATH,
+        help="Normalized static energy and military infrastructure-site GeoJSON cache.",
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -1256,6 +1351,8 @@ def main() -> None:
         max_topography_bytes=max(0, int(args.max_topography_mb * 1024 * 1024)),
         topography_viewport_path=args.topography_viewport,
         surface_regions_path=args.surface_regions,
+        transport_infrastructure_path=args.transport_infrastructure,
+        infrastructure_sites_path=args.infrastructure_sites,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 

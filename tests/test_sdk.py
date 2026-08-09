@@ -69,6 +69,7 @@ from moosebridge.sdk import (
     NearestResult,
     TacticalPicture,
 )
+from moosebridge.infrastructure_sites import ScenerySurvey
 from moosebridge.state import MooseBridgeState
 
 
@@ -123,6 +124,29 @@ class FakeSdkServer:
                         }
                         for point in command.params["points"]
                     ],
+                },
+            }
+        if command.action == "scenery.search":
+            return {
+                "ok": True,
+                "result": {
+                    "action": command.action,
+                    "radius_m": command.params["radius_m"],
+                    "truncated": False,
+                    "center": {"x": 100, "y": 20, "z": 200, "latitude": 54.0, "longitude": 12.0},
+                    "objects": [{
+                        "object_id": "SCENERY:42",
+                        "name": "42",
+                        "type_name": "Industrial building",
+                        "display_name": "Factory",
+                        "x": 110,
+                        "y": 20,
+                        "z": 205,
+                        "latitude": 54.0001,
+                        "longitude": 12.0001,
+                        "life": 100,
+                        "exists": True,
+                    }],
                 },
             }
         if command.action == "terrain.closest_road_points":
@@ -506,6 +530,29 @@ def test_sdk_converts_multiple_points_in_one_command() -> None:
             {"x": 300.0, "y": 5.0, "z": 400.0},
         ]
         assert timeout == 6
+
+    asyncio.run(scenario())
+
+
+def test_sdk_surveys_bounded_dcs_scenery() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        result = await client.survey_scenery(54, 12, radius_m=750, max_results=50)
+
+        assert isinstance(result, ScenerySurvey)
+        assert result.radius_m == 750
+        assert result.objects[0].display_name == "Factory"
+        command, timeout = server.commands[0]
+        assert command.action == "scenery.search"
+        assert command.params == {
+            "latitude": 54.0,
+            "longitude": 12.0,
+            "radius_m": 750.0,
+            "max_results": 50,
+        }
+        assert timeout == 30
 
     asyncio.run(scenario())
 

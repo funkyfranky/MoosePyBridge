@@ -13,6 +13,7 @@ from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .dcs_events import DestroyedObjectEvent, KillEvent
 from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
+from .infrastructure_sites import GeographicSurveyPoint, SceneryObjectSnapshot, ScenerySurvey
 from .diplomacy import (
     BorderViolationTracker,
     CoalitionDoctrine,
@@ -3661,6 +3662,50 @@ class MooseBridgeClient:
         if len(converted) != len(payload):
             raise ValueError(f"DCS converted {len(converted)} of {len(payload)} points")
         return [GeographicPoint.from_payload(item) for item in converted if isinstance(item, dict)]
+
+    async def survey_scenery(
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        radius_m: float = 500.0,
+        max_results: int = 250,
+        timeout: float = 30.0,
+    ) -> ScenerySurvey:
+        """Inspect DCS scenery objects in one deliberately bounded sphere."""
+
+        latitude = float(latitude)
+        longitude = float(longitude)
+        radius_m = float(radius_m)
+        if not math.isfinite(latitude) or not -90 <= latitude <= 90:
+            raise ValueError("latitude must be finite and in range -90..90")
+        if not math.isfinite(longitude) or not -180 <= longitude <= 180:
+            raise ValueError("longitude must be finite and in range -180..180")
+        if not math.isfinite(radius_m) or not 0 < radius_m <= 5000:
+            raise ValueError("radius_m must be finite and in range 0..5000")
+        if not 1 <= max_results <= 2000:
+            raise ValueError("max_results must be in range 1..2000")
+        ack = require_ok(await self.server.send_command(
+            BridgeCommand(action="scenery.search", params={
+                "latitude": latitude,
+                "longitude": longitude,
+                "radius_m": radius_m,
+                "max_results": int(max_results),
+            }),
+            timeout=timeout,
+        ))
+        result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+        center = result.get("center") if isinstance(result.get("center"), dict) else {}
+        center_values = {key: _optional_float(center.get(key)) for key in ("x", "y", "z", "latitude", "longitude")}
+        if any(value is None for value in center_values.values()):
+            raise ValueError("DCS scenery survey is missing its center coordinates")
+        objects = result.get("objects") if isinstance(result.get("objects"), list) else []
+        return ScenerySurvey(
+            center=GeographicSurveyPoint(**center_values),  # type: ignore[arg-type]
+            radius_m=float(result.get("radius_m") or radius_m),
+            objects=tuple(SceneryObjectSnapshot.from_payload(item) for item in objects if isinstance(item, dict)),
+            truncated=result.get("truncated") is True,
+        )
 
     async def distance(self, object_id_a: str, object_id_b: str, timeout: float = 10.0) -> DistanceResult:
         """Measure distance between two bridge object ids.

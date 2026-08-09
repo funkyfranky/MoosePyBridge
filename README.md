@@ -1609,6 +1609,94 @@ step for interactive theater-wide routing.
 Native road routing is intentionally used only for selected corridors because DCS calculates it
 synchronously and can return many points.
 
+The same detailed road graph can also be reduced to stable strategic
+infrastructure objects:
+
+```powershell
+python tools/build_transport_infrastructure.py
+```
+
+This writes `tmp/topography/GermanyCW-transport-infrastructure.geojson`.
+
+Normalized power-generation candidates use a separate, theater-aware site
+artifact:
+
+```powershell
+python tools/build_infrastructure_sites.py
+```
+
+For GermanyCW, modern wind, solar, biogas, and battery sites are excluded by
+policy; other theaters allow them unless their own policy says otherwise. A
+bounded DCS scenery check is available through
+`await bridge.survey_scenery(latitude, longitude, radius_m=500)`.
+The map server loads the normalized cache automatically and exposes it through
+`/api/infrastructure-sites/global.geojson`. `Energy sites` and `Military
+sites` are separate, initially hidden layers under `Infrastructure`. The map
+uses stable representative site markers while the SDK artifact retains the
+original OSM point or polygon geometry.
+
+To inspect one admitted energy site against nearby addressable DCS scenery,
+start DCS, the bridge daemon, and a mission, then run the parameter-free
+example:
+
+```powershell
+python examples/sdk/verify_energy_site.py
+```
+
+By default it selects the admitted site nearest `AIRBASE:Laage`, prints the
+bounded scenery survey, and draws a temporary F10 verification overlay. Edit
+the constants at the top of the file to select another reference or radius.
+Adjacent OSM road edges carrying a `bridge` tag are first connected and then
+collapsed with nearby structures into abstract `TransportBridge` locations.
+The default 150 m radius combines parallel carriageway decks and fragmented
+OSM structures without transitive chaining. The point object retains its raw
+bridge IDs, total length, road classes, endpoint OSM IDs, and approach count.
+`TransportJunction` objects are created where at least three strategic road
+arms meet. By default, the strategic network includes
+motorway, trunk, primary, and secondary roads and their link roads; residential
+and service-road intersections are deliberately excluded. Nearby same-kind OSM
+nodes are then collapsed into operational junction complexes without transitive
+chaining: 300 m for motorway/trunk interchanges and 100 m for other strategic
+junctions. All member OSM IDs remain in the resulting object. The extraction
+can be adjusted with repeated `--highway` arguments, `--minimum-arms`,
+`--bridge-cluster-radius`, `--interchange-cluster-radius`, and
+`--junction-cluster-radius`.
+
+The map server loads this cache automatically. `Bridges` and `Transport
+junctions` are separate, initially hidden layers under `Infrastructure`, and
+the HTTP source is available at
+`/api/transport-infrastructure/global.geojson`. These objects describe OSM
+topology, not verified military load limits or DCS-destructible map objects.
+They are intended as route dependencies and candidates for later strategic
+objective and damage-state modelling.
+
+Route criticality is an explicit offline refinement because it is substantially
+more expensive than extracting locations. Run it against a regional detailed
+graph when needed:
+
+```powershell
+python tools/build_transport_infrastructure.py `
+  --input tmp/topography/GermanyCW-road-routing-mv.npz `
+  --output tmp/topography/GermanyCW-transport-infrastructure-mv.geojson `
+  --analyze-criticality
+```
+
+For each location, Python blocks a bounded area, identifies opposite strategic
+road portals, and searches up to three alternatives within 50 km. The artifact
+stores road-hierarchy importance, alternative distance, added detour, detour
+ratio, a 0-100 score, and `low`, `medium`, `high`, or `critical`. A missing
+alternative means none was found inside the configured analysis limit; it does
+not prove that the continental road network is physically disconnected. The
+map colors high locations orange and critical locations red. On the MV graph,
+the complete analysis currently takes about 94 seconds, so it is not part of
+the fast default extraction.
+
+Display tiers are calibrated separately: bridge thresholds are 95/82/55 and
+junction thresholds are 95/85/65 for critical/high/medium. At theater overview
+zoom only high and critical locations are rendered; medium locations appear at
+zoom 9 and low locations at zoom 11. The underlying features and numeric scores
+remain available independently of this visual level of detail.
+
 The header shows the shared relationship, escalation score, pending transition,
 and blue/red doctrine. The map server is the default diplomacy incident
 coordinator while it runs: it consumes retained `combat.kill` events, evaluates
