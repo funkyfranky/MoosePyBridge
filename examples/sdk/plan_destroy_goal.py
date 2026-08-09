@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "python"))
 
 from moosebridge import (
+    GroundMobilityNetwork,
     ObjectiveComponent,
     ObjectiveKind,
     OwnershipPolicy,
@@ -27,6 +28,7 @@ from moosebridge.control_sdk import sdk_from_control_client
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 10.0
+GROUND_MOBILITY_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
 CLIENT_ID = "destroy-planner-example"
 CLIENT_DISPLAY_NAME = "Destroy Planner Example"
 
@@ -62,7 +64,11 @@ async def main() -> int:
         print("DCS is not connected to the MooseBridge daemon.")
         return 1
 
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    bridge = sdk_from_control_client(
+        control,
+        timeout=COMMAND_TIMEOUT_SECONDS,
+        ground_mobility=GroundMobilityNetwork.load(GROUND_MOBILITY_PATH),
+    )
     await bridge.snapshot_statics()
     mission_time = bridge.state.clock.mission_time if bridge.state.clock else None
     if mission_time is None:

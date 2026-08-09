@@ -550,6 +550,7 @@ def diplomacy_state_to_dict(
     doctrines: CoalitionDoctrineRegistry,
     *,
     mission_generation: int,
+    audit_session_id: str = "",
 ) -> dict[str, Any]:
     """Serialize the shared mission diplomacy state for daemon persistence."""
 
@@ -557,6 +558,7 @@ def diplomacy_state_to_dict(
     return {
         "diplomacy_schema_version": DIPLOMACY_STATE_SCHEMA_VERSION,
         "mission_generation": int(mission_generation),
+        "audit_session_id": audit_session_id,
         "relationship": {
             "state": relationship.state.value,
             "escalation_score": relationship.escalation_score,

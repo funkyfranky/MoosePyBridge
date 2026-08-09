@@ -9,6 +9,12 @@ from typing import Any, Iterable, Mapping
 
 from .ammunition import DcsWeaponFlag, UnitAmmunition, WeaponRole
 from .auftrag_specs import canonical_mission_type, platform_categories_match
+from .ground_mobility import (
+    GroundMobilityNetwork,
+    GroundMobilityProfile,
+    GroundRoute,
+    TRACKED_GROUND_PROFILE,
+)
 from .legions import Cohort, Legion
 from .operational import AssetRole
 from .strategic import StrategicGoalEffect
@@ -227,6 +233,10 @@ class MissionAssignment:
     preparation_time_s: float | None
     transit_distance_m: float | None
     transit_speed_mps: float | None
+    transit_source: str = "straight_line"
+    route_profile: str | None = None
+    platform_max_speed_kph: float | None = None
+    bridge_count: int | None = None
     weapon_flag: DcsWeaponFlag | None = None
     mission_performance: float | None = None
     cohort_skill: str | float | None = None
@@ -243,6 +253,10 @@ class MissionAssignment:
             "preparation_time_s": self.preparation_time_s,
             "transit_distance_m": self.transit_distance_m,
             "transit_speed_mps": self.transit_speed_mps,
+            "transit_source": self.transit_source,
+            "route_profile": self.route_profile,
+            "platform_max_speed_kph": self.platform_max_speed_kph,
+            "bridge_count": self.bridge_count,
             "weapon_flag": self.weapon_flag.name if self.weapon_flag is not None else None,
             "weapon_flag_value": int(self.weapon_flag) if self.weapon_flag is not None else None,
             "mission_performance": self.mission_performance,
@@ -309,9 +323,15 @@ class StrategicMissionResolver:
         self,
         timing: MissionTimingAssumptions | None = None,
         scoring: MissionScoringAssumptions | None = None,
+        *,
+        ground_mobility: GroundMobilityNetwork | None = None,
+        ground_mobility_profile: GroundMobilityProfile = TRACKED_GROUND_PROFILE,
     ) -> None:
         self.timing = timing or MissionTimingAssumptions()
         self.scoring = scoring or MissionScoringAssumptions()
+        self.ground_mobility = ground_mobility
+        self.ground_mobility_profile = ground_mobility_profile
+        self._ground_route_cache: dict[tuple[float, float, float, float, str], GroundRoute | None] = {}
 
     def resolve(
         self,
@@ -365,6 +385,7 @@ class StrategicMissionResolver:
             legion_items,
             target_data,
             fire_support=fire_support,
+            weapon_ranges=weapon_ranges,
         )
         selected, cohort_id, selected_weapon_flag = self._select_available(candidates, assignments)
         selected_fire_support = next(
@@ -387,6 +408,34 @@ class StrategicMissionResolver:
             fire_support=selected_fire_support,
             fire_support_candidates=fire_support,
             assignments=assignments,
+        )
+
+    def assignments_for_mission(
+        self,
+        mission_type: str,
+        *,
+        target_data: Mapping[str, Any] | None,
+        cohorts: Iterable[Cohort],
+        legions: Iterable[Legion] = (),
+        performer_categories: Iterable[str] = (),
+        require_payload: bool = False,
+        weapon_ranges: WeaponRangeRegistry = DEFAULT_WEAPON_RANGE_REGISTRY,
+    ) -> tuple[MissionAssignment, ...]:
+        """Rank COHORTs for one already selected AUFTRAG type."""
+
+        candidate = MissionCandidate(
+            mission_type=mission_type,
+            role=AssetRole.COMBAT,
+            performer_categories=tuple(performer_categories),
+            require_payload=require_payload,
+            rationale="Rank COHORTs for an existing operational requirement.",
+        )
+        return self._mission_assignments(
+            (candidate,),
+            tuple(cohorts),
+            tuple(legions),
+            target_data,
+            weapon_ranges=weapon_ranges,
         )
 
     @staticmethod
@@ -531,6 +580,7 @@ class StrategicMissionResolver:
         target_data: Mapping[str, Any] | None,
         *,
         fire_support: tuple[FireSupportAssignment, ...] = (),
+        weapon_ranges: WeaponRangeRegistry = DEFAULT_WEAPON_RANGE_REGISTRY,
     ) -> tuple[MissionAssignment, ...]:
         target_x = _finite_coordinate((target_data or {}).get("x"))
         target_z = _finite_coordinate((target_data or {}).get("z"))
@@ -539,6 +589,13 @@ class StrategicMissionResolver:
             for item in legions
             if item.x is not None and item.z is not None
         }
+        legion_geographic_positions = {
+            item.object_id: (item.latitude, item.longitude)
+            for item in legions
+            if item.latitude is not None and item.longitude is not None
+        }
+        target_latitude = _finite_coordinate((target_data or {}).get("latitude"))
+        target_longitude = _finite_coordinate((target_data or {}).get("longitude"))
         candidate_priority = {item.mission_type: index for index, item in enumerate(candidates)}
         cohort_by_id = {item.object_id: item for item in cohorts}
         fire_priority = {
@@ -553,6 +610,11 @@ class StrategicMissionResolver:
             distance: float | None,
             speed: float | None,
             weapon_flag: DcsWeaponFlag | None = None,
+            *,
+            transit_source: str = "straight_line",
+            route_profile: str | None = None,
+            platform_max_speed_kph: float | None = None,
+            bridge_count: int | None = None,
         ) -> MissionAssignment:
             performance = cohort.mission_performance_for(candidate.mission_type)
             performance_score = _bounded_score(
@@ -577,6 +639,10 @@ class StrategicMissionResolver:
                 preparation_time_s=preparation,
                 transit_distance_m=distance,
                 transit_speed_mps=speed,
+                transit_source=transit_source,
+                route_profile=route_profile,
+                platform_max_speed_kph=platform_max_speed_kph,
+                bridge_count=bridge_count,
                 weapon_flag=weapon_flag,
                 mission_performance=performance,
                 cohort_skill=cohort.skill,
@@ -604,6 +670,7 @@ class StrategicMissionResolver:
                             support.required_relocation_m,
                             speed,
                             support.weapon_flag,
+                            transit_source="weapon_relocation",
                         )
                     )
                 continue
@@ -625,9 +692,74 @@ class StrategicMissionResolver:
                 else:
                     distance = math.hypot(target_x - origin[0], target_z - origin[1])
                 speed, preparation = self._platform_timing(cohort)
-                eta = preparation + distance / speed if distance is not None else None
+                platform_max_speed_kph = (
+                    weapon_ranges.maximum_speed_kph_for_type(cohort.unit_type)
+                    if cohort.is_ground
+                    else None
+                )
+                if cohort.is_ground and platform_max_speed_kph == 0:
+                    continue
+                transit_source = "straight_line" if distance is not None else "unavailable"
+                route_profile = None
+                bridge_count = None
+                if cohort.is_ground and self.ground_mobility is not None:
+                    geographic_origin = (
+                        (cohort.latitude, cohort.longitude)
+                        if cohort.latitude is not None and cohort.longitude is not None
+                        else legion_geographic_positions.get(cohort.legion_id or "")
+                    )
+                    if (
+                        geographic_origin is not None
+                        and target_latitude is not None
+                        and target_longitude is not None
+                    ):
+                        mobility_profile = self.ground_mobility_profile
+                        if platform_max_speed_kph is not None:
+                            mobility_profile = mobility_profile.calibrated_to_max_speed(
+                                platform_max_speed_kph,
+                                dcs_type=cohort.unit_type,
+                            )
+                        route_key = (
+                            geographic_origin[0],
+                            geographic_origin[1],
+                            target_latitude,
+                            target_longitude,
+                            mobility_profile.name,
+                        )
+                        if route_key not in self._ground_route_cache:
+                            self._ground_route_cache[route_key] = self.ground_mobility.route(
+                                geographic_origin[0],
+                                geographic_origin[1],
+                                target_latitude,
+                                target_longitude,
+                                profile=mobility_profile,
+                            )
+                        route = self._ground_route_cache[route_key]
+                        if route is None:
+                            continue
+                        distance = route.distance_m
+                        eta = preparation + route.travel_time_s
+                        speed = distance / route.travel_time_s if route.travel_time_s > 0 else None
+                        transit_source = "python_ground_mobility"
+                        route_profile = route.profile
+                        bridge_count = route.bridge_count
+                    else:
+                        eta = preparation + distance / speed if distance is not None else None
+                else:
+                    eta = preparation + distance / speed if distance is not None else None
                 assignments.append(
-                    build_assignment(candidate, cohort, eta, preparation, distance, speed)
+                    build_assignment(
+                        candidate,
+                        cohort,
+                        eta,
+                        preparation,
+                        distance,
+                        speed,
+                        transit_source=transit_source,
+                        route_profile=route_profile,
+                        platform_max_speed_kph=platform_max_speed_kph,
+                        bridge_count=bridge_count,
+                    )
                 )
         return tuple(
             sorted(

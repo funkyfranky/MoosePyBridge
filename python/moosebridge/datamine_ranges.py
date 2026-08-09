@@ -33,11 +33,12 @@ class DatamineRange:
 
 @dataclass(slots=True, frozen=True)
 class DatamineUnitEnvelope:
-    """Unit-level AI threat envelope with an optional unambiguous selector."""
+    """Unit-level descriptor data used for ranges and ground mobility."""
 
     dcs_type: str
     minimum_m: float
     maximum_m: float
+    maximum_speed_kph: float | None = None
     primary_weapon_flag: DcsWeaponFlag | None = None
     source_path: str | None = None
 
@@ -109,14 +110,22 @@ def load_datamine_range_data(path: str | None = None) -> DatamineRangeData:
     for item in raw.get("unit_envelopes", []):
         minimum = _number(item.get("minimum_m", 0), "minimum_m")
         maximum = _number(item.get("maximum_m"), "maximum_m")
+        maximum_speed = (
+            _number(item.get("max_speed_kph"), "max_speed_kph")
+            if item.get("max_speed_kph") is not None
+            else None
+        )
         if minimum < 0 or maximum < minimum:
             raise ValueError("Invalid datamine unit envelope")
+        if maximum_speed is not None and maximum_speed < 0:
+            raise ValueError("Invalid datamine unit maximum speed")
         primary = item.get("primary_weapon_flag")
         envelopes.append(
             DatamineUnitEnvelope(
                 dcs_type=str(item["dcs_type"]),
                 minimum_m=minimum,
                 maximum_m=maximum,
+                maximum_speed_kph=maximum_speed,
                 primary_weapon_flag=_flag(primary) if primary is not None else None,
                 source_path=str(item["source_path"]) if item.get("source_path") else None,
             )

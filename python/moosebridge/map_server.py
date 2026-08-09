@@ -560,10 +560,16 @@ class GlobalMapRuntime:
             latest_attempts=True,
         )
         queried_records = (*operational_records, *direct_records)
+        mission_generation = int(bridge.state.mission_generation)
+        audit_session_id = str(bridge.state.audit_session_id or "")
         latest_by_plan: dict[str, dict[str, Any]] = {}
         for record in queried_records:
             payload = record.get("payload") if isinstance(record, dict) else None
             if not isinstance(payload, dict):
+                continue
+            if int(payload.get("mission_generation") or 0) != mission_generation:
+                continue
+            if str(payload.get("audit_session_id") or "") != audit_session_id:
                 continue
             plan_id = str(payload.get("plan_id") or "")
             previous = latest_by_plan.get(plan_id)

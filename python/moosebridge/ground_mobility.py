@@ -49,6 +49,31 @@ class GroundMobilityProfile:
             return float(self.road_speeds_kph.get(edge.road_class, self.offroad_speed_kph))
         return self.offroad_speed_kph
 
+    def calibrated_to_max_speed(
+        self,
+        maximum_speed_kph: float,
+        *,
+        dcs_type: str | None = None,
+    ) -> GroundMobilityProfile:
+        """Scale this profile so its fastest edge equals a DCS ``MaxSpeed`` value."""
+
+        maximum_speed_kph = float(maximum_speed_kph)
+        if not math.isfinite(maximum_speed_kph) or maximum_speed_kph <= 0:
+            raise ValueError("maximum_speed_kph must be finite and positive")
+        baseline_maximum = max(
+            self.offroad_speed_kph,
+            self.bridge_speed_kph,
+            *self.road_speeds_kph.values(),
+        )
+        scale = maximum_speed_kph / baseline_maximum
+        profile_name = f"dcs_max_speed:{dcs_type or 'ground'}:{maximum_speed_kph:g}kph"
+        return GroundMobilityProfile(
+            name=profile_name,
+            offroad_speed_kph=self.offroad_speed_kph * scale,
+            road_speeds_kph={road_class: speed * scale for road_class, speed in self.road_speeds_kph.items()},
+            bridge_speed_kph=self.bridge_speed_kph * scale,
+        )
+
 
 WHEELED_GROUND_PROFILE = GroundMobilityProfile(
     name="wheeled",

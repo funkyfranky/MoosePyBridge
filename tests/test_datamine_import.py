@@ -29,6 +29,7 @@ def test_descriptor_import_separates_exact_range_from_unit_envelope() -> None:
         _G["db"]["unit"] = {
             type = "Test MLRS",
             DisplayName = "Test launcher",
+            MaxSpeed = 64.00008,
             ThreatRangeMin = 10000,
             ThreatRange = 32000,
             attribute = { "MLRS", "Artillery", "Indirect fire" },
@@ -44,6 +45,7 @@ def test_descriptor_import_separates_exact_range_from_unit_envelope() -> None:
     envelope, ranges = descriptor_record(table, "unit.lua")
 
     assert envelope["primary_weapon_flag"] == "ANY_ROCKET"
+    assert envelope["max_speed_kph"] == 64.00008
     assert envelope["minimum_m"] == 10_000
     assert ranges == [
         {
@@ -61,7 +63,7 @@ def test_build_artifact_imports_local_descriptor_directory(tmp_path: Path) -> No
     directory = tmp_path / "_G" / "db" / "Units" / "Cars" / "Car"
     directory.mkdir(parents=True)
     (directory / "unit.lua").write_text(
-        '_G["db"]["unit"] = { type = "Tank", ThreatRange = 2500, '
+        '_G["db"]["unit"] = { type = "Tank", MaxSpeed = 72, ThreatRange = 2500, '
         'attribute = { "Tanks", "Armed ground units" } }',
         encoding="utf-8",
     )
@@ -71,6 +73,7 @@ def test_build_artifact_imports_local_descriptor_directory(tmp_path: Path) -> No
     assert artifact["descriptor_count"] == 1
     assert artifact["source"]["dcs_build"] == "test-build"
     assert artifact["unit_envelopes"][0]["primary_weapon_flag"] == "BUILT_IN_CANNON"
+    assert artifact["unit_envelopes"][0]["max_speed_kph"] == 72
 
 
 def test_sensor_import_extracts_and_clamps_detection_bounds() -> None:

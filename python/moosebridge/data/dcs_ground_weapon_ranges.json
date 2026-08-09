@@ -126,6 +126,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -150,6 +151,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 30.0,
       "maximum_m": 7000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -182,6 +184,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 8000.0,
       "primary_weapon_flag": null,
@@ -204,6 +207,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -230,6 +234,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 18000.0,
       "primary_weapon_flag": null,
@@ -253,6 +258,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -279,6 +285,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -304,6 +311,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -327,6 +335,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -350,6 +359,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -373,6 +383,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -396,6 +407,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 54.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -420,6 +432,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 24.012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -443,6 +456,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 79.92,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -466,6 +480,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -493,6 +508,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 61.02,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": null,
@@ -520,6 +536,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": null,
@@ -547,6 +564,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 65.99988,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": null,
@@ -574,6 +592,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 69.99984,
       "minimum_m": 0.0,
       "maximum_m": 4000.0,
       "primary_weapon_flag": null,
@@ -598,6 +617,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": null,
@@ -619,6 +639,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -646,6 +667,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 100.00008,
       "minimum_m": 0.0,
       "maximum_m": 1600.0,
       "primary_weapon_flag": null,
@@ -674,6 +696,7 @@
         "sp atgm",
         "vehicles"
       ],
+      "max_speed_kph": 100.00008,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": null,
@@ -700,6 +723,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 79.2,
       "minimum_m": 0.0,
       "maximum_m": 1600.0,
       "primary_weapon_flag": null,
@@ -726,6 +750,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 1600.0,
       "primary_weapon_flag": null,
@@ -752,6 +777,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 1600.0,
       "primary_weapon_flag": null,
@@ -779,6 +805,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": null,
@@ -807,6 +834,7 @@
         "sp atgm",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": null,
@@ -828,6 +856,7 @@
         "pillbox",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 800.0,
       "primary_weapon_flag": null,
@@ -851,6 +880,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -877,6 +907,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 51.984,
       "minimum_m": 0.0,
       "maximum_m": 6000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -903,6 +934,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -930,6 +962,7 @@
         "ssm",
         "vehicles"
       ],
+      "max_speed_kph": 69.984,
       "minimum_m": 75000.0,
       "maximum_m": 400000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -957,6 +990,7 @@
         "ssm",
         "vehicles"
       ],
+      "max_speed_kph": 69.984,
       "minimum_m": 75000.0,
       "maximum_m": 400000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -984,6 +1018,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 65.016,
       "minimum_m": 800.0,
       "maximum_m": 6000.0,
       "primary_weapon_flag": "ANTI_TANK_MISSILE",
@@ -1010,6 +1045,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 79.992,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -1038,6 +1074,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 79.992,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -1064,6 +1101,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1090,6 +1128,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 1000.0,
       "maximum_m": 40000.0,
       "primary_weapon_flag": null,
@@ -1118,6 +1157,7 @@
         "search & track radar",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1141,6 +1181,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 93.996,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1169,6 +1210,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 100.008,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -1195,6 +1237,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 84.996,
       "minimum_m": 50000.0,
       "maximum_m": 300000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -1221,6 +1264,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 84.996,
       "minimum_m": 50000.0,
       "maximum_m": 300000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -1247,6 +1291,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 84.996,
       "minimum_m": 15000.0,
       "maximum_m": 70000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -1273,6 +1318,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 84.996,
       "minimum_m": 15000.0,
       "maximum_m": 70000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -1301,6 +1347,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 100.008,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -1334,6 +1381,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 20000.0,
       "primary_weapon_flag": null,
@@ -1361,6 +1409,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 60.012,
       "minimum_m": 100.0,
       "maximum_m": 4000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -1388,6 +1437,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 69.984,
       "minimum_m": 100.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -1415,6 +1465,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 69.984,
       "minimum_m": 100.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -1443,6 +1494,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 65.016,
       "minimum_m": 1500.0,
       "maximum_m": 16000.0,
       "primary_weapon_flag": null,
@@ -1468,6 +1520,7 @@
         "nonandlightarmoredunits",
         "vehicles"
       ],
+      "max_speed_kph": 60.012,
       "minimum_m": 400.0,
       "maximum_m": 6000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -1494,6 +1547,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 39.96,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -1520,6 +1574,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 19.98,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -1541,6 +1596,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1562,6 +1618,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1583,6 +1640,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1604,6 +1662,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1625,6 +1684,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1646,6 +1706,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1673,6 +1734,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 115.2,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -1699,6 +1761,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 51.984,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -1726,6 +1789,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 79.992,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": null,
@@ -1751,6 +1815,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1772,6 +1837,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 79.92,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1793,6 +1859,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 79.92,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1814,6 +1881,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 109.98,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1840,6 +1908,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 20.016,
       "minimum_m": 0.0,
       "maximum_m": 6000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -1861,6 +1930,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -1882,6 +1952,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 1100.0,
       "primary_weapon_flag": null,
@@ -1906,6 +1977,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": null,
@@ -1930,6 +2002,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -1954,6 +2027,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": null,
@@ -1978,6 +2052,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": null,
@@ -2002,6 +2077,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -2026,6 +2102,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": null,
@@ -2050,6 +2127,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 15000.0,
       "primary_weapon_flag": null,
@@ -2072,6 +2150,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2094,6 +2173,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2117,6 +2197,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2139,6 +2220,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2161,6 +2243,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2184,6 +2267,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2207,6 +2291,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2230,6 +2315,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2253,6 +2339,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2277,6 +2364,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2302,6 +2390,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2324,6 +2413,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2354,6 +2444,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 4000.0,
       "primary_weapon_flag": null,
@@ -2375,6 +2466,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 79.92,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2396,6 +2488,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 79.92,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2420,6 +2513,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2444,6 +2538,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2469,6 +2564,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 5000.0,
       "maximum_m": 19000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -2496,6 +2592,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 1000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -2523,6 +2620,7 @@
         "search & track radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2549,6 +2647,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 45000.0,
       "primary_weapon_flag": null,
@@ -2572,6 +2671,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2599,6 +2699,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2625,6 +2726,7 @@
         "tracking radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2648,6 +2750,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2678,6 +2781,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": null,
@@ -2704,6 +2808,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 133.2,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -2731,6 +2836,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 133.2,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -2758,6 +2864,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 133.2,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -2783,6 +2890,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 133.2,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -2806,6 +2914,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 95.004,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2827,6 +2936,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 800.0,
       "primary_weapon_flag": null,
@@ -2848,6 +2958,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 800.0,
       "primary_weapon_flag": null,
@@ -2869,6 +2980,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 800.0,
       "primary_weapon_flag": null,
@@ -2899,6 +3011,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 79.2,
       "minimum_m": 0.0,
       "maximum_m": 15000.0,
       "primary_weapon_flag": null,
@@ -2928,6 +3041,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 79.2,
       "minimum_m": 0.0,
       "maximum_m": 15000.0,
       "primary_weapon_flag": null,
@@ -2955,6 +3069,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 79.2,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -2984,6 +3099,7 @@
         "unarmed",
         "vehicles"
       ],
+      "max_speed_kph": 113.00004,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3010,6 +3126,7 @@
         "ssm",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 100000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -3039,6 +3156,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 5200.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -3062,6 +3180,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3083,6 +3202,7 @@
         "redacted",
         "skeleton_type_a"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -3104,6 +3224,7 @@
         "redacted",
         "skeleton_type_a"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -3125,6 +3246,7 @@
         "redacted",
         "skeleton_type_a"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -3146,6 +3268,7 @@
         "redacted",
         "skeleton_type_a"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -3172,6 +3295,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 45.72,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3198,6 +3322,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 38.016,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3217,6 +3342,7 @@
         "nonarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3240,6 +3366,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3263,6 +3390,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3288,6 +3416,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3312,6 +3441,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3336,6 +3466,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 20000.0,
       "primary_weapon_flag": null,
@@ -3363,6 +3494,7 @@
         "search & track radar",
         "vehicles"
       ],
+      "max_speed_kph": 43.99992,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3388,6 +3520,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 43.99992,
       "minimum_m": 0.0,
       "maximum_m": 25000.0,
       "primary_weapon_flag": null,
@@ -3411,6 +3544,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 79.992,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3435,6 +3569,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 3.6,
       "minimum_m": 0.0,
       "maximum_m": 17200.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -3458,6 +3593,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 124.92,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3481,6 +3617,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 124.92,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3507,6 +3644,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 50.4,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3534,6 +3672,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 100.00008,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -3557,6 +3696,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 100.00008,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3583,6 +3723,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3607,6 +3748,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 3.6,
       "minimum_m": 0.0,
       "maximum_m": 10500.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -3633,6 +3775,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3659,6 +3802,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3685,6 +3829,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3711,6 +3856,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3737,6 +3883,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3760,6 +3907,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 252.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3781,6 +3929,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 59.976,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3805,6 +3954,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -3832,6 +3982,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 66.70008,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3857,6 +4008,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 56.30004,
       "minimum_m": 30.0,
       "maximum_m": 22000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -3884,6 +4036,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -3912,6 +4065,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 65.99988,
       "minimum_m": 0.0,
       "maximum_m": 3800.0,
       "primary_weapon_flag": null,
@@ -3938,6 +4092,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 47.99988,
       "minimum_m": 0.0,
       "maximum_m": 8000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -3966,6 +4121,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 113.00004,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -3995,6 +4151,7 @@
         "sp atgm",
         "vehicles"
       ],
+      "max_speed_kph": 113.00004,
       "minimum_m": 0.0,
       "maximum_m": 3800.0,
       "primary_weapon_flag": null,
@@ -4023,6 +4180,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 113.00004,
       "minimum_m": 0.0,
       "maximum_m": 4500.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -4049,6 +4207,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 39.996,
       "minimum_m": 0.0,
       "maximum_m": 6000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -4077,6 +4236,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 96.84,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -4108,6 +4268,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 96.84,
       "minimum_m": 0.0,
       "maximum_m": 4000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -4137,6 +4298,7 @@
         "sp atgm",
         "vehicles"
       ],
+      "max_speed_kph": 96.84,
       "minimum_m": 0.0,
       "maximum_m": 3800.0,
       "primary_weapon_flag": null,
@@ -4161,6 +4323,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 39.996,
       "minimum_m": 0.0,
       "maximum_m": 18300.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -4185,6 +4348,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 5700.0,
       "primary_weapon_flag": null,
@@ -4212,6 +4376,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 66.70008,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -4236,6 +4401,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 3.6,
       "minimum_m": 0.0,
       "maximum_m": 11500.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -4262,6 +4428,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 72.0,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -4289,6 +4456,7 @@
         "unarmed",
         "vehicles"
       ],
+      "max_speed_kph": 39.996,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -4313,6 +4481,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 1500.0,
       "primary_weapon_flag": null,
@@ -4340,6 +4509,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 8500.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -4366,6 +4536,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 39.996,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -4393,6 +4564,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 55.98,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -4419,6 +4591,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 39.996,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -4447,6 +4620,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 65.99988,
       "minimum_m": 0.0,
       "maximum_m": 4500.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -4474,6 +4648,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 88.92,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": null,
@@ -4497,6 +4672,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -4524,6 +4700,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 1500.0,
       "primary_weapon_flag": null,
@@ -4547,6 +4724,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -4575,6 +4753,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 104.9976,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -4598,6 +4777,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -4625,6 +4805,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -4652,6 +4833,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -4676,6 +4858,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 12.96,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -4702,6 +4885,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 64.00008,
       "minimum_m": 10000.0,
       "maximum_m": 32000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -4731,6 +4915,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 113.00004,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -4757,6 +4942,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 1000.0,
       "primary_weapon_flag": null,
@@ -4783,6 +4969,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -4809,6 +4996,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 15000.0,
       "primary_weapon_flag": null,
@@ -4835,6 +5023,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 15000.0,
       "primary_weapon_flag": null,
@@ -4862,6 +5051,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -4889,6 +5079,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 79.99992,
       "minimum_m": 0.0,
       "maximum_m": 10300.0,
       "primary_weapon_flag": null,
@@ -4910,6 +5101,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 800.0,
       "primary_weapon_flag": null,
@@ -4931,6 +5123,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 800.0,
       "primary_weapon_flag": null,
@@ -4952,6 +5145,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -4973,6 +5167,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 800.0,
       "primary_weapon_flag": null,
@@ -4999,6 +5194,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5025,6 +5221,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5049,6 +5246,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 127.8,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5073,6 +5271,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 3.6,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -5092,6 +5291,7 @@
         "nonarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -5111,6 +5311,7 @@
         "nonarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -5137,6 +5338,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5163,6 +5365,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5189,6 +5392,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5215,6 +5419,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5241,6 +5446,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 100000.0,
       "primary_weapon_flag": null,
@@ -5268,6 +5474,7 @@
         "search & track radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5286,6 +5493,7 @@
         "support & logistics",
         "unarmed"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5304,6 +5512,7 @@
         "support & logistics",
         "unarmed"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5328,6 +5537,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 55.98,
       "minimum_m": 60.0,
       "maximum_m": 23500.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -5351,6 +5561,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5374,6 +5585,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5389,6 +5601,7 @@
         "support & logistics",
         "unarmed"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5404,6 +5617,7 @@
         "support & logistics",
         "unarmed"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5429,6 +5643,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 43.992,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -5455,6 +5670,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 38.016,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -5481,6 +5697,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 45.72,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -5505,6 +5722,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 9000.0,
       "primary_weapon_flag": null,
@@ -5528,6 +5746,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5554,6 +5773,7 @@
         "tracking radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5584,6 +5804,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 6800.0,
       "primary_weapon_flag": null,
@@ -5608,6 +5829,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5634,6 +5856,7 @@
         "tracking radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5660,6 +5883,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5690,6 +5914,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 8000.0,
       "primary_weapon_flag": null,
@@ -5715,6 +5940,7 @@
         "search & track radar",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5741,6 +5967,7 @@
         "search & track radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5756,6 +5983,7 @@
         "support & logistics",
         "unarmed"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5782,6 +6010,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 17000.0,
       "maximum_m": 255000.0,
       "primary_weapon_flag": null,
@@ -5807,6 +6036,7 @@
         "tracking radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5832,6 +6062,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5857,6 +6088,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5880,6 +6112,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5905,6 +6138,7 @@
         "tracking radar",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -5930,6 +6164,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 120000.0,
       "primary_weapon_flag": null,
@@ -5955,6 +6190,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 120000.0,
       "primary_weapon_flag": null,
@@ -5980,6 +6216,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6004,6 +6241,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 6000.0,
       "primary_weapon_flag": null,
@@ -6027,6 +6265,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6053,6 +6292,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 7000.0,
       "maximum_m": 43000.0,
       "primary_weapon_flag": null,
@@ -6076,6 +6316,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6105,6 +6346,7 @@
         "sam tr",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 50000.0,
       "primary_weapon_flag": null,
@@ -6130,6 +6372,7 @@
         "search radar",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6158,6 +6401,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6187,6 +6431,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 5200.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -6215,6 +6460,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6244,6 +6490,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 5200.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -6265,6 +6512,7 @@
         "pillbox",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 800.0,
       "primary_weapon_flag": null,
@@ -6289,6 +6537,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 30.0,
       "maximum_m": 7000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -6313,6 +6562,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 30.0,
       "maximum_m": 17000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -6337,6 +6587,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 30.0,
       "maximum_m": 15000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -6361,6 +6612,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 30.0,
       "maximum_m": 23500.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -6388,6 +6640,7 @@
         "ssm",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 50000.0,
       "maximum_m": 285000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -6406,6 +6659,7 @@
         "support & logistics",
         "unarmed"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6433,6 +6687,7 @@
         "unarmed",
         "vehicles"
       ],
+      "max_speed_kph": 61.488,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6460,6 +6715,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": null,
@@ -6486,6 +6742,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 52.992,
       "minimum_m": 0.0,
       "maximum_m": 1100.0,
       "primary_weapon_flag": null,
@@ -6513,6 +6770,7 @@
         "unarmed",
         "vehicles"
       ],
+      "max_speed_kph": 49.968,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6539,6 +6797,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -6567,6 +6826,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 20000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -6590,6 +6850,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6615,6 +6876,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 20000.0,
       "maximum_m": 70000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -6640,6 +6902,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 20000.0,
       "maximum_m": 70000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -6666,6 +6929,7 @@
         "tracking radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6692,6 +6956,7 @@
         "tracking radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6711,6 +6976,7 @@
         "nonarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -6731,6 +6997,7 @@
         "prone",
         "redacted"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 700.0,
       "primary_weapon_flag": null,
@@ -6750,6 +7017,7 @@
         "nonarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -6770,6 +7038,7 @@
         "nonarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -6789,6 +7058,7 @@
         "nonarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -6818,6 +7088,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 4500.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -6839,6 +7110,7 @@
         "redacted",
         "skeleton_type_a"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -6860,6 +7132,7 @@
         "redacted",
         "skeleton_type_a"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -6881,6 +7154,7 @@
         "redacted",
         "skeleton_type_a"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 500.0,
       "primary_weapon_flag": null,
@@ -6910,6 +7184,7 @@
         "tracking radar",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6934,6 +7209,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 79.992,
       "minimum_m": 30.0,
       "maximum_m": 18700.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -6962,6 +7238,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -6990,6 +7267,7 @@
         "sam related",
         "vehicles"
       ],
+      "max_speed_kph": 14.4,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7016,6 +7294,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 100.00008,
       "minimum_m": 0.0,
       "maximum_m": 4200.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -7044,6 +7323,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "ANY_MISSILE",
@@ -7070,6 +7350,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 39.996,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7096,6 +7377,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 38.016,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7121,6 +7403,7 @@
         "spg",
         "vehicles"
       ],
+      "max_speed_kph": 38.016,
       "minimum_m": 0.0,
       "maximum_m": 4500.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -7144,6 +7427,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 18.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7170,6 +7454,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 194.4,
       "minimum_m": 0.0,
       "maximum_m": 5200.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7196,6 +7481,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 43.2,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7222,6 +7508,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 4000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7248,6 +7535,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 64.8,
       "minimum_m": 0.0,
       "maximum_m": 4000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7274,6 +7562,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 69.99984,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7300,6 +7589,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 69.99984,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7327,6 +7617,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 65.016,
       "minimum_m": 100.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7352,6 +7643,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 64.98,
       "minimum_m": 0.0,
       "maximum_m": 41000.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -7378,6 +7670,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 180.0,
       "minimum_m": 0.0,
       "maximum_m": 5200.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7399,6 +7692,7 @@
         "heavyarmoredunits",
         "redacted"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7426,6 +7720,7 @@
         "unarmed",
         "vehicles"
       ],
+      "max_speed_kph": 113.00004,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7447,6 +7742,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7474,6 +7770,7 @@
         "tank",
         "vehicles"
       ],
+      "max_speed_kph": 79.992,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": null,
@@ -7500,6 +7797,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 43.992,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7526,6 +7824,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 37.98,
       "minimum_m": 0.0,
       "maximum_m": 6000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7554,6 +7853,7 @@
         "unarmed",
         "vehicles"
       ],
+      "max_speed_kph": 144.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7581,6 +7881,7 @@
         "sr sam",
         "vehicles"
       ],
+      "max_speed_kph": 65.00016,
       "minimum_m": 0.0,
       "maximum_m": 12000.0,
       "primary_weapon_flag": null,
@@ -7607,6 +7908,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 105.00012,
       "minimum_m": 0.0,
       "maximum_m": 1000.0,
       "primary_weapon_flag": null,
@@ -7630,6 +7932,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 69.99984,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7656,6 +7959,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 133.2,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -7683,6 +7987,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 133.2,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -7710,6 +8015,7 @@
         "scout/recon",
         "vehicles"
       ],
+      "max_speed_kph": 133.2,
       "minimum_m": 0.0,
       "maximum_m": 1200.0,
       "primary_weapon_flag": null,
@@ -7735,6 +8041,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 133.2,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -7759,6 +8066,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 24.984,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7785,6 +8093,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 43.2,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7809,6 +8118,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 3200.0,
       "primary_weapon_flag": null,
@@ -7833,6 +8143,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": null,
@@ -7859,6 +8170,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 50.004,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7884,6 +8196,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 49.6008,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": null,
@@ -7907,6 +8220,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 59.76,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -7931,6 +8245,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 3500.0,
       "primary_weapon_flag": null,
@@ -7957,6 +8272,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 50.004,
       "minimum_m": 0.0,
       "maximum_m": 3000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -7984,6 +8300,7 @@
         "unarmed",
         "vehicles"
       ],
+      "max_speed_kph": 40.32,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8007,6 +8324,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 59.976,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8031,6 +8349,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 100.00008,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8056,6 +8375,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 64.8,
       "minimum_m": 11500.0,
       "maximum_m": 35800.0,
       "primary_weapon_flag": "ANY_ROCKET",
@@ -8079,6 +8399,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8102,6 +8423,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8125,6 +8447,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8150,6 +8473,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -8175,6 +8499,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -8198,6 +8523,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8221,6 +8547,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8244,6 +8571,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8267,6 +8595,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8290,6 +8619,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8313,6 +8643,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8339,6 +8670,7 @@
         "ssm",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -8368,6 +8700,7 @@
         "sp atgm",
         "vehicles"
       ],
+      "max_speed_kph": 90.0,
       "minimum_m": 0.0,
       "maximum_m": 3800.0,
       "primary_weapon_flag": null,
@@ -8391,6 +8724,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 69.99984,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8420,6 +8754,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 60.00012,
       "minimum_m": 0.0,
       "maximum_m": 2000.0,
       "primary_weapon_flag": null,
@@ -8441,6 +8776,7 @@
         "redacted",
         "train"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8465,6 +8801,7 @@
         "spa",
         "vehicles"
       ],
+      "max_speed_kph": 39.996,
       "minimum_m": 0.0,
       "maximum_m": 10500.0,
       "primary_weapon_flag": "CONVENTIONAL_SHELL",
@@ -8488,6 +8825,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 105.012,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8517,6 +8855,7 @@
         "redacted",
         "vehicles"
       ],
+      "max_speed_kph": 79.992,
       "minimum_m": 0.0,
       "maximum_m": 4800.0,
       "primary_weapon_flag": null,
@@ -8540,6 +8879,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8563,6 +8903,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8586,6 +8927,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8609,6 +8951,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 64.8,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8632,6 +8975,7 @@
         "unarmed vehicles",
         "vehicles"
       ],
+      "max_speed_kph": 74.99988,
       "minimum_m": 0.0,
       "maximum_m": 0.0,
       "primary_weapon_flag": null,
@@ -8661,6 +9005,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 43.99992,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -8686,6 +9031,7 @@
         "sp aaa",
         "vehicles"
       ],
+      "max_speed_kph": 43.2,
       "minimum_m": 0.0,
       "maximum_m": 7000.0,
       "primary_weapon_flag": null,
@@ -8713,6 +9059,7 @@
         "tanks",
         "vehicles"
       ],
+      "max_speed_kph": 64.98,
       "minimum_m": 0.0,
       "maximum_m": 5000.0,
       "primary_weapon_flag": "BUILT_IN_CANNON",
@@ -8737,6 +9084,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -8761,6 +9109,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -8785,6 +9134,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,
@@ -8809,6 +9159,7 @@
         "static aaa",
         "vehicles"
       ],
+      "max_speed_kph": 0.0,
       "minimum_m": 0.0,
       "maximum_m": 2500.0,
       "primary_weapon_flag": null,

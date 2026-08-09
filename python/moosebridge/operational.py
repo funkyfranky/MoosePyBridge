@@ -438,6 +438,18 @@ class OperationalPlanRegistry:
                         for cohort in coalition_cohorts
                         if _cohort_matches_requirement(cohort, requirement, mission_types)
                     ]
+                    ranked_assignments = requirement.metadata.get("mission_assignments")
+                    assignment_priority = {
+                        str(assignment.get("cohort_id")): index
+                        for index, assignment in enumerate(ranked_assignments)
+                        if isinstance(assignment, Mapping) and assignment.get("cohort_id")
+                    } if isinstance(ranked_assignments, list) else {}
+                    if requirement.metadata.get("ground_mobility_filter"):
+                        candidates = [
+                            cohort
+                            for cohort in candidates
+                            if not cohort.is_ground or cohort.object_id in assignment_priority
+                        ]
                     preferred = set(requirement.preferred_legion_ids)
                     cohort_priority = {
                         cohort_id: index for index, cohort_id in enumerate(requirement.allowed_cohort_ids)
@@ -446,6 +458,7 @@ class OperationalPlanRegistry:
                         key=lambda cohort: (
                             cohort_priority.get(cohort.object_id, len(cohort_priority)),
                             0 if cohort.legion_id in preferred else 1,
+                            assignment_priority.get(cohort.object_id, len(assignment_priority)),
                             -max((cohort.mission_performance_for(mission) or 0 for mission in mission_types), default=0),
                             -_cohort_units_per_asset(cohort),
                             cohort.object_id,

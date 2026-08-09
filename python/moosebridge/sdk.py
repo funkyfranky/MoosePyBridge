@@ -48,6 +48,11 @@ from .intelligence import (
     InformationRequirementRegistry,
     InformationRequirementStatus,
 )
+from .ground_mobility import (
+    GroundMobilityNetwork,
+    GroundMobilityProfile,
+    TRACKED_GROUND_PROFILE,
+)
 from .legions import Cohort, Commander, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .mission_resolver import StrategicMissionResolver
@@ -560,6 +565,8 @@ class MooseBridgeClient:
         shortfall produces a persistent replanning advisory.
     :param border_violation_tolerance_s: Continuous DCS-time duration inside
         hostile territory before an escalation incident is recorded.
+    :param ground_mobility: Optional preloaded strategic ground network used for
+        ground-asset feasibility, route distance, and ETA scoring.
     """
 
     def __init__(
@@ -568,12 +575,18 @@ class MooseBridgeClient:
         *,
         weapon_ranges: WeaponRangeRegistry | None = None,
         sensor_ranges: SensorRangeRegistry | None = None,
+        ground_mobility: GroundMobilityNetwork | None = None,
+        ground_mobility_profile: GroundMobilityProfile = TRACKED_GROUND_PROFILE,
         strategic_shortfall_timeout_s: float = 300.0,
         border_violation_tolerance_s: float = 60.0,
     ) -> None:
         self.server = server
         self.weapon_range_registry = weapon_ranges or DEFAULT_WEAPON_RANGE_REGISTRY
         self.sensor_range_registry = sensor_ranges or DEFAULT_SENSOR_RANGE_REGISTRY
+        self.mission_resolver = StrategicMissionResolver(
+            ground_mobility=ground_mobility,
+            ground_mobility_profile=ground_mobility_profile,
+        )
         self.objectives = StrategicObjectiveRegistry()
         self.goals = StrategicGoalRegistry(self.objectives)
         self.plans = OperationalPlanRegistry(self.goals)
@@ -1058,6 +1071,7 @@ class MooseBridgeClient:
             self.relationship,
             self.coalition_doctrines,
             mission_generation=self.state.mission_generation,
+            audit_session_id=self.state.audit_session_id,
         )
         payload["border_violations"] = self.border_violations.to_dict()
         return await self.server.append_audit_record(DIPLOMACY_AUDIT_TYPE, payload)
@@ -1067,12 +1081,14 @@ class MooseBridgeClient:
 
         records = await self.server.query_audit_records(record_type=DIPLOMACY_AUDIT_TYPE)
         generation = self.state.mission_generation
+        audit_session_id = self.state.audit_session_id
         payload = next(
             (
                 record.get("payload")
                 for record in reversed(records)
                 if isinstance(record.get("payload"), dict)
                 and int(record["payload"].get("mission_generation") or 0) == generation
+                and str(record["payload"].get("audit_session_id") or "") == audit_session_id
             ),
             None,
         )
@@ -1199,7 +1215,7 @@ class MooseBridgeClient:
         objective = self.strategic_objective(item.objective_id)
         if objective is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
-        resolver = mission_resolver or StrategicMissionResolver()
+        resolver = mission_resolver or self.mission_resolver
         legions = self._strategic_legions(item.coalition)
         cohorts = self._strategic_cohorts(item.coalition)
         ammunition = self._strategic_ammunition(item.coalition)
@@ -1242,7 +1258,7 @@ class MooseBridgeClient:
         objective = self.strategic_objective(item.objective_id)
         if objective is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
-        resolver = mission_resolver or StrategicMissionResolver()
+        resolver = mission_resolver or self.mission_resolver
         legions = self._strategic_legions(item.coalition)
         cohorts = self._strategic_cohorts(item.coalition)
         ammunition = self._strategic_ammunition(item.coalition)
@@ -1289,7 +1305,7 @@ class MooseBridgeClient:
             component.object_id: effective_component_health(objective, component.object_id, self.state)
             for component in objective.components
         }
-        resolver = mission_resolver or StrategicMissionResolver()
+        resolver = mission_resolver or self.mission_resolver
         legions = self._strategic_legions(item.coalition)
         cohorts = self._strategic_cohorts(item.coalition)
         ammunition = self._strategic_ammunition(item.coalition)
@@ -1341,7 +1357,7 @@ class MooseBridgeClient:
                 f"AIRBASE snapshot is unavailable for {control_id or objective.objective_id}; "
                 "call snapshot_airbases() before proposing runway denial"
             )
-        resolution = (mission_resolver or StrategicMissionResolver()).resolve(
+        resolution = (mission_resolver or self.mission_resolver).resolve(
             control_id or "",
             effect=item.effect,
             target_data=airbase,
@@ -1373,6 +1389,7 @@ class MooseBridgeClient:
             "UNIT": "units",
             "STATIC": "statics",
             "AIRBASE": "airbases",
+            "OPSZONE": "opszones",
         }.get(prefix)
         contact = next(
             (
@@ -1445,12 +1462,87 @@ class MooseBridgeClient:
     def validate_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlanAssessment:
         """Validate a plan against currently mirrored LEGION and COHORT stock."""
 
+        item = plan if isinstance(plan, OperationalPlan) else self.plans.get(plan)
+        if item is None:
+            raise KeyError(f"Unknown operational plan: {plan}")
+        legions = tuple(self.state.legion_objects.values())
+        cohorts = tuple(self.state.cohort_objects.values())
+        self._prepare_operational_assignment_metadata(item, legions=legions, cohorts=cohorts)
         return self.plans.validate(
-            plan,
-            legions=self.state.legion_objects.values(),
-            cohorts=self.state.cohort_objects.values(),
+            item,
+            legions=legions,
+            cohorts=cohorts,
             mission_time=self._current_mission_time(),
         )
+
+    def _prepare_operational_assignment_metadata(
+        self,
+        plan: OperationalPlan,
+        *,
+        legions: tuple[Legion, ...],
+        cohorts: tuple[Cohort, ...],
+    ) -> None:
+        """Attach route-aware COHORT rankings to target-bound requirements."""
+
+        if self.mission_resolver.ground_mobility is None:
+            return
+        coalition_legion_ids = {
+            legion.object_id
+            for legion in legions
+            if normalize_coalition(legion.coalition or legion.coalition_name) == plan.coalition
+        }
+        coalition_cohorts = tuple(
+            cohort for cohort in cohorts if cohort.legion_id in coalition_legion_ids
+        )
+        for phase in plan.phases:
+            for intent in phase.intents:
+                if not intent.target_object_id:
+                    continue
+                target_data = self._strategic_target_data(intent.target_object_id)
+                if not target_data or target_data.get("latitude") is None or target_data.get("longitude") is None:
+                    continue
+                for requirement in intent.asset_requirements:
+                    mission_types = requirement.mission_types or intent.auftrag_types
+                    assignments = []
+                    for mission_type in mission_types:
+                        assignments.extend(
+                            self.mission_resolver.assignments_for_mission(
+                                mission_type,
+                                target_data=target_data,
+                                cohorts=coalition_cohorts,
+                                legions=legions,
+                                performer_categories=requirement.performer_categories,
+                                require_payload=requirement.require_payload,
+                            )
+                        )
+                    best_by_cohort = {}
+                    for assignment in assignments:
+                        previous = best_by_cohort.get(assignment.cohort_id)
+                        if previous is None or assignment.selection_score > previous.selection_score:
+                            best_by_cohort[assignment.cohort_id] = assignment
+                    ranked = sorted(
+                        best_by_cohort.values(),
+                        key=lambda assignment: (
+                            -assignment.selection_score,
+                            assignment.estimated_time_to_effect_s is None,
+                            assignment.estimated_time_to_effect_s
+                            if assignment.estimated_time_to_effect_s is not None
+                            else math.inf,
+                            assignment.cohort_id,
+                        ),
+                    )
+                    ground_candidates_exist = any(
+                        cohort.is_ground
+                        and any(mission in cohort.mission_type_keys for mission in mission_types)
+                        for cohort in coalition_cohorts
+                    )
+                    if not ground_candidates_exist:
+                        continue
+                    requirement.metadata["mission_assignments"] = [assignment.to_dict() for assignment in ranked]
+                    requirement.metadata["ground_mobility_filter"] = True
+                    if ranked:
+                        requirement.metadata["estimated_time_to_effect_s"] = ranked[0].estimated_time_to_effect_s
+                        requirement.metadata["selection_score"] = ranked[0].selection_score
 
     async def refresh_and_validate_operational_plan(self, plan: OperationalPlan | str) -> OperationalPlanAssessment:
         """Refresh LEGION/COHORT state and validate an operational plan."""
@@ -3101,6 +3193,8 @@ class MooseBridgeClient:
         await self.server.append_audit_record(
             RECON_EXECUTION_AUDIT_TYPE,
             {
+                "audit_session_id": self.state.audit_session_id,
+                "mission_generation": self.state.mission_generation,
                 "plan_id": plan_id,
                 "commander_id": commander or "",
                 "attempt_id": attempt_id,

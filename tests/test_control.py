@@ -94,7 +94,7 @@ async def _with_control_server() -> tuple[FakeBridgeServer, MooseBridgeControlSe
 
 
 def test_state_payload_roundtrip_applies_requested_kinds() -> None:
-    source = MooseBridgeState(connected=True)
+    source = MooseBridgeState(connected=True, audit_session_id="server-test")
     source.apply_message(
         {
             "type": "snapshot",
@@ -123,6 +123,7 @@ def test_state_payload_roundtrip_applies_requested_kinds() -> None:
 
     assert payload["counts"]["objects"] == 1
     assert target.connected is True
+    assert target.audit_session_id == "server-test"
     assert target.mission_generation == 0
     assert target.mission_ended is False
     assert target.objects["UNIT:Scout-1"]["object_type"] == "UNIT"

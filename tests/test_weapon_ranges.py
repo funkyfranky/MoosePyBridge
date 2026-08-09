@@ -52,6 +52,9 @@ def test_datamine_profiles_define_mlrs_and_m109_task_ranges() -> None:
     assert m109.maximum_m == 22_000
     assert m109.contains(22_000)
     assert not m109.contains(22_001)
+    assert registry.maximum_speed_kph_for_type("M-109") == pytest.approx(56.30004)
+    assert registry.maximum_speed_kph_for_type("MLRS") == pytest.approx(64.00008)
+    assert registry.maximum_speed_kph_for_type("unknown") is None
 
 
 def test_profiles_for_type_exposes_all_task_eligible_datamine_ranges() -> None:

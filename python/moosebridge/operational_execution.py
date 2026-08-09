@@ -292,6 +292,7 @@ class OperationalPlanExecutor:
             latest_attempts=True,
         )
         generation = self.client.state.mission_generation
+        audit_session_id = self.client.state.audit_session_id
         restored: list[OperationalPlanExecution] = []
         from .operational_audit import execution_from_dict
 
@@ -300,6 +301,7 @@ class OperationalPlanExecutor:
             if (
                 isinstance(payload, dict)
                 and int(payload.get("mission_generation") or 0) == generation
+                and str(payload.get("audit_session_id") or "") == audit_session_id
             ):
                 try:
                     restored.append(execution_from_dict(payload))
@@ -1941,6 +1943,7 @@ class OperationalPlanExecutor:
 
             payload = execution_to_dict(execution)
             payload["mission_generation"] = self.client.state.mission_generation
+            payload["audit_session_id"] = self.client.state.audit_session_id
             await append(PLAN_EXECUTION_AUDIT_TYPE, payload)
         except Exception:
             LOGGER.warning("Could not persist operational execution %s", execution.attempt_id, exc_info=True)

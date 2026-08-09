@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from moosebridge import (
     DcsWeaponFlag,
+    GroundMobilityEdge,
+    GroundMobilityNetwork,
+    GroundMobilityNode,
+    RoadClass,
     StrategicGoalEffect,
     StrategicMissionResolver,
     StrategicTargetDomain,
@@ -20,6 +24,8 @@ def _cohort(
     unit_type: str | None = None,
     x: float | None = None,
     z: float | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
     legion_id: str = "LEGION:Test",
     engage_range_m: float = 20_000,
     mission_performance: float | None = None,
@@ -48,6 +54,8 @@ def _cohort(
             "unit_type": unit_type,
             "x": x,
             "z": z,
+            "latitude": latitude,
+            "longitude": longitude,
             "engage_range_m": engage_range_m,
             "mission_ranges_by_weapon_type": mission_ranges,
             "weapon_ranges_by_type": weapon_ranges,
@@ -74,6 +82,31 @@ def _legion(*, x: float = 0.0, z: float = 0.0) -> Legion:
             "x": x,
             "z": z,
         }
+    )
+
+
+def _ground_network(*, connected: bool = True) -> GroundMobilityNetwork:
+    from pyproj import Transformer
+
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:3035", always_xy=True)
+    first_x, first_y = transformer.transform(12.0, 54.0)
+    second_x, second_y = transformer.transform(12.1, 54.0)
+    nodes = (
+        GroundMobilityNode(0, first_x, first_y, 54.0, 12.0, 0, 0),
+        GroundMobilityNode(1, second_x, second_y, 54.0, 12.1, 0, 0 if connected else 1),
+    )
+    edges = (
+        (GroundMobilityEdge(0, 1, 12_000.0, road_class=RoadClass.PRIMARY, bridge=True),)
+        if connected
+        else ()
+    )
+    return GroundMobilityNetwork(
+        theater_id="test",
+        grid_spacing_m=5_000.0,
+        land_region_ids=("land-0", "land-1"),
+        nodes=nodes,
+        edges=edges,
+        bounds=(53.9, 11.9, 54.1, 12.2),
     )
 
 
@@ -108,6 +141,92 @@ def test_target_domain_uses_object_type_and_dcs_category() -> None:
     assert classify_strategic_target("UNIT:MiG", {"category": "Airplane"}) is StrategicTargetDomain.AIR
     assert classify_strategic_target("GROUP:Burke", {"category": "Ship"}) is StrategicTargetDomain.NAVAL
     assert classify_strategic_target("SCENERY:Bridge") is StrategicTargetDomain.SCENERY
+
+
+def test_ground_assignment_uses_python_mobility_distance_and_eta() -> None:
+    resolution = StrategicMissionResolver(ground_mobility=_ground_network()).resolve(
+        "GROUP:Target",
+        target_data={
+            "category": "Ground Unit",
+            "x": 8_000.0,
+            "z": 0.0,
+            "latitude": 54.0,
+            "longitude": 12.1,
+        },
+        cohorts=(
+            _cohort(
+                "COHORT:Armor",
+                "GROUNDATTACK",
+                "ground",
+                x=0.0,
+                z=0.0,
+                latitude=54.0,
+                longitude=12.0,
+            ),
+        ),
+    )
+
+    assignment = resolution.assignments[0]
+    assert assignment.transit_source == "python_ground_mobility"
+    assert assignment.route_profile == "tracked"
+    assert assignment.bridge_count == 1
+    assert assignment.transit_distance_m == 12_000.0
+    assert assignment.estimated_time_to_effect_s == 60.0 + 12_000.0 / (25.0 / 3.6)
+    assert resolution.to_metadata()["mission_assignments"][0]["transit_source"] == "python_ground_mobility"
+
+
+def test_ground_assignment_calibrates_eta_from_datamine_max_speed() -> None:
+    resolution = StrategicMissionResolver(ground_mobility=_ground_network()).resolve(
+        "GROUP:Target",
+        target_data={
+            "category": "Ground Unit",
+            "latitude": 54.0,
+            "longitude": 12.1,
+        },
+        cohorts=(
+            _cohort(
+                "COHORT:Leopard",
+                "GROUNDATTACK",
+                "ground",
+                unit_type="Leopard-2",
+                latitude=54.0,
+                longitude=12.0,
+            ),
+        ),
+    )
+
+    assignment = resolution.assignments[0]
+    assert assignment.platform_max_speed_kph == 72.0
+    assert assignment.route_profile == "dcs_max_speed:Leopard-2:72kph"
+    assert assignment.transit_speed_mps == 40.0 / 3.6
+    assert assignment.estimated_time_to_effect_s == 60.0 + 12_000.0 / (40.0 / 3.6)
+
+
+def test_disconnected_ground_route_rejects_ground_assignment() -> None:
+    resolution = StrategicMissionResolver(ground_mobility=_ground_network(connected=False)).resolve(
+        "GROUP:Island Target",
+        target_data={
+            "category": "Ground Unit",
+            "x": 8_000.0,
+            "z": 0.0,
+            "latitude": 54.0,
+            "longitude": 12.1,
+        },
+        cohorts=(
+            _cohort(
+                "COHORT:Armor",
+                "GROUNDATTACK",
+                "ground",
+                x=0.0,
+                z=0.0,
+                latitude=54.0,
+                longitude=12.0,
+            ),
+        ),
+    )
+
+    assert resolution.assignments == ()
+    assert resolution.selected_cohort_id is None
 
 
 def test_ground_target_prefers_bai_but_selects_available_groundattack() -> None:

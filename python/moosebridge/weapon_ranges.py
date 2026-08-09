@@ -171,6 +171,11 @@ class WeaponRangeRegistry:
             for item in datamine.unit_envelopes
             if item.primary_weapon_flag is not None and item.maximum_m > 0
         } if datamine is not None else {}
+        self._datamine_maximum_speeds_kph = {
+            item.dcs_type.strip().casefold(): item.maximum_speed_kph
+            for item in datamine.unit_envelopes
+            if item.maximum_speed_kph is not None
+        } if datamine is not None else {}
         self.datamine_metadata = datamine.metadata if datamine is not None else None
         self._role_fallbacks = {
             (WeaponRole(item.role), DcsWeaponFlag(item.weapon_flag)): item for item in role_fallbacks
@@ -210,6 +215,13 @@ class WeaponRangeRegistry:
                 key=lambda item: (item.minimum_m, -item.maximum_m, int(item.weapon_flag), item.source.value),
             )
         )
+
+    def maximum_speed_kph_for_type(self, dcs_type: str | None) -> float | None:
+        """Return the DCS descriptor ``MaxSpeed`` for one ground unit type."""
+
+        if not dcs_type:
+            return None
+        return self._datamine_maximum_speeds_kph.get(dcs_type.strip().casefold())
 
     def resolve(
         self,

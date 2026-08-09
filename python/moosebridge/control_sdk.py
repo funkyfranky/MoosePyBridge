@@ -9,6 +9,7 @@ from .protocol import BridgeCommand
 from .state import MooseBridgeState
 
 if TYPE_CHECKING:
+    from .ground_mobility import GroundMobilityNetwork, GroundMobilityProfile
     from .sensor_ranges import SensorRangeRegistry
     from .sdk import MooseBridgeClient
     from .weapon_ranges import WeaponRangeRegistry
@@ -215,13 +216,18 @@ def sdk_from_control_client(
     *,
     weapon_ranges: "WeaponRangeRegistry | None" = None,
     sensor_ranges: "SensorRangeRegistry | None" = None,
+    ground_mobility: "GroundMobilityNetwork | None" = None,
+    ground_mobility_profile: "GroundMobilityProfile | None" = None,
 ) -> "MooseBridgeClient":
     """Return a high-level SDK client backed by a control client."""
 
     from .sdk import MooseBridgeClient
 
-    return MooseBridgeClient(  # type: ignore[arg-type]
-        ControlSdkAdapter(client, timeout=timeout),
-        weapon_ranges=weapon_ranges,
-        sensor_ranges=sensor_ranges,
-    )
+    kwargs: dict[str, Any] = {
+        "weapon_ranges": weapon_ranges,
+        "sensor_ranges": sensor_ranges,
+        "ground_mobility": ground_mobility,
+    }
+    if ground_mobility_profile is not None:
+        kwargs["ground_mobility_profile"] = ground_mobility_profile
+    return MooseBridgeClient(ControlSdkAdapter(client, timeout=timeout), **kwargs)  # type: ignore[arg-type]

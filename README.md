@@ -690,8 +690,14 @@ a preferred BAI mission merely because it has a shorter response time. Second,
 COHORTs for that mission type are ranked by an auditable score: mission
 performance contributes 50%, COHORT skill 30%, and response time 20%.
 Response time combines distance, platform speed, and a preparation delay, so
-distance is not counted twice. ARTY uses only required relocation; other
-missions use the target distance from the COHORT or its parent LEGION. The
+distance is not counted twice. ARTY uses only required relocation. Air and
+naval missions use straight-line distance from the COHORT or its parent LEGION.
+When a preloaded `GroundMobilityNetwork` is supplied to the SDK or resolver,
+ground missions instead use its connected route distance and travel time; a
+disconnected target does not qualify that ground COHORT. Assignment metadata
+records `transit_source`, the route profile, and bridge count. The native DCS
+road solver is deliberately not called during ranking because it is reserved
+for final tactical route validation. The
 timing defaults are 300 s and 200 m/s for air, 60 s and 10 m/s for ground,
 120 s and 12 m/s for naval forces, and 120 s plus 8.33 m/s relocation for
 artillery. Timing can be replaced through `MissionTimingAssumptions`; scoring
@@ -1548,12 +1554,15 @@ surface artifact or the indexed OSM topography:
 
 ```powershell
 python tools/build_ground_mobility.py
+python tools/validate_ground_mobility_theater.py
 ```
 
 The 5 km graph treats OSMCoastline land/water as a hard constraint, uses
 motorway, trunk, primary, and secondary roads to estimate travel time, and
 creates explicit links across OSM-tagged bridge heads. Wheeled and tracked
 profiles apply different conservative road and off-road speeds. The graph is
+validated against a bridge-connected mainland-to-Rugen route and a deliberately
+disconnected mainland-to-Bornholm route. It is
 used for fast strategic feasibility and cost estimates; it is not sufficiently
 detailed to define tactical waypoints. A live DCS route diagnostic is available
 through:

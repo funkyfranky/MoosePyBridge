@@ -51,6 +51,7 @@ class MooseBridgeState:
     """Stateful Python mirror of the DCS/MOOSE world."""
 
     connected: bool = False
+    audit_session_id: str = ""
     mission_generation: int = 0
     mission_ended: bool = False
     last_heartbeat: dict[str, Any] | None = None
@@ -96,10 +97,12 @@ class MooseBridgeState:
         """Clear all state owned by the completed DCS mission."""
 
         next_generation = self.mission_generation + 1
+        audit_session_id = self.audit_session_id
         fresh = type(self)()
         for field_name in self.__dataclass_fields__:
             setattr(self, field_name, getattr(fresh, field_name))
         self.mission_generation = next_generation
+        self.audit_session_id = audit_session_id
         self.mission_ended = True
 
     def apply_message(self, message: dict[str, Any]) -> None:

@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import logging
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -98,7 +99,7 @@ class MooseBridgeServer:
         self.log_path = log_path
         self.audit_store = AuditStore(audit_path)
         self.reader_limit = reader_limit
-        self.state = MooseBridgeState()
+        self.state = MooseBridgeState(audit_session_id=f"server-{uuid.uuid4().hex}")
         self._server: asyncio.AbstractServer | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._sequence = 0

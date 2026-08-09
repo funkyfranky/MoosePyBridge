@@ -13,6 +13,7 @@ from moosebridge.map_server import GlobalMapRuntime, create_app, empty_picture
 from moosebridge.models import Territory
 from moosebridge.pictures import GlobalPicture
 from moosebridge.sdk import GeographicPoint
+from moosebridge.state import MooseBridgeState
 from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer
 from moosebridge.surface_regions import (
     SurfaceClass,
@@ -386,6 +387,8 @@ def test_map_runtime_publishes_persisted_recon_coverage() -> None:
             return ({
                 "recorded_at": "2026-08-04T20:00:00Z",
                 "payload": {
+                    "audit_session_id": "test-session",
+                    "mission_generation": 0,
                     "plan_id": "PLAN:Recon",
                     "commander_id": "COMMANDER:Blue",
                     "attempt_id": "ATTEMPT:Recon:1",
@@ -438,6 +441,7 @@ def test_map_runtime_publishes_persisted_recon_coverage() -> None:
 
     class Bridge:
         server = Server()
+        state = MooseBridgeState(audit_session_id="test-session")
 
         async def convert_points(self, points: list[tuple[float, float]]) -> list[GeographicPoint]:
             return [

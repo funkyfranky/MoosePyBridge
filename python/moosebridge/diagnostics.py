@@ -409,6 +409,7 @@ def format_operational_plan_assessment(
         (phase.phase_id, intent.intent_id, requirement.requirement_id): intent.metadata.get(
             "estimated_time_to_effect_s"
         )
+        or requirement.metadata.get("estimated_time_to_effect_s")
         for phase in plan.phases
         for intent in phase.intents
         for requirement in intent.asset_requirements
@@ -417,13 +418,15 @@ def format_operational_plan_assessment(
         (phase.phase_id, intent.intent_id, requirement.requirement_id): intent.metadata.get(
             "selection_score"
         )
+        or requirement.metadata.get("selection_score")
         for phase in plan.phases
         for intent in phase.intents
         for requirement in intent.asset_requirements
     }
     mission_assignments = {
-        (phase.phase_id, intent.intent_id, requirement.requirement_id): intent.metadata.get(
-            "mission_assignments"
+        (phase.phase_id, intent.intent_id, requirement.requirement_id): (
+            requirement.metadata.get("mission_assignments")
+            or intent.metadata.get("mission_assignments")
         )
         for phase in plan.phases
         for intent in phase.intents
@@ -477,6 +480,26 @@ def format_operational_plan_assessment(
                 eta_text = f"{float(eta):.0f}s" if isinstance(eta, (int, float)) else "unknown"
                 weapon = assignment.get("weapon_flag")
                 weapon_text = f"/{weapon}" if weapon else ""
+                distance = assignment.get("transit_distance_m")
+                distance_text = (
+                    f" distance={float(distance) / 1_000.0:.1f}km"
+                    if isinstance(distance, (int, float))
+                    else ""
+                )
+                source = assignment.get("transit_source")
+                route_text = f" route={source}" if source else ""
+                max_speed = assignment.get("platform_max_speed_kph")
+                speed_text = (
+                    f" max_speed={float(max_speed):.1f}kph"
+                    if isinstance(max_speed, (int, float))
+                    else ""
+                )
+                bridges = assignment.get("bridge_count")
+                bridge_text = (
+                    f" bridges={int(bridges)}"
+                    if isinstance(bridges, (int, float))
+                    else ""
+                )
                 options.append(
                     f"      option {index}: {assignment.get('mission_type') or '-'}:"
                     f"{assignment.get('cohort_id') or '-'}{weapon_text} "
@@ -484,7 +507,7 @@ def format_operational_plan_assessment(
                     f"performance={float(assignment.get('performance_score') or 0.0):.1f} "
                     f"skill={float(assignment.get('skill_score') or 0.0):.1f} "
                     f"response={float(assignment.get('response_score') or 0.0):.1f} "
-                    f"eta={eta_text}"
+                    f"eta={eta_text}{distance_text}{route_text}{speed_text}{bridge_text}"
                 )
             if options:
                 lines.append("      assignment_options:")

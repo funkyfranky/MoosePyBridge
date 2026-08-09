@@ -124,6 +124,7 @@ def state_payload(state: MooseBridgeState, kinds: Iterable[str] | None = None) -
     selected = tuple(STATE_KINDS if kinds is None else kinds)
     payload: dict[str, Any] = {
         "connected": state.connected,
+        "audit_session_id": state.audit_session_id,
         "mission_generation": state.mission_generation,
         "mission_ended": state.mission_ended,
         "last_heartbeat": state.last_heartbeat,
@@ -146,6 +147,7 @@ def apply_state_payload(state: MooseBridgeState, payload: dict[str, Any]) -> Moo
     """
 
     state.connected = bool(payload.get("connected", False))
+    state.audit_session_id = str(payload.get("audit_session_id") or "")
     state.mission_generation = int(payload.get("mission_generation") or 0)
     state.mission_ended = bool(payload.get("mission_ended", False))
     state.last_heartbeat = payload.get("last_heartbeat") if isinstance(payload.get("last_heartbeat"), dict) else None

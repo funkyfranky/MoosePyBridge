@@ -9,6 +9,7 @@ from moosebridge import (
     AssetRequirement,
     AssetRole,
     DcsWeaponFlag,
+    GroundRoute,
     MissionIntent,
     MooseBridgeClient,
     MooseBridgeServer,
@@ -47,8 +48,12 @@ from moosebridge.pictures import TacticalPicture
 from moosebridge.state import MooseBridgeState
 
 
-def _bridge_with_goal(server: Any | None = None) -> MooseBridgeClient:
-    bridge = MooseBridgeClient(server or MooseBridgeServer())
+def _bridge_with_goal(
+    server: Any | None = None,
+    *,
+    ground_mobility: Any | None = None,
+) -> MooseBridgeClient:
+    bridge = MooseBridgeClient(server or MooseBridgeServer(), ground_mobility=ground_mobility)
     bridge.add_strategic_objective(
         StrategicObjective(
             objective_id="OBJECTIVE:Town",
@@ -269,6 +274,197 @@ def test_plan_validation_does_not_allocate_requested_or_reserved_stock() -> None
     assert assessment.requirements[0].available_count == 0
     assert assessment.requirements[0].shortfall == 1
     assert assessment.feasible is False
+
+
+def test_plan_validation_uses_route_aware_assignment_order_and_filter() -> None:
+    bridge = _bridge_with_goal()
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {"legions": [{"object_id": "LEGION:Blue", "coalition": "blue"}]},
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [
+                    {
+                        "object_id": "COHORT:Disconnected",
+                        "legion_id": "LEGION:Blue",
+                        "is_ground": True,
+                        "available_asset_count": 2,
+                        "mission_types": ["PATROLZONE"],
+                        "mission_performance": {"PATROLZONE": 100},
+                    },
+                    {
+                        "object_id": "COHORT:Reachable",
+                        "legion_id": "LEGION:Blue",
+                        "is_ground": True,
+                        "available_asset_count": 2,
+                        "mission_types": ["PATROLZONE"],
+                        "mission_performance": {"PATROLZONE": 60},
+                    },
+                ]
+            },
+        }
+    )
+    requirement = AssetRequirement(
+        "REQ:Secure",
+        AssetRole.COMBAT,
+        mission_types=("PATROLZONE",),
+        performer_categories=("GROUND",),
+        metadata={
+            "ground_mobility_filter": True,
+            "mission_assignments": [
+                {"cohort_id": "COHORT:Reachable", "selection_score": 55.0},
+            ],
+        },
+    )
+    plan = bridge.add_operational_plan(
+        OperationalPlan(
+            "PLAN:Route aware",
+            "Route aware",
+            "GOAL:Capture Town",
+            "blue",
+            (
+                PlanPhase(
+                    "secure",
+                    "Secure",
+                    (
+                        MissionIntent(
+                            "patrol",
+                            "Patrol",
+                            ("PATROLZONE",),
+                            (requirement,),
+                            target_object_id="OPSZONE:Town",
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    assessment = bridge.validate_operational_plan(plan)
+
+    result = assessment.requirements[0]
+    assert result.candidate_cohort_ids == ("COHORT:Reachable",)
+    assert result.allocations[0].cohort_id == "COHORT:Reachable"
+
+
+def test_sdk_prepares_ground_mobility_ranking_for_zone_requirement() -> None:
+    class MobilityNetwork:
+        def route(
+            self,
+            start_latitude: float,
+            start_longitude: float,
+            end_latitude: float,
+            end_longitude: float,
+            *,
+            profile: Any,
+        ) -> GroundRoute | None:
+            if start_longitude < 12.05:
+                return None
+            return GroundRoute(profile.name, 0, 1, (0, 1), 10_000.0, 1_000.0, 1, 10_000.0)
+
+    bridge = _bridge_with_goal(ground_mobility=MobilityNetwork())
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "opszones",
+            "payload": {
+                "opszones": [
+                    {
+                        "object_id": "OPSZONE:Town",
+                        "x": 10_000.0,
+                        "z": 0.0,
+                        "latitude": 54.0,
+                        "longitude": 12.2,
+                    }
+                ]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {"legions": [{"object_id": "LEGION:Blue", "coalition": "blue"}]},
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [
+                    {
+                        "object_id": "COHORT:Disconnected",
+                        "legion_id": "LEGION:Blue",
+                        "is_ground": True,
+                        "available_asset_count": 1,
+                        "mission_types": ["PATROLZONE"],
+                        "mission_performance": {"PATROLZONE": 100},
+                        "x": 0.0,
+                        "z": 0.0,
+                        "latitude": 54.0,
+                        "longitude": 12.0,
+                    },
+                    {
+                        "object_id": "COHORT:Reachable",
+                        "legion_id": "LEGION:Blue",
+                        "is_ground": True,
+                        "available_asset_count": 1,
+                        "mission_types": ["PATROLZONE"],
+                        "mission_performance": {"PATROLZONE": 60},
+                        "x": 1_000.0,
+                        "z": 0.0,
+                        "latitude": 54.0,
+                        "longitude": 12.1,
+                    },
+                ]
+            },
+        }
+    )
+    requirement = AssetRequirement(
+        "REQ:Secure",
+        AssetRole.COMBAT,
+        mission_types=("PATROLZONE",),
+        performer_categories=("GROUND",),
+    )
+    plan = bridge.add_operational_plan(
+        OperationalPlan(
+            "PLAN:SDK route aware",
+            "SDK route aware",
+            "GOAL:Capture Town",
+            "blue",
+            (
+                PlanPhase(
+                    "secure",
+                    "Secure",
+                    (
+                        MissionIntent(
+                            "patrol",
+                            "Patrol",
+                            ("PATROLZONE",),
+                            (requirement,),
+                            target_object_id="OPSZONE:Town",
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+
+    assessment = bridge.validate_operational_plan(plan)
+
+    assert assessment.requirements[0].allocations[0].cohort_id == "COHORT:Reachable"
+    assignments = requirement.metadata["mission_assignments"]
+    assert [item["cohort_id"] for item in assignments] == ["COHORT:Reachable"]
+    assert assignments[0]["transit_source"] == "python_ground_mobility"
+    assert assignments[0]["bridge_count"] == 1
 
 
 def test_plan_validation_converts_homogeneous_unit_strength_to_asset_groups() -> None:
@@ -607,8 +803,9 @@ class _ExecutionServer:
         auftrag_snapshots: list[dict[str, Any]] | None = None,
         cancel_failures: tuple[str, ...] = (),
         cohort_available_on_refresh: int | None = None,
+        audit_session_id: str = "test-session",
     ) -> None:
-        self.state = MooseBridgeState(connected=True)
+        self.state = MooseBridgeState(connected=True, audit_session_id=audit_session_id)
         self.success = success
         self.final_owner = final_owner
         self.group_ids = group_ids
@@ -1352,8 +1549,14 @@ def _executable_capture_plan(
     client_identity: ControlClientIdentity | None = None,
     units_per_asset: int | None = None,
     min_unit_count: int | None = None,
+    audit_session_id: str = "test-session",
 ) -> tuple[MooseBridgeClient, OperationalPlan]:
-    server = _ExecutionServer(success=success, final_owner=final_owner, audit_path=audit_path)
+    server = _ExecutionServer(
+        success=success,
+        final_owner=final_owner,
+        audit_path=audit_path,
+        audit_session_id=audit_session_id,
+    )
     if client_identity is not None:
         server.client_identity = client_identity  # type: ignore[attr-defined]
     bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
@@ -2409,6 +2612,31 @@ def test_execution_history_does_not_cross_dcs_mission_generations(tmp_path) -> N
     asyncio.run(scenario())
 
 
+def test_execution_history_does_not_cross_server_audit_sessions(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "operational-audit.jsonl"
+        first_bridge, first_plan = _executable_capture_plan(
+            audit_path=path,
+            audit_session_id="server-first",
+        )
+        first = await first_bridge.execute_plan(first_plan)
+        assert first.attempt_number == 1
+        first_bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+        second_bridge, second_plan = _executable_capture_plan(
+            audit_path=path,
+            audit_session_id="server-second",
+        )
+
+        assert await second_bridge.refresh_operational_plan_executions(second_plan) == ()
+        second = await second_bridge.execute_plan(second_plan)
+        assert second.attempt_number == 1
+        assert second.attempt_id == "PLAN:Capture Town/ATTEMPT:1"
+        second_bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+    asyncio.run(scenario())
+
+
 def test_restore_rejects_audit_records_without_strategic_snapshots(tmp_path) -> None:
     async def scenario() -> None:
         path = tmp_path / "legacy-audit.jsonl"
@@ -2416,6 +2644,8 @@ def test_restore_rejects_audit_records_without_strategic_snapshots(tmp_path) -> 
         store.append(
             "operational_plan.execution",
             {
+                "audit_session_id": "test-session",
+                "mission_generation": 0,
                 "plan_id": "PLAN:Legacy",
                 "commander_id": "COMMANDER:Blue",
                 "attempt_id": "PLAN:Legacy/ATTEMPT:1",

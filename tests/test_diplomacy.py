@@ -257,6 +257,27 @@ def test_sdk_persists_and_restores_diplomacy_for_current_mission_generation() ->
     asyncio.run(scenario())
 
 
+def test_diplomacy_does_not_cross_server_audit_sessions(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "diplomacy-audit.jsonl"
+        first_server = MooseBridgeServer(audit_path=path)
+        first = MooseBridgeClient(first_server)
+        first.record_escalation_incident(_incident(1, EscalationIncidentType.UNIT_DESTROYED))
+        await first.persist_diplomacy_state()
+        first_server.audit_store.close()
+
+        second_server = MooseBridgeServer(audit_path=path)
+        second = MooseBridgeClient(second_server)
+
+        assert first_server.state.mission_generation == second_server.state.mission_generation == 0
+        assert first_server.state.audit_session_id != second_server.state.audit_session_id
+        assert await second.refresh_diplomacy_state() is False
+        assert len(second.relationship.incidents) == 0
+        second_server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
 def test_relationship_can_apply_automatic_escalation_but_not_deescalation() -> None:
     relationship = CoalitionRelationship()
 

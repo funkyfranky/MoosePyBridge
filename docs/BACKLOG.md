@@ -217,9 +217,11 @@ Priorities:
   A* routing supports conservative wheeled and tracked speed profiles while
   keeping tactical path generation in MOOSE/DCS. Selected connected corridors
   can be refined through a bounded native `land.findPathOnRoads` SDK request;
-  only that native road path is drawn as the F10 diagnostic. Reference checks
-  connect mainland routes and Rugen by bridge while correctly leaving Bornholm
-  disconnected.
+  only that native road path is drawn as the F10 diagnostic. The reproducible
+  `tools/validate_ground_mobility_theater.py` check connects mainland routes
+  and Rugen by bridge while correctly leaving Bornholm disconnected. The same
+  Python strategic route distance and ETA now feed ground-COHORT feasibility
+  and response scoring; native DCS routing remains outside candidate ranking.
 - [x] OSMCoastline is the default 500 m GermanyCW land/sea baseline. The
   full-theater builder classifies directly from prepared sea polygons, skips
   unused directed-coast distance arrays, uses broadcast grid coordinates, and

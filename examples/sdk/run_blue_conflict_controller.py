@@ -12,12 +12,14 @@ sys.path.insert(0, str(REPO_ROOT / "python"))
 
 from moosebridge import (
     ConflictControllerConfig,
+    GroundMobilityNetwork,
     MooseBridgeClient,
     ObjectiveComponent,
     ObjectiveKind,
     OwnershipPolicy,
     RuleBasedConflictController,
     StrategicObjective,
+    format_operational_plan_assessment,
     format_operational_plan_execution,
     format_relationship,
     format_strategic_goal_portfolio,
@@ -30,6 +32,7 @@ CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 15.0
 EXECUTE_SELECTED_PLAN = True
+GROUND_MOBILITY_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
 
 COALITION = "blue"
 INTEL_ID = "INTEL:Blue Intel"
@@ -91,7 +94,12 @@ async def main() -> int:
         print("DCS is not connected to the MoosePyBridge daemon.")
         return 3
 
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    ground_mobility = GroundMobilityNetwork.load(GROUND_MOBILITY_PATH)
+    bridge = sdk_from_control_client(
+        control,
+        timeout=COMMAND_TIMEOUT_SECONDS,
+        ground_mobility=ground_mobility,
+    )
     add_scenario_objectives(bridge)
     controller = RuleBasedConflictController(
         bridge,
@@ -109,6 +117,12 @@ async def main() -> int:
     print(format_relationship(bridge.relationship))
     print()
     print(format_strategic_goal_portfolio(cycle.portfolio))
+    for selection in cycle.portfolio.selected:
+        plan = bridge.operational_plan(selection.plan_id)
+        assessment = bridge.plans.assessment(selection.plan_id)
+        if plan is not None and assessment is not None:
+            print()
+            print(format_operational_plan_assessment(plan, assessment))
     if cycle.portfolio.selected and not EXECUTE_SELECTED_PLAN:
         print()
         print("Dry run: selected plans were not approved or submitted to DCS.")
