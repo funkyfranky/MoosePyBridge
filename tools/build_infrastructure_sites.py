@@ -15,7 +15,15 @@ PYTHON_ROOT = REPO_ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from moosebridge import TopographyFeature, TopographyLayer, build_energy_sites  # noqa: E402
+from moosebridge import (  # noqa: E402
+    EnergySite,
+    FuelStorageSite,
+    InfrastructureCandidatePolicy,
+    MilitarySite,
+    TopographyFeature,
+    TopographyLayer,
+    build_infrastructure_sites,
+)
 
 
 DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "topography" / "viewport" / "manifest.json"
@@ -23,7 +31,7 @@ DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-infrastructure-si
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build normalized energy-site candidates")
+    parser = argparse.ArgumentParser(description="Build normalized strategic infrastructure-site candidates")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
@@ -34,23 +42,35 @@ def main() -> int:
     args = parser.parse_args()
     payload = json.loads(args.manifest.read_text(encoding="utf-8"))
     theater_id = str(payload.get("theater_id") or "")
-    features = _load_power_plants(args.manifest.parent, payload.get("shards") or [])
+    features = _load_candidates(args.manifest.parent, payload.get("shards") or [])
     policy = None
     if args.include_modern_energy:
-        from moosebridge import InfrastructureCandidatePolicy
         policy = InfrastructureCandidatePolicy(theater_id=theater_id)
-    artifact = build_energy_sites(features.values(), theater_id=theater_id, policy=policy)
+    artifact = build_infrastructure_sites(features.values(), theater_id=theater_id, policy=policy)
     output = artifact.save(args.output)
+    energy_count = sum(isinstance(site, EnergySite) for site in artifact.sites)
+    fuel_count = sum(isinstance(site, FuelStorageSite) for site in artifact.sites)
+    military_count = sum(isinstance(site, MilitarySite) for site in artifact.sites)
     print(f"Infrastructure sites written: {output}")
     print(f"  theater: {theater_id}")
-    print(f"  raw unique power plants: {len(features)}")
-    print(f"  admitted energy sites: {len(artifact.sites)}")
-    excluded = artifact.metadata.get("excluded_energy_source_counts") or {}
+    print(f"  raw unique candidates: {len(features)}")
+    print(f"  admitted energy sites: {energy_count}")
+    print(f"  admitted fuel/storage sites: {fuel_count}")
+    print(f"  admitted military sites: {military_count}")
+    excluded = artifact.metadata.get("energy", {}).get("excluded_energy_source_counts") or {}
     print("  excluded: " + (", ".join(f"{key}={value}" for key, value in sorted(excluded.items())) or "none"))
     return 0
 
 
-def _load_power_plants(directory: Path, shards: list[dict]) -> dict[str, TopographyFeature]:
+_CANDIDATE_CATEGORIES = (
+    "power_plant", "storage_tank", "refinery", "oil", "oil_storage",
+    "distillates_storage", "gas", "natural_gas", "gas_storage", "gas_cavern",
+    "storage", "depot",
+    "military",
+)
+
+
+def _load_candidates(directory: Path, shards: list[dict]) -> dict[str, TopographyFeature]:
     try:
         import pyogrio
         from shapely.geometry import mapping
@@ -65,8 +85,9 @@ def _load_power_plants(directory: Path, shards: list[dict]) -> dict[str, Topogra
         path = directory / str(shard.get("path") or "")
         if not path.is_file() or "topography_infrastructure" not in (shard.get("layers") or []):
             continue
-        frame = pyogrio.read_dataframe(path, where="category = 'power_plant'", columns=columns)
-        print(f"  shard {index}/{len(shards)}: {path.name} ({len(frame)} plants)", flush=True)
+        categories = ",".join(repr(category) for category in _CANDIDATE_CATEGORIES)
+        frame = pyogrio.read_dataframe(path, where=f"category IN ({categories})", columns=columns)
+        print(f"  shard {index}/{len(shards)}: {path.name} ({len(frame)} candidates)", flush=True)
         for row in frame.itertuples(index=False):
             if row.geometry is None or row.geometry.is_empty:
                 continue

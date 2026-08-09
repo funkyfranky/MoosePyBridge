@@ -29,6 +29,7 @@
     { key: "transport_bridges", label: "Bridges", color: "#a56a27", icon: "construction", default: false },
     { key: "transport_junctions", label: "Transport junctions", color: "#176f77", icon: "network", default: false },
     { key: "energy_sites", label: "Energy sites", color: "#b38416", icon: "factory", default: false },
+    { key: "fuel_storage_sites", label: "Fuel and storage sites", color: "#8a5a32", icon: "fuel", default: false },
     { key: "military_sites", label: "Military sites", color: "#6c5b48", icon: "shield", default: false },
     { key: "surface_land_regions", label: "Connected land", color: "#4f7a57", icon: "land-plot", default: false },
     { key: "surface_water_regions", label: "Connected water", color: "#277c9d", icon: "waves", default: false },
@@ -69,7 +70,7 @@
     },
     {
       key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#137f87",
-      layers: ["airbases", "transport_bridges", "transport_junctions", "energy_sites", "military_sites"],
+      layers: ["airbases", "transport_bridges", "transport_junctions", "energy_sites", "fuel_storage_sites", "military_sites"],
     },
     {
       key: "topography", label: "Topography", icon: "map", color: "#3c7069",
@@ -691,7 +692,7 @@
         });
         continue;
       }
-      if (spec.key === "energy_sites" || spec.key === "military_sites") {
+      if (spec.key === "energy_sites" || spec.key === "fuel_storage_sites" || spec.key === "military_sites") {
         addMapLayer(spec, {
           type: "circle",
           source: "infrastructure-sites",
@@ -1258,6 +1259,14 @@
     if (typeof value === "boolean") return value ? "Yes" : "No";
     if (Array.isArray(value)) return value.join(", ");
     if (value && typeof value === "object") return JSON.stringify(value);
+    if (typeof value === "string" && value.startsWith("[") && value.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed.length ? parsed.join(", ") : "-";
+      } catch (_error) {
+        // Keep malformed or ordinary bracketed text unchanged.
+      }
+    }
     return String(value ?? "-");
   }
 
@@ -1280,6 +1289,7 @@
 
   function formattedField(key, value) {
     if (key === "radius_m") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m`;
+    if (key === "capacity_m3") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m³`;
     if (key === "speed" || key === "speed_kts") return `${Number(value).toFixed(1)} kt`;
     if (key === "derived_speed_kts") return `${Number(value).toFixed(1)} kt`;
     if (key === "derived_heading_deg") return `${Number(value).toFixed(1)}°`;
@@ -1341,7 +1351,19 @@
     selectedObjectId = properties.object_id || null;
     const layerLabel = layerSpecs.find((spec) => spec.key === properties.layer)?.label || properties.object_type || "Object";
     elements.detailType.textContent = [layerLabel, properties.category].filter(Boolean).join(" · ");
-    elements.detailTitle.textContent = properties.name || properties.display_name || properties.object_id || "Unnamed object";
+    const unnamedTitle = properties.layer === "fuel_storage_sites"
+      ? "Unnamed fuel storage site"
+      : properties.layer === "energy_sites"
+        ? "Unnamed energy site"
+        : properties.layer === "military_sites"
+          ? "Unnamed military site"
+          : "Unnamed object";
+    const displayName = properties.name && properties.name !== properties.object_id
+      ? properties.name
+      : properties.display_name && properties.display_name !== properties.object_id
+        ? properties.display_name
+        : unnamedTitle;
+    elements.detailTitle.textContent = displayName;
     elements.detailSubtitle.textContent = properties.object_id || "";
     elements.detailCopy.hidden = !properties.object_id;
     const stacked = selectionCandidates.length > 1;

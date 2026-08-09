@@ -1618,8 +1618,8 @@ python tools/build_transport_infrastructure.py
 
 This writes `tmp/topography/GermanyCW-transport-infrastructure.geojson`.
 
-Normalized power-generation candidates use a separate, theater-aware site
-artifact:
+Normalized energy and fuel-storage candidates use a separate, theater-aware
+site artifact:
 
 ```powershell
 python tools/build_infrastructure_sites.py
@@ -1630,22 +1630,31 @@ policy; other theaters allow them unless their own policy says otherwise. A
 bounded DCS scenery check is available through
 `await bridge.survey_scenery(latitude, longitude, radius_m=500)`.
 The map server loads the normalized cache automatically and exposes it through
-`/api/infrastructure-sites/global.geojson`. `Energy sites` and `Military
-sites` are separate, initially hidden layers under `Infrastructure`. The map
-uses stable representative site markers while the SDK artifact retains the
-original OSM point or polygon geometry.
+`/api/infrastructure-sites/global.geojson`. `Energy sites`, `Fuel and storage
+sites`, and `Military sites` are separate, initially hidden layers under
+`Infrastructure`. The map uses stable representative site markers while the
+SDK artifact retains source identifiers and the normalized site geometry.
 
-To inspect one admitted energy site against nearby addressable DCS scenery,
-start DCS, the bridge daemon, and a mission, then run the parameter-free
-example:
+The GermanyCW cache currently contains 2,499 energy sites and 440 fuel or bulk
+storage sites. Fuel admission is deliberately conservative: a candidate needs
+explicit fuel-storage, oil-storage, gas-storage, terminal, depot, tank, or
+refinery evidence. A generic oil or gas industry tag is insufficient. Water,
+slurry, and unspecified tanks are not promoted to operational sites. Related
+terminal, refinery, and tank components are clustered into one location.
+
+To inspect one admitted infrastructure site against nearby addressable DCS
+scenery, start DCS, the bridge daemon, and a mission, then run the
+parameter-free example:
 
 ```powershell
-python examples/sdk/verify_energy_site.py
+python examples/sdk/verify_infrastructure_site.py
 ```
 
-By default it selects the admitted site nearest `AIRBASE:Laage`, prints the
-bounded scenery survey, and draws a temporary F10 verification overlay. Edit
-the constants at the top of the file to select another reference or radius.
+By default it selects the admitted fuel-storage site nearest `AIRBASE:Laage`,
+prints the bounded scenery survey, and draws a temporary F10 verification
+overlay. Edit the typed constants at the top of the file to select energy,
+another site, reference, or radius. `verify_energy_site.py` remains a compact
+energy-specific entry point using the same implementation.
 Adjacent OSM road edges carrying a `bridge` tag are first connected and then
 collapsed with nearby structures into abstract `TransportBridge` locations.
 The default 150 m radius combines parallel carriageway decks and fragmented

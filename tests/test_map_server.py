@@ -29,7 +29,10 @@ from moosebridge.transport_infrastructure import (
 from moosebridge.infrastructure_sites import (
     EnergySite,
     EnergySource,
+    FuelStorageRole,
+    FuelStorageSite,
     InfrastructureSiteKind,
+    StoredCommodity,
     TheaterInfrastructureSites,
 )
 from moosebridge.weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY
@@ -228,7 +231,17 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
             source="test",
             confidence=0.8,
             energy_sources=(EnergySource.COAL,),
-        ),),
+        ), FuelStorageSite(
+            site_id="FUEL_STORAGE_SITE:test",
+            kind=InfrastructureSiteKind.FUEL_STORAGE,
+            geometry={"type": "Point", "coordinates": [12.2, 54.1]},
+            latitude=54.1,
+            longitude=12.2,
+            source="test",
+            confidence=0.8,
+            storage_roles=(FuelStorageRole.TANK_FARM,),
+            commodities=(StoredCommodity.PETROLEUM,),
+        )),
     )
 
     payload = runtime.infrastructure_sites_geojson()
@@ -236,7 +249,8 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
     assert payload["features"][0]["properties"]["layer"] == "energy_sites"
     assert payload["features"][0]["properties"]["source_geometry_type"] == "Polygon"
     assert payload["features"][0]["geometry"] == {"type": "Point", "coordinates": [12.0, 54.0]}
-    assert runtime.status_payload()["infrastructure_site_count"] == 1
+    assert payload["features"][1]["properties"]["layer"] == "fuel_storage_sites"
+    assert runtime.status_payload()["infrastructure_site_count"] == 2
 
 
 def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:

@@ -101,12 +101,15 @@ Priorities:
   theater-aware: the first `EnergySite` model and GermanyCW policy exclude
   modern wind, solar, biogas, and battery sites without imposing that choice
   on other maps. `MilitarySite` is a separate type on the shared site base.
-  The normalized energy cache, SDK representation, browser markers, and
-  bounded DCS scenery-survey example are implemented. Fuel/storage,
-  industrial, port, rail, and communications site builders, clustering, and
+  The normalized energy and fuel/storage caches, SDK representations, browser
+  markers, and shared bounded DCS scenery-survey example are implemented.
+  Fuel/storage uses explicit commodity evidence and category-specific,
+  non-transitive clustering so raw tanks do not become independent strategic
+  objects. Industrial, port, rail, and communications site builders plus
   persisted DCS verification remain open. Keep the model extensible, but do
   not retain every available OSM tag in the operational model.
-- [ ] **Cluster infrastructure features into meaningful sites.** Group related
+- [ ] **Cluster remaining infrastructure features into meaningful sites.**
+  Energy and fuel/storage clustering is implemented. Group related
   buildings, tanks, yards, platforms, terminals, and equipment into one
   operational location where they represent the same real facility. Use
   category-specific clustering and preserve membership for diagnostics so a

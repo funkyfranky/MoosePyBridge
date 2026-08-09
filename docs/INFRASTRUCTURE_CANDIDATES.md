@@ -67,11 +67,11 @@ scan.
 ## Implemented foundation
 
 The SDK now provides a shared `InfrastructureSite` base with distinct
-`EnergySite` and `MilitarySite` types. Candidate admission is controlled by an
-`InfrastructureCandidatePolicy` selected per theater. The GermanyCW policy
-uses 1989 as its scenario reference year and excludes wind, solar, biogas, and
-battery sites. Generic policies exclude nothing, so maps which intentionally
-represent these technologies can retain them.
+`EnergySite`, `FuelStorageSite`, and `MilitarySite` types. Candidate admission
+is controlled by an `InfrastructureCandidatePolicy` selected per theater. The
+GermanyCW policy uses 1989 as its scenario reference year and excludes wind,
+solar, biogas, and battery sites. Generic policies exclude nothing, so maps
+which intentionally represent these technologies can retain them.
 
 Build the compact energy-site artifact from the indexed topography cache with:
 
@@ -79,8 +79,8 @@ Build the compact energy-site artifact from the indexed topography cache with:
 python tools/build_infrastructure_sites.py
 ```
 
-The current source produces 2,499 admitted energy sites from 4,418 unique OSM
-power-plant objects. Use `--include-modern-energy` only for a scenario that
+The current source produces 2,499 admitted energy sites and 440 fuel or bulk
+storage sites. Use `--include-modern-energy` only for a scenario that
 deliberately wants the modern sources. The output is
 `tmp/topography/GermanyCW-infrastructure-sites.geojson`.
 
@@ -91,12 +91,13 @@ verification workflow, not a periodic full-map scanner.
 
 The browser map loads the normalized artifact through
 `/api/infrastructure-sites/global.geojson`. It displays representative
-location markers in the initially hidden `Energy sites` and `Military sites`
-layers. This deliberately keeps the strategic overview readable; the SDK
-artifact still retains each source geometry. Run
-`python examples/sdk/verify_energy_site.py` with a live DCS mission to survey
-and temporarily mark one candidate and its nearby scenery objects on the F10
-map.
+location markers in the initially hidden `Energy sites`, `Fuel and storage
+sites`, and `Military sites` layers. This deliberately keeps the strategic
+overview readable; the SDK artifact retains source and component identifiers.
+Run `python examples/sdk/verify_infrastructure_site.py` with a live DCS mission
+to survey and temporarily mark one candidate and its nearby scenery objects on
+the F10 map. The constants at the top select the typed site category and
+search reference.
 
 ## Site taxonomy
 
@@ -122,6 +123,16 @@ clustered into understandable sites.
 
 Individual tanks are components, never independent sites by default. Missing
 `substance`, `storage`, or parent-site evidence must lower confidence.
+
+Implemented normalization admits only explicit fuel/oil storage, refinery,
+terminal, depot, tank, or gas-storage evidence. It rejects water, slurry, and
+unspecified tanks, and does not interpret generic `industrial=oil` or
+`industrial=gas` as storage by itself.
+Refinery or terminal anchors and nearby tanks are clustered non-transitively;
+standalone known-fuel tanks are clustered separately. A singleton tank needs a
+known capacity of at least 500 cubic metres. The normalized role is one or
+more of refinery, terminal, tank farm, gas storage, or bulk storage, with
+commodities retained where known.
 
 ### Industry
 
