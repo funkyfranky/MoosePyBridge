@@ -21,6 +21,7 @@ class InfrastructureSiteKind(StrEnum):
     ENERGY = "energy"
     FUEL_STORAGE = "fuel_storage"
     MILITARY = "military"
+    INDUSTRIAL = "industrial"
 
 
 class InfrastructureVerificationState(StrEnum):
@@ -80,6 +81,21 @@ class MilitaryRole(StrEnum):
     COMMUNICATIONS_SITE = "communications_site"
     BUNKER_COMPLEX = "bunker_complex"
     MISSILE_SITE = "missile_site"
+
+
+class IndustrialRole(StrEnum):
+    GENERAL_MANUFACTURING = "general_manufacturing"
+    HEAVY_INDUSTRY = "heavy_industry"
+    METALWORKS = "metalworks"
+    CHEMICAL = "chemical"
+    MACHINERY = "machinery"
+    AUTOMOTIVE = "automotive"
+    ELECTRONICS = "electronics"
+    CONSTRUCTION_MATERIALS = "construction_materials"
+    FOOD_PROCESSING = "food_processing"
+    TIMBER_PAPER = "timber_paper"
+    SHIPYARD = "shipyard"
+    EXTRACTION = "extraction"
 
 
 @dataclass(slots=True, frozen=True)
@@ -176,7 +192,7 @@ class InfrastructureSite:
             "layer", "object_id", "name", "object_type", "site_kind", "category", "coordinate_system",
             "latitude", "longitude", "source", "source_ids", "confidence", "scenario_reference_year",
             "verification_state", "component_ids", "energy_sources", "output_mw", "roles",
-            "storage_roles", "commodities", "capacity_m3",
+            "storage_roles", "commodities", "capacity_m3", "products", "footprint_area_m2",
         }
         common = dict(
             site_id=str(properties.get("object_id") or ""),
@@ -210,10 +226,19 @@ class InfrastructureSite:
                 commodities=tuple(StoredCommodity(str(value)) for value in properties.get("commodities") or ()),
                 capacity_m3=_optional_float(properties.get("capacity_m3")),
             )
-        return MilitarySite(
-            **common,
-            roles=tuple(MilitaryRole(str(value)) for value in properties.get("roles") or ()),
-        )
+        if kind is InfrastructureSiteKind.MILITARY:
+            return MilitarySite(
+                **common,
+                roles=tuple(MilitaryRole(str(value)) for value in properties.get("roles") or ()),
+            )
+        if kind is InfrastructureSiteKind.INDUSTRIAL:
+            return IndustrialSite(
+                **common,
+                roles=tuple(IndustrialRole(str(value)) for value in properties.get("roles") or ()),
+                products=tuple(str(value) for value in properties.get("products") or ()),
+                footprint_area_m2=_optional_float(properties.get("footprint_area_m2")),
+            )
+        raise ValueError(f"unsupported infrastructure site kind: {kind}")
 
 
 @dataclass(slots=True, frozen=True)
@@ -279,6 +304,32 @@ class MilitarySite(InfrastructureSite):
 
     def _specific_properties(self) -> dict[str, Any]:
         return {"category": "military_site", "roles": [role.value for role in self.roles]}
+
+
+@dataclass(slots=True, frozen=True)
+class IndustrialSite(InfrastructureSite):
+    """A conservatively admitted industrial plant or works complex."""
+
+    roles: tuple[IndustrialRole, ...] = ()
+    products: tuple[str, ...] = ()
+    footprint_area_m2: float | None = None
+
+    def __post_init__(self) -> None:
+        InfrastructureSite.__post_init__(self)
+        if self.kind is not InfrastructureSiteKind.INDUSTRIAL:
+            raise ValueError("IndustrialSite kind must be industrial")
+        if not self.roles:
+            raise ValueError("industrial site requires at least one role")
+        if self.footprint_area_m2 is not None and self.footprint_area_m2 < 0:
+            raise ValueError("industrial footprint must not be negative")
+
+    def _specific_properties(self) -> dict[str, Any]:
+        return {
+            "category": "industrial_site",
+            "roles": [role.value for role in self.roles],
+            "products": list(self.products),
+            "footprint_area_m2": self.footprint_area_m2,
+        }
 
 
 @dataclass(slots=True, frozen=True)
@@ -581,8 +632,8 @@ class _MilitaryCandidate:
     feature: TopographyFeature
     latitude: float
     longitude: float
-    role: MilitaryRole
-    role_source: str
+    roles: frozenset[MilitaryRole]
+    role_sources: frozenset[str]
     operator: str | None
 
 
@@ -659,22 +710,26 @@ def build_military_sites(
         if not _feature_exists_in_scenario(feature, selected_policy.scenario_reference_year):
             excluded["outside_scenario_date"] += 1
             continue
-        role = _MILITARY_TAG_ROLES.get(military_tag)
-        role_source = "military_tag"
+        tagged_role = _MILITARY_TAG_ROLES.get(military_tag)
         inferred = _military_role_from_name(feature.name)
+        roles: set[MilitaryRole] = set()
+        role_sources: set[str] = set()
+        if tagged_role is not None:
+            roles.add(tagged_role)
+            role_sources.add("military_tag")
+        if inferred is not None:
+            roles.add(inferred)
+            role_sources.add("name")
         if military_tag in _NON_SITE_MILITARY_TAGS:
-            role = inferred
-            role_source = "name" if role is not None else role_source
-            if role is None:
+            roles = {inferred} if inferred is not None else set()
+            role_sources = {"name"} if inferred is not None else set()
+            if not roles:
                 excluded["non_site_role"] += 1
                 continue
-        elif role is None:
-            role = inferred
-            role_source = "name" if role is not None else role_source
-        if role is None:
+        if not roles:
             excluded["ambiguous"] += 1
             continue
-        if role is MilitaryRole.BUNKER_COMPLEX and not feature.name:
+        if roles == {MilitaryRole.BUNKER_COMPLEX} and _is_generic_bunker_name(feature.name):
             excluded["unnamed_bunker"] += 1
             continue
         longitude, latitude = _representative_coordinate(feature.geometry)
@@ -682,8 +737,8 @@ def build_military_sites(
             feature=feature,
             latitude=latitude,
             longitude=longitude,
-            role=role,
-            role_source=role_source,
+            roles=frozenset(roles),
+            role_sources=frozenset(role_sources),
             operator=_optional_string(tags.get("operator")),
         ))
 
@@ -701,6 +756,138 @@ def build_military_sites(
     )
 
 
+@dataclass(slots=True, frozen=True)
+class _IndustrialCandidate:
+    feature: TopographyFeature
+    latitude: float
+    longitude: float
+    roles: frozenset[IndustrialRole]
+    role_sources: frozenset[str]
+    products: frozenset[str]
+    operator: str | None
+    area_m2: float
+
+
+_INDUSTRIAL_CATEGORY_ROLES: dict[str, IndustrialRole] = {
+    "factory": IndustrialRole.GENERAL_MANUFACTURING,
+    "sawmill": IndustrialRole.TIMBER_PAPER,
+    "brewery": IndustrialRole.FOOD_PROCESSING,
+    "food": IndustrialRole.FOOD_PROCESSING,
+    "chemical": IndustrialRole.CHEMICAL,
+    "shipyard": IndustrialRole.SHIPYARD,
+    "mine": IndustrialRole.EXTRACTION,
+    "quarry": IndustrialRole.EXTRACTION,
+    "metal_processing": IndustrialRole.METALWORKS,
+    "steelmaking": IndustrialRole.METALWORKS,
+    "cement": IndustrialRole.CONSTRUCTION_MATERIALS,
+    "glass": IndustrialRole.CONSTRUCTION_MATERIALS,
+    "machinery": IndustrialRole.MACHINERY,
+    "automotive": IndustrialRole.AUTOMOTIVE,
+    "electronics": IndustrialRole.ELECTRONICS,
+}
+
+_NON_INDUSTRIAL_SITE_NAME_TOKENS = {
+    "gewerbegebiet", "industriegebiet", "industrial park", "business park",
+    "zone industrielle", "zone d'activités", "zone d’activités", "stadtwerke",
+    "straßenmeisterei", "strassenmeisterei", "autobahnmeisterei", "bauhof",
+    "recyclinghof", "kläranlage", "klaeranlage", "kraftwerk", "heizwerk",
+    "umspannwerk", "windpark", "solarpark", "biogasanlage", "tanklager",
+}
+
+_STRATEGIC_INDUSTRIAL_ROLES = frozenset({
+    IndustrialRole.HEAVY_INDUSTRY,
+    IndustrialRole.METALWORKS,
+    IndustrialRole.CHEMICAL,
+    IndustrialRole.MACHINERY,
+    IndustrialRole.AUTOMOTIVE,
+    IndustrialRole.ELECTRONICS,
+    IndustrialRole.CONSTRUCTION_MATERIALS,
+    IndustrialRole.SHIPYARD,
+    IndustrialRole.EXTRACTION,
+})
+
+
+def build_industrial_sites(
+    features: Iterable[TopographyFeature],
+    *,
+    theater_id: str,
+    policy: InfrastructureCandidatePolicy | None = None,
+    named_cluster_radius_m: float = 750.0,
+    unnamed_minimum_area_m2: float = 2_500.0,
+    industrial_area_minimum_m2: float = 5_000.0,
+) -> TheaterInfrastructureSites:
+    """Build conservative industrial plants without promoting generic estates."""
+
+    if min(named_cluster_radius_m, unnamed_minimum_area_m2, industrial_area_minimum_m2) < 0:
+        raise ValueError("industrial-site distances and areas must not be negative")
+    selected_policy = policy or infrastructure_policy_for_theater(theater_id)
+    candidates: list[_IndustrialCandidate] = []
+    excluded = {
+        "generic_industrial_area": 0,
+        "weak_works": 0,
+        "small_unnamed_site": 0,
+        "other_infrastructure_category": 0,
+        "outside_scenario_date": 0,
+    }
+    supported_categories = {"industrial_area", "works", *_INDUSTRIAL_CATEGORY_ROLES}
+    for feature in features:
+        if feature.layer is not TopographyLayer.INFRASTRUCTURE or feature.category not in supported_categories:
+            continue
+        if not _feature_exists_in_scenario(feature, selected_policy.scenario_reference_year):
+            excluded["outside_scenario_date"] += 1
+            continue
+        tags = _osm_tags(feature.properties.get("osm_tags"))
+        if _industrial_name_is_non_site(feature.name):
+            excluded["other_infrastructure_category"] += 1
+            continue
+        roles, role_sources = _industrial_roles(feature.category, tags, feature.name)
+        products = _industrial_products(tags)
+        operator = _optional_string(tags.get("operator"))
+        area_m2 = _geometry_area_m2(feature.geometry)
+        named = bool(feature.name or operator)
+        if feature.category == "industrial_area":
+            if "name" not in role_sources or area_m2 < industrial_area_minimum_m2:
+                excluded["generic_industrial_area"] += 1
+                continue
+        elif feature.category == "works":
+            has_evidence = bool(products or tags.get("industrial") or tags.get("craft") or "name" in role_sources)
+            if not named or not has_evidence:
+                excluded["weak_works"] += 1
+                continue
+        elif not named and area_m2 < unnamed_minimum_area_m2:
+            excluded["small_unnamed_site"] += 1
+            continue
+        if not roles:
+            roles = {IndustrialRole.GENERAL_MANUFACTURING}
+            role_sources.add("explicit_industrial_feature")
+        longitude, latitude = _representative_coordinate(feature.geometry)
+        candidates.append(_IndustrialCandidate(
+            feature=feature,
+            latitude=latitude,
+            longitude=longitude,
+            roles=frozenset(roles),
+            role_sources=frozenset(role_sources),
+            products=products,
+            operator=operator,
+            area_m2=area_m2,
+        ))
+
+    clusters = _cluster_industrial_candidates(candidates, named_cluster_radius_m)
+    sites = tuple(_industrial_site_from_cluster(cluster, selected_policy) for cluster in clusters)
+    return TheaterInfrastructureSites(
+        theater_id=theater_id,
+        scenario_reference_year=selected_policy.scenario_reference_year,
+        sites=sites,
+        metadata={
+            "raw_industrial_candidate_count": len(candidates),
+            "excluded_industrial_counts": excluded,
+            "named_cluster_radius_m": named_cluster_radius_m,
+            "unnamed_minimum_area_m2": unnamed_minimum_area_m2,
+            "industrial_area_minimum_m2": industrial_area_minimum_m2,
+        },
+    )
+
+
 def build_infrastructure_sites(
     features: Iterable[TopographyFeature],
     *,
@@ -713,14 +900,16 @@ def build_infrastructure_sites(
     energy = build_energy_sites(materialized, theater_id=theater_id, policy=policy)
     fuel = build_fuel_storage_sites(materialized, theater_id=theater_id, policy=policy)
     military = build_military_sites(materialized, theater_id=theater_id, policy=policy)
+    industrial = build_industrial_sites(materialized, theater_id=theater_id, policy=policy)
     return TheaterInfrastructureSites(
         theater_id=theater_id,
         scenario_reference_year=energy.scenario_reference_year,
-        sites=(*energy.sites, *fuel.sites, *military.sites),
+        sites=(*energy.sites, *fuel.sites, *military.sites, *industrial.sites),
         metadata={
             "energy": energy.metadata,
             "fuel_storage": fuel.metadata,
             "military": military.metadata,
+            "industrial": industrial.metadata,
         },
     )
 
@@ -826,7 +1015,10 @@ def _fuel_candidate_key(candidate: _FuelCandidate) -> tuple[str, str]:
     return candidate.feature.source_id or "", candidate.feature.object_id
 
 
-def _candidate_distance_m(first: _FuelCandidate | _MilitaryCandidate, second: _FuelCandidate | _MilitaryCandidate) -> float:
+def _candidate_distance_m(
+    first: _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate,
+    second: _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate,
+) -> float:
     latitude = math.radians((first.latitude + second.latitude) / 2)
     dx = math.radians(first.longitude - second.longitude) * math.cos(latitude)
     dy = math.radians(first.latitude - second.latitude)
@@ -937,10 +1129,10 @@ def _military_site_from_cluster(
     primary = next((candidate for candidate in ordered if candidate.feature.name), ordered[0])
     source_keys = tuple(sorted({item.feature.source_id or item.feature.object_id for item in cluster}))
     digest = hashlib.sha1("|".join(source_keys).encode("utf-8")).hexdigest()[:16]
-    roles = tuple(sorted({item.role for item in cluster}, key=lambda role: role.value))
+    roles = tuple(sorted({role for item in cluster for role in item.roles}, key=lambda role: role.value))
     names = [item.feature.name for item in ordered if item.feature.name]
     operators = tuple(sorted({item.operator for item in cluster if item.operator}))
-    role_sources = tuple(sorted({item.role_source for item in cluster}))
+    role_sources = tuple(sorted({source for item in cluster for source in item.role_sources}))
     explicit_role = "military_tag" in role_sources
     confidence = min(
         0.95,
@@ -988,6 +1180,185 @@ def _military_candidate_key(candidate: _MilitaryCandidate) -> tuple[str, str]:
     return candidate.feature.source_id or "", candidate.feature.object_id
 
 
+def _cluster_industrial_candidates(
+    candidates: Iterable[_IndustrialCandidate],
+    radius_m: float,
+) -> list[list[_IndustrialCandidate]]:
+    clusters: list[list[_IndustrialCandidate]] = []
+    for candidate in sorted(candidates, key=_industrial_candidate_key):
+        identity = _industrial_identity(candidate)
+        matching = next(
+            (
+                cluster for cluster in clusters
+                if identity
+                and _industrial_identity(cluster[0]) == identity
+                and _candidate_distance_m(candidate, cluster[0]) <= radius_m
+            ),
+            None,
+        )
+        if matching is None:
+            clusters.append([candidate])
+        else:
+            matching.append(candidate)
+    return clusters
+
+
+def _industrial_site_from_cluster(
+    cluster: list[_IndustrialCandidate],
+    policy: InfrastructureCandidatePolicy,
+) -> IndustrialSite:
+    ordered = sorted(cluster, key=_industrial_candidate_key)
+    primary = max(ordered, key=lambda item: (item.area_m2, bool(item.feature.name)))
+    source_keys = tuple(sorted({item.feature.source_id or item.feature.object_id for item in cluster}))
+    digest = hashlib.sha1("|".join(source_keys).encode("utf-8")).hexdigest()[:16]
+    roles = tuple(sorted({role for item in cluster for role in item.roles}, key=lambda role: role.value))
+    products = tuple(sorted({product for item in cluster for product in item.products}))
+    operators = tuple(sorted({item.operator for item in cluster if item.operator}))
+    names = [item.feature.name for item in ordered if item.feature.name]
+    role_sources = tuple(sorted({source for item in cluster for source in item.role_sources}))
+    footprint_area_m2 = sum(item.area_m2 for item in cluster) or None
+    confidence = min(
+        0.95,
+        max(item.feature.confidence for item in cluster)
+        + (0.1 if any(source in role_sources for source in ("industrial_tag", "category", "product")) else 0.0)
+        + (0.1 if names or operators else 0.0),
+    )
+    strategic_candidate = bool(set(roles).intersection(_STRATEGIC_INDUSTRIAL_ROLES)) or (
+        footprint_area_m2 is not None and footprint_area_m2 >= 50_000
+    )
+    return IndustrialSite(
+        site_id=f"INDUSTRIAL_SITE:{digest}",
+        kind=InfrastructureSiteKind.INDUSTRIAL,
+        geometry=primary.feature.geometry,
+        latitude=primary.latitude,
+        longitude=primary.longitude,
+        source=primary.feature.source,
+        confidence=confidence,
+        name=names[0] if names else (f"{operators[0]} industrial site" if operators else None),
+        source_ids=source_keys,
+        scenario_reference_year=policy.scenario_reference_year or primary.feature.scenario_reference_year,
+        verification_state=(
+            InfrastructureVerificationState.DCS_VISUAL_ONLY
+            if any(item.feature.dcs_verified for item in cluster)
+            else InfrastructureVerificationState.UNVERIFIED
+        ),
+        component_ids=tuple(sorted({item.feature.object_id for item in cluster})),
+        roles=roles,
+        products=products,
+        footprint_area_m2=footprint_area_m2,
+        properties={
+            "member_count": len(cluster),
+            "operators": list(operators),
+            "role_sources": list(role_sources),
+            "strategic_candidate": strategic_candidate,
+            "scale": _industrial_scale(footprint_area_m2),
+            "evidence_categories": sorted({item.feature.category for item in cluster}),
+        },
+    )
+
+
+def _industrial_candidate_key(candidate: _IndustrialCandidate) -> tuple[str, str]:
+    return candidate.feature.source_id or "", candidate.feature.object_id
+
+
+def _industrial_identity(candidate: _IndustrialCandidate) -> str:
+    return _normalized_site_name(candidate.feature.name) or _normalized_site_name(candidate.operator)
+
+
+def _industrial_roles(
+    category: str,
+    tags: Mapping[str, Any],
+    name: str | None,
+) -> tuple[set[IndustrialRole], set[str]]:
+    roles: set[IndustrialRole] = set()
+    sources: set[str] = set()
+    category_role = _INDUSTRIAL_CATEGORY_ROLES.get(category)
+    if category_role is not None:
+        roles.add(category_role)
+        sources.add("category")
+    industrial_value = str(tags.get("industrial") or "").strip().casefold()
+    industrial_role = _industrial_role_from_value(industrial_value)
+    if industrial_role is not None:
+        roles.add(industrial_role)
+        sources.add("industrial_tag")
+    for product in _industrial_products(tags):
+        role = _industrial_role_from_value(product)
+        if role is not None:
+            roles.add(role)
+            sources.add("product")
+    inferred = _industrial_role_from_name(name)
+    if inferred is not None:
+        roles.add(inferred)
+        sources.add("name")
+    return roles, sources
+
+
+def _industrial_role_from_value(value: str) -> IndustrialRole | None:
+    normalized = value.casefold().replace("-", "_").replace(" ", "_")
+    groups: tuple[tuple[IndustrialRole, tuple[str, ...]], ...] = (
+        (IndustrialRole.SHIPYARD, ("shipyard", "boatbuilding", "boatbuilder")),
+        (IndustrialRole.HEAVY_INDUSTRY, ("heavy_industry",)),
+        (IndustrialRole.METALWORKS, ("steel", "steelmaking", "metal", "metal_processing", "foundry", "aluminium")),
+        (IndustrialRole.CHEMICAL, ("chemical", "chemicals", "fertilizer", "pharmaceutical")),
+        (IndustrialRole.AUTOMOTIVE, ("automotive", "automotive_parts", "car_parts", "vehicles", "vehicle")),
+        (IndustrialRole.MACHINERY, ("machinery", "machine_shop", "tools", "agricultural_engines")),
+        (IndustrialRole.ELECTRONICS, ("electronics", "electrical", "communication")),
+        (IndustrialRole.CONSTRUCTION_MATERIALS, ("cement", "concrete", "asphalt", "brick", "bricks", "glass", "precast_concrete")),
+        (IndustrialRole.FOOD_PROCESSING, ("food", "food_industry", "brewery", "beer", "dairy", "meat", "slaughterhouse", "bakery", "sugar_refinery", "cheese", "milk", "seafood", "flour", "beverages", "juice")),
+        (IndustrialRole.TIMBER_PAPER, ("sawmill", "timber", "wood", "paper", "cardboard", "pulp", "furniture")),
+        (IndustrialRole.EXTRACTION, ("mine", "quarry", "mining", "gravel", "sand", "salt")),
+        (IndustrialRole.GENERAL_MANUFACTURING, ("factory", "manufacturing", "works", "industrial")),
+    )
+    parts = set(normalized.split("_"))
+    return next(
+        (role for role, values in groups if any(token == normalized or token in parts for token in values)),
+        None,
+    )
+
+
+def _industrial_role_from_name(name: str | None) -> IndustrialRole | None:
+    value = _normalized_site_name(name)
+    if not value:
+        return None
+    patterns: tuple[tuple[IndustrialRole, tuple[str, ...]], ...] = (
+        (IndustrialRole.SHIPYARD, ("werft", "shipyard", "dockyard", "chantier naval")),
+        (IndustrialRole.METALWORKS, ("stahl", "metall", "hüttenwerk", "huettenwerk", "gießerei", "giesserei", "foundry", "smelter")),
+        (IndustrialRole.CHEMICAL, ("chemie", "chemical plant", "pharma", "düngemittel", "duengemittel")),
+        (IndustrialRole.AUTOMOTIVE, ("fahrzeugwerk", "automobil", "automotive", "car factory", "motorenwerk")),
+        (IndustrialRole.MACHINERY, ("maschinenbau", "maschinenfabrik", "machine works")),
+        (IndustrialRole.ELECTRONICS, ("elektronikwerk", "electronic factory")),
+        (IndustrialRole.CONSTRUCTION_MATERIALS, ("zement", "beton", "asphalt", "ziegel", "glaswerk", "cement works", "brickworks")),
+        (IndustrialRole.FOOD_PROCESSING, ("brauerei", "brewery", "molkerei", "schlachthof", "zuckerfabrik", "mühle", "muehle")),
+        (IndustrialRole.TIMBER_PAPER, ("sägewerk", "saegewerk", "papierfabrik", "zellstoffwerk", "paper mill")),
+        (IndustrialRole.EXTRACTION, ("bergwerk", "tagebau", "kieswerk", "steinbruch", "mine", "quarry")),
+        (IndustrialRole.GENERAL_MANUFACTURING, ("fabrik", "factory", " werk", "werke", "works", "manufacturing")),
+    )
+    return next((role for role, tokens in patterns if any(token in value for token in tokens)), None)
+
+
+def _industrial_products(tags: Mapping[str, Any]) -> frozenset[str]:
+    products: set[str] = set()
+    for key in ("product", "produce"):
+        if tags.get(key) is not None:
+            products.update(_split_tag_values(tags[key]))
+    return frozenset(products)
+
+
+def _industrial_name_is_non_site(name: str | None) -> bool:
+    value = _normalized_site_name(name)
+    return bool(value and any(token in value for token in _NON_INDUSTRIAL_SITE_NAME_TOKENS))
+
+
+def _industrial_scale(area_m2: float | None) -> str:
+    if area_m2 is None or area_m2 < 10_000:
+        return "small"
+    if area_m2 < 100_000:
+        return "medium"
+    if area_m2 < 1_000_000:
+        return "large"
+    return "very_large"
+
+
 def _normalized_site_name(name: str | None) -> str:
     return " ".join((name or "").casefold().replace("-", " ").split())
 
@@ -999,7 +1370,7 @@ def _military_role_from_name(name: str | None) -> MilitaryRole | None:
     patterns: tuple[tuple[MilitaryRole, tuple[str, ...]], ...] = (
         (MilitaryRole.AMMUNITION_STORAGE, ("munition", "ammunition", "munitionsdepot")),
         (MilitaryRole.FUEL_STORAGE, ("tanklager", "fuel depot", "carburant")),
-        (MilitaryRole.NAVAL_BASE, ("naval base", "marinebasis", "marinestützpunkt", "flådestation")),
+        (MilitaryRole.NAVAL_BASE, ("naval base", "marinebasis", "marinestützpunkt", "marinearsenal", "flådestation")),
         (MilitaryRole.BARRACKS, ("kaserne", "caserne", "barracks", "kazerne", "koszary")),
         (MilitaryRole.RADAR_SITE, ("radar",)),
         (MilitaryRole.COMMUNICATIONS_SITE, ("funk", "fernmelde", "radio site", "communications")),
@@ -1011,6 +1382,10 @@ def _military_role_from_name(name: str | None) -> MilitaryRole | None:
         (MilitaryRole.BASE, ("military base", "militärbasis", "stützpunkt", "military site")),
     )
     return next((role for role, tokens in patterns if any(token in value for token in tokens)), None)
+
+
+def _is_generic_bunker_name(name: str | None) -> bool:
+    return _normalized_site_name(name) in {"", "bunker", "bunkier"}
 
 
 def _is_military_airfield(tags: Mapping[str, Any], military_tag: str) -> bool:
@@ -1032,6 +1407,7 @@ def _site_layer(kind: InfrastructureSiteKind) -> str:
         InfrastructureSiteKind.ENERGY: "energy_sites",
         InfrastructureSiteKind.FUEL_STORAGE: "fuel_storage_sites",
         InfrastructureSiteKind.MILITARY: "military_sites",
+        InfrastructureSiteKind.INDUSTRIAL: "industrial_sites",
     }[kind]
 
 
@@ -1040,6 +1416,7 @@ def _site_object_type(kind: InfrastructureSiteKind) -> str:
         InfrastructureSiteKind.ENERGY: "ENERGY_SITE",
         InfrastructureSiteKind.FUEL_STORAGE: "FUEL_STORAGE_SITE",
         InfrastructureSiteKind.MILITARY: "MILITARY_SITE",
+        InfrastructureSiteKind.INDUSTRIAL: "INDUSTRIAL_SITE",
     }[kind]
 
 
@@ -1093,6 +1470,44 @@ def _representative_coordinate(geometry: Mapping[str, Any]) -> tuple[float, floa
     if not points:
         raise ValueError("infrastructure geometry contains no coordinates")
     return sum(point[0] for point in points) / len(points), sum(point[1] for point in points) / len(points)
+
+
+def _geometry_area_m2(geometry: Mapping[str, Any]) -> float:
+    geometry_type = str(geometry.get("type") or "")
+    coordinates = geometry.get("coordinates")
+    if geometry_type == "Polygon" and isinstance(coordinates, (list, tuple)):
+        return _polygon_area_m2(coordinates)
+    if geometry_type == "MultiPolygon" and isinstance(coordinates, (list, tuple)):
+        return sum(_polygon_area_m2(polygon) for polygon in coordinates if isinstance(polygon, (list, tuple)))
+    return 0.0
+
+
+def _polygon_area_m2(rings: Any) -> float:
+    if not isinstance(rings, (list, tuple)) or not rings:
+        return 0.0
+    areas = [_ring_area_m2(ring) for ring in rings if isinstance(ring, (list, tuple))]
+    return max(0.0, areas[0] - sum(areas[1:])) if areas else 0.0
+
+
+def _ring_area_m2(ring: Any) -> float:
+    points = [
+        (float(point[0]), float(point[1]))
+        for point in ring
+        if isinstance(point, (list, tuple))
+        and len(point) >= 2
+        and isinstance(point[0], (int, float))
+        and isinstance(point[1], (int, float))
+    ]
+    if len(points) < 3:
+        return 0.0
+    latitude = math.radians(sum(point[1] for point in points) / len(points))
+    scale_x = 6_371_008.8 * math.cos(latitude) * math.pi / 180
+    scale_y = 6_371_008.8 * math.pi / 180
+    projected = [(longitude * scale_x, latitude_value * scale_y) for longitude, latitude_value in points]
+    return abs(sum(
+        first[0] * second[1] - second[0] * first[1]
+        for first, second in zip(projected, projected[1:] + projected[:1])
+    )) / 2
 
 
 def _optional_float(value: Any) -> float | None:

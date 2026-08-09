@@ -1631,16 +1631,28 @@ bounded DCS scenery check is available through
 `await bridge.survey_scenery(latitude, longitude, radius_m=500)`.
 The map server loads the normalized cache automatically and exposes it through
 `/api/infrastructure-sites/global.geojson`. `Energy sites`, `Fuel and storage
-sites`, and `Military sites` are separate, initially hidden layers under
-`Infrastructure`. The map uses stable representative site markers while the
+sites`, `Military sites`, and `Industrial sites` are separate, initially hidden
+layers under `Infrastructure`. The map uses stable representative site markers while the
 SDK artifact retains source identifiers and the normalized site geometry.
 
-The GermanyCW cache currently contains 2,499 energy sites and 440 fuel or bulk
-storage sites. Fuel admission is deliberately conservative: a candidate needs
+The GermanyCW cache currently contains 2,499 energy sites, 440 fuel or bulk
+storage sites, 1,100 military sites, and 5,728 industrial sites. Fuel admission
+is deliberately conservative: a candidate needs
 explicit fuel-storage, oil-storage, gas-storage, terminal, depot, tank, or
 refinery evidence. A generic oil or gas industry tag is insufficient. Water,
 slurry, and unspecified tanks are not promoted to operational sites. Related
 terminal, refinery, and tank components are clustered into one location.
+Military sites retain typed roles such as barracks, depot, ammunition storage,
+radar, communications, naval base, training area, and firing range. DCS
+airfields remain represented by `AIRBASE` objects, and unnamed individual
+bunkers are excluded. Training and firing areas provide geographic context but
+are not automatically targetable strategic sites.
+Industrial admission requires an explicit factory or industry role, product
+evidence, or a recognized named works. Generic and unnamed industrial estates
+are not promoted. The SDK records normalized roles, products, approximate
+footprint, scale, and a separate `strategic_candidate` flag; only 2,046 current
+GermanyCW industrial sites meet that initial strategic-evidence threshold; 2,888
+of the 5,728 normalized sites currently qualify as strategic candidates.
 
 To inspect one admitted infrastructure site against nearby addressable DCS
 scenery, start DCS, the bridge daemon, and a mission, then run the
@@ -1654,7 +1666,24 @@ By default it selects the admitted fuel-storage site nearest `AIRBASE:Laage`,
 prints the bounded scenery survey, and draws a temporary F10 verification
 overlay. Edit the typed constants at the top of the file to select energy,
 another site, reference, or radius. `verify_energy_site.py` remains a compact
-energy-specific entry point using the same implementation.
+energy-specific entry point using the same implementation;
+`verify_military_site.py` selects the military layer and
+`verify_industrial_site.py` selects industry.
+
+Named cities and towns use a separate normalized artifact:
+
+```powershell
+python tools/build_settlements.py
+```
+
+This writes `tmp/topography/GermanyCW-settlements.geojson` and is loaded by the
+map server through `/api/settlements/global.geojson`. The current cache contains
+2,625 cities and towns, including 2,592 generalized urban footprints and 2,318
+source population values. `Cities and towns` is an initially hidden
+Infrastructure layer. Population dates and OSM provenance are retained because
+modern source values need not match the 1999 scenario. The importance class is
+planning evidence only; settlements do not become strategic objectives
+automatically.
 Adjacent OSM road edges carrying a `bridge` tag are first connected and then
 collapsed with nearby structures into abstract `TransportBridge` locations.
 The default 150 m radius combines parallel carriageway decks and fragmented

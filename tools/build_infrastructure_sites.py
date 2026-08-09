@@ -19,6 +19,7 @@ from moosebridge import (  # noqa: E402
     EnergySite,
     FuelStorageSite,
     InfrastructureCandidatePolicy,
+    IndustrialSite,
     MilitarySite,
     TopographyFeature,
     TopographyLayer,
@@ -51,12 +52,14 @@ def main() -> int:
     energy_count = sum(isinstance(site, EnergySite) for site in artifact.sites)
     fuel_count = sum(isinstance(site, FuelStorageSite) for site in artifact.sites)
     military_count = sum(isinstance(site, MilitarySite) for site in artifact.sites)
+    industrial_count = sum(isinstance(site, IndustrialSite) for site in artifact.sites)
     print(f"Infrastructure sites written: {output}")
     print(f"  theater: {theater_id}")
     print(f"  raw unique candidates: {len(features)}")
     print(f"  admitted energy sites: {energy_count}")
     print(f"  admitted fuel/storage sites: {fuel_count}")
     print(f"  admitted military sites: {military_count}")
+    print(f"  admitted industrial sites: {industrial_count}")
     excluded = artifact.metadata.get("energy", {}).get("excluded_energy_source_counts") or {}
     print("  excluded: " + (", ".join(f"{key}={value}" for key, value in sorted(excluded.items())) or "none"))
     return 0
@@ -67,6 +70,9 @@ _CANDIDATE_CATEGORIES = (
     "distillates_storage", "gas", "natural_gas", "gas_storage", "gas_cavern",
     "storage", "depot",
     "military",
+    "industrial_area", "works", "factory", "sawmill", "brewery", "chemical",
+    "shipyard", "mine", "metal_processing", "quarry", "cement", "glass",
+    "machinery", "steelmaking", "automotive", "food", "electronics",
 )
 
 
@@ -79,7 +85,7 @@ def _load_candidates(directory: Path, shards: list[dict]) -> dict[str, Topograph
     features: dict[str, TopographyFeature] = {}
     columns = [
         "layer", "object_id", "name", "category", "source", "source_id", "confidence",
-        "scenario_reference_year", "dcs_verified", "osm_tags",
+        "scenario_reference_year", "valid_from", "dcs_verified", "osm_tags",
     ]
     for index, shard in enumerate(shards, start=1):
         path = directory / str(shard.get("path") or "")
@@ -102,6 +108,7 @@ def _load_candidates(directory: Path, shards: list[dict]) -> dict[str, Topograph
                 confidence=float(row.confidence),
                 name=_text(row.name),
                 scenario_reference_year=_integer(row.scenario_reference_year),
+                valid_from=_integer(row.valid_from),
                 dcs_verified=bool(row.dcs_verified),
                 properties={"osm_tags": _tags(row.osm_tags)},
             )

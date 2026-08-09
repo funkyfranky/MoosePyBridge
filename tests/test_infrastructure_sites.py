@@ -6,6 +6,8 @@ from moosebridge.infrastructure_sites import (
     FuelStorageRole,
     FuelStorageSite,
     InfrastructureSiteKind,
+    IndustrialRole,
+    IndustrialSite,
     MilitaryRole,
     MilitarySite,
     StoredCommodity,
@@ -13,6 +15,7 @@ from moosebridge.infrastructure_sites import (
     build_energy_sites,
     build_fuel_storage_sites,
     build_infrastructure_sites,
+    build_industrial_sites,
     build_military_sites,
     infrastructure_policy_for_theater,
 )
@@ -83,6 +86,41 @@ def _military_feature(
         name=name,
         valid_from=valid_from,
         properties={"osm_tags": osm_tags},
+    )
+
+
+def _industrial_feature(
+    name: str | None,
+    category: str,
+    longitude: float,
+    latitude: float,
+    *,
+    size_degrees: float = 0.001,
+    valid_from: int | None = None,
+    source_suffix: str | None = None,
+    **tags: str,
+) -> TopographyFeature:
+    source = source_suffix or name or f"{longitude}-{latitude}"
+    return TopographyFeature(
+        object_id=f"TOPOGRAPHY:industrial:{source}",
+        layer=TopographyLayer.INFRASTRUCTURE,
+        category=category,
+        geometry={
+            "type": "Polygon",
+            "coordinates": [[
+                [longitude, latitude],
+                [longitude + size_degrees, latitude],
+                [longitude + size_degrees, latitude + size_degrees],
+                [longitude, latitude + size_degrees],
+                [longitude, latitude],
+            ]],
+        },
+        source="OpenStreetMap",
+        source_id=f"way/{source}",
+        confidence=0.55,
+        name=name,
+        valid_from=valid_from,
+        properties={"osm_tags": tags},
     )
 
 
@@ -183,6 +221,72 @@ def test_military_builder_clusters_split_named_installations_without_transitive_
     assert len(artifact.sites) == 2
     assert artifact.sites[0].roles == (MilitaryRole.BASE, MilitaryRole.DEPOT)
     assert artifact.sites[0].properties["member_count"] == 2
+
+
+def test_military_builder_preserves_tagged_and_name_inferred_roles() -> None:
+    artifact = build_military_sites(
+        [_military_feature("Graf Example Kaserne", 12.0, 54.0, military="range")],
+        theater_id="GermanyCW",
+    )
+
+    assert artifact.sites[0].roles == (MilitaryRole.BARRACKS, MilitaryRole.FIRING_RANGE)
+    assert artifact.sites[0].properties["role_sources"] == ["military_tag", "name"]
+
+
+def test_industrial_builder_admits_supported_works_but_not_generic_estates() -> None:
+    artifact = build_industrial_sites(
+        [
+            _industrial_feature("Alpha Steel", "works", 12.0, 54.0, industrial="steelmaking"),
+            _industrial_feature("Gewerbegebiet Beta", "industrial_area", 12.1, 54.0, size_degrees=0.01),
+            _industrial_feature(None, "works", 12.2, 54.0),
+            _industrial_feature("Future Factory", "factory", 12.3, 54.0, valid_from=2005),
+        ],
+        theater_id="GermanyCW",
+    )
+
+    assert len(artifact.sites) == 1
+    site = artifact.sites[0]
+    assert isinstance(site, IndustrialSite)
+    assert site.roles == (IndustrialRole.METALWORKS,)
+    assert site.properties["strategic_candidate"] is True
+    assert artifact.metadata["excluded_industrial_counts"] == {
+        "generic_industrial_area": 0,
+        "weak_works": 1,
+        "small_unnamed_site": 0,
+        "other_infrastructure_category": 1,
+        "outside_scenario_date": 1,
+    }
+
+
+def test_industrial_builder_clusters_same_site_without_merging_neighbors() -> None:
+    artifact = build_industrial_sites(
+        [
+            _industrial_feature("Werft Alpha", "shipyard", 12.0, 54.0, source_suffix="a"),
+            _industrial_feature("Werft Alpha", "works", 12.004, 54.0, source_suffix="b", product="steel"),
+            _industrial_feature("Factory Beta", "factory", 12.005, 54.0, source_suffix="c"),
+        ],
+        theater_id="GermanyCW",
+    )
+
+    assert len(artifact.sites) == 2
+    site = next(item for item in artifact.sites if item.name == "Werft Alpha")
+    assert isinstance(site, IndustrialSite)
+    assert site.roles == (IndustrialRole.METALWORKS, IndustrialRole.SHIPYARD)
+    assert site.products == ("steel",)
+    assert site.properties["member_count"] == 2
+
+
+def test_industrial_site_round_trips_typed_properties() -> None:
+    artifact = build_industrial_sites(
+        [_industrial_feature("Machine Works", "machinery", 12.0, 54.0, product="machinery")],
+        theater_id="GermanyCW",
+    )
+
+    loaded = TheaterInfrastructureSites.from_geojson(artifact.to_geojson())
+
+    assert loaded == artifact
+    assert isinstance(loaded.sites[0], IndustrialSite)
+    assert loaded.sites[0].roles == (IndustrialRole.MACHINERY,)
 
 
 def test_fuel_storage_requires_explicit_commodity_evidence() -> None:

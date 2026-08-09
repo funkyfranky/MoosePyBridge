@@ -31,12 +31,14 @@
     { key: "energy_sites", label: "Energy sites", color: "#b38416", icon: "factory", default: false },
     { key: "fuel_storage_sites", label: "Fuel and storage sites", color: "#8a5a32", icon: "fuel", default: false },
     { key: "military_sites", label: "Military sites", color: "#6c5b48", icon: "shield", default: false },
+    { key: "industrial_sites", label: "Industrial sites", color: "#76578b", icon: "factory", default: false },
+    { key: "settlements", label: "Cities and towns", color: "#9a4f4f", icon: "building-2", default: false },
     { key: "surface_land_regions", label: "Connected land", color: "#4f7a57", icon: "land-plot", default: false },
     { key: "surface_water_regions", label: "Connected water", color: "#277c9d", icon: "waves", default: false },
     { key: "topography_water", label: "Water", color: "#3c83a5", icon: "waves", default: false },
     { key: "topography_roads", label: "Road network", color: "#6f675a", icon: "route", default: false },
     { key: "topography_railways", label: "Railways", color: "#4f5552", icon: "train-front", default: false },
-    { key: "topography_settlements", label: "Settlements", color: "#9a694d", icon: "building-2", default: false },
+    { key: "topography_settlements", label: "Settlement source data", color: "#9a694d", icon: "building-2", default: false },
     { key: "topography_infrastructure", label: "Infrastructure candidates", color: "#76578b", icon: "factory", default: false },
     { key: "topography_landuse", label: "Land use", color: "#66835b", icon: "land-plot", default: false },
     { key: "topography_buildings", label: "Buildings", color: "#77736c", icon: "building", default: false },
@@ -70,7 +72,7 @@
     },
     {
       key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#137f87",
-      layers: ["airbases", "transport_bridges", "transport_junctions", "energy_sites", "fuel_storage_sites", "military_sites"],
+      layers: ["airbases", "settlements", "transport_bridges", "transport_junctions", "energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"],
     },
     {
       key: "topography", label: "Topography", icon: "map", color: "#3c7069",
@@ -139,6 +141,7 @@
   let latestSurfaceRegions = EMPTY;
   let latestTransportInfrastructure = EMPTY;
   let latestInfrastructureSites = EMPTY;
+  let latestSettlements = EMPTY;
   let topographyViewportAvailable = false;
   let fitted = false;
   let reconnectTimer = null;
@@ -456,6 +459,7 @@
       ...latestSurfaceRegions.features,
       ...latestTransportInfrastructure.features,
       ...latestInfrastructureSites.features,
+      ...latestSettlements.features,
     ];
   }
 
@@ -492,6 +496,7 @@
     map.addSource("surface-regions", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("transport-infrastructure", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("infrastructure-sites", { type: "geojson", data: EMPTY, promoteId: "object_id" });
+    map.addSource("settlements", { type: "geojson", data: EMPTY, promoteId: "map_feature_id" });
 
     for (const spec of layerSpecs) {
       if (spec.key === "trajectories") {
@@ -692,20 +697,107 @@
         });
         continue;
       }
-      if (spec.key === "energy_sites" || spec.key === "fuel_storage_sites" || spec.key === "military_sites") {
+      if (["energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"].includes(spec.key)) {
         addMapLayer(spec, {
           type: "circle",
           source: "infrastructure-sites",
           minzoom: 5,
           filter: ["==", ["get", "layer"], spec.key],
           paint: {
-            "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 2.5, 9, 5, 13, 7],
-            "circle-color": spec.color,
+            "circle-radius": [
+              "interpolate", ["linear"], ["zoom"],
+              5, ["+", 2.5, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
+              9, ["+", 5, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
+              13, ["+", 7, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
+            ],
+            "circle-color": spec.key === "industrial_sites"
+              ? ["case", ["==", ["get", "strategic_candidate"], true], spec.color, "#858b87"]
+              : spec.color,
             "circle-stroke-color": "rgba(255,255,255,0.96)",
             "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 10, 1.5],
             "circle-opacity": 0.94,
           },
         });
+        continue;
+      }
+      if (spec.key === "settlements") {
+        const importanceColor = [
+          "match", ["get", "importance_tier"],
+          "critical", "#8f2f3c", "high", "#b4524f", "medium", "#c87a62", "#9b8174",
+        ];
+        const settlementLevels = [
+          { classes: ["metropolis", "large_city"], minzoom: 4, labelZoom: 5, radius: 7 },
+          { classes: ["medium_city"], minzoom: 6.5, labelZoom: 7, radius: 5.5 },
+          { classes: ["small_city", "land_town"], minzoom: 8.5, labelZoom: 9, radius: 4.5 },
+        ];
+        for (const level of settlementLevels) {
+          const classFilter = ["in", ["get", "size_class"], ["literal", level.classes]];
+          const areaFilter = [
+            "all",
+            ["==", ["get", "layer"], spec.key],
+            ["==", ["geometry-type"], "Polygon"],
+            classFilter,
+          ];
+          const pointFilter = [
+            "all",
+            ["==", ["get", "layer"], spec.key],
+            ["==", ["geometry-type"], "Point"],
+            classFilter,
+          ];
+          addMapLayer(spec, {
+            type: "fill",
+            source: "settlements",
+            minzoom: level.minzoom,
+            filter: areaFilter,
+            paint: {
+              "fill-color": importanceColor,
+              "fill-opacity": ["interpolate", ["linear"], ["zoom"], level.minzoom, 0.1, 10, 0.16],
+            },
+          });
+          addMapLayer(spec, {
+            type: "line",
+            source: "settlements",
+            minzoom: level.minzoom,
+            filter: areaFilter,
+            paint: {
+              "line-color": importanceColor,
+              "line-width": ["interpolate", ["linear"], ["zoom"], level.minzoom, 1, 11, 2],
+              "line-opacity": 0.82,
+            },
+          });
+          addMapLayer(spec, {
+            type: "circle",
+            source: "settlements",
+            minzoom: level.minzoom,
+            filter: pointFilter,
+            paint: {
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], level.minzoom, level.radius, 12, level.radius + 3],
+              "circle-color": importanceColor,
+              "circle-stroke-color": "rgba(255,255,255,0.96)",
+              "circle-stroke-width": 1.5,
+              "circle-opacity": 0.94,
+            },
+          });
+          addMapLayer(spec, {
+            type: "symbol",
+            source: "settlements",
+            minzoom: level.labelZoom,
+            filter: pointFilter,
+            layout: {
+              "text-field": ["get", "name"],
+              "text-size": ["match", ["get", "size_class"], "metropolis", 14, "large_city", 13, "medium_city", 12, 11],
+              "text-offset": [0, 1.05],
+              "text-anchor": "top",
+              "text-allow-overlap": false,
+              "text-padding": 8,
+            },
+            paint: {
+              "text-color": "#593b3b",
+              "text-halo-color": "rgba(255,255,255,0.94)",
+              "text-halo-width": 1.4,
+            },
+          });
+        }
         continue;
       }
       if (spec.key === "topography_water") {
@@ -901,10 +993,46 @@
 
   function setInfrastructureSites(infrastructure) {
     if (!infrastructure || infrastructure.type !== "FeatureCollection") return;
-    latestInfrastructureSites = decoratedPicture(infrastructure);
+    latestInfrastructureSites = decoratedPicture({
+      ...infrastructure,
+      features: infrastructure.features.map((feature) => {
+        const longitude = Number(feature.properties?.longitude);
+        const latitude = Number(feature.properties?.latitude);
+        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return feature;
+        return {
+          ...feature,
+          geometry: { type: "Point", coordinates: [longitude, latitude] },
+        };
+      }),
+    });
     const source = map.getSource("infrastructure-sites");
     if (!source) return;
     source.setData(latestInfrastructureSites);
+    updateCounts();
+  }
+
+  function setSettlements(settlements) {
+    if (!settlements || settlements.type !== "FeatureCollection") return;
+    latestSettlements = decoratedPicture(settlements);
+    const displayFeatures = [];
+    for (const feature of latestSettlements.features) {
+      displayFeatures.push({
+        ...feature,
+        properties: { ...feature.properties, map_feature_id: `${feature.properties.object_id}:area` },
+      });
+      if (!["Polygon", "MultiPolygon"].includes(feature.geometry?.type)) continue;
+      const longitude = Number(feature.properties?.longitude);
+      const latitude = Number(feature.properties?.latitude);
+      if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) continue;
+      displayFeatures.push({
+        ...feature,
+        geometry: { type: "Point", coordinates: [longitude, latitude] },
+        properties: { ...feature.properties, map_feature_id: `${feature.properties.object_id}:anchor` },
+      });
+    }
+    const source = map.getSource("settlements");
+    if (!source) return;
+    source.setData({ ...latestSettlements, features: displayFeatures });
     updateCounts();
   }
 
@@ -1357,6 +1485,8 @@
         ? "Unnamed energy site"
         : properties.layer === "military_sites"
           ? "Unnamed military site"
+          : properties.layer === "industrial_sites"
+            ? "Unnamed industrial site"
           : "Unnamed object";
     const displayName = properties.name && properties.name !== properties.object_id
       ? properties.name
@@ -1471,17 +1601,19 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, surfaceRegionsResponse, transportResponse, infrastructureResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, surfaceRegionsResponse, transportResponse, infrastructureResponse, settlementsResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
         fetch("/api/surface-regions/global.geojson"),
         fetch("/api/transport-infrastructure/global.geojson"),
         fetch("/api/infrastructure-sites/global.geojson"),
+        fetch("/api/settlements/global.geojson"),
         fetch("/api/health"),
       ]);
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
       if (surfaceRegionsResponse.ok) setSurfaceRegions(await surfaceRegionsResponse.json());
       if (transportResponse.ok) setTransportInfrastructure(await transportResponse.json());
       if (infrastructureResponse.ok) setInfrastructureSites(await infrastructureResponse.json());
+      if (settlementsResponse.ok) setSettlements(await settlementsResponse.json());
       if (healthResponse.ok) {
         const status = await healthResponse.json();
         updateStatus(status);

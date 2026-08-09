@@ -67,7 +67,7 @@ scan.
 ## Implemented foundation
 
 The SDK now provides a shared `InfrastructureSite` base with distinct
-`EnergySite`, `FuelStorageSite`, and `MilitarySite` types. Candidate admission
+`EnergySite`, `FuelStorageSite`, `MilitarySite`, and `IndustrialSite` types. Candidate admission
 is controlled by an `InfrastructureCandidatePolicy` selected per theater. The
 GermanyCW policy uses 1989 as its scenario reference year and excludes wind,
 solar, biogas, and battery sites. Generic policies exclude nothing, so maps
@@ -79,8 +79,8 @@ Build the compact energy-site artifact from the indexed topography cache with:
 python tools/build_infrastructure_sites.py
 ```
 
-The current source produces 2,499 admitted energy sites and 440 fuel or bulk
-storage sites. Use `--include-modern-energy` only for a scenario that
+The current source produces 2,499 admitted energy sites, 440 fuel or bulk
+storage sites, 1,100 military sites, and 5,728 industrial sites. Use `--include-modern-energy` only for a scenario that
 deliberately wants the modern sources. The output is
 `tmp/topography/GermanyCW-infrastructure-sites.geojson`.
 
@@ -88,6 +88,34 @@ The bridge also exposes `await bridge.survey_scenery(latitude, longitude)` for
 local verification. Its defaults are a 500 m radius and 250 objects; the hard
 limits are 5 km and 2,000 objects. This is a diagnostic input to an offline
 verification workflow, not a periodic full-map scanner.
+
+### Cities and towns
+
+Named OSM `city` and `town` features are normalized separately from ordinary
+infrastructure as typed `Settlement` objects. Villages and hamlets remain raw
+topographic context. Build the versioned theater artifact with:
+
+```powershell
+python tools/build_settlements.py
+```
+
+The current GermanyCW artifact contains 2,625 cities and towns. Of these,
+2,592 have a bounded urban footprint derived from nearby residential,
+commercial, retail, and industrial land use; 2,318 retain a source population
+value. Population and `population:date` are evidence from OSM, not an assertion
+that the value matches the 1999 scenario date.
+
+Size classes are `metropolis`, `large_city`, `medium_city`, `small_city`, and
+`land_town`. Population is preferred; the OSM place class is the explicit
+fallback. Importance combines population and urban extent and remains initial
+planning evidence, not automatic target authorization. Urban footprints are
+generalized with a 200 m gap tolerance and can overlap in continuous
+conurbations. Administrative or nearest-anchor partitioning is deferred until
+that distinction affects a real planning decision.
+
+The map server exposes `/api/settlements/global.geojson`. The initially hidden
+`Cities and towns` layer shows importance-scaled anchors and urban footprints;
+the raw `Settlement source data` layer remains available for diagnostics.
 
 The browser map loads the normalized artifact through
 `/api/infrastructure-sites/global.geojson`. It displays representative
@@ -143,7 +171,19 @@ commodities retained where known.
 
 Generic `landuse=industrial` polygons are only search areas. A named works,
 factory, product tag, historical source, or confirmed DCS scenery is needed for
-a higher-confidence operational site.
+a higher-confidence operational site. The normalized model distinguishes
+general manufacturing, heavy industry, metalworks, chemicals, machinery,
+automotive, electronics, construction materials, food processing, timber and
+paper, shipyards, and extraction.
+
+Same-name or same-operator components may be combined within 750 m; unrelated
+neighboring companies are never merged merely because they occupy the same
+industrial estate. Generic industrial areas, business parks, road-maintenance
+yards, utilities, and weak unnamed works are excluded. Approximate footprint
+and normalized roles determine a separate `strategic_candidate` flag instead
+of making every admitted business a strategic objective. The current
+GermanyCW cache contains 2,888 such candidates among 5,728 industrial sites.
+DCS scenery association and scenario approval remain explicit later steps.
 
 ### Ports and maritime logistics
 
@@ -173,11 +213,22 @@ is not sufficient for them.
 
 ### Military sites
 
-Military bases, listening posts, naval bases, training areas, and weapons
-storage are present in GermanyCW but should not be inferred from civil
-infrastructure alone. They can share the common site/component model while
-using a separate military-site category and stronger scenario or historical
-verification.
+The normalized military taxonomy covers bases and barracks, naval bases,
+depots, ammunition and fuel storage, radar and communications sites, bunker
+complexes, missile sites, training areas, and firing ranges. Explicit OSM
+military tags and conservative name evidence can contribute multiple roles to
+one site. Same-name component polygons are clustered non-transitively within
+one kilometre while their source identifiers remain available for diagnostics.
+
+Airfields are excluded because DCS/MOOSE `AIRBASE` objects provide authoritative
+runtime identity and category. Danger areas, checkpoints, offices, hospitals,
+trenches, and similar features are not independent operational sites. Unnamed
+or generically named individual bunkers are also excluded. The GermanyCW 1989
+policy rejects features whose source dates place them outside the scenario.
+Training areas and firing ranges are useful maneuver context; the cache marks
+them non-targetable by default. A military site remains an external geographic
+candidate until bounded DCS scenery or mission-object verification supplies a
+runtime association.
 
 ## Normalization pipeline
 
@@ -210,12 +261,11 @@ released and updated in phases.
 
 ## Recommended implementation order
 
-1. Power plants and major grid sites
-2. Refineries, tank farms, and fuel depots
-3. Cargo ports, terminals, and shipyards
-4. Major factories and industrial works
-5. Rail yards, freight terminals, and major stations
-6. Dams, mines, tunnels, communications, and military sites
+1. Military sites (implemented candidate normalization)
+2. Major factories and industrial works (implemented candidate normalization)
+3. Rail yards, freight terminals, major stations, and rail junctions
+4. Power-grid sites and dependencies
+5. Cargo ports, terminals, shipyards, dams, mines, tunnels, and communications
 
 The first implementation should include a reusable bounded DCS scenery survey
 so every later category can be checked with the same evidence model.

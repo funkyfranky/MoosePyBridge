@@ -32,8 +32,17 @@ from moosebridge.infrastructure_sites import (
     FuelStorageRole,
     FuelStorageSite,
     InfrastructureSiteKind,
+    IndustrialRole,
+    IndustrialSite,
     StoredCommodity,
     TheaterInfrastructureSites,
+)
+from moosebridge.settlements import (
+    Settlement,
+    SettlementImportanceTier,
+    SettlementKind,
+    SettlementSizeClass,
+    TheaterSettlements,
 )
 from moosebridge.weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY
 
@@ -116,6 +125,7 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "transport_bridge_count": 0,
         "transport_junction_count": 0,
         "infrastructure_site_count": 0,
+        "settlement_count": 0,
         "diplomacy": None,
     }
 
@@ -241,6 +251,17 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
             confidence=0.8,
             storage_roles=(FuelStorageRole.TANK_FARM,),
             commodities=(StoredCommodity.PETROLEUM,),
+        ), IndustrialSite(
+            site_id="INDUSTRIAL_SITE:test",
+            kind=InfrastructureSiteKind.INDUSTRIAL,
+            geometry={"type": "Point", "coordinates": [12.4, 54.2]},
+            latitude=54.2,
+            longitude=12.4,
+            source="test",
+            confidence=0.8,
+            roles=(IndustrialRole.MACHINERY,),
+            products=("machinery",),
+            footprint_area_m2=25_000,
         )),
     )
 
@@ -250,7 +271,35 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
     assert payload["features"][0]["properties"]["source_geometry_type"] == "Polygon"
     assert payload["features"][0]["geometry"] == {"type": "Point", "coordinates": [12.0, 54.0]}
     assert payload["features"][1]["properties"]["layer"] == "fuel_storage_sites"
-    assert runtime.status_payload()["infrastructure_site_count"] == 2
+    assert payload["features"][2]["properties"]["layer"] == "industrial_sites"
+    assert runtime.status_payload()["infrastructure_site_count"] == 3
+
+
+def test_map_runtime_serves_normalized_settlements() -> None:
+    runtime = GlobalMapRuntime()
+    runtime._settlements = TheaterSettlements(
+        theater_id="GermanyCW",
+        settlements=(Settlement(
+            settlement_id="SETTLEMENT:test",
+            name="Test City",
+            kind=SettlementKind.CITY,
+            size_class=SettlementSizeClass.MEDIUM_CITY,
+            geometry={"type": "Point", "coordinates": [12.0, 54.0]},
+            latitude=54.0,
+            longitude=12.0,
+            source="test",
+            confidence=0.8,
+            importance_score=55,
+            importance_tier=SettlementImportanceTier.MEDIUM,
+        ),),
+    )
+
+    payload = runtime.settlements_geojson()
+    status = runtime.status_payload()
+
+    assert payload["features"][0]["properties"]["layer"] == "settlements"
+    assert payload["features"][0]["properties"]["size_class"] == "medium_city"
+    assert status["settlement_count"] == 1
 
 
 def test_map_runtime_clears_all_mission_caches_at_session_boundary() -> None:

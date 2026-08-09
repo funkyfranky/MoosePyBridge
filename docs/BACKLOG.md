@@ -87,6 +87,21 @@ Priorities:
 
 ## P2 - Strategic infrastructure
 
+- [x] **Normalize cities and towns for strategic context.** City and town
+  anchors now retain OSM population evidence and dates, receive transparent
+  size and importance classes, and use bounded urban-landuse footprints. The
+  SDK artifact and browser layer remain context until scenario policy promotes
+  a settlement to a strategic objective.
+- [ ] **Refine settlement boundaries where conurbations matter.** Evaluate
+  historical or administrative boundaries and nearest-anchor partitioning for
+  overlapping urban footprints, especially in the Ruhr area. Preserve the
+  current footprint and provenance rather than silently presenting a modern
+  administrative boundary as DCS-era truth.
+- [ ] **Add historical settlement evidence.** Compare dated population sources,
+  GHSL 1990 built-up areas, and DCS scenery for selected GermanyCW cities. Keep
+  present-day OSM population dates visible and never infer an exact historical
+  population without a source.
+
 - [x] **Inventory current infrastructure candidates and DCS representation.**
   The initial inventory is documented in `INFRASTRUCTURE_CANDIDATES.md`. It
   separates raw OSM features, normalized operational sites, bounded DCS
@@ -101,15 +116,20 @@ Priorities:
   theater-aware: the first `EnergySite` model and GermanyCW policy exclude
   modern wind, solar, biogas, and battery sites without imposing that choice
   on other maps. `MilitarySite` is a separate type on the shared site base.
-  The normalized energy and fuel/storage caches, SDK representations, browser
-  markers, and shared bounded DCS scenery-survey example are implemented.
+  The normalized energy, fuel/storage, military, and industrial caches, SDK representations,
+  browser markers, and shared bounded DCS scenery-survey example are implemented.
   Fuel/storage uses explicit commodity evidence and category-specific,
   non-transitive clustering so raw tanks do not become independent strategic
-  objects. Industrial, port, rail, and communications site builders plus
+  objects. Military candidates use typed roles, preserve multi-role sites,
+  exclude AIRBASE-owned airfields and weak standalone bunker evidence, and keep
+  training/range context non-targetable by default. Industrial sites retain
+  typed production roles, products, footprint and scale, exclude generic
+  estates, and distinguish ordinary locations from strategic candidates.
+  Port, rail, communications, and public-utility site builders plus
   persisted DCS verification remain open. Keep the model extensible, but do
   not retain every available OSM tag in the operational model.
 - [ ] **Cluster remaining infrastructure features into meaningful sites.**
-  Energy and fuel/storage clustering is implemented. Group related
+  Energy, fuel/storage, military, and industrial clustering is implemented. Group related
   buildings, tanks, yards, platforms, terminals, and equipment into one
   operational location where they represent the same real facility. Use
   category-specific clustering and preserve membership for diagnostics so a

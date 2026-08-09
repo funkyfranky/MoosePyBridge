@@ -40,6 +40,7 @@ from .topography import TheaterTopography
 from .topography_viewport import DEFAULT_VIEWPORT_FEATURE_LIMIT, TopographyViewportStore
 from .transport_infrastructure import TheaterTransportInfrastructure
 from .infrastructure_sites import TheaterInfrastructureSites
+from .settlements import TheaterSettlements
 from .surface_regions import TheaterSurfaceRegions
 
 LOGGER = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ DEFAULT_TOPOGRAPHY_VIEWPORT_PATH = Path("tmp/topography/viewport/manifest.json")
 DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
 DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-transport-infrastructure.geojson")
 DEFAULT_INFRASTRUCTURE_SITES_PATH = Path("tmp/topography/GermanyCW-infrastructure-sites.geojson")
+DEFAULT_SETTLEMENTS_PATH = Path("tmp/topography/GermanyCW-settlements.geojson")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
 
@@ -158,6 +160,7 @@ class GlobalMapRuntime:
     surface_regions_path: Path | None = None
     transport_infrastructure_path: Path | None = None
     infrastructure_sites_path: Path | None = None
+    settlements_path: Path | None = None
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
     error: str | None = None
@@ -186,6 +189,7 @@ class GlobalMapRuntime:
     _surface_regions: TheaterSurfaceRegions | None = field(init=False, default=None)
     _transport_infrastructure: TheaterTransportInfrastructure | None = field(init=False, default=None)
     _infrastructure_sites: TheaterInfrastructureSites | None = field(init=False, default=None)
+    _settlements: TheaterSettlements | None = field(init=False, default=None)
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
 
@@ -211,6 +215,7 @@ class GlobalMapRuntime:
         self.load_surface_regions()
         self.load_transport_infrastructure()
         self.load_infrastructure_sites()
+        self.load_settlements()
 
     def load_topography(self) -> TheaterTopography | None:
         """Load the optional static theater cache without touching DCS."""
@@ -331,7 +336,7 @@ class GlobalMapRuntime:
         )
 
     def load_infrastructure_sites(self) -> TheaterInfrastructureSites | None:
-        """Load optional normalized energy and military infrastructure sites."""
+        """Load optional normalized infrastructure sites."""
 
         self._infrastructure_sites = None
         if self.infrastructure_sites_path is None or not self.infrastructure_sites_path.is_file():
@@ -359,6 +364,26 @@ class GlobalMapRuntime:
             }
             feature.setdefault("properties", {})["source_geometry_type"] = source_geometry.get("type")
         return payload
+
+    def load_settlements(self) -> TheaterSettlements | None:
+        """Load optional normalized cities and towns."""
+
+        self._settlements = None
+        if self.settlements_path is None or not self.settlements_path.is_file():
+            return None
+        self._settlements = TheaterSettlements.load(self.settlements_path)
+        LOGGER.info(
+            "Loaded %d normalized settlements for %s from %s",
+            len(self._settlements.settlements),
+            self._settlements.theater_id,
+            self.settlements_path,
+        )
+        return self._settlements
+
+    def settlements_geojson(self) -> dict[str, Any]:
+        """Return normalized city and town objects with their urban footprints."""
+
+        return self._settlements.to_geojson() if self._settlements is not None else empty_picture()
 
     def status_payload(self) -> dict[str, Any]:
         """Return the current browser-facing service status."""
@@ -401,6 +426,7 @@ class GlobalMapRuntime:
                 len(self._transport_infrastructure.junctions) if self._transport_infrastructure else 0
             ),
             "infrastructure_site_count": len(self._infrastructure_sites.sites) if self._infrastructure_sites else 0,
+            "settlement_count": len(self._settlements.settlements) if self._settlements else 0,
             "diplomacy": properties.get("diplomacy"),
         }
 
@@ -1128,6 +1154,7 @@ def create_app(
     surface_regions_path: Path | None = DEFAULT_SURFACE_REGIONS_PATH,
     transport_infrastructure_path: Path | None = DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH,
     infrastructure_sites_path: Path | None = DEFAULT_INFRASTRUCTURE_SITES_PATH,
+    settlements_path: Path | None = DEFAULT_SETTLEMENTS_PATH,
 ) -> FastAPI:
     """Create the FastAPI map application."""
 
@@ -1154,6 +1181,7 @@ def create_app(
         surface_regions_path=surface_regions_path,
         transport_infrastructure_path=transport_infrastructure_path,
         infrastructure_sites_path=infrastructure_sites_path,
+        settlements_path=settlements_path,
     )
 
     @asynccontextmanager
@@ -1249,6 +1277,10 @@ def create_app(
     async def global_infrastructure_sites() -> dict[str, Any]:
         return runtime.infrastructure_sites_geojson()
 
+    @app.get("/api/settlements/global.geojson")
+    async def settlements() -> dict[str, Any]:
+        return runtime.settlements_geojson()
+
     @app.websocket("/ws/global")
     async def global_updates(websocket: WebSocket) -> None:
         await websocket.accept()
@@ -1316,7 +1348,13 @@ def main() -> None:
         "--infrastructure-sites",
         type=Path,
         default=DEFAULT_INFRASTRUCTURE_SITES_PATH,
-        help="Normalized static energy and military infrastructure-site GeoJSON cache.",
+        help="Normalized static infrastructure-site GeoJSON cache.",
+    )
+    parser.add_argument(
+        "--settlements",
+        type=Path,
+        default=DEFAULT_SETTLEMENTS_PATH,
+        help="Normalized city and town GeoJSON cache.",
     )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
@@ -1353,6 +1391,7 @@ def main() -> None:
         surface_regions_path=args.surface_regions,
         transport_infrastructure_path=args.transport_infrastructure,
         infrastructure_sites_path=args.infrastructure_sites,
+        settlements_path=args.settlements,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 
