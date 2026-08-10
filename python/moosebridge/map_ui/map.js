@@ -698,11 +698,49 @@
         continue;
       }
       if (["energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"].includes(spec.key)) {
+        if (spec.key === "military_sites") {
+          const militaryAreaFilter = [
+            "all",
+            ["==", ["get", "layer"], spec.key],
+            ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
+            ["==", ["get", "site_geometry"], "area"],
+          ];
+          const militaryColor = [
+            "match", ["get", "importance_tier"],
+            "critical", "#873838", "high", "#8a5b37", "medium", "#73634c", spec.color,
+          ];
+          addMapLayer(spec, {
+            type: "fill",
+            source: "infrastructure-sites",
+            minzoom: 8,
+            filter: militaryAreaFilter,
+            paint: {
+              "fill-color": militaryColor,
+              "fill-opacity": ["case", ["==", ["get", "targetable_candidate"], true], 0.2, 0.1],
+            },
+          });
+          addMapLayer(spec, {
+            type: "line",
+            source: "infrastructure-sites",
+            minzoom: 8,
+            filter: militaryAreaFilter,
+            paint: {
+              "line-color": militaryColor,
+              "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 13, 2.2],
+              "line-opacity": 0.9,
+            },
+          });
+        }
         addMapLayer(spec, {
           type: "circle",
           source: "infrastructure-sites",
           minzoom: 5,
-          filter: ["==", ["get", "layer"], spec.key],
+          maxzoom: spec.key === "military_sites" ? 9 : 24,
+          filter: [
+            "all",
+            ["==", ["get", "layer"], spec.key],
+            ["==", ["geometry-type"], "Point"],
+          ],
           paint: {
             "circle-radius": [
               "interpolate", ["linear"], ["zoom"],
@@ -710,7 +748,9 @@
               9, ["+", 5, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
               13, ["+", 7, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
             ],
-            "circle-color": spec.key === "industrial_sites"
+            "circle-color": spec.key === "military_sites"
+              ? ["match", ["get", "importance_tier"], "critical", "#873838", "high", "#8a5b37", "medium", "#73634c", spec.color]
+              : spec.key === "industrial_sites"
               ? ["case", ["==", ["get", "strategic_candidate"], true], spec.color, "#858b87"]
               : spec.color,
             "circle-stroke-color": "rgba(255,255,255,0.96)",
@@ -1023,21 +1063,40 @@
 
   function setInfrastructureSites(infrastructure) {
     if (!infrastructure || infrastructure.type !== "FeatureCollection") return;
-    latestInfrastructureSites = decoratedPicture({
-      ...infrastructure,
-      features: infrastructure.features.map((feature) => {
-        const longitude = Number(feature.properties?.longitude);
-        const latitude = Number(feature.properties?.latitude);
-        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return feature;
-        return {
+    latestInfrastructureSites = decoratedPicture(infrastructure);
+    const displayFeatures = [];
+    for (const feature of latestInfrastructureSites.features) {
+      const longitude = Number(feature.properties?.longitude);
+      const latitude = Number(feature.properties?.latitude);
+      const isMilitaryArea = feature.properties?.layer === "military_sites"
+        && ["Polygon", "MultiPolygon"].includes(feature.geometry?.type);
+      if (isMilitaryArea) {
+        displayFeatures.push({
           ...feature,
-          geometry: { type: "Point", coordinates: [longitude, latitude] },
-        };
-      }),
-    });
+          properties: {
+            ...feature.properties,
+            site_geometry: "area",
+            map_feature_id: `${feature.properties.object_id}:area`,
+          },
+        });
+      }
+      if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
+        if (!isMilitaryArea) displayFeatures.push(feature);
+        continue;
+      }
+      displayFeatures.push({
+        ...feature,
+        geometry: { type: "Point", coordinates: [longitude, latitude] },
+        properties: {
+          ...feature.properties,
+          site_geometry: "anchor",
+          map_feature_id: `${feature.properties.object_id}:anchor`,
+        },
+      });
+    }
     const source = map.getSource("infrastructure-sites");
     if (!source) return;
-    source.setData(latestInfrastructureSites);
+    source.setData({ ...latestInfrastructureSites, features: displayFeatures });
     updateCounts();
   }
 

@@ -34,6 +34,8 @@ from moosebridge.infrastructure_sites import (
     InfrastructureSiteKind,
     IndustrialRole,
     IndustrialSite,
+    MilitaryRole,
+    MilitarySite,
     StoredCommodity,
     TheaterInfrastructureSites,
 )
@@ -262,6 +264,19 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
             roles=(IndustrialRole.MACHINERY,),
             products=("machinery",),
             footprint_area_m2=25_000,
+        ), MilitarySite(
+            site_id="MILITARY_SITE:test",
+            kind=InfrastructureSiteKind.MILITARY,
+            geometry={
+                "type": "Polygon",
+                "coordinates": [[[12.5, 54.2], [12.7, 54.2], [12.7, 54.4], [12.5, 54.2]]],
+            },
+            latitude=54.3,
+            longitude=12.6,
+            source="test",
+            confidence=0.8,
+            roles=(MilitaryRole.BASE,),
+            footprint_area_m2=50_000,
         )),
     )
 
@@ -272,7 +287,10 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
     assert payload["features"][0]["geometry"] == {"type": "Point", "coordinates": [12.0, 54.0]}
     assert payload["features"][1]["properties"]["layer"] == "fuel_storage_sites"
     assert payload["features"][2]["properties"]["layer"] == "industrial_sites"
-    assert runtime.status_payload()["infrastructure_site_count"] == 3
+    assert payload["features"][3]["properties"]["layer"] == "military_sites"
+    assert payload["features"][3]["properties"]["source_geometry_type"] == "Polygon"
+    assert payload["features"][3]["geometry"]["type"] == "Polygon"
+    assert runtime.status_payload()["infrastructure_site_count"] == 4
 
 
 def test_map_runtime_serves_normalized_settlements() -> None:

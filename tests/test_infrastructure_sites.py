@@ -67,6 +67,7 @@ def _military_feature(
     latitude: float,
     *,
     military: str | None = None,
+    size_degrees: float = 0.001,
     valid_from: int | None = None,
     source_suffix: str | None = None,
     **tags: str,
@@ -79,7 +80,16 @@ def _military_feature(
         object_id=f"TOPOGRAPHY:military:{source}",
         layer=TopographyLayer.LANDUSE,
         category="military",
-        geometry={"type": "Point", "coordinates": [longitude, latitude]},
+        geometry={
+            "type": "Polygon",
+            "coordinates": [[
+                [longitude - size_degrees, latitude - size_degrees],
+                [longitude + size_degrees, latitude - size_degrees],
+                [longitude + size_degrees, latitude + size_degrees],
+                [longitude - size_degrees, latitude + size_degrees],
+                [longitude - size_degrees, latitude - size_degrees],
+            ]],
+        },
         source="OpenStreetMap",
         source_id=f"way/{source}",
         confidence=0.5,
@@ -161,6 +171,8 @@ def test_military_site_is_a_distinct_site_type() -> None:
     properties = site.to_geojson_feature()["properties"]
     assert properties["object_type"] == "MILITARY_SITE"
     assert properties["roles"] == ["barracks", "depot"]
+    assert properties["importance_score"] == 0
+    assert properties["importance_tier"] == "local"
 
 
 def test_military_builder_keeps_operational_sites_but_not_airfields_or_minor_areas() -> None:
@@ -221,6 +233,51 @@ def test_military_builder_clusters_split_named_installations_without_transitive_
     assert len(artifact.sites) == 2
     assert artifact.sites[0].roles == (MilitaryRole.BASE, MilitaryRole.DEPOT)
     assert artifact.sites[0].properties["member_count"] == 2
+    assert artifact.sites[0].geometry["type"] == "MultiPolygon"
+    assert artifact.sites[0].footprint_area_m2 > 0
+    assert artifact.sites[0].importance_score >= 60
+    assert artifact.sites[0].importance_tier.value == "high"
+
+
+def test_military_builder_fills_internal_footprint_holes() -> None:
+    feature = _military_feature("Core Base", 12.0, 54.0, military="base")
+    feature = TopographyFeature(
+        object_id=feature.object_id,
+        layer=feature.layer,
+        category=feature.category,
+        geometry={
+            "type": "Polygon",
+            "coordinates": [
+                [[11.99, 53.99], [12.01, 53.99], [12.01, 54.01], [11.99, 54.01], [11.99, 53.99]],
+                [[11.999, 53.999], [12.001, 53.999], [12.001, 54.001], [11.999, 54.001], [11.999, 53.999]],
+            ],
+        },
+        source=feature.source,
+        source_id=feature.source_id,
+        confidence=feature.confidence,
+        name=feature.name,
+        properties=feature.properties,
+    )
+
+    site = build_military_sites((feature,), theater_id="GermanyCW").sites[0]
+
+    from shapely.geometry import shape
+
+    footprint = shape(site.geometry)
+    assert footprint.geom_type == "Polygon"
+    assert len(footprint.interiors) == 0
+    assert site.properties["geometry_method"] == "hole_free_union_of_source_components"
+
+
+def test_large_training_area_remains_context_in_importance_ranking() -> None:
+    site = build_military_sites(
+        [_military_feature("Training Alpha", 12.0, 54.0, military="training_area", size_degrees=0.2)],
+        theater_id="GermanyCW",
+    ).sites[0]
+
+    assert site.properties["targetable_candidate"] is False
+    assert site.importance_score <= 39
+    assert site.importance_tier.value == "local"
 
 
 def test_military_builder_preserves_tagged_and_name_inferred_roles() -> None:

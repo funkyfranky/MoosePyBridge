@@ -351,18 +351,20 @@ class GlobalMapRuntime:
         return self._infrastructure_sites
 
     def infrastructure_sites_geojson(self) -> dict[str, Any]:
-        """Return stable site markers while retaining full geometry in the SDK artifact."""
+        """Return map-ready sites, preserving normalized military footprints."""
 
         if not self._infrastructure_sites:
             return empty_picture()
         payload = self._infrastructure_sites.to_geojson()
         for site, feature in zip(self._infrastructure_sites.sites, payload["features"], strict=True):
             source_geometry = feature.get("geometry") or {}
+            feature.setdefault("properties", {})["source_geometry_type"] = source_geometry.get("type")
+            if site.kind.value == "military" and source_geometry.get("type") in {"Polygon", "MultiPolygon"}:
+                continue
             feature["geometry"] = {
                 "type": "Point",
                 "coordinates": [site.longitude, site.latitude],
             }
-            feature.setdefault("properties", {})["source_geometry_type"] = source_geometry.get("type")
         return payload
 
     def load_settlements(self) -> TheaterSettlements | None:

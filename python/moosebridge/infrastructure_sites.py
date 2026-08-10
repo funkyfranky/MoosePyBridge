@@ -32,6 +32,13 @@ class InfrastructureVerificationState(StrEnum):
     NOT_REPRESENTED_IN_DCS = "not_represented_in_dcs"
 
 
+class InfrastructureImportanceTier(StrEnum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOCAL = "local"
+
+
 class EnergySource(StrEnum):
     COAL = "coal"
     GAS = "gas"
@@ -193,6 +200,7 @@ class InfrastructureSite:
             "latitude", "longitude", "source", "source_ids", "confidence", "scenario_reference_year",
             "verification_state", "component_ids", "energy_sources", "output_mw", "roles",
             "storage_roles", "commodities", "capacity_m3", "products", "footprint_area_m2",
+            "importance_score", "importance_tier",
         }
         common = dict(
             site_id=str(properties.get("object_id") or ""),
@@ -230,6 +238,11 @@ class InfrastructureSite:
             return MilitarySite(
                 **common,
                 roles=tuple(MilitaryRole(str(value)) for value in properties.get("roles") or ()),
+                footprint_area_m2=_optional_float(properties.get("footprint_area_m2")),
+                importance_score=float(properties.get("importance_score") or 0),
+                importance_tier=InfrastructureImportanceTier(
+                    str(properties.get("importance_tier") or InfrastructureImportanceTier.LOCAL.value)
+                ),
             )
         if kind is InfrastructureSiteKind.INDUSTRIAL:
             return IndustrialSite(
@@ -294,6 +307,9 @@ class MilitarySite(InfrastructureSite):
     """Military installation kept separate from civilian infrastructure."""
 
     roles: tuple[MilitaryRole, ...] = ()
+    footprint_area_m2: float | None = None
+    importance_score: float = 0.0
+    importance_tier: InfrastructureImportanceTier = InfrastructureImportanceTier.LOCAL
 
     def __post_init__(self) -> None:
         InfrastructureSite.__post_init__(self)
@@ -301,9 +317,19 @@ class MilitarySite(InfrastructureSite):
             raise ValueError("MilitarySite kind must be military")
         if not self.roles:
             raise ValueError("military site requires at least one role")
+        if self.footprint_area_m2 is not None and self.footprint_area_m2 < 0:
+            raise ValueError("military footprint must not be negative")
+        if not 0 <= self.importance_score <= 100:
+            raise ValueError("military importance score must be between zero and 100")
 
     def _specific_properties(self) -> dict[str, Any]:
-        return {"category": "military_site", "roles": [role.value for role in self.roles]}
+        return {
+            "category": "military_site",
+            "roles": [role.value for role in self.roles],
+            "footprint_area_m2": self.footprint_area_m2,
+            "importance_score": self.importance_score,
+            "importance_tier": self.importance_tier.value,
+        }
 
 
 @dataclass(slots=True, frozen=True)
@@ -676,6 +702,21 @@ _TARGETABLE_MILITARY_ROLES = {
     MilitaryRole.COMMUNICATIONS_SITE,
     MilitaryRole.BUNKER_COMPLEX,
     MilitaryRole.MISSILE_SITE,
+}
+
+_MILITARY_ROLE_IMPORTANCE = {
+    MilitaryRole.MISSILE_SITE: 85.0,
+    MilitaryRole.AMMUNITION_STORAGE: 80.0,
+    MilitaryRole.RADAR_SITE: 75.0,
+    MilitaryRole.FUEL_STORAGE: 75.0,
+    MilitaryRole.NAVAL_BASE: 75.0,
+    MilitaryRole.COMMUNICATIONS_SITE: 70.0,
+    MilitaryRole.DEPOT: 65.0,
+    MilitaryRole.BASE: 60.0,
+    MilitaryRole.BUNKER_COMPLEX: 60.0,
+    MilitaryRole.BARRACKS: 50.0,
+    MilitaryRole.TRAINING_AREA: 25.0,
+    MilitaryRole.FIRING_RANGE: 20.0,
 }
 
 
@@ -1140,12 +1181,21 @@ def _military_site_from_cluster(
         + (0.15 if explicit_role else 0.05)
         + (0.1 if names else 0.0),
     )
+    geometry, longitude, latitude = _normalized_military_footprint(cluster)
+    footprint_area_m2 = _geometry_area_m2(geometry) or None
+    targetable_candidate = bool(set(roles).intersection(_TARGETABLE_MILITARY_ROLES))
+    importance_score = _military_importance_score(
+        roles,
+        footprint_area_m2=footprint_area_m2,
+        explicit_role=explicit_role,
+        targetable=targetable_candidate,
+    )
     return MilitarySite(
         site_id=f"MILITARY_SITE:{digest}",
         kind=InfrastructureSiteKind.MILITARY,
-        geometry=primary.feature.geometry,
-        latitude=sum(item.latitude for item in cluster) / len(cluster),
-        longitude=sum(item.longitude for item in cluster) / len(cluster),
+        geometry=geometry,
+        latitude=latitude,
+        longitude=longitude,
         source=primary.feature.source,
         confidence=confidence,
         name=names[0] if names else (f"{operators[0]} military site" if operators else None),
@@ -1158,11 +1208,16 @@ def _military_site_from_cluster(
         ),
         component_ids=tuple(sorted({item.feature.object_id for item in cluster})),
         roles=roles,
+        footprint_area_m2=footprint_area_m2,
+        importance_score=importance_score,
+        importance_tier=_infrastructure_importance_tier(importance_score),
         properties={
             "member_count": len(cluster),
             "operators": list(operators),
             "role_sources": list(role_sources),
-            "targetable_candidate": bool(set(roles).intersection(_TARGETABLE_MILITARY_ROLES)),
+            "targetable_candidate": targetable_candidate,
+            "scale": _industrial_scale(footprint_area_m2),
+            "geometry_method": "hole_free_union_of_source_components",
             "historical_fit": (
                 "date_supported"
                 if any(item.feature.valid_from is not None or item.feature.valid_to is not None for item in cluster)
@@ -1178,6 +1233,78 @@ def _military_site_from_cluster(
 
 def _military_candidate_key(candidate: _MilitaryCandidate) -> tuple[str, str]:
     return candidate.feature.source_id or "", candidate.feature.object_id
+
+
+def _normalized_military_footprint(
+    cluster: list[_MilitaryCandidate],
+) -> tuple[dict[str, Any], float, float]:
+    try:
+        from shapely import make_valid
+        from shapely.geometry import Polygon, mapping, shape
+        from shapely.ops import unary_union
+    except ImportError as exc:
+        raise RuntimeError('military-site normalization requires: python -m pip install -e ".[topography]"') from exc
+
+    polygons = []
+    for candidate in cluster:
+        geometry = make_valid(shape(candidate.feature.geometry))
+        for polygon in _shapely_polygon_components(geometry):
+            polygons.append(Polygon(polygon.exterior))
+    if not polygons:
+        primary = cluster[0]
+        return primary.feature.geometry, primary.longitude, primary.latitude
+    geometry = make_valid(unary_union(polygons))
+    polygon_components = _shapely_polygon_components(geometry)
+    if not polygon_components:
+        primary = cluster[0]
+        return primary.feature.geometry, primary.longitude, primary.latitude
+    geometry = make_valid(unary_union(polygon_components))
+    anchor = geometry.representative_point()
+    return mapping(geometry), float(anchor.x), float(anchor.y)
+
+
+def _shapely_polygon_components(geometry: Any) -> list[Any]:
+    if geometry.is_empty:
+        return []
+    if geometry.geom_type == "Polygon":
+        return [geometry]
+    if geometry.geom_type in {"MultiPolygon", "GeometryCollection"}:
+        return [
+            polygon
+            for part in geometry.geoms
+            for polygon in _shapely_polygon_components(part)
+        ]
+    return []
+
+
+def _military_importance_score(
+    roles: Iterable[MilitaryRole],
+    *,
+    footprint_area_m2: float | None,
+    explicit_role: bool,
+    targetable: bool,
+) -> float:
+    materialized = tuple(roles)
+    role_score = max((_MILITARY_ROLE_IMPORTANCE[role] for role in materialized), default=0.0)
+    area_bonus = 0.0
+    if footprint_area_m2 and footprint_area_m2 > 10_000:
+        area_bonus = min(12.0, math.log10(footprint_area_m2 / 10_000.0) * 4.0)
+    evidence_bonus = 4.0 if explicit_role else 0.0
+    multi_role_bonus = min(6.0, max(0, len(materialized) - 1) * 3.0)
+    score = role_score + area_bonus + evidence_bonus + multi_role_bonus
+    if not targetable:
+        score = min(score, 39.0)
+    return round(min(100.0, max(0.0, score)), 3)
+
+
+def _infrastructure_importance_tier(score: float) -> InfrastructureImportanceTier:
+    if score >= 80:
+        return InfrastructureImportanceTier.CRITICAL
+    if score >= 60:
+        return InfrastructureImportanceTier.HIGH
+    if score >= 40:
+        return InfrastructureImportanceTier.MEDIUM
+    return InfrastructureImportanceTier.LOCAL
 
 
 def _cluster_industrial_candidates(

@@ -1643,10 +1643,13 @@ refinery evidence. A generic oil or gas industry tag is insufficient. Water,
 slurry, and unspecified tanks are not promoted to operational sites. Related
 terminal, refinery, and tank components are clustered into one location.
 Military sites retain typed roles such as barracks, depot, ammunition storage,
-radar, communications, naval base, training area, and firing range. DCS
+radar, communications, naval base, training area, and firing range. Their source
+components are combined into a hole-free footprint with a representative anchor,
+area, scale, and role-led importance score. DCS
 airfields remain represented by `AIRBASE` objects, and unnamed individual
 bunkers are excluded. Training and firing areas provide geographic context but
-are not automatically targetable strategic sites.
+are not automatically targetable strategic sites. The map uses weighted markers
+at overview zoom and normalized footprints from zoom 8.
 Industrial admission requires an explicit factory or industry role, product
 evidence, or a recognized named works. Generic and unnamed industrial estates
 are not promoted. The SDK records normalized roles, products, approximate

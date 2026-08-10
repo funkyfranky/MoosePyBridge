@@ -98,6 +98,9 @@ def format_site(site: InfrastructureSite) -> None:
         print(f"Components      : {len(site.component_ids)}")
     elif isinstance(site, MilitarySite):
         print(f"Roles           : {', '.join(role.value for role in site.roles)}")
+        area = f"{site.footprint_area_m2 / 1_000_000:,.2f} km2" if site.footprint_area_m2 is not None else "unknown"
+        print(f"Footprint       : {area}")
+        print(f"Importance      : {site.importance_score:.1f} ({site.importance_tier.value})")
         print(f"Targetable      : {bool(site.properties.get('targetable_candidate'))}")
         print(f"Historical fit  : {site.properties.get('historical_fit') or 'unverified'}")
         print(f"Components      : {len(site.component_ids)}")

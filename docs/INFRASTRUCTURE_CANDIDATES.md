@@ -228,6 +228,16 @@ complexes, missile sites, training areas, and firing ranges. Explicit OSM
 military tags and conservative name evidence can contribute multiple roles to
 one site. Same-name component polygons are clustered non-transitively within
 one kilometre while their source identifiers remain available for diagnostics.
+Their polygons are normalized into one hole-free site footprint; disconnected
+parts remain one `MultiPolygon` site instead of becoming unrelated markers.
+`footprint_area_m2`, `importance_score`, `importance_tier`, and `scale` provide
+the spatial and strategic summary used by the SDK and map.
+
+Importance is role-led: missile, ammunition, radar, fuel, naval, communications,
+depot, base, bunker, and barracks roles carry progressively lower base values.
+Footprint and multiple supported roles add bounded bonuses. Training areas and
+firing ranges are operational context rather than automatic targets, so their
+score remains local even when their footprint is very large.
 
 Airfields are excluded because DCS/MOOSE `AIRBASE` objects provide authoritative
 runtime identity and category. Danger areas, checkpoints, offices, hospitals,
@@ -238,6 +248,10 @@ Training areas and firing ranges are useful maneuver context; the cache marks
 them non-targetable by default. A military site remains an external geographic
 candidate until bounded DCS scenery or mission-object verification supplies a
 runtime association.
+
+At overview zoom the map shows one importance-weighted marker per military site.
+From zoom level 8 onward it switches to the normalized footprint, avoiding both
+raw OSM fragments and misleading point-only installations.
 
 ## Normalization pipeline
 
