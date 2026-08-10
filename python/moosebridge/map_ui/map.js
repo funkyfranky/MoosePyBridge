@@ -736,6 +736,14 @@
             "all",
             ["==", ["get", "layer"], spec.key],
             ["==", ["geometry-type"], "Polygon"],
+            ["==", ["get", "settlement_geometry"], "urban"],
+            classFilter,
+          ];
+          const administrativeFilter = [
+            "all",
+            ["==", ["get", "layer"], spec.key],
+            ["==", ["geometry-type"], "Polygon"],
+            ["==", ["get", "settlement_geometry"], "administrative"],
             classFilter,
           ];
           const pointFilter = [
@@ -744,6 +752,28 @@
             ["==", ["geometry-type"], "Point"],
             classFilter,
           ];
+          addMapLayer(spec, {
+            type: "fill",
+            source: "settlements",
+            minzoom: level.minzoom,
+            filter: administrativeFilter,
+            paint: {
+              "fill-color": importanceColor,
+              "fill-opacity": ["interpolate", ["linear"], ["zoom"], level.minzoom, 0.015, 10, 0.035],
+            },
+          });
+          addMapLayer(spec, {
+            type: "line",
+            source: "settlements",
+            minzoom: level.minzoom,
+            filter: administrativeFilter,
+            paint: {
+              "line-color": importanceColor,
+              "line-width": ["interpolate", ["linear"], ["zoom"], level.minzoom, 0.8, 11, 1.3],
+              "line-dasharray": [3, 2],
+              "line-opacity": 0.62,
+            },
+          });
           addMapLayer(spec, {
             type: "fill",
             source: "settlements",
@@ -1016,10 +1046,27 @@
     latestSettlements = decoratedPicture(settlements);
     const displayFeatures = [];
     for (const feature of latestSettlements.features) {
+      const { urban_geometry: urbanGeometry, ...displayProperties } = feature.properties || {};
+      const isAdministrative = feature.properties?.boundary_kind === "administrative";
       displayFeatures.push({
         ...feature,
-        properties: { ...feature.properties, map_feature_id: `${feature.properties.object_id}:area` },
+        properties: {
+          ...displayProperties,
+          settlement_geometry: isAdministrative ? "administrative" : "urban",
+          map_feature_id: `${feature.properties.object_id}:area`,
+        },
       });
+      if (["Polygon", "MultiPolygon"].includes(urbanGeometry?.type)) {
+        displayFeatures.push({
+          ...feature,
+          geometry: urbanGeometry,
+          properties: {
+            ...displayProperties,
+            settlement_geometry: "urban",
+            map_feature_id: `${feature.properties.object_id}:urban`,
+          },
+        });
+      }
       if (!["Polygon", "MultiPolygon"].includes(feature.geometry?.type)) continue;
       const longitude = Number(feature.properties?.longitude);
       const latitude = Number(feature.properties?.latitude);
@@ -1027,7 +1074,7 @@
       displayFeatures.push({
         ...feature,
         geometry: { type: "Point", coordinates: [longitude, latitude] },
-        properties: { ...feature.properties, map_feature_id: `${feature.properties.object_id}:anchor` },
+        properties: { ...displayProperties, settlement_geometry: "anchor", map_feature_id: `${feature.properties.object_id}:anchor` },
       });
     }
     const source = map.getSource("settlements");

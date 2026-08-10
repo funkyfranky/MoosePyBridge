@@ -128,9 +128,11 @@ def main() -> int:
         item.boundary_kind is SettlementBoundaryKind.ADMINISTRATIVE
         for item in artifact.settlements
     )
+    urban_envelopes = sum("urban_geometry" in item.properties for item in artifact.settlements)
     populated = sum(item.population is not None for item in artifact.settlements)
     print(f"  urban footprints: {footprints}")
     print(f"  administrative boundaries: {administrative}")
+    print(f"  urban envelopes: {urban_envelopes}")
     print(f"  population values: {populated}")
     tiers = ", ".join(
         f"{tier.value}={sum(item.importance_tier is tier for item in artifact.settlements)}"

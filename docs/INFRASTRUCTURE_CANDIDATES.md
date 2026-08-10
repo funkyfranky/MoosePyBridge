@@ -117,7 +117,10 @@ not automatic target authorization. Urban
 footprints are generalized with a 200 m gap tolerance and can overlap in
 continuous conurbations. Administrative boundaries remain explicitly marked
 modern comparison evidence and store their area as `administrative_area_m2`;
-nearest-anchor partitioning remains deferred.
+the clipped and smoothed built-up envelope is retained as `urban_geometry`. This
+strategic urban core is connected and has no internal holes; minor detached land-use
+fragments are excluded while inland water and parks remain inside the city area.
+Nearest-anchor partitioning remains deferred.
 
 The map server exposes `/api/settlements/global.geojson`. The initially hidden
 `Cities and towns` layer shows importance-scaled anchors and urban footprints;

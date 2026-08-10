@@ -144,6 +144,112 @@ def test_matching_administrative_boundary_replaces_urban_footprint() -> None:
     assert result.metadata["administrative_match_count"] == 1
 
 
+def test_administrative_boundary_retains_clipped_urban_envelope() -> None:
+    town = _feature(
+        "TOPOGRAPHY:town/1",
+        TopographyLayer.SETTLEMENTS,
+        "town",
+        {"type": "Point", "coordinates": [12.0, 54.0]},
+        name="Test Town",
+        tags={"population": "12000", "wikidata": "Q2"},
+    )
+    urban = _feature(
+        "TOPOGRAPHY:landuse/1",
+        TopographyLayer.LANDUSE,
+        "residential",
+        {
+            "type": "Polygon",
+            "coordinates": [[[11.98, 53.98], [12.03, 53.98], [12.03, 54.02], [11.98, 54.02], [11.98, 53.98]]],
+        },
+    )
+    boundary = _feature(
+        "TOPOGRAPHY:boundary/1",
+        TopographyLayer.ADMINISTRATIVE_BOUNDARIES,
+        "8",
+        {
+            "type": "Polygon",
+            "coordinates": [[[11.99, 53.99], [12.01, 53.99], [12.01, 54.01], [11.99, 54.01], [11.99, 53.99]]],
+        },
+        name="Test Town",
+        tags={"wikidata": "Q2"},
+    )
+
+    original = build_settlements((town, urban), theater_id="GermanyCW").settlements[0]
+    result = apply_administrative_boundaries(
+        TheaterSettlements(theater_id="GermanyCW", settlements=(original,)),
+        (boundary,),
+    )
+    settlement = result.settlements[0]
+
+    assert settlement.geometry == boundary.geometry
+    assert settlement.properties["urban_geometry"]["type"] == "Polygon"
+    assert 0 < settlement.urban_area_m2 < original.urban_area_m2
+    assert 0 < settlement.properties["urban_coverage_percent"] <= 100
+    assert settlement.properties["urban_component_count"] == 1
+    assert settlement.properties["urban_hole_count"] == 0
+    assert result.metadata["urban_envelope_count"] == 1
+
+
+def test_administrative_boundary_creates_one_hole_free_urban_core() -> None:
+    town = _feature(
+        "TOPOGRAPHY:town/core",
+        TopographyLayer.SETTLEMENTS,
+        "town",
+        {"type": "Point", "coordinates": [12.0, 54.0]},
+        name="Core Town",
+        tags={"wikidata": "Q123"},
+    )
+    urban_with_hole = _feature(
+        "TOPOGRAPHY:landuse/core",
+        TopographyLayer.LANDUSE,
+        "residential",
+        {
+            "type": "Polygon",
+            "coordinates": [
+                [[11.99, 53.99], [12.01, 53.99], [12.01, 54.01], [11.99, 54.01], [11.99, 53.99]],
+                [[11.999, 53.999], [12.001, 53.999], [12.001, 54.001], [11.999, 54.001], [11.999, 53.999]],
+            ],
+        },
+    )
+    detached = _feature(
+        "TOPOGRAPHY:landuse/detached",
+        TopographyLayer.LANDUSE,
+        "industrial",
+        {
+            "type": "Polygon",
+            "coordinates": [[[12.04, 54.04], [12.05, 54.04], [12.05, 54.05], [12.04, 54.05], [12.04, 54.04]]],
+        },
+    )
+    boundary = _feature(
+        "TOPOGRAPHY:boundary/core",
+        TopographyLayer.ADMINISTRATIVE_BOUNDARIES,
+        "8",
+        {
+            "type": "Polygon",
+            "coordinates": [[[11.98, 53.98], [12.06, 53.98], [12.06, 54.06], [11.98, 54.06], [11.98, 53.98]]],
+        },
+        name="Core Town",
+        tags={"wikidata": "Q123"},
+    )
+
+    original = build_settlements((town, urban_with_hole, detached), theater_id="GermanyCW").settlements[0]
+    settlement = apply_administrative_boundaries(
+        TheaterSettlements(theater_id="GermanyCW", settlements=(original,)),
+        (boundary,),
+        urban_smooth_m=0,
+        urban_core_gap_m=0,
+    ).settlements[0]
+
+    from shapely.geometry import shape
+
+    urban_core = shape(settlement.properties["urban_geometry"])
+    assert urban_core.geom_type == "Polygon"
+    assert len(urban_core.interiors) == 0
+    assert settlement.properties["urban_component_count"] == 1
+    assert settlement.properties["urban_hole_count"] == 0
+    assert settlement.properties["urban_envelope_method"].startswith("connected_hole_free")
+
+
 def test_containing_boundary_with_different_name_is_not_assigned() -> None:
     city = _feature(
         "TOPOGRAPHY:city/rostock",

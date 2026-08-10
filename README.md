@@ -1691,12 +1691,18 @@ Administrative boundaries are modern comparison evidence and are identified by
 `boundary_kind=administrative`, `administrative_level`, and their OSM relation.
 `administrative_area_m2` records the municipal area, while `urban_area_m2`
 continues to describe the generalized built-up footprint used by the importance
-score.
+score. For matched settlements, `urban_geometry` contains a connected, hole-free
+urban core derived from the smoothed footprint. Detached minor components are
+discarded; inland water, parks, and other internal gaps remain part of the strategic
+city area.
+clipped to the administrative boundary. The map renders it as the stronger fill
+and keeps the administrative boundary as a restrained dashed outline.
 
 By default this writes `tmp/topography/GermanyCW-settlements.geojson` and is loaded by the
 map server through `/api/settlements/global.geojson`. The current cache contains
-2,625 cities and towns, including 2,592 generalized urban footprints and 2,318
-source population values. `Cities and towns` is an initially hidden
+2,625 cities and towns, including 2,336 administrative boundaries, 2,274
+clipped urban envelopes, 288 urban-footprint fallbacks, and 2,318 source
+population values. `Cities and towns` is an initially hidden
 Infrastructure layer. Population dates and OSM provenance are retained because
 modern source values need not match the 1999 scenario. The importance class is
 planning evidence only; settlements do not become strategic objectives

@@ -337,13 +337,20 @@ def build_settlements(
 def apply_administrative_boundaries(
     artifact: TheaterSettlements,
     boundaries: Iterable[TopographyFeature],
+    *,
+    urban_smooth_m: float = 100.0,
+    urban_simplify_m: float = 100.0,
+    min_urban_component_area_m2: float = 50_000.0,
+    urban_core_gap_m: float = 200.0,
+    urban_core_relative_component_area: float = 0.02,
 ) -> TheaterSettlements:
-    """Replace urban footprints with matching OSM administrative boundaries."""
+    """Add matching OSM boundaries while retaining one connected urban core."""
 
     try:
         from pyproj import Transformer
-        from shapely.geometry import Point, shape
-        from shapely.ops import transform
+        from shapely import make_valid
+        from shapely.geometry import Point, mapping, shape
+        from shapely.ops import transform, unary_union
         from shapely.strtree import STRtree
     except ImportError as exc:
         raise RuntimeError('settlement building requires: python -m pip install -e ".[topography]"') from exc
@@ -356,10 +363,12 @@ def apply_administrative_boundaries(
     if not candidates:
         return artifact
     to_metric = Transformer.from_crs("EPSG:4326", "EPSG:3035", always_xy=True)
+    to_wgs84 = Transformer.from_crs("EPSG:3035", "EPSG:4326", always_xy=True)
     projected = [transform(to_metric.transform, shape(feature.geometry)) for feature in candidates]
     tree = STRtree(projected)
     updated: list[Settlement] = []
     matched = 0
+    envelope_count = 0
     for settlement in artifact.settlements:
         point = transform(to_metric.transform, Point(settlement.longitude, settlement.latitude))
         containing = [
@@ -384,12 +393,71 @@ def apply_administrative_boundaries(
             "administrative_level": int(boundary.category),
             "administrative_area_m2": float(area_m2),
         })
+        urban_area_m2 = settlement.urban_area_m2
+        importance_score = settlement.importance_score
+        if settlement.boundary_kind is SettlementBoundaryKind.URBAN_FOOTPRINT:
+            urban = make_valid(transform(to_metric.transform, shape(settlement.geometry)))
+            administrative = make_valid(projected[index])
+            envelope = make_valid(urban.intersection(administrative))
+            if not envelope.is_empty and urban_smooth_m > 0:
+                envelope = make_valid(
+                    envelope.buffer(urban_smooth_m)
+                    .buffer(-urban_smooth_m)
+                    .intersection(administrative)
+                )
+            polygons = [
+                geometry for geometry in _polygon_components(envelope)
+                if geometry.area >= min_urban_component_area_m2 or geometry.covers(point)
+            ]
+            envelope = None
+            if polygons:
+                largest_area = max(geometry.area for geometry in polygons)
+                core_components = [
+                    geometry
+                    for geometry in polygons
+                    if geometry.area >= max(
+                        min_urban_component_area_m2,
+                        largest_area * urban_core_relative_component_area,
+                    )
+                ]
+                envelope = make_valid(unary_union(core_components))
+                if urban_core_gap_m > 0:
+                    envelope = make_valid(
+                        envelope.buffer(urban_core_gap_m)
+                        .buffer(-urban_core_gap_m)
+                        .intersection(administrative)
+                    )
+                envelope = _nearest_polygon_component(envelope, point)
+                if envelope is not None:
+                    envelope = make_valid(
+                        _polygon_without_holes(envelope)
+                        .simplify(urban_simplify_m, preserve_topology=True)
+                    )
+                    envelope = _nearest_polygon_component(envelope, point)
+            if envelope is not None and not envelope.is_empty:
+                urban_area_m2 = float(envelope.area)
+                importance_score = settlement_importance_score(
+                    population=settlement.population,
+                    urban_area_m2=urban_area_m2,
+                    kind=settlement.kind,
+                )
+                properties.update({
+                    "urban_geometry": mapping(transform(to_wgs84.transform, envelope)),
+                    "urban_component_count": 1,
+                    "urban_hole_count": 0,
+                    "urban_coverage_percent": round(urban_area_m2 / float(area_m2) * 100.0, 3),
+                    "urban_envelope_method": "connected_hole_free_landuse_core_clipped_to_administrative_boundary",
+                })
+                envelope_count += 1
         updated.append(replace(
             settlement,
             geometry=boundary.geometry,
             source="; ".join(dict.fromkeys((settlement.source, boundary.source))),
             confidence=max(settlement.confidence, boundary.confidence),
+            urban_area_m2=urban_area_m2,
             boundary_kind=SettlementBoundaryKind.ADMINISTRATIVE,
+            importance_score=importance_score,
+            importance_tier=settlement_importance_tier(importance_score),
             source_ids=tuple(dict.fromkeys((*settlement.source_ids, *(value for value in (boundary.source_id,) if value)))),
             properties=properties,
         ))
@@ -403,8 +471,42 @@ def apply_administrative_boundaries(
             "administrative_boundary_count": len(candidates),
             "administrative_match_count": matched,
             "administrative_levels": [4, 6, 8],
+            "urban_envelope_count": envelope_count,
+            "urban_envelope_policy": "connected hole-free land-use core clipped to administrative boundary",
+            "urban_envelope_smooth_m": urban_smooth_m,
+            "urban_envelope_simplify_m": urban_simplify_m,
+            "urban_envelope_min_component_area_m2": min_urban_component_area_m2,
+            "urban_envelope_core_gap_m": urban_core_gap_m,
+            "urban_envelope_relative_component_area": urban_core_relative_component_area,
         },
     )
+
+
+def _polygon_components(geometry: Any) -> list[Any]:
+    if geometry.is_empty:
+        return []
+    if geometry.geom_type == "Polygon":
+        return [geometry]
+    if geometry.geom_type in {"MultiPolygon", "GeometryCollection"}:
+        return [
+            polygon
+            for part in geometry.geoms
+            for polygon in _polygon_components(part)
+        ]
+    return []
+
+
+def _nearest_polygon_component(geometry: Any, point: Any) -> Any | None:
+    polygons = _polygon_components(geometry)
+    if not polygons:
+        return None
+    return min(polygons, key=lambda polygon: (polygon.distance(point), -polygon.area))
+
+
+def _polygon_without_holes(polygon: Any) -> Any:
+    from shapely.geometry import Polygon
+
+    return Polygon(polygon.exterior)
 
 
 def _administrative_match_rank(settlement: Settlement, boundary: TopographyFeature) -> int:
