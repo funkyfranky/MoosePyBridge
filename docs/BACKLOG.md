@@ -92,12 +92,11 @@ Priorities:
   size and importance classes, and use bounded urban-landuse footprints. The
   SDK artifact and browser layer remain context until scenario policy promotes
   a settlement to a strategic objective.
-- [ ] **Refine settlement boundaries where conurbations matter.** Modern OSM
-  administrative boundaries are now available as an explicit comparison mode
-  with urban-footprint fallback. Evaluate the result in Hamburg and the Ruhr
-  area, then decide between administrative, historical morphological, or
-  nearest-anchor boundaries. Preserve provenance rather than silently
-  presenting a modern administrative boundary as DCS-era truth.
+- [x] **Refine settlement boundaries where conurbations matter.** Modern OSM
+  administrative boundaries are retained as provenance while connected,
+  hole-free urban cores provide the operational geometry. Hamburg and smaller
+  towns were visually checked; internal water and parks deliberately remain
+  inside instead of fragmenting a city into many pieces.
 - [ ] **Add historical settlement evidence.** Compare dated population sources,
   GHSL 1990 built-up areas, and DCS scenery for selected GermanyCW cities. Keep
   present-day OSM population dates visible and never infer an exact historical
@@ -126,16 +125,31 @@ Priorities:
   training/range context non-targetable by default. Industrial sites retain
   typed production roles, products, footprint and scale, exclude generic
   estates, and distinguish ordinary locations from strategic candidates.
-  Port, rail, communications, and public-utility site builders plus
+  Port, communications, and public-utility site builders plus
   persisted DCS verification remain open. Keep the model extensible, but do
   not retain every available OSM tag in the operational model.
 - [ ] **Cluster remaining infrastructure features into meaningful sites.**
-  Energy, fuel/storage, military, and industrial clustering is implemented. Group related
+  Energy, fuel/storage, military, industrial, and railway clustering is implemented. Group related
   buildings, tanks, yards, platforms, terminals, and equipment into one
   operational location where they represent the same real facility. Use
   category-specific clustering and preserve membership for diagnostics so a
   refinery, power station, port, or rail yard is not represented by hundreds of
   independent target markers.
+- [x] **Normalize operational railway locations.** Aggregate stations, freight
+  terminals, marshalling yards, depots, mainline junctions, and railway bridges
+  into stable typed objects while keeping ordinary track as topographic and
+  routing context. Targeted PBF reads are resumable through a per-source cache,
+  and the browser exposes one grouped railway-infrastructure layer.
+- [ ] **Validate railway infrastructure against GermanyCW.** Compare a
+  representative major station, freight or marshalling yard, junction, and rail
+  bridge with the DCS F10 map and bounded scenery surveys. Record absent or
+  historically uncertain modern OSM facilities instead of silently accepting
+  them.
+- [ ] **Add railway network criticality and operational effects.** Build a
+  railway routing graph, measure detours or disconnection when a junction or
+  bridge is unavailable, and distinguish location importance from verified DCS
+  damage state. Use validated high-value locations as candidates for later
+  strategic objectives and supply-line reasoning.
 - [ ] **Add category-specific importance and dependency analysis.** Rank sites
   with transparent evidence appropriate to their role: capacity and network
   position for energy, storage and distribution role for fuel, production and

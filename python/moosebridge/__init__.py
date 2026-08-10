@@ -218,6 +218,14 @@ from .transport_infrastructure import (
     TransportImportanceTier,
     build_transport_infrastructure,
 )
+from .railway_infrastructure import (
+    DEFAULT_RAILWAY_CLUSTER_RADIUS_M,
+    RailwayImportanceTier,
+    RailwayLocation,
+    RailwayLocationKind,
+    TheaterRailwayInfrastructure,
+    build_railway_infrastructure,
+)
 from .infrastructure_sites import (
     EnergySite,
     EnergySource,
@@ -890,6 +898,12 @@ __all__ = [
     "DEFAULT_JUNCTION_CLUSTER_RADIUS_M",
     "TheaterTransportInfrastructure",
     "TransportBridge",
+    "DEFAULT_RAILWAY_CLUSTER_RADIUS_M",
+    "RailwayImportanceTier",
+    "RailwayLocation",
+    "RailwayLocationKind",
+    "TheaterRailwayInfrastructure",
+    "build_railway_infrastructure",
     "TransportJunction",
     "TransportJunctionKind",
     "TransportImportanceTier",

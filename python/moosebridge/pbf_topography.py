@@ -44,7 +44,10 @@ OGR_LAYER_FILTERS: dict[str, str] = {
     "points": (
         "place IN ('city','town','village','hamlet') OR "
         "man_made IN ('works','water_works','wastewater_plant','storage_tank','silo') OR "
-        "other_tags LIKE '%\"power\"=>\"plant\"%' OR other_tags LIKE '%\"harbour\"=>\"yes\"%'"
+        "other_tags LIKE '%\"power\"=>\"plant\"%' OR other_tags LIKE '%\"harbour\"=>\"yes\"%' OR "
+        "other_tags LIKE '%\"railway\"=>\"station\"%' OR other_tags LIKE '%\"railway\"=>\"halt\"%' OR "
+        "other_tags LIKE '%\"railway\"=>\"depot\"%' OR other_tags LIKE '%\"railway\"=>\"freight_terminal\"%' OR "
+        "other_tags LIKE '%\"public_transport\"=>\"station\"%'"
     ),
     "lines": (
         "highway IN ('motorway','trunk','primary','secondary','tertiary','unclassified') OR "
@@ -57,6 +60,8 @@ OGR_LAYER_FILTERS: dict[str, str] = {
         "man_made IN ('works','water_works','wastewater_plant','storage_tank','silo') OR "
         "military IS NOT NULL OR other_tags LIKE '%\"power\"=>\"plant\"%' OR "
         "other_tags LIKE '%\"harbour\"=>\"yes\"%' OR "
+        "other_tags LIKE '%\"railway\"=>\"station\"%' OR other_tags LIKE '%\"railway\"=>\"depot\"%' OR "
+        "other_tags LIKE '%\"railway\"=>\"freight_terminal\"%' OR other_tags LIKE '%\"freight\"=>\"yes\"%' OR "
         "(boundary = 'administrative' AND admin_level IN ('4','6','8'))"
     ),
 }

@@ -77,6 +77,27 @@ def test_overpass_element_can_supply_transport_and_bridge_layers() -> None:
     assert all(feature.valid_from == 1938 for feature in features)
 
 
+def test_overpass_element_classifies_railway_facilities() -> None:
+    station = features_from_overpass_element({
+        "type": "node",
+        "id": 44,
+        "lat": 54.1,
+        "lon": 12.2,
+        "tags": {"railway": "station", "name": "Test Central", "train": "yes"},
+    }, scenario_reference_year=1999)
+    halt = features_from_overpass_element({
+        "type": "node",
+        "id": 45,
+        "lat": 54.2,
+        "lon": 12.3,
+        "tags": {"railway": "halt", "name": "Test Halt"},
+    }, scenario_reference_year=1999)
+
+    assert station[0].layer is TopographyLayer.INFRASTRUCTURE
+    assert station[0].category == "railway_station"
+    assert halt[0].category == "railway_halt"
+
+
 def test_inconsistent_osm_validity_dates_do_not_abort_theater_import() -> None:
     features = features_from_overpass_element(
         {

@@ -125,8 +125,9 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "surface_region_count": 0,
         "surface_regions_source_complete": None,
         "transport_bridge_count": 0,
-        "transport_junction_count": 0,
-        "infrastructure_site_count": 0,
+            "transport_junction_count": 0,
+            "railway_infrastructure_count": 0,
+            "infrastructure_site_count": 0,
         "settlement_count": 0,
         "diplomacy": None,
     }
@@ -657,3 +658,13 @@ def test_map_ui_does_not_apply_tactical_filters_to_topography() -> None:
 
     assert "const tacticalFilters = isTopographyLayer(checkbox.dataset.layer)" in map_script
     assert "[mapLayerBaseFilters.get(id), ...tacticalFilters]" in map_script
+
+
+def test_map_ui_exposes_grouped_railway_infrastructure() -> None:
+    map_script = (
+        Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui" / "map.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'key: "railway_infrastructure", label: "Rail infrastructure"' in map_script
+    assert 'fetch("/api/railway-infrastructure/global.geojson")' in map_script
+    assert 'source: "railway-infrastructure"' in map_script

@@ -211,6 +211,19 @@ def _is_area(tags: dict[str, Any]) -> bool:
 
 
 def _infrastructure_category(tags: dict[str, Any]) -> str | None:
+    railway = str(tags.get("railway") or "").strip().casefold()
+    public_transport = str(tags.get("public_transport") or "").strip().casefold()
+    service = str(tags.get("service") or "").strip().casefold()
+    if railway in {"freight_terminal", "container_terminal"} or tags.get("freight") in {"yes", "only"}:
+        return "railway_freight_terminal"
+    if railway in {"depot", "engine_shed", "roundhouse", "workshop"}:
+        return "railway_depot"
+    if railway == "yard" or (railway in RAIL_CLASSES and service == "yard"):
+        return "railway_yard"
+    if railway == "station" or (public_transport == "station" and tags.get("train") == "yes"):
+        return "railway_station"
+    if railway == "halt":
+        return "railway_halt"
     if tags.get("bridge") not in {None, "no"} and tags.get("highway"):
         return "bridge"
     if tags.get("power") == "plant":

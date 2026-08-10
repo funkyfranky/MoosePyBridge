@@ -28,6 +28,17 @@
     { key: "loss_reports", label: "Loss reports", color: "#8f3434", icon: "shield-x", size: 1.0, default: true },
     { key: "transport_bridges", label: "Bridges", color: "#a56a27", icon: "construction", default: false },
     { key: "transport_junctions", label: "Transport junctions", color: "#176f77", icon: "network", default: false },
+    {
+      key: "railway_infrastructure", label: "Rail infrastructure", color: "#4f5552", icon: "train-front", default: false,
+      children: [
+        { key: "station", label: "Stations", icon: "train-front", default: false },
+        { key: "freight_terminal", label: "Freight terminals", icon: "container", default: false },
+        { key: "marshalling_yard", label: "Marshalling yards", icon: "git-fork", default: false },
+        { key: "depot", label: "Depots", icon: "warehouse", default: false },
+        { key: "junction", label: "Rail junctions", icon: "network", default: false },
+        { key: "bridge", label: "Rail bridges", icon: "construction", default: false },
+      ],
+    },
     { key: "energy_sites", label: "Energy sites", color: "#b38416", icon: "factory", default: false },
     { key: "fuel_storage_sites", label: "Fuel and storage sites", color: "#8a5a32", icon: "fuel", default: false },
     { key: "military_sites", label: "Military sites", color: "#6c5b48", icon: "shield", default: false },
@@ -72,7 +83,7 @@
     },
     {
       key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#137f87",
-      layers: ["airbases", "settlements", "transport_bridges", "transport_junctions", "energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"],
+      layers: ["airbases", "settlements", "transport_bridges", "transport_junctions", "railway_infrastructure", "energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"],
     },
     {
       key: "topography", label: "Topography", icon: "map", color: "#3c7069",
@@ -140,6 +151,7 @@
   let latestTopography = EMPTY;
   let latestSurfaceRegions = EMPTY;
   let latestTransportInfrastructure = EMPTY;
+  let latestRailwayInfrastructure = EMPTY;
   let latestInfrastructureSites = EMPTY;
   let latestSettlements = EMPTY;
   let topographyViewportAvailable = false;
@@ -458,6 +470,7 @@
       ...topography,
       ...latestSurfaceRegions.features,
       ...latestTransportInfrastructure.features,
+      ...latestRailwayInfrastructure.features,
       ...latestInfrastructureSites.features,
       ...latestSettlements.features,
     ];
@@ -495,6 +508,7 @@
     }
     map.addSource("surface-regions", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("transport-infrastructure", { type: "geojson", data: EMPTY, promoteId: "object_id" });
+    map.addSource("railway-infrastructure", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("infrastructure-sites", { type: "geojson", data: EMPTY, promoteId: "object_id" });
     map.addSource("settlements", { type: "geojson", data: EMPTY, promoteId: "map_feature_id" });
 
@@ -691,6 +705,38 @@
             ],
             "circle-stroke-color": "rgba(255,255,255,0.96)",
             "circle-stroke-width": 1.8,
+            "circle-opacity": infrastructureVisibilityOpacity(),
+            "circle-stroke-opacity": infrastructureVisibilityOpacity(),
+          },
+        });
+        continue;
+      }
+      if (spec.key === "railway_infrastructure") {
+        addMapLayer(spec, {
+          type: "circle",
+          source: "railway-infrastructure",
+          minzoom: 7,
+          filter: ["==", ["get", "layer"], spec.key],
+          paint: {
+            "circle-radius": [
+              "+",
+              ["match", ["get", "importance_tier"], "critical", 7, "high", 6, "medium", 5, 4],
+              ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 0, 5, 1.5, 20, 3],
+            ],
+            "circle-color": [
+              "match", ["get", "map_category"],
+              "station", "#4f5552",
+              "freight_terminal", "#76578b",
+              "marshalling_yard", "#7b6332",
+              "depot", "#6c5b48",
+              "junction", "#176f77",
+              "bridge", "#a56a27",
+              spec.color,
+            ],
+            "circle-stroke-color": [
+              "match", ["get", "importance_tier"], "critical", "#b83232", "high", "#d17822", "rgba(255,255,255,0.96)",
+            ],
+            "circle-stroke-width": ["match", ["get", "importance_tier"], "critical", 3, "high", 2.5, 1.7],
             "circle-opacity": infrastructureVisibilityOpacity(),
             "circle-stroke-opacity": infrastructureVisibilityOpacity(),
           },
@@ -1085,6 +1131,15 @@
     const source = map.getSource("transport-infrastructure");
     if (!source) return;
     source.setData(latestTransportInfrastructure);
+    updateCounts();
+  }
+
+  function setRailwayInfrastructure(infrastructure) {
+    if (!infrastructure || infrastructure.type !== "FeatureCollection") return;
+    latestRailwayInfrastructure = decoratedPicture(infrastructure);
+    const source = map.getSource("railway-infrastructure");
+    if (!source) return;
+    source.setData(latestRailwayInfrastructure);
     updateCounts();
   }
 
@@ -1742,10 +1797,11 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, surfaceRegionsResponse, transportResponse, infrastructureResponse, settlementsResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, surfaceRegionsResponse, transportResponse, railwayResponse, infrastructureResponse, settlementsResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
         fetch("/api/surface-regions/global.geojson"),
         fetch("/api/transport-infrastructure/global.geojson"),
+        fetch("/api/railway-infrastructure/global.geojson"),
         fetch("/api/infrastructure-sites/global.geojson"),
         fetch("/api/settlements/global.geojson"),
         fetch("/api/health"),
@@ -1753,6 +1809,7 @@
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
       if (surfaceRegionsResponse.ok) setSurfaceRegions(await surfaceRegionsResponse.json());
       if (transportResponse.ok) setTransportInfrastructure(await transportResponse.json());
+      if (railwayResponse.ok) setRailwayInfrastructure(await railwayResponse.json());
       if (infrastructureResponse.ok) setInfrastructureSites(await infrastructureResponse.json());
       if (settlementsResponse.ok) setSettlements(await settlementsResponse.json());
       if (healthResponse.ok) {

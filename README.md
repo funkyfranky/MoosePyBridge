@@ -1700,8 +1700,7 @@ continues to describe the generalized built-up footprint used by the importance
 score. For matched settlements, `urban_geometry` contains a connected, hole-free
 urban core derived from the smoothed footprint. Detached minor components are
 discarded; inland water, parks, and other internal gaps remain part of the strategic
-city area.
-clipped to the administrative boundary. The map renders it as the stronger fill
+city area. The core is clipped to the administrative boundary. The map renders it as the stronger fill
 and keeps the administrative boundary as a restrained dashed outline.
 
 By default this writes `tmp/topography/GermanyCW-settlements.geojson` and is loaded by the
@@ -1763,6 +1762,33 @@ junction thresholds are 95/85/65 for critical/high/medium. At theater overview
 zoom only high and critical locations are rendered; medium locations appear at
 zoom 9 and low locations at zoom 11. The underlying features and numeric scores
 remain available independently of this visual level of detail.
+
+Operational railway locations use a separate aggregated cache:
+
+```powershell
+python tools/build_railway_infrastructure.py
+```
+
+This reads ordinary railway lines from the indexed topography shards and only
+the relevant station, halt, freight, yard, and depot tags from the local
+Geofabrik PBF files. Per-source facility reads are cached below
+`tmp/topography/railway_facility_cache`, so an interrupted theater-wide build
+can be resumed. Use `--refresh-facilities` only when the PBF inputs or railway
+classification have changed. A bounded regional diagnostic can be generated
+with `--source mecklenburg-vorpommern`.
+
+The resulting `tmp/topography/GermanyCW-railway-infrastructure.geojson`
+contains aggregated stations, freight terminals, marshalling yards, depots,
+rail junctions, and rail bridges. Ordinary track remains in the Topography
+layer and is not duplicated as infrastructure. Each operational location keeps
+its source members and receives a transparent importance score and tier based
+on facility role, topology, and extent. These values are planning evidence,
+not proof that the modern OSM facility exists in the 1999 DCS theater.
+
+The map server loads the cache automatically and exposes it through
+`/api/railway-infrastructure/global.geojson`. `Rail infrastructure` is one
+initially hidden Infrastructure group whose six location classes can be toggled
+independently.
 
 The header shows the shared relationship, escalation score, pending transition,
 and blue/red doctrine. The map server is the default diplomacy incident

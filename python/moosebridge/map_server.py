@@ -39,6 +39,7 @@ from .recon import RECON_EXECUTION_AUDIT_TYPE
 from .topography import TheaterTopography
 from .topography_viewport import DEFAULT_VIEWPORT_FEATURE_LIMIT, TopographyViewportStore
 from .transport_infrastructure import TheaterTransportInfrastructure
+from .railway_infrastructure import TheaterRailwayInfrastructure
 from .infrastructure_sites import TheaterInfrastructureSites
 from .settlements import TheaterSettlements
 from .surface_regions import TheaterSurfaceRegions
@@ -65,6 +66,7 @@ DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
 DEFAULT_TOPOGRAPHY_VIEWPORT_PATH = Path("tmp/topography/viewport/manifest.json")
 DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
 DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-transport-infrastructure.geojson")
+DEFAULT_RAILWAY_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-railway-infrastructure.geojson")
 DEFAULT_INFRASTRUCTURE_SITES_PATH = Path("tmp/topography/GermanyCW-infrastructure-sites.geojson")
 DEFAULT_SETTLEMENTS_PATH = Path("tmp/topography/GermanyCW-settlements.geojson")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
@@ -159,6 +161,7 @@ class GlobalMapRuntime:
     topography_viewport_path: Path | None = None
     surface_regions_path: Path | None = None
     transport_infrastructure_path: Path | None = None
+    railway_infrastructure_path: Path | None = None
     infrastructure_sites_path: Path | None = None
     settlements_path: Path | None = None
     picture: dict[str, Any] = field(default_factory=empty_picture)
@@ -188,6 +191,7 @@ class GlobalMapRuntime:
     _topography_viewport_error: str | None = field(init=False, default=None)
     _surface_regions: TheaterSurfaceRegions | None = field(init=False, default=None)
     _transport_infrastructure: TheaterTransportInfrastructure | None = field(init=False, default=None)
+    _railway_infrastructure: TheaterRailwayInfrastructure | None = field(init=False, default=None)
     _infrastructure_sites: TheaterInfrastructureSites | None = field(init=False, default=None)
     _settlements: TheaterSettlements | None = field(init=False, default=None)
     _frontline_tracker: FrontlineForceTracker = field(init=False)
@@ -214,6 +218,7 @@ class GlobalMapRuntime:
         self.load_topography_viewport()
         self.load_surface_regions()
         self.load_transport_infrastructure()
+        self.load_railway_infrastructure()
         self.load_infrastructure_sites()
         self.load_settlements()
 
@@ -335,6 +340,26 @@ class GlobalMapRuntime:
             if self._transport_infrastructure is not None else empty_picture()
         )
 
+    def load_railway_infrastructure(self) -> TheaterRailwayInfrastructure | None:
+        """Load optional aggregated railway facilities and network locations."""
+
+        self._railway_infrastructure = None
+        if self.railway_infrastructure_path is None or not self.railway_infrastructure_path.is_file():
+            return None
+        self._railway_infrastructure = TheaterRailwayInfrastructure.load(self.railway_infrastructure_path)
+        LOGGER.info(
+            "Loaded %d railway infrastructure locations for %s from %s",
+            len(self._railway_infrastructure.locations),
+            self._railway_infrastructure.theater_id,
+            self.railway_infrastructure_path,
+        )
+        return self._railway_infrastructure
+
+    def railway_infrastructure_geojson(self) -> dict[str, Any]:
+        """Return aggregated static railway infrastructure locations."""
+
+        return self._railway_infrastructure.to_geojson() if self._railway_infrastructure else empty_picture()
+
     def load_infrastructure_sites(self) -> TheaterInfrastructureSites | None:
         """Load optional normalized infrastructure sites."""
 
@@ -426,6 +451,9 @@ class GlobalMapRuntime:
             ),
             "transport_junction_count": (
                 len(self._transport_infrastructure.junctions) if self._transport_infrastructure else 0
+            ),
+            "railway_infrastructure_count": (
+                len(self._railway_infrastructure.locations) if self._railway_infrastructure else 0
             ),
             "infrastructure_site_count": len(self._infrastructure_sites.sites) if self._infrastructure_sites else 0,
             "settlement_count": len(self._settlements.settlements) if self._settlements else 0,
@@ -1155,6 +1183,7 @@ def create_app(
     topography_viewport_path: Path | None = DEFAULT_TOPOGRAPHY_VIEWPORT_PATH,
     surface_regions_path: Path | None = DEFAULT_SURFACE_REGIONS_PATH,
     transport_infrastructure_path: Path | None = DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH,
+    railway_infrastructure_path: Path | None = DEFAULT_RAILWAY_INFRASTRUCTURE_PATH,
     infrastructure_sites_path: Path | None = DEFAULT_INFRASTRUCTURE_SITES_PATH,
     settlements_path: Path | None = DEFAULT_SETTLEMENTS_PATH,
 ) -> FastAPI:
@@ -1182,6 +1211,7 @@ def create_app(
         topography_viewport_path=topography_viewport_path,
         surface_regions_path=surface_regions_path,
         transport_infrastructure_path=transport_infrastructure_path,
+        railway_infrastructure_path=railway_infrastructure_path,
         infrastructure_sites_path=infrastructure_sites_path,
         settlements_path=settlements_path,
     )
@@ -1275,6 +1305,10 @@ def create_app(
     async def global_transport_infrastructure() -> dict[str, Any]:
         return runtime.transport_infrastructure_geojson()
 
+    @app.get("/api/railway-infrastructure/global.geojson")
+    async def global_railway_infrastructure() -> dict[str, Any]:
+        return runtime.railway_infrastructure_geojson()
+
     @app.get("/api/infrastructure-sites/global.geojson")
     async def global_infrastructure_sites() -> dict[str, Any]:
         return runtime.infrastructure_sites_geojson()
@@ -1347,6 +1381,12 @@ def main() -> None:
         help="Static strategic bridge and road-junction GeoJSON cache.",
     )
     parser.add_argument(
+        "--railway-infrastructure",
+        type=Path,
+        default=DEFAULT_RAILWAY_INFRASTRUCTURE_PATH,
+        help="Aggregated static railway-infrastructure GeoJSON cache.",
+    )
+    parser.add_argument(
         "--infrastructure-sites",
         type=Path,
         default=DEFAULT_INFRASTRUCTURE_SITES_PATH,
@@ -1392,6 +1432,7 @@ def main() -> None:
         topography_viewport_path=args.topography_viewport,
         surface_regions_path=args.surface_regions,
         transport_infrastructure_path=args.transport_infrastructure,
+        railway_infrastructure_path=args.railway_infrastructure,
         infrastructure_sites_path=args.infrastructure_sites,
         settlements_path=args.settlements,
     )

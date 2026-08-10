@@ -213,8 +213,21 @@ remaining sites stay available as geographic and economic context.
 - Rail junctions and rail bridges where network disruption matters
 - Ordinary track remains topographic and routing context
 
-The current import contains railway lines but does not yet import enough
-station, yard, freight, and depot tags for this model.
+Implemented normalization reads ordinary railway lines from the indexed
+topography cache and performs a targeted, cached read of station, halt, freight,
+yard, and depot evidence from the local PBF files. Nearby same-kind source
+features are combined into stable operational locations while retaining their
+source IDs. Mainline graph degree supplies rail-junction candidates; tagged
+track structures supply rail bridges. The output is
+`tmp/topography/GermanyCW-railway-infrastructure.geojson` and is exposed as a
+grouped browser layer with independent station, freight-terminal,
+marshalling-yard, depot, junction, and bridge controls.
+
+Importance is role-led and refined by source membership, facility extent, and
+branch count. The current tiers are an initial operational ranking. DCS/F10
+comparison, historical validation, railway-network detour analysis, and the
+promotion of selected locations to strategic objectives remain explicit later
+steps.
 
 ### Water, communications, and public utilities
 
@@ -293,6 +306,7 @@ released and updated in phases.
 1. Military sites (implemented candidate normalization)
 2. Major factories and industrial works (implemented candidate normalization)
 3. Rail yards, freight terminals, major stations, and rail junctions
+   (implemented candidate normalization; DCS validation remains)
 4. Power-grid sites and dependencies
 5. Cargo ports, terminals, shipyards, dams, mines, tunnels, and communications
 
