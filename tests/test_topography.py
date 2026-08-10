@@ -174,6 +174,33 @@ def test_pyrosm_buildings_are_explicitly_optional() -> None:
     assert included[0].layer is TopographyLayer.BUILDINGS
 
 
+def test_osm_administrative_boundary_is_preserved() -> None:
+    features = features_from_pyrosm_record(
+        {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[9.8, 53.4], [10.2, 53.4], [10.2, 53.7], [9.8, 53.7], [9.8, 53.4]]],
+            },
+            "properties": {
+                "id": 62782,
+                "osm_type": "relation",
+                "name": "Hamburg",
+                "boundary": "administrative",
+                "admin_level": "4",
+            },
+        },
+        scenario_reference_year=1999,
+        source_snapshot_date=None,
+        include_buildings=False,
+    )
+
+    assert len(features) == 1
+    assert features[0].layer is TopographyLayer.ADMINISTRATIVE_BOUNDARIES
+    assert features[0].category == "4"
+    assert features[0].geometry["type"] == "Polygon"
+
+
 def test_topography_detail_levels_keep_baseline_small_and_local_detail_rich() -> None:
     def feature(layer: TopographyLayer, category: str) -> TopographyFeature:
         return TopographyFeature(

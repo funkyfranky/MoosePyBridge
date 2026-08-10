@@ -7,6 +7,7 @@ from moosebridge.settlements import (
     SettlementKind,
     SettlementSizeClass,
     TheaterSettlements,
+    apply_administrative_boundaries,
     build_settlements,
     settlement_importance_tier,
     settlement_size_class,
@@ -105,6 +106,69 @@ def test_town_without_urban_landuse_remains_point() -> None:
     assert settlement.boundary_kind is SettlementBoundaryKind.POINT_ONLY
     assert settlement.geometry["type"] == "Point"
     assert settlement.size_class is SettlementSizeClass.SMALL_CITY
+
+
+def test_matching_administrative_boundary_replaces_urban_footprint() -> None:
+    city = _feature(
+        "TOPOGRAPHY:city/hamburg",
+        TopographyLayer.SETTLEMENTS,
+        "city",
+        {"type": "Point", "coordinates": [10.0, 53.55]},
+        name="Hamburg",
+        tags={"wikidata": "Q1055", "population": "1800000"},
+    )
+    boundary = _feature(
+        "TOPOGRAPHY:boundary/hamburg",
+        TopographyLayer.ADMINISTRATIVE_BOUNDARIES,
+        "4",
+        {
+            "type": "Polygon",
+            "coordinates": [[[9.8, 53.4], [10.2, 53.4], [10.2, 53.7], [9.8, 53.7], [9.8, 53.4]]],
+        },
+        name="Freie und Hansestadt Hamburg",
+        tags={"wikidata": "Q1055", "boundary": "administrative", "admin_level": "4"},
+    )
+
+    result = apply_administrative_boundaries(
+        build_settlements((city,), theater_id="GermanyCW"),
+        (boundary,),
+    )
+    settlement = result.settlements[0]
+
+    assert settlement.boundary_kind is SettlementBoundaryKind.ADMINISTRATIVE
+    assert settlement.geometry == boundary.geometry
+    assert settlement.urban_area_m2 is None
+    assert settlement.properties["administrative_area_m2"] > 800_000_000
+    assert settlement.properties["administrative_level"] == 4
+    assert settlement.properties["administrative_boundary_id"] == boundary.source_id
+    assert result.metadata["administrative_match_count"] == 1
+
+
+def test_containing_boundary_with_different_name_is_not_assigned() -> None:
+    city = _feature(
+        "TOPOGRAPHY:city/rostock",
+        TopographyLayer.SETTLEMENTS,
+        "city",
+        {"type": "Point", "coordinates": [12.1, 54.1]},
+        name="Rostock",
+    )
+    boundary = _feature(
+        "TOPOGRAPHY:boundary/county",
+        TopographyLayer.ADMINISTRATIVE_BOUNDARIES,
+        "6",
+        {
+            "type": "Polygon",
+            "coordinates": [[[11.8, 53.9], [12.4, 53.9], [12.4, 54.3], [11.8, 54.3], [11.8, 53.9]]],
+        },
+        name="Landkreis Rostock",
+    )
+
+    settlement = apply_administrative_boundaries(
+        build_settlements((city,), theater_id="GermanyCW"),
+        (boundary,),
+    ).settlements[0]
+
+    assert settlement.boundary_kind is SettlementBoundaryKind.POINT_ONLY
 
 
 def test_settlement_artifact_round_trip(tmp_path) -> None:

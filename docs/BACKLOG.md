@@ -92,11 +92,12 @@ Priorities:
   size and importance classes, and use bounded urban-landuse footprints. The
   SDK artifact and browser layer remain context until scenario policy promotes
   a settlement to a strategic objective.
-- [ ] **Refine settlement boundaries where conurbations matter.** Evaluate
-  historical or administrative boundaries and nearest-anchor partitioning for
-  overlapping urban footprints, especially in the Ruhr area. Preserve the
-  current footprint and provenance rather than silently presenting a modern
-  administrative boundary as DCS-era truth.
+- [ ] **Refine settlement boundaries where conurbations matter.** Modern OSM
+  administrative boundaries are now available as an explicit comparison mode
+  with urban-footprint fallback. Evaluate the result in Hamburg and the Ruhr
+  area, then decide between administrative, historical morphological, or
+  nearest-anchor boundaries. Preserve provenance rather than silently
+  presenting a modern administrative boundary as DCS-era truth.
 - [ ] **Add historical settlement evidence.** Compare dated population sources,
   GHSL 1990 built-up areas, and DCS scenery for selected GermanyCW cities. Keep
   present-day OSM population dates visible and never infer an exact historical

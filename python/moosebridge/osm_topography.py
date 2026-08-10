@@ -128,6 +128,18 @@ def features_from_overpass_element(
     place = str(tags.get("place") or "")
     if place in SETTLEMENT_CLASSES:
         output.append(_feature(source_id, TopographyLayer.SETTLEMENTS, place, geometry, 0.65, tags, common))
+    if str(tags.get("boundary") or "") == "administrative" and str(tags.get("admin_level") or ""):
+        output.append(
+            _feature(
+                source_id,
+                TopographyLayer.ADMINISTRATIVE_BOUNDARIES,
+                str(tags["admin_level"]),
+                geometry,
+                0.8,
+                tags,
+                common,
+            )
+        )
     infrastructure_category = _infrastructure_category(tags)
     if infrastructure_category is not None:
         output.append(

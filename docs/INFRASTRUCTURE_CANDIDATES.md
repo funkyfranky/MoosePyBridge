@@ -99,19 +99,25 @@ topographic context. Build the versioned theater artifact with:
 python tools/build_settlements.py
 ```
 
-The current GermanyCW artifact contains 2,625 cities and towns. Of these,
-2,592 have a bounded urban footprint derived from nearby residential,
-commercial, retail, and industrial land use; 2,318 retain a source population
-value. Population and `population:date` are evidence from OSM, not an assertion
-that the value matches the 1999 scenario date.
+The current GermanyCW source contains 2,625 cities and towns. The builder
+prefers a matching OSM administrative boundary from levels 4, 6, and 8 and
+retains the bounded urban footprint as a fallback. This accommodates city
+states such as Hamburg, independent cities such as Rostock, and ordinary
+municipalities. Matches require Wikidata or normalized-name agreement and must
+contain the place anchor. Use `--boundary-mode urban` for the former
+footprint-only behavior or `--boundary-source hamburg` for a bounded comparison.
+Population and `population:date` are evidence from OSM, not an assertion that
+the value matches the 1999 scenario date.
 
 Size classes are `metropolis`, `large_city`, `medium_city`, `small_city`, and
 `land_town`. Population is preferred; the OSM place class is the explicit
-fallback. Importance combines population and urban extent and remains initial
-planning evidence, not automatic target authorization. Urban footprints are
-generalized with a 200 m gap tolerance and can overlap in continuous
-conurbations. Administrative or nearest-anchor partitioning is deferred until
-that distinction affects a real planning decision.
+fallback. Importance combines population and the generalized built-up area,
+not the often much larger municipal area, and remains initial planning evidence,
+not automatic target authorization. Urban
+footprints are generalized with a 200 m gap tolerance and can overlap in
+continuous conurbations. Administrative boundaries remain explicitly marked
+modern comparison evidence and store their area as `administrative_area_m2`;
+nearest-anchor partitioning remains deferred.
 
 The map server exposes `/api/settlements/global.geojson`. The initially hidden
 `Cities and towns` layer shows importance-scaled anchors and urban footprints;

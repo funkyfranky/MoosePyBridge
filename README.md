@@ -1676,7 +1676,24 @@ Named cities and towns use a separate normalized artifact:
 python tools/build_settlements.py
 ```
 
-This writes `tmp/topography/GermanyCW-settlements.geojson` and is loaded by the
+The builder prefers matching OSM administrative boundaries and retains the
+urban footprint as a fallback. German city states, independent cities, and
+municipalities are matched across administrative levels 4, 6, and 8 by
+Wikidata or normalized name. To compare Hamburg without reading every PBF:
+
+```powershell
+python tools/build_settlements.py --boundary-source hamburg --output tmp/topography/GermanyCW-settlements-administrative-test.geojson
+./run_map.ps1 --settlements tmp/topography/GermanyCW-settlements-administrative-test.geojson
+```
+
+Use `--boundary-mode urban` to reproduce the previous footprint-only artifact.
+Administrative boundaries are modern comparison evidence and are identified by
+`boundary_kind=administrative`, `administrative_level`, and their OSM relation.
+`administrative_area_m2` records the municipal area, while `urban_area_m2`
+continues to describe the generalized built-up footprint used by the importance
+score.
+
+By default this writes `tmp/topography/GermanyCW-settlements.geojson` and is loaded by the
 map server through `/api/settlements/global.geojson`. The current cache contains
 2,625 cities and towns, including 2,592 generalized urban footprints and 2,318
 source population values. `Cities and towns` is an initially hidden

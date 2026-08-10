@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import hashlib
 import json
@@ -33,6 +33,7 @@ class SettlementSizeClass(StrEnum):
 
 class SettlementBoundaryKind(StrEnum):
     URBAN_FOOTPRINT = "urban_footprint"
+    ADMINISTRATIVE = "administrative"
     POINT_ONLY = "point_only"
 
 
@@ -331,6 +332,103 @@ def build_settlements(
             "population_count": population_count,
         },
     )
+
+
+def apply_administrative_boundaries(
+    artifact: TheaterSettlements,
+    boundaries: Iterable[TopographyFeature],
+) -> TheaterSettlements:
+    """Replace urban footprints with matching OSM administrative boundaries."""
+
+    try:
+        from pyproj import Transformer
+        from shapely.geometry import Point, shape
+        from shapely.ops import transform
+        from shapely.strtree import STRtree
+    except ImportError as exc:
+        raise RuntimeError('settlement building requires: python -m pip install -e ".[topography]"') from exc
+
+    candidates = [
+        feature for feature in boundaries
+        if feature.layer is TopographyLayer.ADMINISTRATIVE_BOUNDARIES
+        and feature.category in {"4", "6", "8"}
+    ]
+    if not candidates:
+        return artifact
+    to_metric = Transformer.from_crs("EPSG:4326", "EPSG:3035", always_xy=True)
+    projected = [transform(to_metric.transform, shape(feature.geometry)) for feature in candidates]
+    tree = STRtree(projected)
+    updated: list[Settlement] = []
+    matched = 0
+    for settlement in artifact.settlements:
+        point = transform(to_metric.transform, Point(settlement.longitude, settlement.latitude))
+        containing = [
+            int(index) for index in tree.query(point)
+            if projected[int(index)].covers(point)
+        ]
+        ranked = sorted(
+            (
+                (_administrative_match_rank(settlement, candidates[index]), projected[index].area, index)
+                for index in containing
+            ),
+            key=lambda item: (-item[0], item[1]),
+        )
+        if not ranked or ranked[0][0] <= 0:
+            updated.append(settlement)
+            continue
+        _, area_m2, index = ranked[0]
+        boundary = candidates[index]
+        properties = dict(settlement.properties)
+        properties.update({
+            "administrative_boundary_id": boundary.source_id,
+            "administrative_level": int(boundary.category),
+            "administrative_area_m2": float(area_m2),
+        })
+        updated.append(replace(
+            settlement,
+            geometry=boundary.geometry,
+            source="; ".join(dict.fromkeys((settlement.source, boundary.source))),
+            confidence=max(settlement.confidence, boundary.confidence),
+            boundary_kind=SettlementBoundaryKind.ADMINISTRATIVE,
+            source_ids=tuple(dict.fromkeys((*settlement.source_ids, *(value for value in (boundary.source_id,) if value)))),
+            properties=properties,
+        ))
+        matched += 1
+    return replace(
+        artifact,
+        settlements=tuple(updated),
+        metadata={
+            **artifact.metadata,
+            "boundary_policy": "OSM administrative boundary with urban-footprint fallback",
+            "administrative_boundary_count": len(candidates),
+            "administrative_match_count": matched,
+            "administrative_levels": [4, 6, 8],
+        },
+    )
+
+
+def _administrative_match_rank(settlement: Settlement, boundary: TopographyFeature) -> int:
+    settlement_wikidata = str(settlement.properties.get("wikidata") or "").strip()
+    boundary_wikidata = str(_tags(boundary).get("wikidata") or "").strip()
+    if settlement_wikidata and settlement_wikidata == boundary_wikidata:
+        return 3
+    if _normalized_place_name(settlement.name) == _normalized_place_name(boundary.name or ""):
+        return 2
+    return 0
+
+
+def _normalized_place_name(value: str) -> str:
+    import re
+
+    text = value.casefold().replace("&", " und ")
+    for prefix in ("freie und hansestadt ", "kreisfreie stadt ", "landeshauptstadt ", "hansestadt "):
+        text = text.removeprefix(prefix)
+    text = re.sub(r"[^a-z0-9äöüß]+", " ", text)
+    ignored = {
+        "gemeinde", "stadt",
+    }
+    words = [word for word in text.split() if word not in ignored]
+    return " ".join(words)
 
 
 def settlement_size_class(*, population: int | None, kind: SettlementKind) -> tuple[SettlementSizeClass, str]:

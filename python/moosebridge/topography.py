@@ -23,6 +23,7 @@ class TopographyLayer(StrEnum):
     INFRASTRUCTURE = "topography_infrastructure"
     BUILDINGS = "topography_buildings"
     LANDUSE = "topography_landuse"
+    ADMINISTRATIVE_BOUNDARIES = "topography_administrative_boundaries"
 
 
 @dataclass(slots=True, frozen=True)

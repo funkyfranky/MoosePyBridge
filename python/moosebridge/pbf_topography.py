@@ -24,9 +24,10 @@ PBF_TAG_FILTER: dict[str, Any] = {
     "harbour": ["yes"],
     "bridge": True,
     "industrial": True,
+    "boundary": ["administrative"],
 }
 PBF_TAG_COLUMNS = tuple(PBF_TAG_FILTER) + (
-    "name", "name:en", "start_date", "end_date", "building", "water", "area",
+    "name", "name:en", "start_date", "end_date", "building", "water", "area", "admin_level",
 )
 
 DETAILED_PBF_TAG_FILTER: dict[str, Any] = {
@@ -55,7 +56,8 @@ OGR_LAYER_FILTERS: dict[str, str] = {
         "landuse IN ('industrial','commercial','residential','retail','military','port') OR "
         "man_made IN ('works','water_works','wastewater_plant','storage_tank','silo') OR "
         "military IS NOT NULL OR other_tags LIKE '%\"power\"=>\"plant\"%' OR "
-        "other_tags LIKE '%\"harbour\"=>\"yes\"%'"
+        "other_tags LIKE '%\"harbour\"=>\"yes\"%' OR "
+        "(boundary = 'administrative' AND admin_level IN ('4','6','8'))"
     ),
 }
 
@@ -188,7 +190,65 @@ def topography_detail_level(feature: TopographyFeature) -> TopographyDetailLevel
         return TopographyDetailLevel.LOW if category in {"industrial", "military", "port"} else TopographyDetailLevel.HIGH
     if feature.layer is TopographyLayer.INFRASTRUCTURE:
         return TopographyDetailLevel.ALL if category in {"power_plant", "harbour"} else TopographyDetailLevel.LOW
+    if feature.layer is TopographyLayer.ADMINISTRATIVE_BOUNDARIES:
+        return TopographyDetailLevel.ALL
     return TopographyDetailLevel.HIGH
+
+
+def administrative_boundaries_from_pbf(
+    paths: Iterable[str | Path],
+    *,
+    bounds: tuple[float, float, float, float] | None = None,
+    admin_levels: tuple[int, ...] = (4, 6, 8),
+    simplify_meters: float = 75.0,
+) -> tuple[TopographyFeature, ...]:
+    """Read municipality and city-state boundaries without rebuilding topography."""
+
+    try:
+        import pyogrio
+    except ImportError as exc:
+        raise RuntimeError('PBF import requires: python -m pip install -e ".[topography]"') from exc
+
+    levels = tuple(sorted({int(level) for level in admin_levels}))
+    if not levels:
+        raise ValueError("at least one administrative level is required")
+    level_sql = ",".join(f"'{level}'" for level in levels)
+    where = f"boundary = 'administrative' AND admin_level IN ({level_sql})"
+    bbox = None
+    if bounds is not None:
+        south, west, north, east = bounds
+        bbox = (west, south, east, north)
+    features: dict[str, TopographyFeature] = {}
+    for raw_path in paths:
+        path = Path(raw_path)
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        frame = pyogrio.read_dataframe(
+            path,
+            layer="multipolygons",
+            bbox=bbox,
+            where=where,
+            columns=["osm_id", "osm_way_id", "name", "type", "boundary", "admin_level", "other_tags"],
+            use_arrow=True,
+        )
+        if frame is None or frame.empty:
+            continue
+        if simplify_meters > 0:
+            source_crs = frame.crs or "EPSG:4326"
+            frame = frame.to_crs("EPSG:3035")
+            frame.geometry = frame.geometry.simplify(simplify_meters, preserve_topology=True)
+            frame = frame.to_crs(source_crs)
+        for record in frame.iterfeatures():
+            normalized = _normalize_ogr_record(record, "multipolygons")
+            for feature in features_from_pyrosm_record(
+                normalized,
+                scenario_reference_year=None,
+                source_snapshot_date=None,
+                include_buildings=False,
+            ):
+                if feature.layer is TopographyLayer.ADMINISTRATIVE_BOUNDARIES:
+                    features[feature.object_id] = feature
+    return tuple(sorted(features.values(), key=lambda feature: feature.object_id))
 
 
 def _with_detail_level(feature: TopographyFeature, level: TopographyDetailLevel) -> TopographyFeature:
