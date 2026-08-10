@@ -256,7 +256,10 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
         ), IndustrialSite(
             site_id="INDUSTRIAL_SITE:test",
             kind=InfrastructureSiteKind.INDUSTRIAL,
-            geometry={"type": "Point", "coordinates": [12.4, 54.2]},
+            geometry={
+                "type": "Polygon",
+                "coordinates": [[[12.3, 54.1], [12.5, 54.1], [12.5, 54.3], [12.3, 54.1]]],
+            },
             latitude=54.2,
             longitude=12.4,
             source="test",
@@ -287,6 +290,8 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
     assert payload["features"][0]["geometry"] == {"type": "Point", "coordinates": [12.0, 54.0]}
     assert payload["features"][1]["properties"]["layer"] == "fuel_storage_sites"
     assert payload["features"][2]["properties"]["layer"] == "industrial_sites"
+    assert payload["features"][2]["properties"]["source_geometry_type"] == "Polygon"
+    assert payload["features"][2]["geometry"]["type"] == "Polygon"
     assert payload["features"][3]["properties"]["layer"] == "military_sites"
     assert payload["features"][3]["properties"]["source_geometry_type"] == "Polygon"
     assert payload["features"][3]["geometry"]["type"] == "Polygon"

@@ -1652,10 +1652,13 @@ are not automatically targetable strategic sites. The map uses weighted markers
 at overview zoom and normalized footprints from zoom 8.
 Industrial admission requires an explicit factory or industry role, product
 evidence, or a recognized named works. Generic and unnamed industrial estates
-are not promoted. The SDK records normalized roles, products, approximate
-footprint, scale, and a separate `strategic_candidate` flag; only 2,046 current
-GermanyCW industrial sites meet that initial strategic-evidence threshold; 2,888
-of the 5,728 normalized sites currently qualify as strategic candidates.
+are not promoted. The SDK records normalized roles, products, a hole-free
+combined footprint, scale, importance score and tier, and a separate
+`strategic_candidate` flag. Role is weighted most strongly; size, product,
+operator, and multiple-role evidence refine the score. The map shows weighted
+overview markers and switches to the normalized industrial footprint from zoom
+9. The current GermanyCW cache classifies 2,123 of 5,728 industrial sites as
+strategic candidates.
 
 To inspect one admitted infrastructure site against nearby addressable DCS
 scenery, start DCS, the bridge daemon, and a mission, then run the

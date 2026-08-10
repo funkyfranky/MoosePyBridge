@@ -189,10 +189,16 @@ Same-name or same-operator components may be combined within 750 m; unrelated
 neighboring companies are never merged merely because they occupy the same
 industrial estate. Generic industrial areas, business parks, road-maintenance
 yards, utilities, and weak unnamed works are excluded. Approximate footprint
-and normalized roles determine a separate `strategic_candidate` flag instead
-of making every admitted business a strategic objective. The current
-GermanyCW cache contains 2,888 such candidates among 5,728 industrial sites.
-DCS scenery association and scenario approval remain explicit later steps.
+and normalized roles contribute to a typed importance score and tier. Role is
+the dominant factor; footprint, product, operator, and multiple-role evidence
+only refine the result. A separate `strategic_candidate` flag therefore does
+not make every admitted business a strategic objective. Component polygons are
+combined into a hole-free footprint while disconnected works remain a
+`MultiPolygon`. DCS scenery association and scenario approval remain explicit
+later steps. The map uses importance-colored overview markers and switches to
+the normalized footprint at detailed zoom. In the current GermanyCW cache,
+2,123 of 5,728 admitted industrial sites meet the strategic threshold; the
+remaining sites stay available as geographic and economic context.
 
 ### Ports and maritime logistics
 

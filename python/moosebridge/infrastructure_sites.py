@@ -250,6 +250,10 @@ class InfrastructureSite:
                 roles=tuple(IndustrialRole(str(value)) for value in properties.get("roles") or ()),
                 products=tuple(str(value) for value in properties.get("products") or ()),
                 footprint_area_m2=_optional_float(properties.get("footprint_area_m2")),
+                importance_score=float(properties.get("importance_score") or 0),
+                importance_tier=InfrastructureImportanceTier(
+                    str(properties.get("importance_tier") or InfrastructureImportanceTier.LOCAL.value)
+                ),
             )
         raise ValueError(f"unsupported infrastructure site kind: {kind}")
 
@@ -339,6 +343,8 @@ class IndustrialSite(InfrastructureSite):
     roles: tuple[IndustrialRole, ...] = ()
     products: tuple[str, ...] = ()
     footprint_area_m2: float | None = None
+    importance_score: float = 0.0
+    importance_tier: InfrastructureImportanceTier = InfrastructureImportanceTier.LOCAL
 
     def __post_init__(self) -> None:
         InfrastructureSite.__post_init__(self)
@@ -348,6 +354,8 @@ class IndustrialSite(InfrastructureSite):
             raise ValueError("industrial site requires at least one role")
         if self.footprint_area_m2 is not None and self.footprint_area_m2 < 0:
             raise ValueError("industrial footprint must not be negative")
+        if not 0 <= self.importance_score <= 100:
+            raise ValueError("industrial importance score must be between zero and 100")
 
     def _specific_properties(self) -> dict[str, Any]:
         return {
@@ -355,6 +363,8 @@ class IndustrialSite(InfrastructureSite):
             "roles": [role.value for role in self.roles],
             "products": list(self.products),
             "footprint_area_m2": self.footprint_area_m2,
+            "importance_score": self.importance_score,
+            "importance_tier": self.importance_tier.value,
         }
 
 
@@ -835,17 +845,20 @@ _NON_INDUSTRIAL_SITE_NAME_TOKENS = {
     "umspannwerk", "windpark", "solarpark", "biogasanlage", "tanklager",
 }
 
-_STRATEGIC_INDUSTRIAL_ROLES = frozenset({
-    IndustrialRole.HEAVY_INDUSTRY,
-    IndustrialRole.METALWORKS,
-    IndustrialRole.CHEMICAL,
-    IndustrialRole.MACHINERY,
-    IndustrialRole.AUTOMOTIVE,
-    IndustrialRole.ELECTRONICS,
-    IndustrialRole.CONSTRUCTION_MATERIALS,
-    IndustrialRole.SHIPYARD,
-    IndustrialRole.EXTRACTION,
-})
+_INDUSTRIAL_ROLE_IMPORTANCE: dict[IndustrialRole, float] = {
+    IndustrialRole.HEAVY_INDUSTRY: 78.0,
+    IndustrialRole.CHEMICAL: 72.0,
+    IndustrialRole.SHIPYARD: 72.0,
+    IndustrialRole.METALWORKS: 68.0,
+    IndustrialRole.MACHINERY: 62.0,
+    IndustrialRole.AUTOMOTIVE: 62.0,
+    IndustrialRole.ELECTRONICS: 60.0,
+    IndustrialRole.EXTRACTION: 52.0,
+    IndustrialRole.CONSTRUCTION_MATERIALS: 48.0,
+    IndustrialRole.TIMBER_PAPER: 38.0,
+    IndustrialRole.FOOD_PROCESSING: 33.0,
+    IndustrialRole.GENERAL_MANUFACTURING: 28.0,
+}
 
 
 def build_industrial_sites(
@@ -1181,7 +1194,7 @@ def _military_site_from_cluster(
         + (0.15 if explicit_role else 0.05)
         + (0.1 if names else 0.0),
     )
-    geometry, longitude, latitude = _normalized_military_footprint(cluster)
+    geometry, longitude, latitude = _normalized_feature_footprint(item.feature for item in cluster)
     footprint_area_m2 = _geometry_area_m2(geometry) or None
     targetable_candidate = bool(set(roles).intersection(_TARGETABLE_MILITARY_ROLES))
     importance_score = _military_importance_score(
@@ -1235,29 +1248,34 @@ def _military_candidate_key(candidate: _MilitaryCandidate) -> tuple[str, str]:
     return candidate.feature.source_id or "", candidate.feature.object_id
 
 
-def _normalized_military_footprint(
-    cluster: list[_MilitaryCandidate],
+def _normalized_feature_footprint(
+    features: Iterable[TopographyFeature],
 ) -> tuple[dict[str, Any], float, float]:
     try:
         from shapely import make_valid
         from shapely.geometry import Polygon, mapping, shape
         from shapely.ops import unary_union
     except ImportError as exc:
-        raise RuntimeError('military-site normalization requires: python -m pip install -e ".[topography]"') from exc
+        raise RuntimeError('infrastructure-site normalization requires: python -m pip install -e ".[topography]"') from exc
 
+    materialized = tuple(features)
+    if not materialized:
+        raise ValueError("infrastructure footprint requires at least one source feature")
     polygons = []
-    for candidate in cluster:
-        geometry = make_valid(shape(candidate.feature.geometry))
+    for feature in materialized:
+        geometry = make_valid(shape(feature.geometry))
         for polygon in _shapely_polygon_components(geometry):
             polygons.append(Polygon(polygon.exterior))
     if not polygons:
-        primary = cluster[0]
-        return primary.feature.geometry, primary.longitude, primary.latitude
+        primary = materialized[0]
+        longitude, latitude = _representative_coordinate(primary.geometry)
+        return primary.geometry, longitude, latitude
     geometry = make_valid(unary_union(polygons))
     polygon_components = _shapely_polygon_components(geometry)
     if not polygon_components:
-        primary = cluster[0]
-        return primary.feature.geometry, primary.longitude, primary.latitude
+        primary = materialized[0]
+        longitude, latitude = _representative_coordinate(primary.geometry)
+        return primary.geometry, longitude, latitude
     geometry = make_valid(unary_union(polygon_components))
     anchor = geometry.representative_point()
     return mapping(geometry), float(anchor.x), float(anchor.y)
@@ -1343,22 +1361,28 @@ def _industrial_site_from_cluster(
     operators = tuple(sorted({item.operator for item in cluster if item.operator}))
     names = [item.feature.name for item in ordered if item.feature.name]
     role_sources = tuple(sorted({source for item in cluster for source in item.role_sources}))
-    footprint_area_m2 = sum(item.area_m2 for item in cluster) or None
+    geometry, longitude, latitude = _normalized_feature_footprint(item.feature for item in cluster)
+    footprint_area_m2 = _geometry_area_m2(geometry) or None
     confidence = min(
         0.95,
         max(item.feature.confidence for item in cluster)
         + (0.1 if any(source in role_sources for source in ("industrial_tag", "category", "product")) else 0.0)
         + (0.1 if names or operators else 0.0),
     )
-    strategic_candidate = bool(set(roles).intersection(_STRATEGIC_INDUSTRIAL_ROLES)) or (
-        footprint_area_m2 is not None and footprint_area_m2 >= 50_000
+    importance_score = _industrial_importance_score(
+        roles,
+        footprint_area_m2=footprint_area_m2,
+        has_products=bool(products),
+        has_operator=bool(operators),
+        explicit_role=any(source in role_sources for source in ("industrial_tag", "category", "product")),
     )
+    strategic_candidate = importance_score >= 50
     return IndustrialSite(
         site_id=f"INDUSTRIAL_SITE:{digest}",
         kind=InfrastructureSiteKind.INDUSTRIAL,
-        geometry=primary.feature.geometry,
-        latitude=primary.latitude,
-        longitude=primary.longitude,
+        geometry=geometry,
+        latitude=latitude,
+        longitude=longitude,
         source=primary.feature.source,
         confidence=confidence,
         name=names[0] if names else (f"{operators[0]} industrial site" if operators else None),
@@ -1373,15 +1397,36 @@ def _industrial_site_from_cluster(
         roles=roles,
         products=products,
         footprint_area_m2=footprint_area_m2,
+        importance_score=importance_score,
+        importance_tier=_infrastructure_importance_tier(importance_score),
         properties={
             "member_count": len(cluster),
             "operators": list(operators),
             "role_sources": list(role_sources),
             "strategic_candidate": strategic_candidate,
             "scale": _industrial_scale(footprint_area_m2),
+            "geometry_method": "hole_free_union_of_source_components",
             "evidence_categories": sorted({item.feature.category for item in cluster}),
         },
     )
+
+
+def _industrial_importance_score(
+    roles: Iterable[IndustrialRole],
+    *,
+    footprint_area_m2: float | None,
+    has_products: bool,
+    has_operator: bool,
+    explicit_role: bool,
+) -> float:
+    materialized = tuple(roles)
+    role_score = max((_INDUSTRIAL_ROLE_IMPORTANCE[role] for role in materialized), default=0.0)
+    area_bonus = 0.0
+    if footprint_area_m2 and footprint_area_m2 > 10_000:
+        area_bonus = min(15.0, math.log10(footprint_area_m2 / 10_000.0) * 5.0)
+    evidence_bonus = (3.0 if explicit_role else 0.0) + (3.0 if has_products else 0.0) + (2.0 if has_operator else 0.0)
+    multi_role_bonus = min(4.0, max(0, len(materialized) - 1) * 2.0)
+    return round(min(100.0, max(0.0, role_score + area_bonus + evidence_bonus + multi_role_bonus)), 3)
 
 
 def _industrial_candidate_key(candidate: _IndustrialCandidate) -> tuple[str, str]:

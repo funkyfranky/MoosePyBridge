@@ -109,6 +109,7 @@ def format_site(site: InfrastructureSite) -> None:
         print(f"Products        : {', '.join(site.products) if site.products else 'unknown'}")
         area = f"{site.footprint_area_m2:,.0f} m2" if site.footprint_area_m2 is not None else "unknown"
         print(f"Footprint       : {area}")
+        print(f"Importance      : {site.importance_score:.1f} ({site.importance_tier.value})")
         print(f"Scale           : {site.properties.get('scale') or 'unknown'}")
         print(f"Strategic       : {bool(site.properties.get('strategic_candidate'))}")
         print(f"Components      : {len(site.component_ids)}")

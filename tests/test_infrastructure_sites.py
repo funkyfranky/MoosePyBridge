@@ -306,6 +306,8 @@ def test_industrial_builder_admits_supported_works_but_not_generic_estates() -> 
     assert isinstance(site, IndustrialSite)
     assert site.roles == (IndustrialRole.METALWORKS,)
     assert site.properties["strategic_candidate"] is True
+    assert site.importance_score >= 60
+    assert site.importance_tier.value == "high"
     assert artifact.metadata["excluded_industrial_counts"] == {
         "generic_industrial_area": 0,
         "weak_works": 1,
@@ -331,6 +333,50 @@ def test_industrial_builder_clusters_same_site_without_merging_neighbors() -> No
     assert site.roles == (IndustrialRole.METALWORKS, IndustrialRole.SHIPYARD)
     assert site.products == ("steel",)
     assert site.properties["member_count"] == 2
+    assert site.geometry["type"] == "MultiPolygon"
+    assert site.footprint_area_m2 > 0
+    assert site.importance_tier.value == "critical"
+
+
+def test_industrial_builder_fills_internal_footprint_holes() -> None:
+    feature = _industrial_feature("Chemical Alpha", "chemical", 12.0, 54.0)
+    feature = TopographyFeature(
+        object_id=feature.object_id,
+        layer=feature.layer,
+        category=feature.category,
+        geometry={
+            "type": "Polygon",
+            "coordinates": [
+                [[11.99, 53.99], [12.01, 53.99], [12.01, 54.01], [11.99, 54.01], [11.99, 53.99]],
+                [[11.999, 53.999], [12.001, 53.999], [12.001, 54.001], [11.999, 54.001], [11.999, 53.999]],
+            ],
+        },
+        source=feature.source,
+        source_id=feature.source_id,
+        confidence=feature.confidence,
+        name=feature.name,
+        properties=feature.properties,
+    )
+
+    site = build_industrial_sites((feature,), theater_id="GermanyCW").sites[0]
+
+    from shapely.geometry import shape
+
+    footprint = shape(site.geometry)
+    assert footprint.geom_type == "Polygon"
+    assert len(footprint.interiors) == 0
+    assert site.properties["geometry_method"] == "hole_free_union_of_source_components"
+
+
+def test_small_general_factory_is_not_automatically_strategic() -> None:
+    site = build_industrial_sites(
+        [_industrial_feature("Factory Alpha", "factory", 12.0, 54.0)],
+        theater_id="GermanyCW",
+    ).sites[0]
+
+    assert site.importance_score < 50
+    assert site.importance_tier.value == "local"
+    assert site.properties["strategic_candidate"] is False
 
 
 def test_industrial_site_round_trips_typed_properties() -> None:

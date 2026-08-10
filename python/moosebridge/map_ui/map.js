@@ -698,66 +698,93 @@
         continue;
       }
       if (["energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"].includes(spec.key)) {
-        if (spec.key === "military_sites") {
-          const militaryAreaFilter = [
+        if (["military_sites", "industrial_sites"].includes(spec.key)) {
+          const siteAreaFilter = [
             "all",
             ["==", ["get", "layer"], spec.key],
             ["in", ["geometry-type"], ["literal", ["Polygon", "MultiPolygon"]]],
             ["==", ["get", "site_geometry"], "area"],
           ];
-          const militaryColor = [
+          const siteColor = [
             "match", ["get", "importance_tier"],
-            "critical", "#873838", "high", "#8a5b37", "medium", "#73634c", spec.color,
+            "critical", spec.key === "military_sites" ? "#873838" : "#6f315f",
+            "high", spec.key === "military_sites" ? "#8a5b37" : "#754b70",
+            "medium", spec.key === "military_sites" ? "#73634c" : "#6d5d78",
+            spec.color,
           ];
           addMapLayer(spec, {
             type: "fill",
             source: "infrastructure-sites",
-            minzoom: 8,
-            filter: militaryAreaFilter,
+            minzoom: spec.key === "military_sites" ? 8 : 9,
+            filter: siteAreaFilter,
             paint: {
-              "fill-color": militaryColor,
-              "fill-opacity": ["case", ["==", ["get", "targetable_candidate"], true], 0.2, 0.1],
+              "fill-color": siteColor,
+              "fill-opacity": spec.key === "military_sites"
+                ? ["case", ["==", ["get", "targetable_candidate"], true], 0.2, 0.1]
+                : ["case", ["==", ["get", "strategic_candidate"], true], 0.2, 0.1],
             },
           });
           addMapLayer(spec, {
             type: "line",
             source: "infrastructure-sites",
-            minzoom: 8,
-            filter: militaryAreaFilter,
+            minzoom: spec.key === "military_sites" ? 8 : 9,
+            filter: siteAreaFilter,
             paint: {
-              "line-color": militaryColor,
+              "line-color": siteColor,
               "line-width": ["interpolate", ["linear"], ["zoom"], 8, 1.2, 13, 2.2],
               "line-opacity": 0.9,
             },
           });
         }
+        const detailedSite = ["military_sites", "industrial_sites"].includes(spec.key);
+        const sitePointFilter = [
+          "all",
+          ["==", ["get", "layer"], spec.key],
+          ["==", ["geometry-type"], "Point"],
+        ];
+        const siteCircleColor = detailedSite
+          ? ["match", ["get", "importance_tier"],
+            "critical", spec.key === "military_sites" ? "#873838" : "#6f315f",
+            "high", spec.key === "military_sites" ? "#8a5b37" : "#754b70",
+            "medium", spec.key === "military_sites" ? "#73634c" : "#6d5d78",
+            spec.color]
+          : spec.color;
+        const siteOverviewOpacity = spec.key === "industrial_sites"
+          ? ["step", ["zoom"],
+            ["match", ["get", "importance_tier"], "critical", 0.94, "high", 0.94, 0],
+            7, ["match", ["get", "importance_tier"], "critical", 0.94, "high", 0.94, "medium", 0.9, 0],
+            9, 0.94]
+          : 0.94;
+        const siteCirclePaint = {
+          "circle-radius": [
+            "interpolate", ["linear"], ["zoom"],
+            5, ["+", 2.5, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
+            9, ["+", 5, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
+            13, ["+", 7, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
+          ],
+          "circle-color": siteCircleColor,
+          "circle-stroke-color": "rgba(255,255,255,0.96)",
+          "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 10, 1.5],
+          "circle-opacity": siteOverviewOpacity,
+          "circle-stroke-opacity": siteOverviewOpacity,
+        };
         addMapLayer(spec, {
           type: "circle",
           source: "infrastructure-sites",
           minzoom: 5,
-          maxzoom: spec.key === "military_sites" ? 9 : 24,
-          filter: [
-            "all",
-            ["==", ["get", "layer"], spec.key],
-            ["==", ["geometry-type"], "Point"],
-          ],
-          paint: {
-            "circle-radius": [
-              "interpolate", ["linear"], ["zoom"],
-              5, ["+", 2.5, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
-              9, ["+", 5, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
-              13, ["+", 7, ["match", ["coalesce", ["get", "scale"], ""], "very_large", 2.5, "large", 1.5, "medium", 0.75, 0]],
-            ],
-            "circle-color": spec.key === "military_sites"
-              ? ["match", ["get", "importance_tier"], "critical", "#873838", "high", "#8a5b37", "medium", "#73634c", spec.color]
-              : spec.key === "industrial_sites"
-              ? ["case", ["==", ["get", "strategic_candidate"], true], spec.color, "#858b87"]
-              : spec.color,
-            "circle-stroke-color": "rgba(255,255,255,0.96)",
-            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 5, 0.6, 10, 1.5],
-            "circle-opacity": 0.94,
-          },
+          maxzoom: spec.key === "military_sites" ? 9 : spec.key === "industrial_sites" ? 10 : 24,
+          filter: sitePointFilter,
+          paint: siteCirclePaint,
         });
+        if (detailedSite) {
+          addMapLayer(spec, {
+            type: "circle",
+            source: "infrastructure-sites",
+            minzoom: spec.key === "military_sites" ? 9 : 10,
+            filter: ["all", ...sitePointFilter.slice(1), ["==", ["get", "source_geometry_type"], "Point"]],
+            paint: { ...siteCirclePaint, "circle-opacity": 0.94, "circle-stroke-opacity": 0.94 },
+          });
+        }
         continue;
       }
       if (spec.key === "settlements") {
@@ -1068,9 +1095,9 @@
     for (const feature of latestInfrastructureSites.features) {
       const longitude = Number(feature.properties?.longitude);
       const latitude = Number(feature.properties?.latitude);
-      const isMilitaryArea = feature.properties?.layer === "military_sites"
+      const isDetailedArea = ["military_sites", "industrial_sites"].includes(feature.properties?.layer)
         && ["Polygon", "MultiPolygon"].includes(feature.geometry?.type);
-      if (isMilitaryArea) {
+      if (isDetailedArea) {
         displayFeatures.push({
           ...feature,
           properties: {
@@ -1081,7 +1108,7 @@
         });
       }
       if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) {
-        if (!isMilitaryArea) displayFeatures.push(feature);
+        if (!isDetailedArea) displayFeatures.push(feature);
         continue;
       }
       displayFeatures.push({
@@ -1514,7 +1541,8 @@
     tracked_object_id: "Tracked object", source_layer: "Source layer", sample_count: "Samples", track_sample_count: "Track samples",
     derived_speed_kts: "Current speed", derived_heading_deg: "Movement heading", track_distance_m: "Track distance",
     track_duration_s: "Track duration", distance_m: "Distance", duration_s: "Duration", average_speed_mps: "Average speed",
-    last_update_mission_time: "Last DCS update",
+    last_update_mission_time: "Last DCS update", footprint_area_m2: "Footprint area",
+    importance_score: "Importance score", importance_tier: "Importance tier",
   };
 
   function humanizeKey(key) {
@@ -1524,6 +1552,13 @@
   function formattedField(key, value) {
     if (key === "radius_m") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m`;
     if (key === "capacity_m3") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m³`;
+    if (key === "footprint_area_m2") {
+      const area = Number(value);
+      return area >= 1_000_000
+        ? `${(area / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 2 })} km²`
+        : `${area.toLocaleString("en-US", { maximumFractionDigits: 0 })} m²`;
+    }
+    if (key === "importance_score") return Number(value).toFixed(1);
     if (key === "speed" || key === "speed_kts") return `${Number(value).toFixed(1)} kt`;
     if (key === "derived_speed_kts") return `${Number(value).toFixed(1)} kt`;
     if (key === "derived_heading_deg") return `${Number(value).toFixed(1)}°`;
