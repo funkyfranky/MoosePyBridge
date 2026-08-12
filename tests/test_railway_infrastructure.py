@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 from moosebridge import (
+    RailwayCriticalityConfig,
+    RailwayImportanceTier,
+    RailwayLocation,
     RailwayLocationKind,
     TheaterRailwayInfrastructure,
     TopographyFeature,
     TopographyLayer,
+    analyze_railway_criticality,
     build_railway_infrastructure,
+    build_railway_routing_network,
 )
 
 
@@ -51,13 +56,13 @@ def test_builds_aggregated_operational_railway_locations() -> None:
 
     kinds = [location.kind for location in result.locations]
     assert kinds.count(RailwayLocationKind.STATION) == 1
-    assert kinds.count(RailwayLocationKind.MARSHALLING_YARD) == 1
+    assert kinds.count(RailwayLocationKind.RAIL_YARD) == 1
     assert kinds.count(RailwayLocationKind.JUNCTION) == 1
     assert kinds.count(RailwayLocationKind.BRIDGE) == 1
     station = next(location for location in result.locations if location.kind is RailwayLocationKind.STATION)
     assert station.member_count == 2
     assert station.name == "Test Central"
-    yard = next(location for location in result.locations if location.kind is RailwayLocationKind.MARSHALLING_YARD)
+    yard = next(location for location in result.locations if location.kind is RailwayLocationKind.RAIL_YARD)
     assert yard.member_count == 2
     assert yard.track_length_m > 0
 
@@ -74,3 +79,99 @@ def test_railway_geojson_round_trip(tmp_path) -> None:
 
     assert restored == result
     assert all(feature["geometry"]["type"] == "Point" for feature in restored.to_geojson()["features"])
+
+
+def test_bridge_clustering_does_not_chain_distant_structures() -> None:
+    tracks = [
+        _track("RAIL:B1", [[12.0000, 54.0], [12.0001, 54.0]], bridge="yes"),
+        _track("RAIL:B2", [[12.0037, 54.0], [12.0038, 54.0]], bridge="yes"),
+        _track("RAIL:B3", [[12.0074, 54.0], [12.0075, 54.0]], bridge="yes"),
+    ]
+
+    result = build_railway_infrastructure(
+        tracks,
+        theater_id="Test",
+        cluster_radius_m=300,
+    )
+
+    bridges = [location for location in result.locations if location.kind is RailwayLocationKind.BRIDGE]
+    assert len(bridges) == 2
+    assert sorted(location.member_count for location in bridges) == [1, 2]
+
+
+def test_railway_routing_round_trip_and_route(tmp_path) -> None:
+    network = build_railway_routing_network(
+        [
+            _track("RAIL:1", [[12.0, 54.0], [12.01, 54.0]]),
+            _track("RAIL:2", [[12.01, 54.0], [12.02, 54.0]], bridge="yes"),
+        ],
+        theater_id="Test",
+    )
+
+    route = network.route(54.0, 12.0, 54.0, 12.02)
+    restored = type(network).load(network.save(tmp_path / "railway-routing.npz"))
+
+    assert route is not None
+    assert route.edge_count == 2
+    assert route.distance_m > 1_000
+    assert restored.node_count == network.node_count
+    assert restored.edge_count == network.edge_count
+
+
+def test_railway_criticality_detects_disconnection() -> None:
+    tracks = [
+        _track("RAIL:1", [[12.0, 54.0], [12.01, 54.0]]),
+        _track("RAIL:2", [[12.01, 54.0], [12.02, 54.0]], bridge="yes"),
+        _track("RAIL:3", [[12.02, 54.0], [12.03, 54.0]]),
+    ]
+    network = build_railway_routing_network(tracks, theater_id="Test")
+    location = RailwayLocation(
+        location_id="RAILWAY_BRIDGE:Test:1",
+        kind=RailwayLocationKind.BRIDGE,
+        latitude=54.0,
+        longitude=12.015,
+        importance_score=75,
+        importance_tier=RailwayImportanceTier.HIGH,
+    )
+    infrastructure = TheaterRailwayInfrastructure(theater_id="Test", locations=(location,))
+
+    analyzed = analyze_railway_criticality(
+        network,
+        infrastructure,
+        config=RailwayCriticalityConfig(bridge_block_radius_m=400, maximum_route_m=20_000),
+    )
+
+    properties = analyzed.locations[0].properties
+    assert properties["network_analysis_complete"] is True
+    assert properties["network_disconnected_if_lost"] is True
+    assert properties["network_criticality_score"] == 100
+
+
+def test_railway_criticality_records_alternative_route() -> None:
+    tracks = [
+        _track("RAIL:1", [[12.0, 54.0], [12.01, 54.0]]),
+        _track("RAIL:2", [[12.01, 54.0], [12.02, 54.0]], bridge="yes"),
+        _track("RAIL:3", [[12.02, 54.0], [12.03, 54.0]]),
+        _track("RAIL:4", [[12.01, 54.0], [12.01, 54.01], [12.02, 54.01], [12.02, 54.0]]),
+    ]
+    network = build_railway_routing_network(tracks, theater_id="Test")
+    location = RailwayLocation(
+        location_id="RAILWAY_BRIDGE:Test:2",
+        kind=RailwayLocationKind.BRIDGE,
+        latitude=54.0,
+        longitude=12.015,
+        importance_score=75,
+        importance_tier=RailwayImportanceTier.HIGH,
+    )
+
+    analyzed = analyze_railway_criticality(
+        network,
+        TheaterRailwayInfrastructure(theater_id="Test", locations=(location,)),
+        config=RailwayCriticalityConfig(bridge_block_radius_m=400, maximum_route_m=20_000),
+    )
+
+    properties = analyzed.locations[0].properties
+    assert properties["network_disconnected_if_lost"] is False
+    assert properties["network_alternative_route_found"] is True
+    assert properties["network_detour_added_m"] > 0
+    assert properties["network_detour_ratio"] > 1

@@ -226,6 +226,13 @@ from .railway_infrastructure import (
     TheaterRailwayInfrastructure,
     build_railway_infrastructure,
 )
+from .railway_routing import (
+    RailwayCriticalityConfig,
+    RailwayRoute,
+    RailwayRoutingNetwork,
+    analyze_railway_criticality,
+    build_railway_routing_network,
+)
 from .infrastructure_sites import (
     EnergySite,
     EnergySource,
@@ -904,6 +911,11 @@ __all__ = [
     "RailwayLocationKind",
     "TheaterRailwayInfrastructure",
     "build_railway_infrastructure",
+    "RailwayCriticalityConfig",
+    "RailwayRoute",
+    "RailwayRoutingNetwork",
+    "analyze_railway_criticality",
+    "build_railway_routing_network",
     "TransportJunction",
     "TransportJunctionKind",
     "TransportImportanceTier",

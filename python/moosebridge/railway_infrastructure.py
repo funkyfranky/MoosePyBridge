@@ -23,7 +23,7 @@ DEFAULT_RAILWAY_CLUSTER_RADIUS_M = 350.0
 class RailwayLocationKind(StrEnum):
     STATION = "station"
     FREIGHT_TERMINAL = "freight_terminal"
-    MARSHALLING_YARD = "marshalling_yard"
+    RAIL_YARD = "rail_yard"
     DEPOT = "depot"
     JUNCTION = "junction"
     BRIDGE = "bridge"
@@ -224,7 +224,11 @@ def build_railway_infrastructure(
     clustered: list[_Candidate] = []
     for kind in RailwayLocationKind:
         radius = 180.0 if kind is RailwayLocationKind.STATION else cluster_radius_m
-        clustered.extend(_cluster_candidates([candidate for candidate in candidates if candidate.kind is kind], radius))
+        clustered.extend(_cluster_candidates(
+            [candidate for candidate in candidates if candidate.kind is kind],
+            radius,
+            allow_chaining=kind is not RailwayLocationKind.BRIDGE,
+        ))
     locations = tuple(sorted((_location(theater_id, candidate) for candidate in clustered), key=lambda item: item.location_id))
     return TheaterRailwayInfrastructure(
         theater_id=theater_id,
@@ -244,7 +248,7 @@ def _facility_candidates(features: Iterable[TopographyFeature]) -> list[_Candida
         "railway_station": RailwayLocationKind.STATION,
         "railway_halt": RailwayLocationKind.STATION,
         "railway_freight_terminal": RailwayLocationKind.FREIGHT_TERMINAL,
-        "railway_yard": RailwayLocationKind.MARSHALLING_YARD,
+        "railway_yard": RailwayLocationKind.RAIL_YARD,
         "railway_depot": RailwayLocationKind.DEPOT,
     }
     scores = {
@@ -296,7 +300,7 @@ def _track_site_candidates(tracks: Iterable[TopographyFeature]) -> list[_Candida
         railway = str(tags.get("railway") or "").casefold()
         freight = str(tags.get("freight") or "").casefold()
         if service == "yard" or railway == "yard":
-            kind, score = RailwayLocationKind.MARSHALLING_YARD, 32.0
+            kind, score = RailwayLocationKind.RAIL_YARD, 32.0
         elif railway in {"depot", "engine_shed", "roundhouse", "workshop"}:
             kind, score = RailwayLocationKind.DEPOT, 48.0
         elif railway in {"freight_terminal", "container_terminal"} or freight in {"yes", "only"}:
@@ -374,7 +378,12 @@ def _bridge_candidates(tracks: Iterable[TopographyFeature]) -> list[_Candidate]:
     return output
 
 
-def _cluster_candidates(candidates: list[_Candidate], radius_m: float) -> list[_Candidate]:
+def _cluster_candidates(
+    candidates: list[_Candidate],
+    radius_m: float,
+    *,
+    allow_chaining: bool = True,
+) -> list[_Candidate]:
     if not candidates:
         return []
     from pyproj import Transformer
@@ -409,7 +418,8 @@ def _cluster_candidates(candidates: list[_Candidate], radius_m: float) -> list[_
                     unseen.remove(index)
                     buckets[(math.floor(px / cell_size), math.floor(py / cell_size))].discard(index)
                     members.append(index)
-                    queue.append(index)
+                    if allow_chaining:
+                        queue.append(index)
         result.append(_merge_candidates([candidates[index] for index in members]))
     return result
 

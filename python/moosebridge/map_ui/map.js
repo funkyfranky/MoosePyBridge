@@ -33,7 +33,7 @@
       children: [
         { key: "station", label: "Stations", icon: "train-front", default: false },
         { key: "freight_terminal", label: "Freight terminals", icon: "container", default: false },
-        { key: "marshalling_yard", label: "Marshalling yards", icon: "git-fork", default: false },
+        { key: "rail_yard", label: "Rail yards", icon: "git-fork", default: false },
         { key: "depot", label: "Depots", icon: "warehouse", default: false },
         { key: "junction", label: "Rail junctions", icon: "network", default: false },
         { key: "bridge", label: "Rail bridges", icon: "construction", default: false },
@@ -727,7 +727,7 @@
               "match", ["get", "map_category"],
               "station", "#4f5552",
               "freight_terminal", "#76578b",
-              "marshalling_yard", "#7b6332",
+              "rail_yard", "#7b6332",
               "depot", "#6c5b48",
               "junction", "#176f77",
               "bridge", "#a56a27",
@@ -1598,6 +1598,11 @@
     track_duration_s: "Track duration", distance_m: "Distance", duration_s: "Duration", average_speed_mps: "Average speed",
     last_update_mission_time: "Last DCS update", footprint_area_m2: "Footprint area",
     importance_score: "Importance score", importance_tier: "Importance tier",
+    network_analysis_complete: "Analysis", network_disconnected_if_lost: "Loss effect",
+    network_alternative_route_found: "Alternative route", network_criticality_score: "Network criticality",
+    network_detour_added_m: "Additional distance", network_detour_distance_m: "Detour distance",
+    network_detour_ratio: "Detour ratio", network_portal_pair_count: "Tested route pairs",
+    network_analysis_radius_m: "Analysis radius", network_analysis_limit_m: "Route limit",
   };
 
   function humanizeKey(key) {
@@ -1614,6 +1619,12 @@
         : `${area.toLocaleString("en-US", { maximumFractionDigits: 0 })} m²`;
     }
     if (key === "importance_score") return Number(value).toFixed(1);
+    if (key === "network_criticality_score") return `${Number(value).toFixed(1)} / 100`;
+    if (key === "network_detour_ratio") return `${Number(value).toFixed(2)}x`;
+    if (["network_detour_added_m", "network_detour_distance_m", "network_analysis_radius_m", "network_analysis_limit_m"].includes(key)) {
+      const distance = Number(value);
+      return distance >= 1000 ? `${(distance / 1000).toFixed(1)} km` : `${distance.toFixed(0)} m`;
+    }
     if (key === "speed" || key === "speed_kts") return `${Number(value).toFixed(1)} kt`;
     if (key === "derived_speed_kts") return `${Number(value).toFixed(1)} kt`;
     if (key === "derived_heading_deg") return `${Number(value).toFixed(1)}°`;
@@ -1669,6 +1680,43 @@
     return rows;
   }
 
+  function railNetworkImpactRows(properties, consumed) {
+    if (properties.network_analysis_complete === undefined) return [];
+    const keys = [
+      "network_analysis_complete", "network_disconnected_if_lost", "network_alternative_route_found",
+      "network_criticality_score", "network_detour_added_m", "network_detour_distance_m",
+      "network_detour_ratio", "network_portal_pair_count", "network_analysis_radius_m",
+      "network_analysis_limit_m",
+    ];
+    keys.forEach((key) => consumed.add(key));
+    if (!properties.network_analysis_complete) return [["Analysis", "Not completed"]];
+
+    const lossEffect = properties.network_disconnected_if_lost
+      ? "Network disconnected"
+      : properties.network_alternative_route_found
+        ? "Detour required"
+        : "No material route impact";
+    const rows = [
+      ["Analysis", "Complete"],
+      ["Loss effect", lossEffect],
+      ["Network criticality", formattedField("network_criticality_score", properties.network_criticality_score)],
+      ["Tested route pairs", readableValue(properties.network_portal_pair_count)],
+      ["Alternative route", properties.network_alternative_route_found ? "Available" : "None"],
+    ];
+    if (properties.network_alternative_route_found) {
+      rows.push(
+        ["Additional distance", formattedField("network_detour_added_m", properties.network_detour_added_m)],
+        ["Detour distance", formattedField("network_detour_distance_m", properties.network_detour_distance_m)],
+        ["Detour ratio", formattedField("network_detour_ratio", properties.network_detour_ratio)],
+      );
+    }
+    rows.push(
+      ["Analysis radius", formattedField("network_analysis_radius_m", properties.network_analysis_radius_m)],
+      ["Route limit", formattedField("network_analysis_limit_m", properties.network_analysis_limit_m)],
+    );
+    return rows.filter(([, value]) => value !== undefined && value !== null && !String(value).includes("NaN"));
+  }
+
   function showDetails(feature) {
     selectedFeature = feature;
     const properties = feature.properties || {};
@@ -1713,6 +1761,10 @@
       operational.splice(Math.max(0, start), 2, ["Strength", `${properties.alive_unit_count} / ${properties.unit_count} alive`]);
     }
     addDetailSection("Operational", "activity", operational);
+
+    if (properties.layer === "railway_infrastructure") {
+      addDetailSection("Rail network impact", "network", railNetworkImpactRows(properties, consumed));
+    }
 
     if (properties.layer === "airbases") {
       consumed.add("airbase_id");

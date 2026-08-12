@@ -17,7 +17,14 @@ PYTHON_ROOT = REPO_ROOT / "python"
 if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
-from moosebridge import TopographyFeature, TopographyLayer, build_railway_infrastructure  # noqa: E402
+from moosebridge import (  # noqa: E402
+    RailwayCriticalityConfig,
+    TopographyFeature,
+    TopographyLayer,
+    analyze_railway_criticality,
+    build_railway_infrastructure,
+    build_railway_routing_network,
+)
 from moosebridge.pbf_topography import _normalize_ogr_record, features_from_pyrosm_record  # noqa: E402
 from moosebridge.topography_coverage import TheaterTopographyCoverage  # noqa: E402
 
@@ -28,6 +35,7 @@ DEFAULT_PBF_DIR = REPO_ROOT / "tmp" / "topography" / "pbf"
 DEFAULT_COVERAGE = REPO_ROOT / "tmp" / "topography" / "GermanyCW-coverage.geojson"
 DEFAULT_FACILITY_CACHE = REPO_ROOT / "tmp" / "topography" / "railway_facility_cache"
 DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-railway-infrastructure.geojson"
+DEFAULT_ROUTING_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-railway-routing.npz"
 
 
 def main() -> int:
@@ -37,6 +45,9 @@ def main() -> int:
     parser.add_argument("--pbf-dir", type=Path, default=DEFAULT_PBF_DIR)
     parser.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--routing-output", type=Path, default=DEFAULT_ROUTING_OUTPUT)
+    parser.add_argument("--analyze-criticality", action="store_true")
+    parser.add_argument("--maximum-route-km", type=float, default=100.0)
     parser.add_argument("--facility-cache", type=Path, default=DEFAULT_FACILITY_CACHE)
     parser.add_argument("--refresh-facilities", action="store_true")
     parser.add_argument("--cluster-radius", type=float, default=350.0)
@@ -76,6 +87,19 @@ def main() -> int:
         cluster_radius_m=args.cluster_radius,
     )
     built = perf_counter()
+    routing = None
+    if args.analyze_criticality:
+        routing = build_railway_routing_network(
+            tracks.values(),
+            theater_id=str(manifest.get("theater_id") or config.get("theater_id") or ""),
+        )
+        routing.save(args.routing_output)
+        artifact = analyze_railway_criticality(
+            routing,
+            artifact,
+            config=RailwayCriticalityConfig(maximum_route_m=args.maximum_route_km * 1_000),
+        )
+    analyzed = perf_counter()
     output = artifact.save(args.output)
     saved = perf_counter()
     counts = artifact.to_geojson()["properties"]["counts"]
@@ -88,10 +112,13 @@ def main() -> int:
     print(f"  raw facility features: {len(facilities)}")
     print("  locations: " + ", ".join(f"{key}={value}" for key, value in counts.items()))
     print("  importance: " + ", ".join(f"{key}={value}" for key, value in tiers.items()))
+    if routing is not None:
+        print(f"  routing graph: {routing.node_count} nodes, {routing.edge_count} edges -> {args.routing_output}")
+        print(f"  criticality locations: {artifact.metadata.get('railway_criticality_location_count', 0)}")
     print(
-        "  tracks/facilities/build/save: "
+        "  tracks/facilities/build/analysis/save: "
         f"{tracks_loaded-started:.2f}s / {facilities_loaded-tracks_loaded:.2f}s / "
-        f"{built-facilities_loaded:.2f}s / {saved-built:.2f}s"
+        f"{built-facilities_loaded:.2f}s / {analyzed-built:.2f}s / {saved-analyzed:.2f}s"
     )
     return 0
 

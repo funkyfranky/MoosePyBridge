@@ -1769,6 +1769,18 @@ Operational railway locations use a separate aggregated cache:
 python tools/build_railway_infrastructure.py
 ```
 
+Optional offline railway-network and failure analysis is enabled explicitly:
+
+```powershell
+python tools/build_railway_infrastructure.py --analyze-criticality
+```
+
+This additionally writes `GermanyCW-railway-routing.npz` and assesses only
+high or critical rail junctions and bridges. A failed bridge blocks its rail
+edges; a failed junction blocks its local graph nodes. The resulting
+properties distinguish network disconnection from an available but longer
+alternative route. The expensive analysis is not run by the map server.
+
 This reads ordinary railway lines from the indexed topography shards and only
 the relevant station, halt, freight, yard, and depot tags from the local
 Geofabrik PBF files. Per-source facility reads are cached below
@@ -1778,7 +1790,7 @@ classification have changed. A bounded regional diagnostic can be generated
 with `--source mecklenburg-vorpommern`.
 
 The resulting `tmp/topography/GermanyCW-railway-infrastructure.geojson`
-contains aggregated stations, freight terminals, marshalling yards, depots,
+contains aggregated stations, freight terminals, rail yards, depots,
 rail junctions, and rail bridges. Ordinary track remains in the Topography
 layer and is not duplicated as infrastructure. Each operational location keeps
 its source members and receives a transparent importance score and tier based

@@ -209,7 +209,8 @@ remaining sites stay available as geographic and economic context.
 
 ### Rail infrastructure
 
-- Major stations, freight terminals, depots, and marshalling yards
+- Major stations, freight terminals, depots, and rail yards. The generic OSM
+  `service=yard` tag is not treated as proof of a dedicated marshalling yard.
 - Rail junctions and rail bridges where network disruption matters
 - Ordinary track remains topographic and routing context
 
@@ -220,8 +221,8 @@ features are combined into stable operational locations while retaining their
 source IDs. Mainline graph degree supplies rail-junction candidates; tagged
 track structures supply rail bridges. The output is
 `tmp/topography/GermanyCW-railway-infrastructure.geojson` and is exposed as a
-grouped browser layer with independent station, freight-terminal,
-marshalling-yard, depot, junction, and bridge controls.
+grouped browser layer with independent station, freight-terminal, rail-yard,
+depot, junction, and bridge controls.
 
 Importance is role-led and refined by source membership, facility extent, and
 branch count. The current tiers are an initial operational ranking. DCS/F10

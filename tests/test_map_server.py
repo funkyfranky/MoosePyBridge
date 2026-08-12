@@ -668,3 +668,5 @@ def test_map_ui_exposes_grouped_railway_infrastructure() -> None:
     assert 'key: "railway_infrastructure", label: "Rail infrastructure"' in map_script
     assert 'fetch("/api/railway-infrastructure/global.geojson")' in map_script
     assert 'source: "railway-infrastructure"' in map_script
+    assert 'addDetailSection("Rail network impact", "network"' in map_script
+    assert '"Network disconnected"' in map_script

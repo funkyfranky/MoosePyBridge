@@ -136,20 +136,15 @@ Priorities:
   refinery, power station, port, or rail yard is not represented by hundreds of
   independent target markers.
 - [x] **Normalize operational railway locations.** Aggregate stations, freight
-  terminals, marshalling yards, depots, mainline junctions, and railway bridges
+  terminals, rail yards, depots, mainline junctions, and railway bridges
   into stable typed objects while keeping ordinary track as topographic and
   routing context. Targeted PBF reads are resumable through a per-source cache,
   and the browser exposes one grouped railway-infrastructure layer.
-- [ ] **Validate railway infrastructure against GermanyCW.** Compare a
-  representative major station, freight or marshalling yard, junction, and rail
-  bridge with the DCS F10 map and bounded scenery surveys. Record absent or
-  historically uncertain modern OSM facilities instead of silently accepting
-  them.
-- [ ] **Add railway network criticality and operational effects.** Build a
-  railway routing graph, measure detours or disconnection when a junction or
-  bridge is unavailable, and distinguish location importance from verified DCS
-  damage state. Use validated high-value locations as candidates for later
-  strategic objectives and supply-line reasoning.
+- [x] **Establish railway validation and network-analysis tooling.** Bounded
+  scenery surveys and F10 overlays support DCS comparison. A compact routing
+  graph measures bridge and junction loss as disconnection or detour, bridge
+  clustering cannot form kilometer-long chains, and the map detail panel shows
+  the resulting network impact. Remaining railway work is deferred below.
 - [ ] **Add category-specific importance and dependency analysis.** Rank sites
   with transparent evidence appropriate to their role: capacity and network
   position for energy, storage and distribution role for fuel, production and
@@ -180,6 +175,41 @@ Priorities:
   destroyed, repaired, or captured state from events and snapshots. Keep the
   immutable source site intact so damage and coalition control do not rewrite
   the geographic cache.
+
+## P2 - Deferred railway infrastructure
+
+- [ ] **Finish representative GermanyCW validation.** Complete and record the
+  F10/scenery comparison for a major station, freight terminal or rail yard,
+  junction, and the mainland-Rugen railway bridge. Persist `confirmed`,
+  `dcs_visual_only`, `approximate`, `historically_uncertain`, and
+  `not_represented_in_dcs` evidence instead of keeping test conclusions only in
+  example output.
+- [ ] **Calibrate railway classification and importance.** Refine station
+  importance with station category, service, passenger or freight role, and
+  measured network impact. Review rail-yard and bridge aggregation thresholds,
+  unusually long single OSM bridge objects, and the critical/high/medium tier
+  boundaries against representative GermanyCW locations.
+- [ ] **Validate and extend railway criticality.** Check graph topology and
+  portal selection against known corridors, calibrate bridge and junction
+  blocking radii, and evaluate whether medium-tier structures also need bounded
+  analysis. Retain explicit evidence for no-route, disconnection, and detour
+  results, including uncertainty near theater and data-source boundaries.
+- [ ] **Expose railway routing as a stable SDK service.** Add bounded route and
+  disruption queries with cache identity, provenance, diagnostics, and
+  predictable failure results. Keep the expensive theater graph offline or
+  cached so map refresh and tactical DCS processing are unaffected.
+- [ ] **Model runtime railway disruption and restoration.** Associate selected
+  railway locations with scenario-defined DCS scenery, statics, zones, or
+  events; track intact, damaged, blocked, destroyed, and repaired state; and
+  invalidate affected cached routes only when an explicit association changes.
+- [ ] **Use railway effects in strategic reasoning.** Let Python evaluate
+  protection, interdiction, repair, rerouting, and supply-corridor consequences.
+  Promote only validated or scenario-approved locations to strategic objectives;
+  OSM importance or graph criticality alone must never create an attack goal.
+- [ ] **Finish railway map ergonomics.** Add independent importance filters and
+  optional network-impact filtering while retaining the grouped station,
+  terminal, yard, depot, junction, and bridge controls and zoom-dependent
+  density.
 
 ## P2 - Deferred transport infrastructure
 
