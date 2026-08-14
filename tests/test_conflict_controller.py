@@ -137,3 +137,38 @@ def test_first_snapshot_preserves_configured_objectives_and_declares_war_after_r
         assert cycle.portfolio.selected == ()
 
     asyncio.run(scenario())
+
+
+def test_preview_cycle_preserves_current_relationship() -> None:
+    async def scenario() -> None:
+        client = MooseBridgeClient(MooseBridgeServer())
+        client.add_strategic_objective(
+            _objective("OBJECTIVE:Enemy Zone", ObjectiveKind.OPSZONE, owner="red"),
+            sync=False,
+        )
+
+        async def snapshot_statics() -> dict[str, object]:
+            return {"ok": True}
+
+        async def refresh_tactical_picture(coalition: str, intel_id: str) -> TacticalPicture:
+            return TacticalPicture(coalition=coalition, intel_id=intel_id)
+
+        async def refresh_legion_state() -> object:
+            return client.state
+
+        client.snapshot_statics = snapshot_statics  # type: ignore[method-assign]
+        client.refresh_tactical_picture = refresh_tactical_picture  # type: ignore[method-assign]
+        client.refresh_legion_state = refresh_legion_state  # type: ignore[method-assign]
+
+        cycle = await RuleBasedConflictController(client).run_cycle(
+            execute=False,
+            manage_relationship=False,
+        )
+
+        assert client.relationship.state is RelationshipState.PEACE
+        assert client.relationship.incidents == []
+        assert cycle.generated_goal_ids == ()
+        assert cycle.goal_generation.goals == ()
+        assert "peace" in cycle.goal_generation.rejected[0].reason
+
+    asyncio.run(scenario())

@@ -2682,6 +2682,7 @@ class MooseBridgeClient:
             intel_contacts=list(self.state.intel_contact_objects.values()),
             intel_clusters=list(self.state.intel_cluster_objects.values()),
             loss_reports=list(self.state.loss_reports.values()),
+            strategic_objectives=list(self.strategic_objectives()),
             strategic_scope=self.build_strategic_scope(strict=False),
         )
 
@@ -3707,6 +3708,66 @@ class MooseBridgeClient:
         """
 
         return require_ok(await self.server.mark_object(object_id, text))
+
+    async def mark_map_position(
+        self,
+        text: str,
+        *,
+        x: float | None = None,
+        z: float | None = None,
+        y: float = 0.0,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        altitude: float = 0.0,
+        coalition: str | int = "all",
+        read_only: bool = False,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        """Create a compact native marker at a DCS or WGS84 map position.
+
+        Supply either ``x`` and ``z`` or ``latitude`` and ``longitude``.
+        WGS84 coordinates are converted inside DCS with ``coord.LLtoLO``.
+        """
+
+        marker_text = str(text).strip()
+        if not marker_text:
+            raise ValueError("marker text must not be empty")
+        if len(marker_text) > 180:
+            raise ValueError("marker text accepts at most 180 characters")
+        local_position = x is not None or z is not None
+        geographic_position = latitude is not None or longitude is not None
+        if local_position == geographic_position:
+            raise ValueError("supply either x/z or latitude/longitude")
+        if local_position:
+            values = (x, y, z)
+            if x is None or z is None or not all(math.isfinite(float(value)) for value in values):
+                raise ValueError("x, y and z must be finite numbers")
+            point = {"x": float(x), "y": float(y), "z": float(z)}
+        else:
+            values = (latitude, longitude, altitude)
+            if latitude is None or longitude is None or not all(math.isfinite(float(value)) for value in values):
+                raise ValueError("latitude, longitude and altitude must be finite numbers")
+            if not -90 <= float(latitude) <= 90 or not -180 <= float(longitude) <= 180:
+                raise ValueError("latitude/longitude is outside WGS84 bounds")
+            point = {
+                "latitude": float(latitude),
+                "longitude": float(longitude),
+                "altitude": float(altitude),
+            }
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="map.marker.create",
+                    params={
+                        "point": point,
+                        "text": marker_text,
+                        "coalition": validate_draw_zone_coalition(coalition),
+                        "read_only": bool(read_only),
+                    },
+                ),
+                timeout=timeout,
+            )
+        )
 
     async def coords(self, object_id: str, format: str = "xyz", timeout: float = 10.0) -> CoordinateResult:
         """Resolve coordinates for a bridge object id.

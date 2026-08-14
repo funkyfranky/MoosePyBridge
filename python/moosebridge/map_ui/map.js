@@ -71,6 +71,7 @@
         { key: "uncovered", label: "Uncovered components", icon: "circle-alert", color: "#c45b32", default: true },
       ],
     },
+    { key: "strategic_objectives", label: "Strategic objectives", color: "#7d3f68", icon: "flag-triangle-right", size: 1.12, default: true },
     { key: "missions", label: "Missions", color: "#ad3c76", icon: "target", size: 1.05, default: true },
   ];
   const layerSections = [
@@ -100,7 +101,7 @@
     },
     {
       key: "operations", label: "Operations", icon: "target", color: "#ad3c76",
-      layers: ["legions", "missions"],
+      layers: ["legions", "strategic_objectives", "missions"],
     },
     {
       key: "events", label: "Events", icon: "history", color: "#8f3434",
@@ -114,7 +115,7 @@
   const coalitionColors = { blue: "#2776b9", red: "#c44343", neutral: "#858d88", unknown: "#59635e" };
   const filterSpecs = [
     {
-      key: "coalition", label: "Coalition",
+      key: "coalition", property: "map_coalition", label: "Coalition",
       options: [
         { key: "blue", label: "Blue", icon: "flag", color: "#2776b9" },
         { key: "red", label: "Red", icon: "flag", color: "#c44343" },
@@ -123,11 +124,43 @@
       ],
     },
     {
-      key: "status", label: "Status",
+      key: "status", property: "map_status", label: "Status",
       options: [
         { key: "alive", label: "Alive", icon: "activity", color: "#25865f" },
         { key: "dead", label: "Dead", icon: "circle-off", color: "#a65353" },
         { key: "unknown", label: "No status", icon: "circle-help", color: "#65716b" },
+      ],
+    },
+    {
+      key: "objective_owner", property: "objective_owner", layer: "strategic_objectives", label: "Objective owner",
+      options: [
+        { key: "blue", label: "Blue", icon: "flag", color: "#2776b9" },
+        { key: "red", label: "Red", icon: "flag", color: "#c44343" },
+        { key: "neutral", label: "Neutral", icon: "flag", color: "#858d88" },
+        { key: "unassigned", label: "Unassigned", icon: "circle-help", color: "#65716b" },
+      ],
+    },
+    {
+      key: "objective_category", property: "objective_category", layer: "strategic_objectives", label: "Objective category",
+      options: [
+        { key: "airbase", label: "Airbase", icon: "plane-takeoff", color: "#397f96" },
+        { key: "farp", label: "FARP", icon: "fan", color: "#397f96" },
+        { key: "opszone", label: "OPS zone", icon: "shield", color: "#7d3f68" },
+        { key: "territory", label: "City or territory", icon: "map", color: "#9b5548" },
+        { key: "depot", label: "Depot", icon: "warehouse", color: "#9a6436" },
+        { key: "port", label: "Port", icon: "ship", color: "#397f96" },
+        { key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#75629b" },
+        { key: "force", label: "Force", icon: "boxes", color: "#59635e" },
+        { key: "custom", label: "Custom", icon: "flag-triangle-right", color: "#7d3f68" },
+      ],
+    },
+    {
+      key: "objective_rank", property: "objective_rank", layer: "strategic_objectives", label: "Objective rank",
+      options: [
+        { key: "top5", label: "Top 5", icon: "chevrons-up", color: "#9f3838" },
+        { key: "top10", label: "6-10", icon: "chevron-up", color: "#c27532" },
+        { key: "ranked", label: "11+", icon: "minus", color: "#68736d" },
+        { key: "unranked", label: "Unranked", icon: "circle-help", color: "#8a928e" },
       ],
     },
   ];
@@ -150,6 +183,7 @@
     "intel-contact": { icon: "Crosshair", frame: "triangle" },
     "intel-cluster": { icon: "Radar", frame: "circle" },
     "loss-report": { icon: "ShieldX", frame: "triangle" },
+    "strategic-objective": { icon: "Flag", frame: "diamond" },
     "mission": { icon: "Target", frame: "diamond" },
     "incursion": { icon: "ShieldAlert", frame: "triangle" },
   };
@@ -285,6 +319,7 @@
     detailPrevious: document.getElementById("detail-previous"),
     detailNext: document.getElementById("detail-next"),
     detailFocus: document.getElementById("detail-focus"),
+    detailF10Marker: document.getElementById("detail-f10-marker"),
     detailCopy: document.getElementById("detail-copy"),
     detailClose: document.getElementById("detail-close"),
     errorBanner: document.getElementById("error-banner"),
@@ -316,6 +351,14 @@
     return "unknown";
   }
 
+  function objectiveRankCategory(value) {
+    const rank = Number(value);
+    if (!Number.isFinite(rank) || rank <= 0) return "unranked";
+    if (rank <= 5) return "top5";
+    if (rank <= 10) return "top10";
+    return "ranked";
+  }
+
   function mapSymbol(properties) {
     const layer = properties.layer;
     let definition = "static";
@@ -334,6 +377,7 @@
     } else if (layer === "intel_contacts") definition = "intel-contact";
     else if (layer === "intel_clusters") definition = "intel-cluster";
     else if (layer === "loss_reports") definition = "loss-report";
+    else if (layer === "strategic_objectives") definition = "strategic-objective";
     else if (layer === "missions") definition = "mission";
     else if (layer === "incursions") definition = "incursion";
     const coalition = Object.hasOwn(coalitionColors, properties.coalition) ? properties.coalition : "unknown";
@@ -351,6 +395,12 @@
           map_category: feature.properties?.map_category || (feature.properties?.layer === "airbases" ? airbaseCategory(feature.properties || {}) : undefined),
           map_coalition: coalitionFilterCategory(feature.properties || {}),
           map_status: statusFilterCategory(feature.properties || {}),
+          objective_owner: feature.properties?.layer === "strategic_objectives"
+            ? coalitionFilterCategory(feature.properties || {}) : undefined,
+          objective_category: feature.properties?.layer === "strategic_objectives"
+            ? String(feature.properties?.category || "custom").toLowerCase() : undefined,
+          objective_rank: feature.properties?.layer === "strategic_objectives"
+            ? objectiveRankCategory(feature.properties?.selection_rank) : undefined,
         },
       })),
     };
@@ -648,6 +698,26 @@
             "circle-stroke-color": "rgba(255,255,255,0.96)",
             "circle-stroke-width": 2.2,
             "circle-opacity": 0.96,
+          },
+        });
+        continue;
+      }
+      if (spec.key === "strategic_objectives") {
+        addMapLayer(spec, {
+          type: "symbol",
+          minzoom: 5,
+          filter: ["==", ["get", "layer"], spec.key],
+          layout: {
+            "icon-image": ["get", "map_symbol"],
+            "icon-size": [
+              "interpolate", ["linear"], ["coalesce", ["get", "strategic_value"], 0],
+              0, 0.82, 50, 1.02, 100, 1.24,
+            ],
+            "icon-allow-overlap": true,
+            "icon-padding": 3,
+          },
+          paint: {
+            "icon-opacity": ["case", ["==", ["get", "status"], "destroyed"], 0.38, 0.96],
           },
         });
         continue;
@@ -1308,6 +1378,10 @@
       }
       counts.set(`coalition:${feature.properties?.map_coalition}`, (counts.get(`coalition:${feature.properties?.map_coalition}`) || 0) + 1);
       counts.set(`status:${feature.properties?.map_status}`, (counts.get(`status:${feature.properties?.map_status}`) || 0) + 1);
+      for (const spec of filterSpecs.filter((item) => item.layer === key)) {
+        const value = feature.properties?.[spec.property];
+        counts.set(`${spec.key}:${value}`, (counts.get(`${spec.key}:${value}`) || 0) + 1);
+      }
     });
     const trajectoryCount = counts.get("trajectories") || 0;
     elements.featureCount.textContent = trajectoryCount
@@ -1560,19 +1634,20 @@
   }
 
   function applyLayerVisibility() {
-    const coalitionFilter = ["in", ["get", "map_coalition"], ["literal", selectedFilterValues("coalition")]];
-    const statusFilter = ["in", ["get", "map_status"], ["literal", selectedFilterValues("status")]];
     document.querySelectorAll("[data-layer]").forEach((checkbox) => {
       const visibility = checkbox.checked ? "visible" : "none";
+      const layer = checkbox.dataset.layer;
       const tacticalFilters = isTopographyLayer(checkbox.dataset.layer)
         ? []
-        : [coalitionFilter, statusFilter];
-      for (const id of mapLayerIds.get(checkbox.dataset.layer) || []) {
+        : filterSpecs
+          .filter((spec) => !spec.layer || spec.layer === layer)
+          .map((spec) => ["in", ["get", spec.property], ["literal", selectedFilterValues(spec.key)]]);
+      for (const id of mapLayerIds.get(layer) || []) {
         if (!map.getLayer(id)) continue;
         map.setLayoutProperty(id, "visibility", visibility);
         const filters = [mapLayerBaseFilters.get(id), ...tacticalFilters].filter(Boolean);
-        const children = [...document.querySelectorAll(`[data-parent-layer="${checkbox.dataset.layer}"]:checked`)];
-        if (children.length || document.querySelector(`[data-parent-layer="${checkbox.dataset.layer}"]`)) {
+        const children = [...document.querySelectorAll(`[data-parent-layer="${layer}"]:checked`)];
+        if (children.length || document.querySelector(`[data-parent-layer="${layer}"]`)) {
           const categories = children.map((child) => child.dataset.category);
           filters.push(["in", ["get", "map_category"], ["literal", categories]]);
         }
@@ -1609,6 +1684,11 @@
     track_duration_s: "Track duration", distance_m: "Distance", duration_s: "Duration", average_speed_mps: "Average speed",
     last_update_mission_time: "Last DCS update", footprint_area_m2: "Footprint area",
     importance_score: "Importance score", importance_tier: "Importance tier",
+    strategic_value: "Strategic value", priority: "Priority", selection_rank: "Selection rank",
+    selection_category: "Selection category", selection_limit: "Selection limit", component_count: "Components",
+    control_object_id: "Control object", ownership_policy: "Ownership policy", scope_state: "Strategic scope",
+    goal_count: "Goals", blue_goal_id: "Blue goal", blue_goal_action: "Blue action", blue_goal_status: "Blue goal status",
+    red_goal_id: "Red goal", red_goal_action: "Red action", red_goal_status: "Red goal status",
     energy_roles: "Energy roles", energy_sources: "Energy sources", output_mw: "Electrical output",
     voltage_kv: "Grid voltage",
     maritime_roles: "Maritime roles", cargo_types: "Cargo types", quay_length_m: "Quay length",
@@ -1640,6 +1720,8 @@
         : `${area.toLocaleString("en-US", { maximumFractionDigits: 0 })} m²`;
     }
     if (key === "importance_score") return Number(value).toFixed(1);
+    if (key === "strategic_value" || key === "priority") return `${Number(value).toFixed(1)} / 100`;
+    if (key === "health") return `${(Number(value) * 100).toFixed(1)}%`;
     if (key === "network_criticality_score") return `${Number(value).toFixed(1)} / 100`;
     if (key === "network_detour_ratio") return `${Number(value).toFixed(2)}x`;
     if (["network_detour_added_m", "network_detour_distance_m", "network_analysis_radius_m", "network_analysis_limit_m"].includes(key)) {
@@ -1689,6 +1771,78 @@
     }
     section.append(heading, list);
     elements.detailSections.appendChild(section);
+  }
+
+  function addStrategicGoalControls(properties) {
+    const section = document.createElement("section");
+    section.className = "detail-section strategic-goal-controls";
+    const heading = document.createElement("h3");
+    heading.className = "detail-section-title";
+    heading.innerHTML = '<i data-lucide="list-plus"></i><span>Goal selection</span>';
+    const controls = document.createElement("div");
+    controls.className = "goal-control-row";
+    const coalitionControl = document.createElement("div");
+    coalitionControl.className = "segmented-control";
+    coalitionControl.setAttribute("aria-label", "Goal coalition");
+    let selectedCoalition = "blue";
+    const status = document.createElement("div");
+    status.className = "goal-control-status";
+    const createButton = document.createElement("button");
+    createButton.className = "command-button";
+    createButton.type = "button";
+    createButton.innerHTML = '<i data-lucide="plus"></i><span>Create goal</span>';
+
+    function refreshControl() {
+      status.classList.remove("is-error");
+      coalitionControl.querySelectorAll("button").forEach((button) => {
+        const selected = button.dataset.coalition === selectedCoalition;
+        button.classList.toggle("is-selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+      });
+      const goalId = properties[`${selectedCoalition}_goal_id`];
+      createButton.disabled = Boolean(goalId);
+      status.textContent = goalId
+        ? `${properties[`${selectedCoalition}_goal_action`]} goal · ${properties[`${selectedCoalition}_goal_status`]}`
+        : "No goal selected";
+    }
+
+    for (const coalition of ["blue", "red"]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.coalition = coalition;
+      button.textContent = coalition.charAt(0).toUpperCase() + coalition.slice(1);
+      button.addEventListener("click", () => {
+        selectedCoalition = coalition;
+        refreshControl();
+      });
+      coalitionControl.appendChild(button);
+    }
+    createButton.addEventListener("click", async () => {
+      createButton.disabled = true;
+      status.textContent = "Creating goal...";
+      try {
+        const response = await fetch("/api/strategic-goals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ objective_id: properties.object_id, coalition: selectedCoalition }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "Goal creation failed");
+        const goal = result.goal;
+        properties[`${selectedCoalition}_goal_id`] = goal.goal_id;
+        properties[`${selectedCoalition}_goal_action`] = goal.action;
+        properties[`${selectedCoalition}_goal_status`] = goal.status;
+        status.textContent = `${goal.action} goal · ${goal.status}`;
+      } catch (error) {
+        createButton.disabled = false;
+        status.textContent = String(error.message || error);
+        status.classList.add("is-error");
+      }
+    });
+    controls.append(coalitionControl, createButton);
+    section.append(heading, controls, status);
+    elements.detailSections.appendChild(section);
+    refreshControl();
   }
 
   function detailRows(properties, keys, consumed) {
@@ -1763,6 +1917,7 @@
     elements.detailTitle.textContent = displayName;
     elements.detailSubtitle.textContent = properties.object_id || "";
     elements.detailCopy.hidden = !properties.object_id;
+    elements.detailF10Marker.hidden = !markerPointForFeature(feature);
     const stacked = selectionCandidates.length > 1;
     elements.detailStackCount.hidden = !stacked;
     elements.detailPrevious.hidden = !stacked;
@@ -1777,13 +1932,24 @@
     if (typeof properties.active === "boolean") addBadge(properties.active ? "Active" : "Inactive", properties.active ? "is-active" : "is-inactive");
     if (properties.state) addBadge(String(properties.state));
 
-    const consumed = new Set(["name", "layer", "map_symbol", "coordinate_system", "dcs_name", "latitude", "longitude", "x", "y", "z", "category", "coalition", "owner", "state", "alive", "active", "object_type", "dcs_category"]);
+    const consumed = new Set(["name", "layer", "map_symbol", "map_coalition", "map_status", "map_category", "objective_owner", "objective_category", "objective_rank", "coordinate_system", "dcs_name", "latitude", "longitude", "x", "y", "z", "category", "coalition", "owner", "state", "alive", "active", "object_type", "dcs_category"]);
+    if (properties.layer === "strategic_objectives") addStrategicGoalControls(properties);
     const operational = detailRows(properties, ["mission_type", "status", "target", "target_id", "threat_level", "threat_level_max", "threat_level_sum", "threat_level_avg", "unit_count", "alive_unit_count", "size", "speed", "radius_m", "derived_speed_kts", "derived_heading_deg", "track_distance_m", "track_duration_s", "last_update_mission_time", "sample_count", "distance_m", "duration_s", "average_speed_mps"], consumed);
     if (properties.unit_count !== undefined && properties.alive_unit_count !== undefined) {
       const start = operational.findIndex(([label]) => label === fieldLabels.unit_count);
       operational.splice(Math.max(0, start), 2, ["Strength", `${properties.alive_unit_count} / ${properties.unit_count} alive`]);
     }
     addDetailSection("Operational", "activity", operational);
+
+    if (properties.layer === "strategic_objectives") {
+      addDetailSection("Strategic assessment", "flag-triangle-right", detailRows(properties, [
+        "strategic_value", "priority", "scope_state", "selection_category", "selection_rank",
+        "selection_limit", "health", "contested", "control_object_id",
+        "ownership_policy", "component_count", "component_ids", "goal_count",
+        "blue_goal_id", "blue_goal_action", "blue_goal_status",
+        "red_goal_id", "red_goal_action", "red_goal_status", "source_kind", "source_object_id",
+      ], consumed));
+    }
 
     if (properties.layer === "railway_infrastructure") {
       addDetailSection("Rail network impact", "network", railNetworkImpactRows(properties, consumed));
@@ -1852,6 +2018,84 @@
       const bounds = new maplibregl.LngLatBounds();
       selectedFeature.geometry.coordinates.forEach((coordinate) => bounds.extend(coordinate));
       if (!bounds.isEmpty()) map.fitBounds(bounds, { padding: 100, maxZoom: 12, duration: 500 });
+    }
+  }
+
+  function markerPointForFeature(feature) {
+    const properties = feature?.properties || {};
+    const x = Number(properties.x); const z = Number(properties.z);
+    if (Number.isFinite(x) && Number.isFinite(z)) {
+      const y = Number(properties.y);
+      return { x, y: Number.isFinite(y) ? y : 0, z };
+    }
+    const latitude = Number(properties.latitude); const longitude = Number(properties.longitude);
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      return { latitude, longitude, altitude: 0 };
+    }
+    const geometry = feature?.geometry;
+    if (geometry?.type === "Point" && geometry.coordinates?.length >= 2) {
+      return { longitude: Number(geometry.coordinates[0]), latitude: Number(geometry.coordinates[1]), altitude: 0 };
+    }
+    const coordinates = [];
+    function collect(value) {
+      if (!Array.isArray(value)) return;
+      if (value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) {
+        coordinates.push([Number(value[0]), Number(value[1])]);
+        return;
+      }
+      value.forEach(collect);
+    }
+    collect(geometry?.coordinates);
+    if (!coordinates.length) return null;
+    const longitudes = coordinates.map(([lon]) => lon);
+    const latitudes = coordinates.map(([, lat]) => lat);
+    return {
+      longitude: (Math.min(...longitudes) + Math.max(...longitudes)) / 2,
+      latitude: (Math.min(...latitudes) + Math.max(...latitudes)) / 2,
+      altitude: 0,
+    };
+  }
+
+  async function createF10Marker() {
+    const point = markerPointForFeature(selectedFeature);
+    if (!selectedFeature || !point) return;
+    const properties = selectedFeature.properties || {};
+    elements.detailF10Marker.disabled = true;
+    elements.detailF10Marker.title = "Creating DCS F10 marker...";
+    try {
+      const response = await fetch("/api/dcs-markers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          point,
+          properties: {
+            object_id: properties.object_id,
+            name: properties.name,
+            display_name: properties.display_name,
+            layer: properties.layer,
+            object_type: properties.object_type,
+            category: properties.category,
+            selection_category: properties.selection_category,
+            dcs_type: properties.dcs_type,
+            coalition: properties.coalition,
+            owner: properties.owner,
+            status: properties.status,
+            state: properties.state,
+            alive: properties.alive,
+          },
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "DCS F10 marker creation failed");
+      const suffix = result.marker?.mark_id === undefined ? "" : ` (#${result.marker.mark_id})`;
+      elements.detailF10Marker.title = `DCS F10 marker created${suffix}`;
+      setTimeout(() => { elements.detailF10Marker.title = "Create DCS F10 marker"; }, 1800);
+    } catch (error) {
+      elements.detailF10Marker.title = "Create DCS F10 marker";
+      elements.errorBanner.hidden = false;
+      elements.errorBanner.textContent = String(error.message || error);
+    } finally {
+      elements.detailF10Marker.disabled = false;
     }
   }
 
@@ -1937,6 +2181,7 @@
   elements.detailPrevious.addEventListener("click", () => showSelectionAt(selectionIndex - 1));
   elements.detailNext.addEventListener("click", () => showSelectionAt(selectionIndex + 1));
   elements.detailFocus.addEventListener("click", focusSelectedFeature);
+  elements.detailF10Marker.addEventListener("click", createF10Marker);
   elements.detailCopy.addEventListener("click", async () => {
     if (!selectedObjectId) return;
     try {

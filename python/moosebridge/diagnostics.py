@@ -80,9 +80,23 @@ def format_strategic_objective_generation(
         ),
         (
             f"  out_of_scope={result.out_of_scope_count} "
-            f"below_threshold={result.below_threshold_count} contested={contested}"
+            f"below_threshold={result.below_threshold_count} "
+            f"category_scope_limit={result.category_scope_limit_count} contested={contested}"
         ),
     ]
+    scope_counts = ", ".join(
+        f"{scope}={count}" for scope, count in result.counts_by_scope.items() if count
+    ) or "none"
+    owner_counts: dict[str, int] = {}
+    kind_counts: dict[str, int] = {}
+    for objective in result.objectives:
+        owner = objective.owner or "unassigned"
+        owner_counts[owner] = owner_counts.get(owner, 0) + 1
+        kind = objective.kind.value
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+    owners = ", ".join(f"{key}={value}" for key, value in sorted(owner_counts.items())) or "none"
+    kinds = ", ".join(f"{key}={value}" for key, value in sorted(kind_counts.items())) or "none"
+    lines.extend((f"  scope: {scope_counts}", f"  owners: {owners}", f"  kinds: {kinds}"))
     for item in result.exclusions[:max(0, exclusion_limit)]:
         scope = f" scope={item.scope_state.value}" if item.scope_state is not None else ""
         lines.append(f"  EXCLUDED {item.object_id}: {item.reason}{scope}")

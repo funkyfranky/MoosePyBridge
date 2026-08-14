@@ -586,7 +586,7 @@ class RuleBasedOperationalPlanner:
             if health <= 0:
                 continue
             prefix = component.object_id.partition(":")[0].upper()
-            targetable = prefix == "STATIC"
+            targetable = component.is_destroy_target and prefix == "STATIC"
             if prefix in {"GROUP", "UNIT"}:
                 contact = contacts_by_target.get(component.object_id)
                 if contact is not None:

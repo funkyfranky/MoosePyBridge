@@ -19,6 +19,10 @@ RAILWAY_INFRASTRUCTURE_SCHEMA = "moosebridge.railway_infrastructure"
 RAILWAY_INFRASTRUCTURE_SCHEMA_VERSION = 1
 DEFAULT_RAILWAY_CLUSTER_RADIUS_M = 350.0
 
+_LEGACY_RAILWAY_LOCATION_KINDS = {
+    "marshalling_yard": "rail_yard",
+}
+
 
 class RailwayLocationKind(StrEnum):
     STATION = "station"
@@ -27,6 +31,11 @@ class RailwayLocationKind(StrEnum):
     DEPOT = "depot"
     JUNCTION = "junction"
     BRIDGE = "bridge"
+
+
+def _railway_location_kind(value: object) -> RailwayLocationKind:
+    normalized = str(value or "")
+    return RailwayLocationKind(_LEGACY_RAILWAY_LOCATION_KINDS.get(normalized, normalized))
 
 
 class RailwayImportanceTier(StrEnum):
@@ -106,7 +115,7 @@ class RailwayLocation:
         }
         return cls(
             location_id=str(properties.get("object_id") or ""),
-            kind=RailwayLocationKind(str(properties.get("railway_kind") or properties.get("category") or "")),
+            kind=_railway_location_kind(properties.get("railway_kind") or properties.get("category")),
             latitude=float(properties.get("latitude", coordinates[1])),
             longitude=float(properties.get("longitude", coordinates[0])),
             name=_optional_text(properties.get("name")),

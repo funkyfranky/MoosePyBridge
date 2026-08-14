@@ -94,7 +94,7 @@ def evaluate_strategic_objective(
         else:
             action = StrategicGoalAction.CAPTURE
             reason = "OPSZONE is not controlled by the coalition"
-    elif objective.components:
+    elif any(component.is_destroy_target for component in objective.components):
         if objective.owner == normalized:
             reason = "friendly component objective is not an attack target"
         elif objective.owner in {"blue", "red"}:
@@ -102,6 +102,8 @@ def evaluate_strategic_objective(
             reason = "enemy objective has addressable components"
         else:
             reason = "neutral component objective is not attacked automatically"
+    elif objective.components:
+        reason = "objective components are geographic references, not addressable DCS targets"
     else:
         reason = "no supported CAPTURE, DEFEND, or DESTROY plan is available"
 

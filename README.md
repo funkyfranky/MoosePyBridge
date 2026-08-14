@@ -268,6 +268,40 @@ selection, where it ranks otherwise permissible goals without overriding
 diplomacy. Repeated generation keeps an existing planned or active goal rather
 than creating a duplicate.
 
+For a running mission, the parameterless preview example loads the generated
+GermanyCW infrastructure datasets, resolves the TERRITORY-defined conflict
+area, registers admitted objectives, derives coalition goals, creates
+rule-based operational plan candidates, and performs capacity-aware portfolio
+selection without executing a mission:
+
+```powershell
+& "C:\Program Files\Python313\python.exe" examples/sdk/generate_strategic_objectives.py
+```
+
+`MANAGE_RELATIONSHIP = False` is the safe default: current diplomacy is used
+unchanged, so offensive goals are rejected during peace. Set it to `True` only
+when the preview is deliberately allowed to invoke the controller's configured
+war declaration. `MAX_CONCURRENT_GOALS` limits the selected portfolio; omitted
+candidates remain visible as deferred or rejected decisions.
+
+Automatic objective generation always retains mission-controlled airbases,
+FARPs, and OPSZONEs. Geographic data is grouped by effective scope
+(`blue`, `red`, `neutral`, or `contested`) and by category such as settlement,
+bridge, railway, or energy site. Within each group the ten highest strategic
+values are retained by default. The remainder is reported as
+`category_scope_limit`, so reducing the working set does not hide why a
+candidate was omitted. The limit can be adjusted or disabled explicitly:
+
+```python
+from moosebridge import StrategicObjectiveGenerationConfig
+
+config = StrategicObjectiveGenerationConfig(
+    maximum_geographic_objectives_per_category_per_scope=20,
+)
+# Use None instead of 20 to retain every candidate above its importance threshold.
+result = bridge.generate_strategic_objectives(config=config)
+```
+
 The SDK also maintains passive strategic feedback. Relevant ownership and
 loss events update objectives and goals immediately. COHORT, LEGION, and world
 state snapshots revalidate every non-terminal plan from the existing mirror;
@@ -1850,6 +1884,16 @@ The map server loads the cache automatically and exposes it through
 `/api/railway-infrastructure/global.geojson`. `Rail infrastructure` is one
 initially hidden Infrastructure group whose six location classes can be toggled
 independently.
+
+For a valid mission scope, the map server generates the bounded strategic
+objective set once per mission and keeps its ownership and condition synchronized
+from live state. `Operations > Strategic objectives` shows these selected targets
+with owner-colored flag markers scaled by strategic value. The detail panel exposes
+their rank, category, scope, value, control object, and component references. The
+map filters can restrict objectives by owner, broad category, and selection rank.
+From an objective's detail panel, an operator can derive one planned blue or red
+goal through the same relationship-aware rules used by the Python SDK. This action
+selects intent only; it does not activate a goal or execute an operational plan.
 
 The header shows the shared relationship, escalation score, pending transition,
 and blue/red doctrine. The map server is the default diplomacy incident

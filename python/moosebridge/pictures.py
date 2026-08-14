@@ -9,6 +9,7 @@ from .clock import DcsTime
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .intelligence import IntelContactAssessment, IntelContactMemory, assess_intel_contact
+from .strategic import StrategicObjective
 from .strategic_scope import StrategicTerritoryScope
 
 
@@ -509,6 +510,7 @@ class GlobalPicture:
     intel_contacts: list[IntelContact] = field(default_factory=list)
     intel_clusters: list[IntelCluster] = field(default_factory=list)
     loss_reports: list[dict[str, Any]] = field(default_factory=list)
+    strategic_objectives: list[StrategicObjective] = field(default_factory=list)
     strategic_scope: StrategicTerritoryScope | None = None
 
     def counts(self) -> dict[str, int]:
@@ -530,6 +532,7 @@ class GlobalPicture:
             "intel_contacts": len(self.intel_contacts),
             "intel_clusters": len(self.intel_clusters),
             "loss_reports": len(self.loss_reports),
+            "strategic_objectives": len(self.strategic_objectives),
         }
 
     def validate(self) -> list[PictureValidationIssue]:
@@ -728,11 +731,83 @@ class GlobalPicture:
         features.extend(_point_feature(item, "intel_contacts", {"intel_id": item.intel_id, "threat_level": item.threat_level}) for item in self.intel_contacts)
         features.extend(_point_feature(item, "intel_clusters", {"intel_id": item.intel_id, "size": item.size}) for item in self.intel_clusters)
         features.extend(_raw_point_feature(item, "loss_reports", {"perspective": "global_truth"}) for item in self.loss_reports)
+        features.extend(self._strategic_objective_features())
         features.extend(self._mission_features())
         metadata = self.clock.to_dict() if self.clock else {}
+        metadata["strategic_objective_count"] = len(self.strategic_objectives)
         if self.strategic_scope is not None:
             metadata["strategic_scope"] = self.strategic_scope.counts()
         return _feature_collection(features, scope="global", metadata=metadata)
+
+    def _strategic_objective_features(self) -> list[GeoJsonFeature | None]:
+        raw_objects = {
+            str(item.get("object_id") or ""): item
+            for items in (self.groups, self.units, self.statics, self.airbases, self.zones)
+            for item in items
+        }
+        typed_objects = {
+            item.object_id: item
+            for items in (self.territories, self.opszones, self.opsgroups, self.legions)
+            for item in items
+        }
+
+        def position(objective: StrategicObjective) -> tuple[float | None, float | None]:
+            longitude = _as_float(objective.metadata.get("longitude"))
+            latitude = _as_float(objective.metadata.get("latitude"))
+            if longitude is not None and latitude is not None:
+                return longitude, latitude
+            reference_ids = (
+                *((objective.control_object_id,) if objective.control_object_id else ()),
+                *(component.object_id for component in objective.components),
+            )
+            for object_id in reference_ids:
+                raw = raw_objects.get(object_id)
+                if raw is not None:
+                    longitude = _as_float(raw.get("longitude"))
+                    latitude = _as_float(raw.get("latitude"))
+                else:
+                    item = typed_objects.get(object_id)
+                    longitude = _as_float(getattr(item, "longitude", None))
+                    latitude = _as_float(getattr(item, "latitude", None))
+                if longitude is not None and latitude is not None:
+                    return longitude, latitude
+            return None, None
+
+        features: list[GeoJsonFeature | None] = []
+        for objective in self.strategic_objectives:
+            longitude, latitude = position(objective)
+            metadata = dict(objective.metadata)
+            metadata.pop("latitude", None)
+            metadata.pop("longitude", None)
+            features.append(
+                _feature(
+                    geometry=_point_geometry(longitude, latitude),
+                    layer="strategic_objectives",
+                    object_id=objective.objective_id,
+                    name=objective.name,
+                    object_type="STRATEGIC_OBJECTIVE",
+                    category=objective.kind.value,
+                    properties={
+                        **metadata,
+                        "coalition": objective.owner,
+                        "owner": objective.owner,
+                        "status": objective.status.value,
+                        "strategic_value": objective.strategic_value,
+                        "priority": objective.priority,
+                        "health": objective.health,
+                        "contested": objective.contested,
+                        "control_object_id": objective.control_object_id,
+                        "ownership_policy": objective.ownership_policy.value,
+                        "component_count": len(objective.components),
+                        "component_ids": [component.object_id for component in objective.components],
+                        "latitude": latitude,
+                        "longitude": longitude,
+                        "created_mission_time": objective.created_mission_time,
+                        "updated_mission_time": objective.updated_mission_time,
+                    },
+                )
+            )
+        return features
 
     def _mission_features(self) -> list[GeoJsonFeature | None]:
         features: list[GeoJsonFeature | None] = []

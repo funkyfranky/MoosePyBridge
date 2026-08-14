@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 import math
 from typing import Any
@@ -41,6 +42,7 @@ class StrategicObjectiveGenerationConfig:
     minimum_site_importance: float = 50.0
     include_unscored_fuel_storage: bool = True
     include_contested: bool = True
+    maximum_geographic_objectives_per_category_per_scope: int | None = 10
 
     def __post_init__(self) -> None:
         for value in (
@@ -51,6 +53,9 @@ class StrategicObjectiveGenerationConfig:
         ):
             if not math.isfinite(value) or not 0 <= value <= 100:
                 raise ValueError("objective importance thresholds must be between zero and 100")
+        limit = self.maximum_geographic_objectives_per_category_per_scope
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0):
+            raise ValueError("geographic objective limit must be a positive integer or None")
 
 
 @dataclass(slots=True, frozen=True)
@@ -78,6 +83,10 @@ class StrategicObjectiveGenerationResult:
     @property
     def below_threshold_count(self) -> int:
         return sum(item.reason == "below_importance_threshold" for item in self.exclusions)
+
+    @property
+    def category_scope_limit_count(self) -> int:
+        return sum(item.reason == "category_scope_limit" for item in self.exclusions)
 
 
 def generate_strategic_objectives(
@@ -142,7 +151,10 @@ def generate_strategic_objectives(
                     "generated": True,
                     "source_object_id": source_id,
                     "scope_state": scope_state.value,
-                    "targetable": bool(components) or control_object_id is not None,
+                    "targetable": (
+                        any(component.is_destroy_target for component in components)
+                        or control_object_id is not None
+                    ),
                     **(metadata or {}),
                 },
             )
@@ -193,6 +205,7 @@ def generate_strategic_objectives(
             admit,
             exclusions,
             metadata={"source_kind": "settlement", "settlement_kind": settlement.kind.value},
+            selection_category="settlement",
         )
 
     if transport:
@@ -209,6 +222,9 @@ def generate_strategic_objectives(
                 admit,
                 exclusions,
                 metadata={"source_kind": "transport", "infrastructure_kind": type(item).__name__},
+                selection_category=(
+                    "transport_bridge" if isinstance(item, TransportBridge) else "transport_junction"
+                ),
             )
 
     for item in railway.locations if railway else ():
@@ -223,6 +239,7 @@ def generate_strategic_objectives(
             admit,
             exclusions,
             metadata={"source_kind": "railway", "railway_kind": item.kind.value},
+            selection_category="railway",
         )
 
     for site in infrastructure.sites if infrastructure else ():
@@ -251,8 +268,14 @@ def generate_strategic_objectives(
             exclusions,
             components=components,
             metadata={"source_kind": "infrastructure_site", "infrastructure_kind": site.kind.value},
+            selection_category=f"infrastructure_{site.kind.value}",
         )
 
+    objectives = _limit_geographic_objectives(
+        objectives,
+        exclusions,
+        resolved.maximum_geographic_objectives_per_category_per_scope,
+    )
     objectives.sort(key=lambda item: (-item.priority, item.objective_id))
     exclusions.sort(key=lambda item: (item.reason, item.object_id))
     return StrategicObjectiveGenerationResult(
@@ -273,6 +296,7 @@ def _admit_geographic_candidate(
     *,
     components: tuple[ObjectiveComponent, ...] = (),
     metadata: dict[str, Any] | None = None,
+    selection_category: str,
 ) -> None:
     if score < threshold:
         exclusions.append(StrategicObjectiveExclusion(source_id, "below_importance_threshold"))
@@ -289,9 +313,47 @@ def _admit_geographic_candidate(
             "latitude": item.latitude,
             "longitude": item.longitude,
             "source": getattr(item, "source", None),
+            "selection_category": selection_category,
             **(metadata or {}),
         },
     )
+
+
+def _limit_geographic_objectives(
+    objectives: list[StrategicObjective],
+    exclusions: list[StrategicObjectiveExclusion],
+    limit: int | None,
+) -> list[StrategicObjective]:
+    if limit is None:
+        return objectives
+
+    selected: list[StrategicObjective] = []
+    grouped: dict[tuple[str, str], list[StrategicObjective]] = defaultdict(list)
+    for objective in objectives:
+        category = str(objective.metadata.get("selection_category") or "")
+        scope_state = str(objective.metadata.get("scope_state") or "")
+        if objective.control_object_id is not None or not category or not scope_state:
+            selected.append(objective)
+            continue
+        grouped[(scope_state, category)].append(objective)
+
+    for (scope_name, _category), candidates in sorted(grouped.items()):
+        candidates.sort(key=lambda item: (-item.strategic_value, item.objective_id))
+        scope_state = StrategicScopeState(scope_name)
+        for rank, objective in enumerate(candidates, start=1):
+            if rank <= limit:
+                objective.metadata["selection_rank"] = rank
+                objective.metadata["selection_limit"] = limit
+                selected.append(objective)
+            else:
+                exclusions.append(
+                    StrategicObjectiveExclusion(
+                        str(objective.metadata.get("source_object_id") or objective.objective_id),
+                        "category_scope_limit",
+                        scope_state,
+                    )
+                )
+    return selected
 
 
 def _classify_payload(scope: StrategicTerritoryScope, payload: dict[str, Any]) -> StrategicScopeState:

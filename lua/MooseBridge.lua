@@ -757,6 +757,34 @@ function MOOSE_BRIDGE:_MarkPoint(point, text)
   return {x=point.x, y=point.y or 0, z=point.z, text=mark_text}
 end
 
+function MOOSE_BRIDGE:_CreateMapMarker(params)
+  if not trigger or not trigger.action or not trigger.action.markToAll then
+    error("DCS trigger.action.markToAll is not available")
+  end
+  local point = self:_DebugMarkupPoint(params.point or params)
+  local text = self:_OptionalString(params.text) or "MOOSE Bridge marker"
+  if #text > 180 then error("map.marker.create text accepts at most 180 characters") end
+  local coalition_id = self:_DebugMarkupCoalition(params.coalition or "all")
+  local read_only = params.read_only == true
+  local mark_id = self:_NextMarkId()
+  if coalition_id == -1 then
+    trigger.action.markToAll(mark_id, text, point, read_only, "")
+  else
+    if not trigger.action.markToCoalition then error("DCS trigger.action.markToCoalition is not available") end
+    trigger.action.markToCoalition(mark_id, text, point, coalition_id, read_only, "")
+  end
+  return {
+    action="map.marker.create",
+    mark_id=mark_id,
+    text=text,
+    coalition=coalition_id,
+    read_only=read_only,
+    x=point.x,
+    y=point.y or 0,
+    z=point.z,
+  }
+end
+
 function MOOSE_BRIDGE:_CountTable(value)
   if type(value) ~= "table" then return 0 end
   local count = 0
@@ -1970,6 +1998,10 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   self:RegisterCommand("mark.object", function(cmd)
     local p = cmd.params or {}; local point = self:_PointForObjectId(p.object_id)
     return self:_MarkPoint(point, p.text or "MOOSE Bridge mark")
+  end)
+
+  self:RegisterCommand("map.marker.create", function(cmd)
+    return self:_CreateMapMarker(cmd.params or {})
   end)
 
   self:RegisterCommand("map.overlay.draw", function(cmd)

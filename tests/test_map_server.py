@@ -9,11 +9,12 @@ pytest.importorskip("fastapi")
 
 from moosebridge.clock import DcsTime
 from moosebridge.ammunition import UnitAmmunition
-from moosebridge.map_server import GlobalMapRuntime, create_app, empty_picture
+from moosebridge.map_server import GlobalMapRuntime, compact_dcs_marker_text, create_app, empty_picture
 from moosebridge.models import Territory
 from moosebridge.pictures import GlobalPicture
 from moosebridge.sdk import GeographicPoint
 from moosebridge.state import MooseBridgeState
+from moosebridge.strategic import ObjectiveKind, OwnershipPolicy, StrategicObjective
 from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer
 from moosebridge.surface_regions import (
     SurfaceClass,
@@ -118,6 +119,8 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "frontline_error": None,
         "recon_coverage_count": 0,
         "recon_coverage_error": None,
+        "strategic_objective_count": 0,
+        "strategic_objective_error": None,
         "topography_theater_id": None,
         "topography_feature_count": 0,
         "topography_load_warning": None,
@@ -669,6 +672,126 @@ def test_map_app_exposes_runtime() -> None:
     assert app.state.topography_tile_concurrency == 1
 
 
+def test_map_runtime_creates_one_selected_strategic_goal_and_annotates_picture() -> None:
+    objective = StrategicObjective(
+        objective_id="OBJECTIVE:Town Fight",
+        name="Town Fight",
+        kind=ObjectiveKind.OPSZONE,
+        control_object_id="OPSZONE:Town Fight",
+        ownership_policy=OwnershipPolicy.MOOSE_MANAGED,
+        owner="red",
+        strategic_value=90,
+        priority=80,
+    )
+
+    class Bridge:
+        relationship = None
+
+        def __init__(self) -> None:
+            self.goals = []
+
+        def strategic_objective(self, objective_id: str):
+            return objective if objective_id == objective.objective_id else None
+
+        def strategic_goals(self):
+            return tuple(self.goals)
+
+        def add_strategic_goal(self, goal):
+            self.goals.append(goal)
+            return goal
+
+    bridge = Bridge()
+    runtime = GlobalMapRuntime()
+    runtime.connected = True
+    runtime._mission_generation = 3
+    runtime._bridge = bridge
+    runtime.picture = {
+        "type": "FeatureCollection",
+        "properties": {"mission_time": 120.0},
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [12.0, 54.0]},
+            "properties": {"layer": "strategic_objectives", "object_id": objective.objective_id},
+        }],
+    }
+
+    created = runtime.create_strategic_goal(objective.objective_id, "blue")
+
+    assert created["action"] == "capture"
+    assert created["status"] == "planned"
+    assert created["objective_id"] == objective.objective_id
+    properties = runtime.picture["features"][0]["properties"]
+    assert properties["goal_count"] == 1
+    assert properties["blue_goal_id"] == created["goal_id"]
+    assert properties["blue_goal_action"] == "capture"
+    assert properties["blue_goal_status"] == "planned"
+    with pytest.raises(ValueError, match="open goal already exists"):
+        runtime.create_strategic_goal(objective.objective_id, "blue")
+
+
+def test_map_app_exposes_strategic_goal_creation_endpoint() -> None:
+    app = create_app()
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/api/strategic-goals")
+
+    assert "POST" in route.methods
+
+
+def test_map_runtime_creates_compact_dcs_marker_at_wgs84_position() -> None:
+    class Bridge:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def mark_map_position(self, text: str, **params):
+            self.calls.append((text, params))
+            return {"ok": True, "result": {"mark_id": 42, "coalition": -1, "read_only": False}}
+
+    async def scenario() -> None:
+        bridge = Bridge()
+        runtime = GlobalMapRuntime()
+        runtime.connected = True
+        runtime._bridge = bridge
+
+        marker = await runtime.create_dcs_marker({
+            "point": {"latitude": 53.92, "longitude": 12.28},
+            "properties": {
+                "object_id": "AIRBASE:Laage",
+                "name": "Laage",
+                "category": "airdrome",
+                "coalition": "blue",
+                "status": "operational",
+            },
+        })
+
+        assert marker["mark_id"] == 42
+        assert marker["text"] == "Laage\nairdrome | Blue | operational\nAIRBASE:Laage"
+        assert bridge.calls[0][1]["latitude"] == 53.92
+        assert bridge.calls[0][1]["longitude"] == 12.28
+        assert bridge.calls[0][1]["coalition"] == "all"
+        assert bridge.calls[0][1]["read_only"] is False
+
+    asyncio.run(scenario())
+
+
+def test_compact_dcs_marker_text_is_single_value_per_line_and_bounded() -> None:
+    text = compact_dcs_marker_text({
+        "object_id": "STATIC:" + "X" * 200,
+        "name": "  Red   Supply\nDepot  ",
+        "dcs_type": "fuel_storage",
+        "coalition": "red",
+        "alive": True,
+    })
+
+    assert text.startswith("Red Supply Depot\nfuel storage | Red | alive\nSTATIC:")
+    assert len(text) <= 180
+
+
+def test_map_app_exposes_dcs_marker_creation_endpoint() -> None:
+    app = create_app()
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/api/dcs-markers")
+
+    assert "POST" in route.methods
+
+
 def test_map_ui_does_not_apply_tactical_filters_to_topography() -> None:
     map_script = (
         Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui" / "map.js"
@@ -676,6 +799,30 @@ def test_map_ui_does_not_apply_tactical_filters_to_topography() -> None:
 
     assert "const tacticalFilters = isTopographyLayer(checkbox.dataset.layer)" in map_script
     assert "[mapLayerBaseFilters.get(id), ...tacticalFilters]" in map_script
+
+
+def test_map_ui_exposes_objective_filters_and_goal_selection() -> None:
+    map_script = (
+        Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui" / "map.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'key: "objective_owner"' in map_script
+    assert 'key: "objective_category"' in map_script
+    assert 'key: "objective_rank"' in map_script
+    assert 'spec.layer === layer' in map_script
+    assert 'fetch("/api/strategic-goals"' in map_script
+    assert 'addStrategicGoalControls(properties)' in map_script
+
+
+def test_map_ui_exposes_selected_object_f10_marker_action() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    index = (root / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="detail-f10-marker"' in index
+    assert 'fetch("/api/dcs-markers"' in map_script
+    assert "function markerPointForFeature(feature)" in map_script
+    assert 'elements.detailF10Marker.addEventListener("click", createF10Marker)' in map_script
 
 
 def test_map_ui_exposes_grouped_railway_infrastructure() -> None:

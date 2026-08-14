@@ -19,7 +19,10 @@ from moosebridge.settlements import (
 )
 from moosebridge.state import MooseBridgeState
 from moosebridge.strategic import ObjectiveKind, OwnershipPolicy
-from moosebridge.strategic_objectives import generate_strategic_objectives
+from moosebridge.strategic_objectives import (
+    StrategicObjectiveGenerationConfig,
+    generate_strategic_objectives,
+)
 from moosebridge.strategic_scope import StrategicScopeState, build_strategic_territory_scope
 
 
@@ -138,6 +141,85 @@ def test_generator_applies_importance_threshold_and_preserves_dcs_components() -
     depot = by_id["OBJECTIVE:FUEL_STORAGE_SITE:Depot"]
     assert depot.kind is ObjectiveKind.DEPOT
     assert [component.object_id for component in depot.components] == ["SCENERY:123"]
-    assert depot.metadata["targetable"] is True
+    assert depot.metadata["targetable"] is False
     assert "OBJECTIVE:SETTLEMENT:Local" not in by_id
     assert result.below_threshold_count == 1
+
+
+def test_generator_limits_ranked_geographic_categories_per_scope() -> None:
+    scope, state = _scope_and_state()
+    settlements = TheaterSettlements(
+        theater_id="Test",
+        settlements=tuple(
+            Settlement(
+                settlement_id=f"SETTLEMENT:Candidate-{index:02d}",
+                name=f"Candidate {index:02d}",
+                kind=SettlementKind.TOWN,
+                size_class=SettlementSizeClass.LAND_TOWN,
+                geometry={"type": "Point", "coordinates": [0.05, 0.05]},
+                latitude=0.05,
+                longitude=0.05,
+                source="OpenStreetMap",
+                confidence=0.8,
+                importance_score=50 + index,
+                importance_tier=SettlementImportanceTier.MEDIUM,
+            )
+            for index in range(13)
+        ),
+    )
+
+    result = generate_strategic_objectives(
+        state,
+        scope,  # type: ignore[arg-type]
+        settlements=settlements,
+        config=StrategicObjectiveGenerationConfig(
+            maximum_geographic_objectives_per_category_per_scope=3,
+        ),
+    )
+
+    selected = [
+        item
+        for item in result.objectives
+        if item.metadata.get("selection_category") == "settlement"
+    ]
+    assert [item.name for item in selected] == ["Candidate 12", "Candidate 11", "Candidate 10"]
+    assert [item.metadata["selection_rank"] for item in selected] == [1, 2, 3]
+    assert result.category_scope_limit_count == 10
+    assert result.candidate_count == 16
+    assert "OBJECTIVE:AIRBASE:Inside" in {item.objective_id for item in result.objectives}
+    assert "OBJECTIVE:OPSZONE:Center" in {item.objective_id for item in result.objectives}
+
+
+def test_generator_can_disable_geographic_category_limit() -> None:
+    scope, state = _scope_and_state()
+    settlements = TheaterSettlements(
+        theater_id="Test",
+        settlements=tuple(
+            Settlement(
+                settlement_id=f"SETTLEMENT:Candidate-{index:02d}",
+                name=f"Candidate {index:02d}",
+                kind=SettlementKind.TOWN,
+                size_class=SettlementSizeClass.LAND_TOWN,
+                geometry={"type": "Point", "coordinates": [0.05, 0.05]},
+                latitude=0.05,
+                longitude=0.05,
+                source="OpenStreetMap",
+                confidence=0.8,
+                importance_score=60,
+                importance_tier=SettlementImportanceTier.MEDIUM,
+            )
+            for index in range(12)
+        ),
+    )
+
+    result = generate_strategic_objectives(
+        state,
+        scope,  # type: ignore[arg-type]
+        settlements=settlements,
+        config=StrategicObjectiveGenerationConfig(
+            maximum_geographic_objectives_per_category_per_scope=None,
+        ),
+    )
+
+    assert sum(item.kind is ObjectiveKind.TERRITORY for item in result.objectives) == 12
+    assert result.category_scope_limit_count == 0

@@ -215,6 +215,12 @@ class ObjectiveComponent:
         object.__setattr__(self, "role", role)
         object.__setattr__(self, "capture_behavior", CaptureBehavior(self.capture_behavior))
 
+    @property
+    def is_destroy_target(self) -> bool:
+        """Return whether the operational planner can attack this component."""
+
+        return self.object_id.partition(":")[0].upper() in {"GROUP", "UNIT", "STATIC"}
+
 
 @dataclass(slots=True, frozen=True)
 class ComponentHealthEstimate:

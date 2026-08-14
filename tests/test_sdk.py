@@ -71,6 +71,7 @@ from moosebridge.sdk import (
 )
 from moosebridge.infrastructure_sites import ScenerySurvey
 from moosebridge.state import MooseBridgeState
+from moosebridge.strategic import ObjectiveKind, ObjectiveStatus, OwnershipPolicy, StrategicObjective
 
 
 class FakeSdkServer:
@@ -680,6 +681,32 @@ def test_sdk_draw_and_clear_debug_overlay_send_bounded_native_markup_commands() 
     asyncio.run(scenario())
 
 
+def test_sdk_mark_map_position_supports_dcs_and_wgs84_coordinates() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        await client.mark_map_position("Blue Armor\nGround Unit | Blue | alive", x=10, y=2, z=20)
+        await client.mark_map_position("Laage\nairdrome | Blue", latitude=53.92, longitude=12.28)
+
+        local, local_timeout = server.commands[0]
+        assert local.action == "map.marker.create"
+        assert local.params == {
+            "point": {"x": 10.0, "y": 2.0, "z": 20.0},
+            "text": "Blue Armor\nGround Unit | Blue | alive",
+            "coalition": "all",
+            "read_only": False,
+        }
+        assert local_timeout == 10.0
+        geographic, _ = server.commands[1]
+        assert geographic.params["point"] == {"latitude": 53.92, "longitude": 12.28, "altitude": 0.0}
+
+        with pytest.raises(ValueError, match="either x/z or latitude/longitude"):
+            await client.mark_map_position("Invalid", x=1, z=2, latitude=54, longitude=12)
+
+    asyncio.run(scenario())
+
+
 def test_sdk_closest_road_points_returns_typed_matches() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -1216,6 +1243,57 @@ def test_global_picture_exports_polygon_zone_geometry() -> None:
     assert feature["properties"]["shape"] == "polygon"
     assert "radius_m" not in feature["properties"]
     assert "vertices" not in feature["properties"]
+
+
+def test_global_picture_exports_ranked_strategic_objectives_and_resolves_control_positions() -> None:
+    picture = GlobalPicture(
+        airbases=[{
+            "object_id": "AIRBASE:Laage", "dcs_name": "Laage", "latitude": 53.92, "longitude": 12.28,
+        }],
+        strategic_objectives=[
+            StrategicObjective(
+                objective_id="OBJECTIVE:AIRBASE:Laage",
+                name="Laage Airbase",
+                kind=ObjectiveKind.AIRBASE,
+                control_object_id="AIRBASE:Laage",
+                ownership_policy=OwnershipPolicy.DCS_MANAGED,
+                strategic_value=90,
+                priority=85,
+                owner="blue",
+                status=ObjectiveStatus.OPERATIONAL,
+                metadata={
+                    "scope_state": "blue",
+                    "selection_category": "airbase",
+                    "selection_rank": 1,
+                    "selection_limit": 10,
+                },
+            ),
+            StrategicObjective(
+                objective_id="OBJECTIVE:PORT:Rostock",
+                name="Rostock Port",
+                kind=ObjectiveKind.PORT,
+                control_object_id=None,
+                ownership_policy=OwnershipPolicy.FIXED,
+                strategic_value=78,
+                priority=78,
+                owner="neutral",
+                metadata={"latitude": 54.15, "longitude": 12.1, "selection_rank": 2},
+            ),
+        ],
+    )
+
+    features = [
+        feature for feature in picture.to_geojson()["features"]
+        if feature["properties"]["layer"] == "strategic_objectives"
+    ]
+
+    assert picture.counts()["strategic_objectives"] == 2
+    assert features[0]["geometry"]["coordinates"] == [12.28, 53.92]
+    assert features[0]["properties"]["strategic_value"] == 90
+    assert features[0]["properties"]["selection_rank"] == 1
+    assert features[0]["properties"]["control_object_id"] == "AIRBASE:Laage"
+    assert features[1]["geometry"]["coordinates"] == [12.1, 54.15]
+    assert features[1]["properties"]["category"] == "port"
 
 
 def test_global_picture_uses_linked_polygon_geometry_for_opszone() -> None:

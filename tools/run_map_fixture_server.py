@@ -15,6 +15,7 @@ if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
 from moosebridge.map_server import create_app
+from moosebridge.strategic import ObjectiveKind, OwnershipPolicy, StrategicObjective
 
 
 MOBILE_QA_PAGE = """<!doctype html>
@@ -174,6 +175,13 @@ def build_fixture_picture() -> dict[str, Any]:
             tracked_object_id="UNIT:Blue Armor-2", source_layer="units", event="S_EVENT_UNIT_LOST",
         ),
         _feature(
+            "strategic_objectives", "OBJECTIVE:Town Fight", _point(12.33, 53.90),
+            name="Capture Town Fight", coalition="red", owner="red", category="opszone",
+            status="operational", strategic_value=92.0, priority=90.0, scope_state="red",
+            selection_category="opszone", selection_rank=1, selection_limit=10,
+            control_object_id="OPSZONE:Town Fight", ownership_policy="moose_managed", component_count=0,
+        ),
+        _feature(
             "missions", "AUFTRAG:7", _point(12.33, 53.90),
             name="Capture Town Fight", coalition="blue", category="Ground", alive=True,
             mission_type="CAPTUREZONE", status="executing", target_id="OPSZONE:Town Fight", legion_id="LEGION:Blue Brigade",
@@ -238,6 +246,48 @@ def main() -> int:
     runtime.picture = build_fixture_picture()
     runtime.connected = True
     runtime.error = None
+
+    class FixtureBridge:
+        relationship = None
+
+        def __init__(self) -> None:
+            self.objective = StrategicObjective(
+                objective_id="OBJECTIVE:Town Fight",
+                name="Capture Town Fight",
+                kind=ObjectiveKind.OPSZONE,
+                control_object_id="OPSZONE:Town Fight",
+                ownership_policy=OwnershipPolicy.MOOSE_MANAGED,
+                owner="red",
+                strategic_value=92,
+                priority=90,
+            )
+            self.goals: list[Any] = []
+            self.next_mark_id = 7000
+
+        def strategic_objective(self, objective_id: str) -> StrategicObjective | None:
+            return self.objective if objective_id == self.objective.objective_id else None
+
+        def strategic_goals(self) -> tuple[Any, ...]:
+            return tuple(self.goals)
+
+        def add_strategic_goal(self, goal: Any) -> Any:
+            self.goals.append(goal)
+            return goal
+
+        async def mark_map_position(self, text: str, **params: Any) -> dict[str, Any]:
+            self.next_mark_id += 1
+            return {
+                "ok": True,
+                "result": {
+                    "action": "map.marker.create",
+                    "mark_id": self.next_mark_id,
+                    "text": text,
+                    "coalition": -1,
+                    "read_only": bool(params.get("read_only", False)),
+                },
+            }
+
+    runtime._bridge = FixtureBridge()
 
     from fastapi.responses import HTMLResponse
 

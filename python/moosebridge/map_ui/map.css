@@ -146,6 +146,19 @@ button, input { font: inherit; letter-spacing: 0; }
 .detail-section:last-child { border-bottom: 0; }
 .detail-section-title { display: flex; align-items: center; gap: 7px; margin: 0 4px 5px; color: #35413c; font-size: 12px; font-weight: 700; text-transform: uppercase; }
 .detail-section-title svg { width: 15px; height: 15px; color: var(--muted); }
+.strategic-goal-controls { display: grid; gap: 8px; }
+.goal-control-row { display: grid; grid-template-columns: minmax(132px, 1fr) minmax(124px, auto); gap: 8px; padding: 0 4px; }
+.segmented-control { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); height: 32px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.segmented-control button { min-width: 0; padding: 4px 8px; color: var(--muted); background: #fff; border: 0; cursor: pointer; }
+.segmented-control button + button { border-left: 1px solid var(--border); }
+.segmented-control button:hover { background: #edf0ee; }
+.segmented-control button.is-selected { color: #fff; background: #46534d; font-weight: 600; }
+.command-button { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 5px 10px; color: #fff; background: #46534d; border: 1px solid #35413c; border-radius: 4px; cursor: pointer; }
+.command-button:hover { background: #35413c; }
+.command-button:disabled { color: #6d7671; background: #e5e9e6; border-color: var(--border); cursor: default; }
+.command-button svg { width: 16px; height: 16px; }
+.goal-control-status { min-height: 18px; padding: 0 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.goal-control-status.is-error { color: var(--red); }
 .property-list { display: grid; grid-template-columns: minmax(116px, 0.75fr) minmax(0, 1.25fr); gap: 0; margin: 0; }
 .property-list dt,
 .property-list dd { margin: 0; padding: 6px 4px; overflow-wrap: anywhere; }
@@ -179,4 +192,5 @@ button, input { font: inherit; letter-spacing: 0; }
   #mission-clock, .separator { display: none; }
   .layer-panel, .detail-panel { top: 126px; max-height: calc(100% - 150px); }
   .layer-panel { width: min(236px, calc(100% - 24px)); }
+  .goal-control-row { grid-template-columns: 1fr; }
 }

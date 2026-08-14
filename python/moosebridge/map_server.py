@@ -42,6 +42,7 @@ from .transport_infrastructure import TheaterTransportInfrastructure
 from .railway_infrastructure import TheaterRailwayInfrastructure
 from .infrastructure_sites import TheaterInfrastructureSites
 from .settlements import TheaterSettlements
+from .strategic_goals import generate_strategic_goals
 from .surface_regions import TheaterSurfaceRegions
 
 LOGGER = logging.getLogger(__name__)
@@ -99,6 +100,40 @@ def _number(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _marker_value(value: Any) -> str:
+    """Return one compact, single-line marker value."""
+
+    return " ".join(str(value or "").replace("_", " ").split())
+
+
+def compact_dcs_marker_text(properties: dict[str, Any], *, max_length: int = 180) -> str:
+    """Build concise F10 marker text from browser-map feature properties."""
+
+    object_id = _marker_value(properties.get("object_id"))
+    name = _marker_value(properties.get("name") or properties.get("display_name") or object_id or "Map object")
+    category = _marker_value(
+        properties.get("dcs_type")
+        or properties.get("category")
+        or properties.get("selection_category")
+        or properties.get("object_type")
+        or properties.get("layer")
+    )
+    side = _marker_value(properties.get("coalition") or properties.get("owner"))
+    status = _marker_value(properties.get("status") or properties.get("state"))
+    if not status and isinstance(properties.get("alive"), bool):
+        status = "alive" if properties["alive"] else "destroyed"
+    details = " | ".join(value for value in (category, side.title(), status) if value)
+    lines = [name[:72]]
+    if details:
+        lines.append(details[:72])
+    if object_id and object_id != name:
+        lines.append(object_id[:72])
+    text = "\n".join(lines)
+    if len(text) > max_length:
+        text = text[: max(1, max_length - 3)].rstrip() + "..."
+    return text
 
 
 def _distance_m(first: TrackPoint, second: TrackPoint) -> float:
@@ -183,6 +218,10 @@ class GlobalMapRuntime:
     _recon_features: list[dict[str, Any]] = field(default_factory=list)
     _recon_audit_signature: tuple[tuple[str, str], ...] = ()
     _recon_error: str | None = None
+    _strategic_objective_signature: tuple[Any, ...] = ()
+    _strategic_objective_error: str | None = None
+    _strategic_goal_generation_number: int = 0
+    _bridge: Any = field(init=False, default=None, repr=False)
     _diplomacy_event_cursor: str | None = None
     _border_violation_signature: tuple[tuple[str, str, float, bool], ...] = ()
     _topography: TheaterTopography | None = field(init=False, default=None)
@@ -436,6 +475,12 @@ class GlobalMapRuntime:
             "frontline_error": self._frontline_error,
             "recon_coverage_count": len(self._recon_features),
             "recon_coverage_error": self._recon_error,
+            "strategic_objective_count": sum(
+                1
+                for feature in self.picture.get("features", [])
+                if feature.get("properties", {}).get("layer") == "strategic_objectives"
+            ),
+            "strategic_objective_error": self._strategic_objective_error,
             "topography_theater_id": self._topography.theater_id if self._topography else None,
             "topography_feature_count": len(self._topography.features) if self._topography else 0,
             "topography_load_warning": self._topography_load_warning,
@@ -478,6 +523,9 @@ class GlobalMapRuntime:
         self._recon_features.clear()
         self._recon_audit_signature = ()
         self._recon_error = None
+        self._strategic_objective_signature = ()
+        self._strategic_objective_error = None
+        self._strategic_goal_generation_number = 0
         self._diplomacy_event_cursor = None
         self._border_violation_signature = ()
         self._frontline_tracker.reset()
@@ -541,6 +589,149 @@ class GlobalMapRuntime:
         properties["history_seconds"] = self.history_seconds
         self.picture = {**picture, "features": [*decorated_features, *trajectories], "properties": properties}
         return self.picture
+
+    def update_strategic_objectives(self, picture: GlobalPicture, bridge: Any) -> None:
+        """Generate and synchronize the map server's mission-scoped objective view."""
+
+        signature = (
+            int(bridge.state.mission_generation),
+            tuple(
+                sorted(
+                    (territory.object_id, territory.coalition, territory.shape, len(territory.vertices))
+                    for territory in picture.territories
+                )
+            ),
+            bool(self._settlements),
+            bool(self._transport_infrastructure),
+            bool(self._railway_infrastructure),
+            bool(self._infrastructure_sites),
+        )
+        try:
+            if signature != self._strategic_objective_signature:
+                bridge.generate_strategic_objectives(
+                    settlements=self._settlements,
+                    transport=self._transport_infrastructure,
+                    railway=self._railway_infrastructure,
+                    infrastructure=self._infrastructure_sites,
+                    register=True,
+                    replace=True,
+                )
+                self._strategic_objective_signature = signature
+            else:
+                bridge.sync_strategic_objectives(source="map.refresh")
+            picture.strategic_objectives.clear()
+            picture.strategic_objectives.extend(bridge.strategic_objectives())
+            self._strategic_objective_error = None
+        except ValueError as exc:
+            error = str(exc)
+            if error != self._strategic_objective_error:
+                LOGGER.warning("Strategic objective update unavailable: %s", error)
+            else:
+                LOGGER.debug("Strategic objective update still unavailable: %s", error)
+            self._strategic_objective_error = error
+
+    def create_strategic_goal(self, objective_id: str, coalition: str) -> dict[str, Any]:
+        """Derive and register one planned coalition goal selected on the map."""
+
+        bridge = self._bridge
+        if bridge is None or not self.connected:
+            raise RuntimeError("DCS bridge is not connected")
+        objective = bridge.strategic_objective(str(objective_id).strip())
+        if objective is None:
+            raise KeyError(f"Unknown strategic objective: {objective_id}")
+        self._strategic_goal_generation_number += 1
+        generation_id = f"MAP:{self._mission_generation}:{self._strategic_goal_generation_number}"
+        properties = self.picture.get("properties") if isinstance(self.picture.get("properties"), dict) else {}
+        result = generate_strategic_goals(
+            (objective,),
+            coalition,
+            relationship=bridge.relationship,
+            existing_goals=bridge.strategic_goals(),
+            mission_time=_number(properties.get("mission_time")),
+            generation_id=generation_id,
+            metadata={"selected_from": "global_map"},
+        )
+        if not result.goals:
+            reason = result.decisions[0].reason if result.decisions else "No strategic goal could be derived"
+            raise ValueError(reason)
+        goal = bridge.add_strategic_goal(result.goals[0])
+        self.annotate_strategic_goals(self.picture, bridge)
+        return {
+            "goal_id": goal.goal_id,
+            "name": goal.name,
+            "coalition": goal.coalition,
+            "action": goal.action.value,
+            "objective_id": goal.objective_id,
+            "priority": goal.priority,
+            "status": goal.status.value,
+            "reason": result.decisions[0].reason,
+        }
+
+    async def create_dcs_marker(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Create an all-visible F10 marker for one selected map feature."""
+
+        bridge = self._bridge
+        if bridge is None or not self.connected:
+            raise RuntimeError("DCS bridge is not connected")
+        properties = payload.get("properties")
+        point = payload.get("point")
+        if not isinstance(properties, dict) or not isinstance(point, dict):
+            raise ValueError("properties and point are required")
+        text = compact_dcs_marker_text(properties)
+        x, z = _number(point.get("x")), _number(point.get("z"))
+        latitude, longitude = _number(point.get("latitude")), _number(point.get("longitude"))
+        if x is not None and z is not None:
+            ack = await bridge.mark_map_position(
+                text,
+                x=x,
+                y=_number(point.get("y")) or 0.0,
+                z=z,
+                coalition="all",
+                read_only=False,
+                timeout=self.timeout,
+            )
+        elif latitude is not None and longitude is not None:
+            ack = await bridge.mark_map_position(
+                text,
+                latitude=latitude,
+                longitude=longitude,
+                altitude=_number(point.get("altitude")) or 0.0,
+                coalition="all",
+                read_only=False,
+                timeout=self.timeout,
+            )
+        else:
+            raise ValueError("point requires x/z or latitude/longitude")
+        result = ack.get("result") if isinstance(ack.get("result"), dict) else ack
+        return {
+            "mark_id": result.get("mark_id"),
+            "text": text,
+            "coalition": result.get("coalition", -1),
+            "read_only": result.get("read_only", False),
+        }
+
+    @staticmethod
+    def annotate_strategic_goals(geojson: dict[str, Any], bridge: Any) -> dict[str, Any]:
+        """Attach coalition-private goal state to its shared objective feature."""
+
+        goals_by_objective: dict[str, list[Any]] = {}
+        for goal in bridge.strategic_goals():
+            goals_by_objective.setdefault(goal.objective_id, []).append(goal)
+        for feature in geojson.get("features") or ():
+            properties = feature.get("properties") if isinstance(feature, dict) else None
+            if not isinstance(properties, dict) or properties.get("layer") != "strategic_objectives":
+                continue
+            goals = goals_by_objective.get(str(properties.get("object_id") or ""), [])
+            properties["goal_count"] = len(goals)
+            for coalition in ("blue", "red"):
+                matching = [goal for goal in goals if goal.coalition == coalition]
+                if not matching:
+                    continue
+                goal = matching[-1]
+                properties[f"{coalition}_goal_id"] = goal.goal_id
+                properties[f"{coalition}_goal_action"] = goal.action.value
+                properties[f"{coalition}_goal_status"] = goal.status.value
+        return geojson
 
     async def update_frontline(
         self,
@@ -1064,6 +1255,7 @@ class GlobalMapRuntime:
         with suppress(asyncio.CancelledError):
             await self._task
         self._task = None
+        self._bridge = None
 
     async def _run(self) -> None:
         control = MooseBridgeControlClient(
@@ -1073,6 +1265,7 @@ class GlobalMapRuntime:
             display_name="MooseBridge Map Server",
         )
         bridge = sdk_from_control_client(control, timeout=self.timeout)
+        self._bridge = bridge
         while True:
             try:
                 status = await control.status(timeout=self.timeout)
@@ -1082,7 +1275,10 @@ class GlobalMapRuntime:
                 if not status.get("connected"):
                     raise ConnectionError("DCS is not connected to the MooseBridge daemon")
                 picture = await bridge.refresh_global_picture()
+                self.update_strategic_objectives(picture, bridge)
                 geojson = picture.to_geojson()
+                self.annotate_strategic_goals(geojson, bridge)
+                geojson.setdefault("properties", {})["strategic_objective_error"] = self._strategic_objective_error
                 await bridge.refresh_diplomacy_state()
                 event_history = await control.query_events(
                     "*",
@@ -1253,6 +1449,35 @@ def create_app(
     @app.get("/api/picture/global.geojson")
     async def global_picture() -> dict[str, Any]:
         return runtime.picture
+
+    @app.post("/api/strategic-goals")
+    async def create_strategic_goal(payload: dict[str, Any]) -> dict[str, Any]:
+        objective_id = str(payload.get("objective_id") or "").strip()
+        coalition = str(payload.get("coalition") or "").strip().lower()
+        if not objective_id:
+            raise HTTPException(status_code=400, detail="objective_id is required")
+        if coalition not in {"blue", "red"}:
+            raise HTTPException(status_code=400, detail="coalition must be blue or red")
+        try:
+            goal = runtime.create_strategic_goal(objective_id, coalition)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, TimeoutError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        await runtime._broadcast({"type": "picture", "data": runtime.picture, "status": runtime.status_payload()})
+        return {"ok": True, "goal": goal}
+
+    @app.post("/api/dcs-markers")
+    async def create_dcs_marker(payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            marker = await runtime.create_dcs_marker(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (RuntimeError, TimeoutError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"ok": True, "marker": marker}
 
     @app.get("/api/topography/global.geojson")
     async def global_topography() -> dict[str, Any]:

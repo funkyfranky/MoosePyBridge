@@ -114,6 +114,27 @@ def test_relationship_blocks_offense_but_keeps_defense() -> None:
     assert "peace" in capture.reason
 
 
+def test_geographic_components_do_not_create_destroy_goals() -> None:
+    relationship = CoalitionRelationship()
+    relationship.state = RelationshipState.WAR
+    objective = _objective(
+        "Mapped Depot",
+        ObjectiveKind.DEPOT,
+        "red",
+        components=(ObjectiveComponent("TOPOGRAPHY:OSM:way/123:infrastructure"),),
+    )
+
+    result = generate_strategic_goals(
+        (objective,),
+        "blue",
+        relationship=relationship,
+        mission_time=100,
+    )
+
+    assert result.goals == ()
+    assert "geographic references" in result.rejected[0].reason
+
+
 def test_sdk_registers_once_and_reports_auditable_decisions() -> None:
     client = MooseBridgeClient(MooseBridgeServer())
     client.relationship.state = RelationshipState.WAR
@@ -128,4 +149,3 @@ def test_sdk_registers_once_and_reports_auditable_decisions() -> None:
     rendered = format_strategic_goal_generation(first)
     assert "coalition=blue" in rendered
     assert "capture=1" in rendered
-

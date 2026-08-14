@@ -17,7 +17,11 @@ from .strategic import (
     normalize_coalition,
 )
 from .strategic_selection import StrategicGoalPortfolio
-from .strategic_goals import StrategicGoalGenerationConfig, evaluate_strategic_objective
+from .strategic_goals import (
+    StrategicGoalGenerationConfig,
+    StrategicGoalGenerationResult,
+    evaluate_strategic_objective,
+)
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -72,6 +76,7 @@ class ConflictControllerCycle:
     portfolio: StrategicGoalPortfolio
     executions: tuple[OperationalPlanExecution, ...]
     issues: tuple[ConflictControllerIssue, ...]
+    goal_generation: StrategicGoalGenerationResult
 
 
 class RuleBasedConflictController:
@@ -100,9 +105,15 @@ class RuleBasedConflictController:
         self,
         *,
         execute: bool = True,
+        manage_relationship: bool = True,
         on_event: Callable[[object], None] | None = None,
     ) -> ConflictControllerCycle:
-        """Run one bounded decision cycle using coalition-private INTEL."""
+        """Run one bounded decision cycle using coalition-private INTEL.
+
+        Set ``manage_relationship`` to ``False`` for a side-effect-free
+        strategic preview. Goal policy then uses the relationship exactly as
+        it currently exists and does not declare war automatically.
+        """
 
         configured_objectives = self.client.strategic_objectives()
         await self.client.snapshot_statics()
@@ -113,13 +124,14 @@ class RuleBasedConflictController:
         for objective in configured_objectives:
             if self.client.strategic_objective(objective.objective_id) is None:
                 self.client.add_strategic_objective(objective, sync=False)
-        await self.ensure_war()
+        if manage_relationship:
+            await self.ensure_war()
         # Planning and portfolio reservations must use current COHORT availability
         # and group strength, especially after SetGrouping() changes in MOOSE.
         await self.client.refresh_legion_state()
         self.client.sync_strategic_objectives(source=f"{self.config.controller_id}.cycle")
         self._cycle_number += 1
-        generated_goals, generated_plans, issues = self._prepare_candidates(picture)
+        generated_goals, generated_plans, issues, goal_generation = self._prepare_candidates(picture)
         plans = self._owned_nonterminal_plans()
         portfolio = self.client.select_strategic_goal_portfolio(
             self.config.coalition,
@@ -172,12 +184,18 @@ class RuleBasedConflictController:
             portfolio=portfolio,
             executions=tuple(executions),
             issues=tuple(issues),
+            goal_generation=goal_generation,
         )
 
     def _prepare_candidates(
         self,
         picture: TacticalPicture,
-    ) -> tuple[list[StrategicGoal], list[OperationalPlan], list[ConflictControllerIssue]]:
+    ) -> tuple[
+        list[StrategicGoal],
+        list[OperationalPlan],
+        list[ConflictControllerIssue],
+        StrategicGoalGenerationResult,
+    ]:
         goals: list[StrategicGoal] = []
         plans: list[OperationalPlan] = []
         issues: list[ConflictControllerIssue] = []
@@ -225,7 +243,7 @@ class RuleBasedConflictController:
                 continue
             goals.append(goal)
             plans.append(plan)
-        return goals, plans, issues
+        return goals, plans, issues, generation
 
     def _desired_action(self, objective: StrategicObjective) -> StrategicGoalAction | None:
         return evaluate_strategic_objective(objective, self.config.coalition).action

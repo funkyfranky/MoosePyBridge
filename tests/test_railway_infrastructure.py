@@ -81,6 +81,21 @@ def test_railway_geojson_round_trip(tmp_path) -> None:
     assert all(feature["geometry"]["type"] == "Point" for feature in restored.to_geojson()["features"])
 
 
+def test_railway_geojson_loads_legacy_marshalling_yard_kind() -> None:
+    result = build_railway_infrastructure(
+        [_track("RAIL:Y1", [[12.03, 54.0], [12.032, 54.0]], service="yard")],
+        theater_id="Test",
+    )
+    payload = result.to_geojson()
+    payload["features"][0]["properties"]["railway_kind"] = "marshalling_yard"
+    payload["features"][0]["properties"]["category"] = "marshalling_yard"
+
+    restored = TheaterRailwayInfrastructure.from_geojson(payload)
+
+    assert restored.locations[0].kind is RailwayLocationKind.RAIL_YARD
+    assert restored.to_geojson()["features"][0]["properties"]["railway_kind"] == "rail_yard"
+
+
 def test_bridge_clustering_does_not_chain_distant_structures() -> None:
     tracks = [
         _track("RAIL:B1", [[12.0000, 54.0], [12.0001, 54.0]], bridge="yes"),
