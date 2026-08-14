@@ -36,8 +36,11 @@ Priorities:
   deterministic rule engine before adding an LLM decision layer. The first
   capacity-aware portfolio selector is complete: it permits multiple concurrent
   goals, applies explicit priority ordering, and prevents provisional COHORT
-  overbooking across candidate plans. Threat, cost, uncertainty, and objective
-  relationship scoring remain to be added.
+  overbooking across candidate plans. Shared objectives now also produce
+  coalition-private CAPTURE/DEFEND/DESTROY goals through one relationship-aware,
+  scope-aware SDK derivation used by the conflict controller. Neutral targets
+  remain protected and duplicate open goals are suppressed. Threat, cost,
+  uncertainty, and richer objective relationship scoring remain to be added.
 - [x] **Close the deterministic strategic feedback loop.** Reassess active goals and plans
   after objective ownership changes, losses, INTEL changes, mission outcomes,
   and asset availability changes without duplicating MOOSE tactical behavior.
@@ -120,17 +123,15 @@ Priorities:
   nuclear generation, 110/220/380 kV substations, and converter stations with
   DCS scenery. Record category-specific confidence; OSM evidence alone does
   not authorize a strategic target.
-- [ ] **Bring the remaining infrastructure candidates to the transport-cache
-  standard.** Define a small, typed taxonomy for energy, fuel and storage,
-  industrial sites, ports and harbours, rail facilities, communications, and
-  other operationally relevant infrastructure. Convert raw OSM features into
-  stable point or site objects with source identifiers, provenance, geometry,
-  member counts, and reproducible versioned artifacts. Keep the taxonomy
-  theater-aware: the first `EnergySite` model and GermanyCW policy exclude
-  modern wind, solar, biogas, and battery sites without imposing that choice
-  on other maps. `MilitarySite` is a separate type on the shared site base.
-  The normalized energy, fuel/storage, military, industrial, and maritime caches, SDK representations,
-  browser markers, and shared bounded DCS scenery-survey example are implemented.
+- [x] **Normalize the selected infrastructure type set.** Energy, fuel and
+  storage, military, industrial, maritime, road, railway, and settlement data
+  are converted into stable typed objects with provenance, geometry, source
+  identifiers, member evidence, and reproducible versioned artifacts. Keep the
+  taxonomy theater-aware: the first `EnergySite` model and GermanyCW policy
+  exclude modern wind, solar, biogas, and battery sites without imposing that
+  choice on other maps. `MilitarySite` is a separate type on the shared site
+  base. The normalized caches, public SDK representations, browser layers, and
+  bounded DCS scenery-survey examples are implemented.
   Fuel/storage uses explicit commodity evidence and category-specific,
   non-transitive clustering so raw tanks do not become independent strategic
   objects. Military candidates use typed roles, preserve multi-role sites,
@@ -140,16 +141,21 @@ Priorities:
   estates, and distinguish ordinary locations from strategic candidates.
   Maritime sites aggregate civilian ports, terminal roles, cargo evidence,
   piers, quays, docks, harbour basins, berths, and shipyards while excluding
-  marinas and keeping naval bases military. Communications and public-utility
-  site builders plus persisted DCS verification remain open. Keep the model extensible, but do
+  marinas and keeping naval bases military. Keep the model extensible, but do
   not retain every available OSM tag in the operational model.
-- [ ] **Cluster remaining infrastructure features into meaningful sites.**
-  Energy, fuel/storage, military, industrial, maritime, and railway clustering is implemented. Group related
-  buildings, tanks, yards, platforms, terminals, and equipment into one
-  operational location where they represent the same real facility. Use
-  category-specific clustering and preserve membership for diagnostics so a
-  refinery, power station, port, or rail yard is not represented by hundreds of
-  independent target markers.
+- [x] **Cluster infrastructure features into meaningful sites.** Energy,
+  fuel/storage, military, industrial, maritime, railway, road-transport, and
+  settlement aggregation use category-specific rules and preserve membership
+  for diagnostics. A refinery, power station, port, rail yard, bridge, or
+  junction is therefore represented as an operational location instead of
+  hundreds of independent source markers.
+- [ ] **Defer additional infrastructure categories.** Do not add more types to
+  the current implementation increment. Preserve communications and radar
+  sites, water and wastewater utilities, dams and flood-control works,
+  pipelines and pumping stations, civil-government facilities, emergency
+  services, and other specialist landmarks as future candidates. Add one only
+  when it supports a concrete strategic decision and DCS can represent or
+  scenario-author its operational effect.
 - [x] **Normalize operational railway locations.** Aggregate stations, freight
   terminals, rail yards, depots, mainline junctions, and railway bridges
   into stable typed objects while keeping ordinary track as topographic and
@@ -167,18 +173,29 @@ Priorities:
   centrality or detour impact for rail facilities. Record uncertainty and the
   reason for every tier; avoid applying the road-junction score unchanged to
   unrelated infrastructure.
+- [ ] **Bring the selected categories to a common maturity level.** Every
+  selected type now has typed source data and a browser representation, but
+  validation and operational behavior are uneven. Persist representative DCS
+  verification for settlements, energy, fuel/storage, military, industrial,
+  maritime, road, and railway sites; add comparable importance diagnostics;
+  and expose a consistent SDK query surface before treating the categories as
+  equally trustworthy planning inputs.
 - [ ] **Validate maritime sites and add intermodal dependencies.** Compare a
   representative cargo port, ferry terminal, fishing port, and shipyard with
   GermanyCW DCS scenery and F10 geography. Then connect admitted ports to the
   normalized road and railway networks and record whether loss of a bridge,
   rail junction, fuel terminal, or access corridor materially isolates the
   site. Keep throughput unknown unless an explicit source provides it.
-- [ ] **Expose typed infrastructure through the SDK and browser map.** Give each
-  category a bounded map representation, useful detail panel, importance-based
-  styling, zoom-dependent density, and filters for category and
-  critical/high/medium/low importance. Large raw source layers remain optional
-  topographic context; the strategic infrastructure layer contains only
-  normalized sites.
+- [x] **Expose typed infrastructure through the SDK and browser map.** Each
+  selected category has a public typed representation, bounded map layer,
+  useful detail panel, importance-based styling, and zoom-dependent density.
+  Large raw source layers remain optional topographic context; normalized
+  infrastructure layers contain operational sites rather than raw components.
+- [ ] **Add consistent infrastructure query and filtering ergonomics.** Provide
+  SDK helpers for spatial, kind, role, strategic-candidate, verification, and
+  importance queries. Add independent critical/high/medium/low browser filters
+  where dense layers need them, without loading raw source data into the live
+  picture.
 - [ ] **Validate infrastructure against the GermanyCW DCS theater.** Compare
   high-value candidates with the DCS F10 map, Mission Editor, local scenery,
   and available historical sources. Retain `confirmed`, `approximate`,
@@ -492,3 +509,17 @@ Priorities:
   observations from every coalition INTEL agent.
 - [x] Information requirements track open, partial, satisfied, and lost states
   without cancelling a running RECON mission.
+- [x] Strategic mission scope is derived from red, blue, and neutral TERRITORY
+  geometry. Red/blue ownership overrides neutral coverage, everything outside
+  their union is out of scope, and red/blue overlap is an explicit validation
+  error unless the scenario opts into contested areas.
+- [x] Automatic strategic-objective generation now applies the TERRITORY scope
+  centrally to live Airbases/OPSZONEs and normalized settlement, transport,
+  railway, energy, fuel, military, industrial, and maritime candidates.
+  Out-of-scope and below-threshold candidates remain visible in bounded
+  diagnostics; manual objectives are not replaced unless explicitly requested.
+- [x] Automatic strategic-goal derivation applies the strategic mission scope
+  and rejects out-of-scope objectives instead of inventing a fallback.
+- [ ] Apply the strategic mission scope to frontline calculation bounds and
+  diplomatic border classification. Each consumer should reject invalid
+  overlap instead of inventing a fallback.

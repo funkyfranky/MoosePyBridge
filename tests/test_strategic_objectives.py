@@ -1,0 +1,143 @@
+"""Tests for scope-bounded automatic strategic-objective generation."""
+
+from __future__ import annotations
+
+from moosebridge.infrastructure_sites import (
+    FuelStorageRole,
+    FuelStorageSite,
+    InfrastructureSiteKind,
+    StoredCommodity,
+    TheaterInfrastructureSites,
+)
+from moosebridge.models import Territory
+from moosebridge.settlements import (
+    Settlement,
+    SettlementImportanceTier,
+    SettlementKind,
+    SettlementSizeClass,
+    TheaterSettlements,
+)
+from moosebridge.state import MooseBridgeState
+from moosebridge.strategic import ObjectiveKind, OwnershipPolicy
+from moosebridge.strategic_objectives import generate_strategic_objectives
+from moosebridge.strategic_scope import StrategicScopeState, build_strategic_territory_scope
+
+
+def _territory(object_id: str, coalition: str, bounds: tuple[float, float, float, float]) -> Territory:
+    min_x, min_z, max_x, max_z = bounds
+    return Territory.from_payload(
+        {
+            "object_id": object_id,
+            "dcs_name": object_id.removeprefix("TERRITORY:"),
+            "object_type": "TERRITORY",
+            "coalition": coalition,
+            "vertices": [
+                {"x": min_x, "z": min_z, "longitude": min_x / 1000, "latitude": min_z / 1000},
+                {"x": max_x, "z": min_z, "longitude": max_x / 1000, "latitude": min_z / 1000},
+                {"x": max_x, "z": max_z, "longitude": max_x / 1000, "latitude": max_z / 1000},
+                {"x": min_x, "z": max_z, "longitude": min_x / 1000, "latitude": max_z / 1000},
+            ],
+        }
+    )
+
+
+def _scope_and_state() -> tuple[object, MooseBridgeState]:
+    territories = [
+        _territory("TERRITORY:Neutral", "neutral", (0, 0, 100, 100)),
+        _territory("TERRITORY:Blue", "blue", (0, 0, 40, 100)),
+        _territory("TERRITORY:Red", "red", (60, 0, 100, 100)),
+    ]
+    state = MooseBridgeState()
+    state.territory_objects = {item.object_id: item for item in territories}
+    state.airbases = {
+        "AIRBASE:Inside": {"object_id": "AIRBASE:Inside", "name": "Inside", "category": "Airdrome", "coalition": "blue", "x": 20, "z": 20},
+        "AIRBASE:Outside": {"object_id": "AIRBASE:Outside", "name": "Outside", "category": "Airdrome", "coalition": "neutral", "x": 120, "z": 20},
+    }
+    state.opszones = {
+        "OPSZONE:Center": {"object_id": "OPSZONE:Center", "name": "Center", "owner_current_name": "neutral", "x": 50, "z": 50},
+    }
+    return build_strategic_territory_scope(territories), state
+
+
+def test_generator_admits_live_objects_only_inside_scope() -> None:
+    scope, state = _scope_and_state()
+
+    result = generate_strategic_objectives(state, scope)  # type: ignore[arg-type]
+    by_id = {item.objective_id: item for item in result.objectives}
+
+    airbase = by_id["OBJECTIVE:AIRBASE:Inside"]
+    assert airbase.kind is ObjectiveKind.AIRBASE
+    assert airbase.ownership_policy is OwnershipPolicy.DCS_MANAGED
+    assert airbase.owner == "blue"
+    assert by_id["OBJECTIVE:OPSZONE:Center"].owner == "neutral"
+    assert "OBJECTIVE:AIRBASE:Outside" not in by_id
+    assert result.out_of_scope_count == 1
+    assert result.counts_by_scope[StrategicScopeState.BLUE.value] == 1
+
+
+def test_generator_applies_importance_threshold_and_preserves_dcs_components() -> None:
+    scope, state = _scope_and_state()
+    settlements = TheaterSettlements(
+        theater_id="Test",
+        settlements=(
+            Settlement(
+                settlement_id="SETTLEMENT:Important",
+                name="Important",
+                kind=SettlementKind.CITY,
+                size_class=SettlementSizeClass.LARGE_CITY,
+                geometry={"type": "Point", "coordinates": [0.05, 0.05]},
+                latitude=0.05,
+                longitude=0.05,
+                source="OpenStreetMap",
+                confidence=0.8,
+                importance_score=75,
+                importance_tier=SettlementImportanceTier.HIGH,
+            ),
+            Settlement(
+                settlement_id="SETTLEMENT:Local",
+                name="Local",
+                kind=SettlementKind.TOWN,
+                size_class=SettlementSizeClass.LAND_TOWN,
+                geometry={"type": "Point", "coordinates": [0.05, 0.06]},
+                latitude=0.06,
+                longitude=0.05,
+                source="OpenStreetMap",
+                confidence=0.8,
+                importance_score=20,
+                importance_tier=SettlementImportanceTier.LOCAL,
+            ),
+        ),
+    )
+    sites = TheaterInfrastructureSites(
+        theater_id="Test",
+        sites=(
+            FuelStorageSite(
+                site_id="FUEL_STORAGE_SITE:Depot",
+                kind=InfrastructureSiteKind.FUEL_STORAGE,
+                geometry={"type": "Point", "coordinates": [0.07, 0.05]},
+                latitude=0.05,
+                longitude=0.07,
+                source="OpenStreetMap",
+                confidence=0.8,
+                component_ids=("SCENERY:123",),
+                storage_roles=(FuelStorageRole.TANK_FARM,),
+                commodities=(StoredCommodity.PETROLEUM,),
+            ),
+        ),
+    )
+
+    result = generate_strategic_objectives(
+        state,
+        scope,  # type: ignore[arg-type]
+        settlements=settlements,
+        infrastructure=sites,
+    )
+    by_id = {item.objective_id: item for item in result.objectives}
+
+    assert by_id["OBJECTIVE:SETTLEMENT:Important"].owner == "neutral"
+    depot = by_id["OBJECTIVE:FUEL_STORAGE_SITE:Depot"]
+    assert depot.kind is ObjectiveKind.DEPOT
+    assert [component.object_id for component in depot.components] == ["SCENERY:123"]
+    assert depot.metadata["targetable"] is True
+    assert "OBJECTIVE:SETTLEMENT:Local" not in by_id
+    assert result.below_threshold_count == 1

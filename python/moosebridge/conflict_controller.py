@@ -10,7 +10,6 @@ from .operational import OperationalPlan, OperationalPlanStatus
 from .operational_execution import OperationalPlanExecution
 from .pictures import TacticalPicture
 from .strategic import (
-    ObjectiveKind,
     StrategicGoal,
     StrategicGoalAction,
     StrategicGoalStatus,
@@ -18,6 +17,7 @@ from .strategic import (
     normalize_coalition,
 )
 from .strategic_selection import StrategicGoalPortfolio
+from .strategic_goals import StrategicGoalGenerationConfig, evaluate_strategic_objective
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -181,41 +181,31 @@ class RuleBasedConflictController:
         goals: list[StrategicGoal] = []
         plans: list[OperationalPlan] = []
         issues: list[ConflictControllerIssue] = []
-        mission_time = picture.clock.mission_time if picture.clock else None
         for objective in self.client.strategic_objectives():
-            desired = self._desired_action(objective)
+            desired = evaluate_strategic_objective(
+                objective,
+                self.config.coalition,
+                relationship=self.client.relationship,
+            ).action
             existing = self._open_goal_for_objective(objective.objective_id)
             if existing is not None and existing.action is not desired:
                 if existing.status is StrategicGoalStatus.PLANNED:
                     self.client.cancel_strategic_goal(existing, reason="objective state changed before selection")
-                existing = None
-            if desired is None or existing is not None:
+        generation = self.client.generate_strategic_goals(
+            self.config.coalition,
+            generation_id=f"CYCLE:{self._cycle_number}",
+            config=StrategicGoalGenerationConfig(
+                defense_duration_s=self.config.defense_duration_s,
+                destroy_required_damage=self.config.destroy_required_damage,
+            ),
+            metadata={"conflict_controller": self.config.controller_id},
+        )
+        for goal in generation.goals:
+            objective = self.client.strategic_objective(goal.objective_id)
+            if objective is None:
                 continue
+            desired = goal.action
             token = objective.objective_id.removeprefix("OBJECTIVE:").replace(" ", "-")
-            goal = StrategicGoal(
-                goal_id=(
-                    f"GOAL:{self.config.coalition}:{desired.value}:{token}:"
-                    f"CYCLE:{self._cycle_number}"
-                ),
-                name=f"{self.config.coalition.title()} {desired.value} {objective.name}",
-                coalition=self.config.coalition,
-                action=desired,
-                objective_id=objective.objective_id,
-                priority=max(objective.priority, objective.strategic_value),
-                created_mission_time=mission_time,
-                deadline_mission_time=(
-                    mission_time + self.config.defense_duration_s
-                    if desired is StrategicGoalAction.DEFEND and mission_time is not None
-                    else None
-                ),
-                required_damage=(
-                    self.config.destroy_required_damage
-                    if desired is StrategicGoalAction.DESTROY
-                    else None
-                ),
-                metadata={"conflict_controller": self.config.controller_id},
-            )
-            self.client.add_strategic_goal(goal)
             try:
                 plan_id = (
                     f"PLAN:{self.config.coalition}:{desired.value}:{token}:"
@@ -238,17 +228,7 @@ class RuleBasedConflictController:
         return goals, plans, issues
 
     def _desired_action(self, objective: StrategicObjective) -> StrategicGoalAction | None:
-        if objective.kind is ObjectiveKind.OPSZONE:
-            if objective.owner == self.config.coalition:
-                return StrategicGoalAction.DEFEND if objective.contested else None
-            return StrategicGoalAction.CAPTURE
-        if (
-            objective.components
-            and objective.owner != self.config.coalition
-            and objective.health != 0.0
-        ):
-            return StrategicGoalAction.DESTROY
-        return None
+        return evaluate_strategic_objective(objective, self.config.coalition).action
 
     def _open_goal_for_objective(self, objective_id: str) -> StrategicGoal | None:
         for goal in self.client.strategic_goals(

@@ -13,7 +13,7 @@ from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .dcs_events import DestroyedObjectEvent, KillEvent
 from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
-from .infrastructure_sites import GeographicSurveyPoint, SceneryObjectSnapshot, ScenerySurvey
+from .infrastructure_sites import GeographicSurveyPoint, SceneryObjectSnapshot, ScenerySurvey, TheaterInfrastructureSites
 from .diplomacy import (
     BorderViolationTracker,
     CoalitionDoctrine,
@@ -105,6 +105,24 @@ from .strategic_feedback import (
     StrategicFeedbackPolicy,
 )
 from .strategic_selection import StrategicGoalPortfolio, StrategicGoalPortfolioSelector
+from .strategic_scope import (
+    StrategicScopeConfig,
+    StrategicTerritoryScope,
+    build_strategic_territory_scope,
+)
+from .strategic_objectives import (
+    StrategicObjectiveGenerationConfig,
+    StrategicObjectiveGenerationResult,
+    generate_strategic_objectives,
+)
+from .strategic_goals import (
+    StrategicGoalGenerationConfig,
+    StrategicGoalGenerationResult,
+    generate_strategic_goals,
+)
+from .settlements import TheaterSettlements
+from .railway_infrastructure import TheaterRailwayInfrastructure
+from .transport_infrastructure import TheaterTransportInfrastructure
 from .strategic import (
     ObjectiveEvent,
     OwnershipPolicy,
@@ -580,6 +598,7 @@ class MooseBridgeClient:
         ground_mobility_profile: GroundMobilityProfile = TRACKED_GROUND_PROFILE,
         strategic_shortfall_timeout_s: float = 300.0,
         border_violation_tolerance_s: float = 60.0,
+        strategic_scope_config: StrategicScopeConfig | None = None,
     ) -> None:
         self.server = server
         self.weapon_range_registry = weapon_ranges or DEFAULT_WEAPON_RANGE_REGISTRY
@@ -601,11 +620,13 @@ class MooseBridgeClient:
         self.relationship = CoalitionRelationship()
         self.coalition_doctrines = CoalitionDoctrineRegistry()
         self.border_violations = BorderViolationTracker(border_violation_tolerance_s)
+        self.strategic_scope_config = strategic_scope_config or StrategicScopeConfig()
         self.information_requirement_registry = InformationRequirementRegistry()
         self.plan_executor = OperationalPlanExecutor(self)
         self._auftrag_ids_by_object: dict[int, str] = {}
         self._strategic_feedback_message_ids: set[str] = set()
         self._strategic_feedback_tasks: set[asyncio.Task[Any]] = set()
+        self._strategic_goal_generation_number = 0
         self.strategic_feedback.add_listener(self._on_strategic_feedback_policy_event)
         add_listener = getattr(server, "add_message_listener", None)
         if callable(add_listener):
@@ -637,6 +658,7 @@ class MooseBridgeClient:
         self.information_requirement_registry.clear()
         self._auftrag_ids_by_object.clear()
         self._strategic_feedback_message_ids.clear()
+        self._strategic_goal_generation_number = 0
         if reset_state:
             self.state.reset_mission()
 
@@ -769,6 +791,41 @@ class MooseBridgeClient:
             self.sync_strategic_objectives(source="current_state")
         return added
 
+    def generate_strategic_objectives(
+        self,
+        *,
+        settlements: TheaterSettlements | None = None,
+        transport: TheaterTransportInfrastructure | None = None,
+        railway: TheaterRailwayInfrastructure | None = None,
+        infrastructure: TheaterInfrastructureSites | None = None,
+        config: StrategicObjectiveGenerationConfig | None = None,
+        register: bool = True,
+        replace: bool = False,
+    ) -> StrategicObjectiveGenerationResult:
+        """Generate scope-bounded objectives from live and static theater data.
+
+        Existing manually registered objectives remain authoritative unless
+        ``replace`` is explicitly enabled.
+        """
+
+        result = generate_strategic_objectives(
+            self.state,
+            self.build_strategic_scope(strict=True),
+            settlements=settlements,
+            transport=transport,
+            railway=railway,
+            infrastructure=infrastructure,
+            config=config,
+        )
+        if register:
+            for objective in result.objectives:
+                existing = self.objectives.get(objective.objective_id)
+                if existing is not None and not replace:
+                    continue
+                self.objectives.add(objective, replace=existing is not None)
+            self.sync_strategic_objectives(source="strategic_objective_generation")
+        return result
+
     def remove_strategic_objective(self, objective: StrategicObjective | str) -> StrategicObjective:
         """Remove a strategic objective during the mission."""
 
@@ -806,6 +863,39 @@ class MooseBridgeClient:
         if activate:
             self.activate_strategic_goal(added)
         return added
+
+    def generate_strategic_goals(
+        self,
+        coalition: str,
+        *,
+        config: StrategicGoalGenerationConfig | None = None,
+        register: bool = True,
+        generation_id: str | None = None,
+        metadata: dict[str, object] | None = None,
+    ) -> StrategicGoalGenerationResult:
+        """Derive executable coalition-private goals from current objectives.
+
+        Relationship state is a hard boundary here. Coalition doctrine remains
+        a portfolio-ranking preference and is applied by
+        :meth:`select_strategic_goal_portfolio`.
+        """
+
+        self._strategic_goal_generation_number += 1
+        resolved_generation_id = generation_id or f"AUTO:{self._strategic_goal_generation_number}"
+        result = generate_strategic_goals(
+            self.strategic_objectives(),
+            coalition,
+            relationship=self.relationship,
+            existing_goals=self.strategic_goals(),
+            mission_time=self._current_mission_time(),
+            generation_id=resolved_generation_id,
+            config=config,
+            metadata=metadata,
+        )
+        if register:
+            for goal in result.goals:
+                self.goals.add(goal)
+        return result
 
     def activate_strategic_goal(self, goal: StrategicGoal | str) -> StrategicGoal:
         """Activate a planned strategic goal and evaluate its current state."""
@@ -2082,6 +2172,15 @@ class MooseBridgeClient:
             return territories
         return [territory for territory in territories if _same_coalition(territory.coalition, coalition)]
 
+    def build_strategic_scope(self, *, strict: bool = True) -> StrategicTerritoryScope:
+        """Build mission scope from red, blue, and neutral territories."""
+
+        return build_strategic_territory_scope(
+            self.state.territory_objects.values(),
+            config=self.strategic_scope_config,
+            strict=strict,
+        )
+
     def opsgroup(self, object_id: str) -> OpsGroup | None:
         """Return a typed OPSGROUP by object id.
 
@@ -2583,6 +2682,7 @@ class MooseBridgeClient:
             intel_contacts=list(self.state.intel_contact_objects.values()),
             intel_clusters=list(self.state.intel_cluster_objects.values()),
             loss_reports=list(self.state.loss_reports.values()),
+            strategic_scope=self.build_strategic_scope(strict=False),
         )
 
     async def request_snapshots(self, actions: tuple[str, ...]) -> None:

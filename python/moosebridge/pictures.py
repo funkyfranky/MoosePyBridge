@@ -9,6 +9,7 @@ from .clock import DcsTime
 from .legions import Cohort, Legion
 from .models import Auftrag, Intel, IntelCluster, IntelContact, OpsGroup, OpsZone, Territory
 from .intelligence import IntelContactAssessment, IntelContactMemory, assess_intel_contact
+from .strategic_scope import StrategicTerritoryScope
 
 
 class HasGeographicPoint(Protocol):
@@ -508,6 +509,7 @@ class GlobalPicture:
     intel_contacts: list[IntelContact] = field(default_factory=list)
     intel_clusters: list[IntelCluster] = field(default_factory=list)
     loss_reports: list[dict[str, Any]] = field(default_factory=list)
+    strategic_scope: StrategicTerritoryScope | None = None
 
     def counts(self) -> dict[str, int]:
         """Return object counts by global-picture layer."""
@@ -645,6 +647,17 @@ class GlobalPicture:
                     )
                 )
 
+        if self.strategic_scope is not None:
+            issues.extend(
+                PictureValidationIssue(
+                    issue.severity,
+                    f"strategic_scope_{issue.code}",
+                    issue.message,
+                    issue.territory_ids[0] if len(issue.territory_ids) == 1 else None,
+                )
+                for issue in self.strategic_scope.issues
+            )
+
         group_ids = {str(item.get("object_id") or "") for item in self.groups}
         for unit in self.units:
             group_name = unit.get("group_name")
@@ -702,6 +715,8 @@ class GlobalPicture:
         zone_features = [_raw_zone_feature(item) for item in self.zones]
         features.extend(zone_features)
         features.extend(_territory_feature(item) for item in self.territories)
+        if self.strategic_scope is not None:
+            features.extend(self.strategic_scope.to_geojson_features())
         zones_by_name = {
             str(feature.get("properties", {}).get("name") or ""): feature
             for feature in zone_features
@@ -714,7 +729,10 @@ class GlobalPicture:
         features.extend(_point_feature(item, "intel_clusters", {"intel_id": item.intel_id, "size": item.size}) for item in self.intel_clusters)
         features.extend(_raw_point_feature(item, "loss_reports", {"perspective": "global_truth"}) for item in self.loss_reports)
         features.extend(self._mission_features())
-        return _feature_collection(features, scope="global", metadata=self.clock.to_dict() if self.clock else {})
+        metadata = self.clock.to_dict() if self.clock else {}
+        if self.strategic_scope is not None:
+            metadata["strategic_scope"] = self.strategic_scope.counts()
+        return _feature_collection(features, scope="global", metadata=metadata)
 
     def _mission_features(self) -> list[GeoJsonFeature | None]:
         features: list[GeoJsonFeature | None] = []

@@ -31,6 +31,9 @@ from .sensor_ranges import SensorRangeProfile
 from .strategic import GoalCondition, StrategicGoal
 from .strategic_feedback import StrategicFeedbackDecision, StrategicFeedbackEvent
 from .strategic_selection import StrategicGoalPortfolio
+from .strategic_scope import StrategicTerritoryScope
+from .strategic_objectives import StrategicObjectiveGenerationResult
+from .strategic_goals import StrategicGoalGenerationResult
 from .weapon_ranges import WeaponRangeProfile
 
 if TYPE_CHECKING:
@@ -39,6 +42,87 @@ if TYPE_CHECKING:
 
 def _text(value: object, default: str = "-") -> str:
     return str(value) if value not in (None, "") else default
+
+
+def format_strategic_scope(scope: StrategicTerritoryScope) -> str:
+    """Return concise mission-scope geometry and validation diagnostics."""
+
+    counts = scope.counts()
+    lines = [
+        (
+            f"Strategic scope territories={counts['territories']} valid={counts['valid']} "
+            f"errors={counts['errors']} warnings={counts['warnings']} "
+            f"red_blue_overlap={float(counts['overlap_area_m2']) / 1_000_000:.3f}km2"
+        ),
+        (
+            f"  area blue={scope.blue.area / 1_000_000:.1f}km2 "
+            f"red={scope.red.area / 1_000_000:.1f}km2 "
+            f"neutral={scope.neutral.area / 1_000_000:.1f}km2 "
+            f"contested={scope.contested.area / 1_000_000:.3f}km2"
+        ),
+    ]
+    lines.extend(f"  {issue.severity.upper()} {issue.code}: {issue.message}" for issue in scope.issues)
+    return "\n".join(lines)
+
+
+def format_strategic_objective_generation(
+    result: StrategicObjectiveGenerationResult,
+    *,
+    exclusion_limit: int = 20,
+) -> str:
+    """Return a compact audit of automatic objective admission."""
+
+    contested = result.counts_by_scope.get("contested", 0)
+    lines = [
+        (
+            f"Strategic objective generation candidates={result.candidate_count} "
+            f"generated={len(result.objectives)} excluded={len(result.exclusions)}"
+        ),
+        (
+            f"  out_of_scope={result.out_of_scope_count} "
+            f"below_threshold={result.below_threshold_count} contested={contested}"
+        ),
+    ]
+    for item in result.exclusions[:max(0, exclusion_limit)]:
+        scope = f" scope={item.scope_state.value}" if item.scope_state is not None else ""
+        lines.append(f"  EXCLUDED {item.object_id}: {item.reason}{scope}")
+    remaining = len(result.exclusions) - max(0, exclusion_limit)
+    if remaining > 0:
+        lines.append(f"  ... {remaining} more exclusion(s)")
+    return "\n".join(lines)
+
+
+def format_strategic_goal_generation(
+    result: StrategicGoalGenerationResult,
+    *,
+    rejection_limit: int = 20,
+) -> str:
+    """Return a compact audit of coalition-specific goal derivation."""
+
+    counts: dict[str, int] = {}
+    for goal in result.goals:
+        counts[goal.action.value] = counts.get(goal.action.value, 0) + 1
+    actions = ", ".join(f"{key}={value}" for key, value in sorted(counts.items())) or "none"
+    lines = [
+        (
+            f"Strategic goal generation coalition={result.coalition} "
+            f"evaluated={len(result.decisions)} generated={len(result.goals)} "
+            f"rejected={len(result.rejected)}"
+        ),
+        f"  actions: {actions}",
+    ]
+    for goal in result.goals:
+        lines.append(
+            f"  GENERATED {goal.goal_id} objective={goal.objective_id} "
+            f"action={goal.action.value} priority={goal.priority:g}"
+        )
+    for item in result.rejected[:max(0, rejection_limit)]:
+        action = item.action.value if item.action is not None else "none"
+        lines.append(f"  SKIPPED {item.objective_id} action={action}: {item.reason}")
+    remaining = len(result.rejected) - max(0, rejection_limit)
+    if remaining > 0:
+        lines.append(f"  ... {remaining} more skipped decision(s)")
+    return "\n".join(lines)
 
 
 def format_strategic_feedback(event: StrategicFeedbackEvent) -> str:
@@ -1018,6 +1102,9 @@ __all__ = [
     "format_operational_plan_execution",
     "format_operational_plan_reconciliation",
     "format_strategic_goal",
+    "format_strategic_goal_generation",
+    "format_strategic_objective_generation",
+    "format_strategic_scope",
     "format_strategic_feedback",
     "format_strategic_feedback_decision",
     "format_strategic_goal_portfolio",

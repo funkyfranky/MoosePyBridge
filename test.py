@@ -10,14 +10,14 @@ from pyrosm import OSM
 # Configuration
 # ----------------------------------------------------------------------
 
-DATA_DIR = Path("data")
+REPO_ROOT = Path(__file__).resolve().parent
 
 PBF_URL = (
     "https://download.geofabrik.de/"
     "europe/germany/schleswig-holstein-latest.osm.pbf"
 )
 
-PBF_FILE = DATA_DIR / "schleswig-holstein-latest.osm.pbf"
+PBF_FILE = REPO_ROOT / "tmp" / "topography" / "pbf" / "schleswig-holstein-latest.osm.pbf"
 
 FORCE_DOWNLOAD = False
 

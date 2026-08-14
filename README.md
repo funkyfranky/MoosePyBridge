@@ -252,6 +252,22 @@ available.
 `await bridge.wait_for_strategic_goal_event(goal_id)` waits for completion
 without periodically requesting objective snapshots.
 
+The SDK can derive the currently executable `CAPTURE`, `DEFEND`, and `DESTROY`
+goals for either coalition from the shared objective registry:
+
+```python
+result = bridge.generate_strategic_goals("blue")
+print(format_strategic_goal_generation(result))
+```
+
+The derivation respects the TERRITORY scope and shared relationship as hard
+boundaries. It proposes CAPTURE or DEFEND for MOOSE OPSZONEs and DESTROY only
+for enemy objectives with addressable components. Neutral infrastructure is
+not attacked automatically. Coalition doctrine is applied later by portfolio
+selection, where it ranks otherwise permissible goals without overriding
+diplomacy. Repeated generation keeps an existing planned or active goal rather
+than creating a duplicate.
+
 The SDK also maintains passive strategic feedback. Relevant ownership and
 loss events update objectives and goals immediately. COHORT, LEGION, and world
 state snapshots revalidate every non-terminal plan from the existing mirror;
@@ -330,7 +346,7 @@ await bridge.persist_diplomacy_state()
 
 `examples/sdk/run_blue_conflict_controller.py` demonstrates one deliberately
 bounded autonomous cycle. It restores or declares war, uses blue INTEL, derives
-CAPTURE/DEFEND/DESTROY candidates only from explicitly registered objectives,
+CAPTURE/DEFEND/DESTROY candidates from registered objectives,
 admits at most one capacity-feasible plan, approves it, and executes it through
 the blue COMMANDER. Red DCS forces can serve as targets for this first scenario;
 red LEGIONs and COHORTs are required only when red should plan and execute its

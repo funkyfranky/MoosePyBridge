@@ -16,7 +16,8 @@
       ],
     },
     { key: "zones", label: "Zones", color: "#c19424", icon: "map-pin", default: false },
-    { key: "territories", label: "Territories", color: "#59635e", icon: "map", default: true },
+    { key: "strategic_scope", label: "Strategic scope", color: "#59635e", icon: "scan", default: true },
+    { key: "territories", label: "Source territories", color: "#59635e", icon: "map", default: false },
     { key: "frontlines", label: "Frontlines", color: "#573a58", icon: "git-commit-horizontal", default: true },
     { key: "pressure_frontlines", label: "Pressure lines", color: "#9a6f24", icon: "activity", default: false },
     { key: "incursions", label: "Incursions", color: "#d06f27", icon: "shield-alert", size: 1.12, default: true },
@@ -79,7 +80,7 @@
     },
     {
       key: "territorial", label: "Territorial control", icon: "map", color: "#573a58",
-      layers: ["territories", "frontlines", "pressure_frontlines", "incursions"],
+      layers: ["strategic_scope", "territories", "frontlines", "pressure_frontlines", "incursions"],
     },
     {
       key: "zones", label: "Zones", icon: "map-pin", color: "#8b5ea7",
@@ -568,12 +569,14 @@
         });
         continue;
       }
-      if (spec.key === "zones" || spec.key === "territories" || spec.key === "opszones") {
+      if (spec.key === "zones" || spec.key === "territories" || spec.key === "strategic_scope" || spec.key === "opszones") {
         const areaColor = spec.key === "opszones"
           ? ["case",
               ["==", ["get", "contested"], true], "#d06f27",
               ["match", ["get", "owner"], "blue", coalitionColors.blue, "red", coalitionColors.red, "neutral", coalitionColors.neutral, spec.color],
             ]
+          : spec.key === "strategic_scope"
+            ? ["match", ["get", "scope_state"], "blue", coalitionColors.blue, "red", coalitionColors.red, "neutral", "#aeb3ae", "contested", "#d06f27", spec.color]
           : spec.key === "territories"
             ? ["match", ["get", "coalition"], "blue", coalitionColors.blue, "red", coalitionColors.red, "neutral", coalitionColors.neutral, spec.color]
           : spec.color;
@@ -581,18 +584,18 @@
           type: "fill",
           source: "zone-areas",
           filter: ["==", ["get", "layer"], spec.key],
-          paint: { "fill-color": areaColor, "fill-opacity": spec.key === "territories" ? 0.14 : spec.key === "opszones" ? 0.22 : 0.1 },
+          paint: { "fill-color": areaColor, "fill-opacity": spec.key === "strategic_scope" ? 0.18 : spec.key === "territories" ? 0.1 : spec.key === "opszones" ? 0.22 : 0.1 },
         });
         addMapLayer(spec, {
           type: "line",
           source: "zone-areas",
           filter: ["==", ["get", "layer"], spec.key],
-          paint: { "line-color": areaColor, "line-width": spec.key === "territories" ? 2 : spec.key === "opszones" ? 2.4 : 1.2 },
+          paint: { "line-color": areaColor, "line-width": spec.key === "strategic_scope" ? 2.5 : spec.key === "territories" ? 1.4 : spec.key === "opszones" ? 2.4 : 1.2 },
         });
         addMapLayer(spec, {
           type: "symbol",
           source: "zone-areas",
-          minzoom: spec.key === "zones" ? 7 : 4,
+          minzoom: spec.key === "zones" ? 7 : spec.key === "strategic_scope" ? 5 : 4,
           filter: ["==", ["get", "layer"], spec.key],
           layout: {
             "text-field": ["get", "name"],
@@ -1084,7 +1087,7 @@
     return {
       type: "FeatureCollection",
       features: picture.features
-        .filter((feature) => ["zones", "territories", "opszones"].includes(feature.properties?.layer))
+        .filter((feature) => ["zones", "territories", "strategic_scope", "opszones"].includes(feature.properties?.layer))
         .map(zoneAreaFeature)
         .filter(Boolean),
     };

@@ -24,6 +24,7 @@ htmlcov/
 # Runtime logs and bridge captures
 *.log
 *.jsonl
+*.osm.pbf
 moosebridge_raw.jsonl
 tmp/frontline_prototype.geojson
 tmp/frontline_prototype.html
