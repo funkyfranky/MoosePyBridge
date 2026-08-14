@@ -20,12 +20,13 @@ from moosebridge import (  # noqa: E402
     FuelStorageSite,
     InfrastructureCandidatePolicy,
     IndustrialSite,
+    MaritimeSite,
     MilitarySite,
     TopographyFeature,
     TopographyLayer,
     build_infrastructure_sites,
 )
-from moosebridge.pbf_topography import energy_features_from_pbf  # noqa: E402
+from moosebridge.pbf_topography import targeted_infrastructure_features_from_pbf  # noqa: E402
 
 
 DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "topography" / "viewport" / "manifest.json"
@@ -41,7 +42,7 @@ def main() -> int:
         "--pbf-directory",
         type=Path,
         default=DEFAULT_PBF_DIRECTORY,
-        help="Directory containing Geofabrik PBF files for targeted energy extraction.",
+        help="Directory containing Geofabrik PBF files for targeted energy and maritime extraction.",
     )
     parser.add_argument(
         "--include-modern-energy",
@@ -54,12 +55,13 @@ def main() -> int:
     features = _load_candidates(args.manifest.parent, payload.get("shards") or [])
     pbf_paths = sorted(args.pbf_directory.glob("*.osm.pbf")) if args.pbf_directory.is_dir() else []
     if pbf_paths:
-        print(f"  reading targeted energy data from {len(pbf_paths)} PBF file(s)", flush=True)
+        print(f"  reading targeted energy and maritime data from {len(pbf_paths)} PBF file(s)", flush=True)
         bounds = _manifest_bounds(payload.get("shards") or [])
-        for feature in energy_features_from_pbf(
+        for feature in targeted_infrastructure_features_from_pbf(
             pbf_paths,
             bounds=bounds,
             scenario_reference_year=1989 if theater_id.casefold() == "germanycw" else None,
+            max_workers=8,
         ):
             features[feature.object_id] = feature
     policy = None
@@ -74,6 +76,7 @@ def main() -> int:
     fuel_count = sum(isinstance(site, FuelStorageSite) for site in artifact.sites)
     military_count = sum(isinstance(site, MilitarySite) for site in artifact.sites)
     industrial_count = sum(isinstance(site, IndustrialSite) for site in artifact.sites)
+    maritime_count = sum(isinstance(site, MaritimeSite) for site in artifact.sites)
     print(f"Infrastructure sites written: {output}")
     print(f"  theater: {theater_id}")
     print(f"  raw unique candidates: {len(features)}")
@@ -81,6 +84,7 @@ def main() -> int:
     print(f"  admitted fuel/storage sites: {fuel_count}")
     print(f"  admitted military sites: {military_count}")
     print(f"  admitted industrial sites: {industrial_count}")
+    print(f"  admitted maritime sites: {maritime_count}")
     excluded = artifact.metadata.get("energy", {}).get("excluded_energy_source_counts") or {}
     print("  excluded: " + (", ".join(f"{key}={value}" for key, value in sorted(excluded.items())) or "none"))
     return 0
@@ -94,6 +98,7 @@ _CANDIDATE_CATEGORIES = (
     "industrial_area", "works", "factory", "sawmill", "brewery", "chemical",
     "shipyard", "mine", "metal_processing", "quarry", "cement", "glass",
     "machinery", "steelmaking", "automotive", "food", "electronics",
+    "harbour", "port", "ferry_terminal", "pier", "quay", "dock", "berth", "harbour_basin",
 )
 
 

@@ -98,6 +98,22 @@ def test_overpass_element_classifies_railway_facilities() -> None:
     assert halt[0].category == "railway_halt"
 
 
+def test_overpass_element_classifies_maritime_facilities_and_components() -> None:
+    port = features_from_overpass_element({
+        "type": "way",
+        "id": 46,
+        "tags": {"name": "Cargo Alpha", "landuse": "port", "port": "cargo", "cargo": "containers"},
+        "geometry": [{"lon": 12.0, "lat": 54.0}, {"lon": 12.01, "lat": 54.0}, {"lon": 12.0, "lat": 54.0}],
+    }, scenario_reference_year=1999)
+    berth = features_from_overpass_element({
+        "type": "node", "id": 47, "lat": 54.0, "lon": 12.02,
+        "tags": {"seamark:type": "berth", "seamark:berth:category": "loading"},
+    }, scenario_reference_year=1999)
+
+    assert next(feature for feature in port if feature.layer is TopographyLayer.INFRASTRUCTURE).category == "port"
+    assert berth[0].category == "berth"
+
+
 def test_inconsistent_osm_validity_dates_do_not_abort_theater_import() -> None:
     features = features_from_overpass_element(
         {

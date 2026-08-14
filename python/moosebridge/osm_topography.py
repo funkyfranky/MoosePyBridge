@@ -38,6 +38,12 @@ def build_overpass_query(bounds: tuple[float, float, float, float]) -> str:
   nwr[\"power\"=\"substation\"]({bbox});
   nwr[\"man_made\"~\"^(works|water_works|wastewater_plant|storage_tank|silo)$\"]({bbox});
   nwr[\"harbour\"=\"yes\"]({bbox});
+  nwr[\"landuse\"=\"port\"]({bbox});
+  nwr[\"industrial\"~\"^(port|shipyard)$\"]({bbox});
+  nwr[\"amenity\"=\"ferry_terminal\"]({bbox});
+  nwr[\"man_made\"~\"^(pier|quay|shipyard)$\"]({bbox});
+  nwr[\"waterway\"=\"dock\"]({bbox});
+  nwr[\"seamark:type\"~\"^(harbour|berth|harbour_basin)$\"]({bbox});
   nwr[\"industrial\"]({bbox});
   way[\"bridge\"][\"highway\"]({bbox});
 );
@@ -231,7 +237,22 @@ def _infrastructure_category(tags: dict[str, Any]) -> str | None:
         return "power_plant"
     if tags.get("power") == "substation":
         return "power_converter" if tags.get("substation") == "converter" else "power_substation"
-    if tags.get("harbour") == "yes" or tags.get("landuse") == "port":
+    seamark_type = str(tags.get("seamark:type") or "").strip().casefold()
+    if tags.get("amenity") == "ferry_terminal":
+        return "ferry_terminal"
+    if tags.get("man_made") in {"pier", "quay", "shipyard"}:
+        return str(tags["man_made"])
+    if tags.get("industrial") == "shipyard":
+        return "shipyard"
+    if tags.get("waterway") == "dock" or seamark_type == "dock":
+        return "dock"
+    if seamark_type == "berth":
+        return "berth"
+    if seamark_type == "harbour_basin":
+        return "harbour_basin"
+    if tags.get("landuse") == "port" or tags.get("industrial") == "port" or tags.get("port"):
+        return "port"
+    if tags.get("harbour") == "yes" or seamark_type == "harbour":
         return "harbour"
     if tags.get("man_made"):
         return str(tags["man_made"])

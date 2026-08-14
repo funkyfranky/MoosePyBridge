@@ -50,6 +50,7 @@
     { key: "fuel_storage_sites", label: "Fuel and storage sites", color: "#8a5a32", icon: "fuel", default: false },
     { key: "military_sites", label: "Military sites", color: "#6c5b48", icon: "shield", default: false },
     { key: "industrial_sites", label: "Industrial sites", color: "#76578b", icon: "factory", default: false },
+    { key: "maritime_sites", label: "Ports and maritime logistics", color: "#176f77", icon: "anchor", default: false },
     { key: "settlements", label: "Cities and towns", color: "#9a4f4f", icon: "building-2", default: false },
     { key: "surface_land_regions", label: "Connected land", color: "#4f7a57", icon: "land-plot", default: false },
     { key: "surface_water_regions", label: "Connected water", color: "#277c9d", icon: "waves", default: false },
@@ -90,7 +91,7 @@
     },
     {
       key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#137f87",
-      layers: ["airbases", "settlements", "transport_bridges", "transport_junctions", "railway_infrastructure", "energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"],
+      layers: ["airbases", "settlements", "transport_bridges", "transport_junctions", "railway_infrastructure", "maritime_sites", "energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"],
     },
     {
       key: "topography", label: "Topography", icon: "map", color: "#3c7069",
@@ -750,8 +751,8 @@
         });
         continue;
       }
-      if (["energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"].includes(spec.key)) {
-        if (["energy_sites", "military_sites", "industrial_sites"].includes(spec.key)) {
+      if (["energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites", "maritime_sites"].includes(spec.key)) {
+        if (["energy_sites", "military_sites", "industrial_sites", "maritime_sites"].includes(spec.key)) {
           const siteAreaFilter = [
             "all",
             ["==", ["get", "layer"], spec.key],
@@ -760,9 +761,9 @@
           ];
           const siteColor = [
             "match", ["get", "importance_tier"],
-            "critical", spec.key === "energy_sites" ? "#85600d" : spec.key === "military_sites" ? "#873838" : "#6f315f",
-            "high", spec.key === "energy_sites" ? "#a57716" : spec.key === "military_sites" ? "#8a5b37" : "#754b70",
-            "medium", spec.key === "energy_sites" ? "#b38d35" : spec.key === "military_sites" ? "#73634c" : "#6d5d78",
+            "critical", spec.key === "energy_sites" ? "#85600d" : spec.key === "military_sites" ? "#873838" : spec.key === "maritime_sites" ? "#075f70" : "#6f315f",
+            "high", spec.key === "energy_sites" ? "#a57716" : spec.key === "military_sites" ? "#8a5b37" : spec.key === "maritime_sites" ? "#177688" : "#754b70",
+            "medium", spec.key === "energy_sites" ? "#b38d35" : spec.key === "military_sites" ? "#73634c" : spec.key === "maritime_sites" ? "#338796" : "#6d5d78",
             spec.color,
           ];
           addMapLayer(spec, {
@@ -789,7 +790,7 @@
             },
           });
         }
-        const detailedSite = ["energy_sites", "military_sites", "industrial_sites"].includes(spec.key);
+        const detailedSite = ["energy_sites", "military_sites", "industrial_sites", "maritime_sites"].includes(spec.key);
         const sitePointFilter = [
           "all",
           ["==", ["get", "layer"], spec.key],
@@ -797,12 +798,12 @@
         ];
         const siteCircleColor = detailedSite
           ? ["match", ["get", "importance_tier"],
-            "critical", spec.key === "energy_sites" ? "#85600d" : spec.key === "military_sites" ? "#873838" : "#6f315f",
-            "high", spec.key === "energy_sites" ? "#a57716" : spec.key === "military_sites" ? "#8a5b37" : "#754b70",
-            "medium", spec.key === "energy_sites" ? "#b38d35" : spec.key === "military_sites" ? "#73634c" : "#6d5d78",
+            "critical", spec.key === "energy_sites" ? "#85600d" : spec.key === "military_sites" ? "#873838" : spec.key === "maritime_sites" ? "#075f70" : "#6f315f",
+            "high", spec.key === "energy_sites" ? "#a57716" : spec.key === "military_sites" ? "#8a5b37" : spec.key === "maritime_sites" ? "#177688" : "#754b70",
+            "medium", spec.key === "energy_sites" ? "#b38d35" : spec.key === "military_sites" ? "#73634c" : spec.key === "maritime_sites" ? "#338796" : "#6d5d78",
             spec.color]
           : spec.color;
-        const siteOverviewOpacity = ["energy_sites", "industrial_sites"].includes(spec.key)
+        const siteOverviewOpacity = ["energy_sites", "industrial_sites", "maritime_sites"].includes(spec.key)
           ? ["step", ["zoom"],
             ["match", ["get", "importance_tier"], "critical", 0.94, "high", 0.94, 0],
             7, ["match", ["get", "importance_tier"], "critical", 0.94, "high", 0.94, "medium", 0.9, 0],
@@ -825,7 +826,7 @@
           type: "circle",
           source: "infrastructure-sites",
           minzoom: 5,
-          maxzoom: spec.key === "military_sites" ? 9 : ["energy_sites", "industrial_sites"].includes(spec.key) ? 10 : 24,
+          maxzoom: spec.key === "military_sites" ? 9 : ["energy_sites", "industrial_sites", "maritime_sites"].includes(spec.key) ? 10 : 24,
           filter: sitePointFilter,
           paint: siteCirclePaint,
         });
@@ -1157,7 +1158,7 @@
     for (const feature of latestInfrastructureSites.features) {
       const longitude = Number(feature.properties?.longitude);
       const latitude = Number(feature.properties?.latitude);
-      const isDetailedArea = ["energy_sites", "military_sites", "industrial_sites"].includes(feature.properties?.layer)
+      const isDetailedArea = ["energy_sites", "military_sites", "industrial_sites", "maritime_sites"].includes(feature.properties?.layer)
         && ["Polygon", "MultiPolygon"].includes(feature.geometry?.type);
       if (isDetailedArea) {
         displayFeatures.push({
@@ -1607,6 +1608,8 @@
     importance_score: "Importance score", importance_tier: "Importance tier",
     energy_roles: "Energy roles", energy_sources: "Energy sources", output_mw: "Electrical output",
     voltage_kv: "Grid voltage",
+    maritime_roles: "Maritime roles", cargo_types: "Cargo types", quay_length_m: "Quay length",
+    berth_count: "Berths",
     network_analysis_complete: "Analysis", network_disconnected_if_lost: "Loss effect",
     network_alternative_route_found: "Alternative route", network_criticality_score: "Network criticality",
     network_detour_added_m: "Additional distance", network_detour_distance_m: "Detour distance",
@@ -1623,6 +1626,10 @@
     if (key === "capacity_m3") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m³`;
     if (key === "output_mw") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 1 })} MW`;
     if (key === "voltage_kv") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 1 })} kV`;
+    if (key === "quay_length_m") {
+      const distance = Number(value);
+      return distance >= 1000 ? `${(distance / 1000).toFixed(1)} km` : `${distance.toFixed(0)} m`;
+    }
     if (key === "footprint_area_m2") {
       const area = Number(value);
       return area >= 1_000_000
@@ -1742,6 +1749,8 @@
           ? "Unnamed military site"
           : properties.layer === "industrial_sites"
             ? "Unnamed industrial site"
+          : properties.layer === "maritime_sites"
+            ? "Unnamed maritime site"
           : "Unnamed object";
     const displayName = properties.name && properties.name !== properties.object_id
       ? properties.name

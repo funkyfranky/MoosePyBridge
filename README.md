@@ -1625,6 +1625,18 @@ site artifact:
 python tools/build_infrastructure_sites.py
 ```
 
+When only the maritime taxonomy changes, the existing indexed topography cache
+can update that category without repeating the expensive theater-wide PBF scan:
+
+```powershell
+python tools/build_maritime_sites.py
+```
+
+This preserves the other normalized categories, removes legacy industrial
+shipyard duplicates, and replaces the maritime sites atomically in the same
+artifact. A later full infrastructure build remains the authoritative route
+when the source PBF snapshots themselves change.
+
 For GermanyCW, modern wind, solar, biogas, and battery sites are excluded by
 policy; other theaters allow them unless their own policy says otherwise. Power
 plants are clustered by stable identity and proximity. Grid substations require
@@ -1634,14 +1646,19 @@ bounded DCS scenery check is available through
 `await bridge.survey_scenery(latitude, longitude, radius_m=500)`.
 The map server loads the normalized cache automatically and exposes it through
 `/api/infrastructure-sites/global.geojson`. `Energy sites`, `Fuel and storage
-sites`, `Military sites`, and `Industrial sites` are separate, initially hidden
+sites`, `Military sites`, `Industrial sites`, and `Ports and maritime logistics` are separate, initially hidden
 layers under `Infrastructure`. Energy sites can be filtered into power plants,
 grid substations, and converter stations. The map uses importance-weighted
 representative markers and normalized footprints while the SDK artifact retains
-source identifiers and component membership.
+source identifiers and component membership. Maritime normalization groups
+port anchors with nearby piers, quays, docks, basins, and berths. Generic local
+harbours remain low-weight context; cargo, terminal, ferry, fishing, and shipyard
+evidence determines operational roles and strategic importance.
 
 The GermanyCW cache currently contains 3,718 energy sites, 440 fuel or bulk
-storage sites, 1,100 military sites, and 5,727 industrial sites. Fuel admission
+storage sites, 1,100 military sites, 5,641 industrial sites, and 507 maritime
+sites. Of the maritime sites, 301 currently have explicit strategic evidence;
+generic local harbours remain low-weight context. Fuel admission
 is deliberately conservative: a candidate needs
 explicit fuel-storage, oil-storage, gas-storage, terminal, depot, tank, or
 refinery evidence. A generic oil or gas industry tag is insufficient. Water,
@@ -1666,7 +1683,7 @@ combined footprint, scale, importance score and tier, and a separate
 `strategic_candidate` flag. Role is weighted most strongly; size, product,
 operator, and multiple-role evidence refine the score. The map shows weighted
 overview markers and switches to the normalized industrial footprint from zoom
-9. The current GermanyCW cache classifies 2,123 of 5,727 industrial sites as
+9. The current GermanyCW cache classifies 2,037 of 5,641 industrial sites as
 strategic candidates.
 
 To inspect one admitted infrastructure site against nearby addressable DCS
@@ -1683,7 +1700,14 @@ overlay. Edit the typed constants at the top of the file to select energy,
 another site, reference, or radius. `verify_energy_site.py` remains a compact
 energy-specific entry point using the same implementation;
 `verify_military_site.py` selects the military layer and
-`verify_industrial_site.py` selects industry.
+`verify_industrial_site.py` selects industry. Maritime sites normalize civilian
+ports, cargo/container/bulk/RoRo and ferry terminals, fishing ports, passenger
+terminals, and shipyards. Piers, quays, docks, harbour basins, and berths are
+retained as components of their nearest port rather than promoted to independent
+strategic locations. Naval bases remain military sites. The model records
+explicit cargo types plus footprint, approximate quay length, berth count,
+importance, and source membership; it does not infer throughput where OSM has
+no capacity evidence.
 
 Named cities and towns use a separate normalized artifact:
 

@@ -26,6 +26,7 @@ from moosebridge import (  # noqa: E402
     InfrastructureSite,
     InfrastructureSiteKind,
     IndustrialSite,
+    MaritimeSite,
     MilitarySite,
     MooseBridgeClient,
     ScenerySurvey,
@@ -40,7 +41,7 @@ CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 SITES_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-infrastructure-sites.geojson"
 
-# Select ENERGY, FUEL_STORAGE, MILITARY, or INDUSTRIAL. Set an exact site name, or leave
+# Select ENERGY, FUEL_STORAGE, MILITARY, INDUSTRIAL, or MARITIME. Set an exact site name, or leave
 # None to use the nearest admitted site to REFERENCE_OBJECT_ID.
 SITE_KIND = InfrastructureSiteKind.FUEL_STORAGE
 SITE_NAME: str | None = None
@@ -113,6 +114,17 @@ def format_site(site: InfrastructureSite) -> None:
         print(f"Scale           : {site.properties.get('scale') or 'unknown'}")
         print(f"Strategic       : {bool(site.properties.get('strategic_candidate'))}")
         print(f"Components      : {len(site.component_ids)}")
+    elif isinstance(site, MaritimeSite):
+        print(f"Roles           : {', '.join(role.value for role in site.roles)}")
+        print(f"Cargo           : {', '.join(value.value for value in site.cargo_types) if site.cargo_types else 'unknown'}")
+        area = f"{site.footprint_area_m2 / 1_000_000:,.2f} km2" if site.footprint_area_m2 is not None else "unknown"
+        quay = f"{site.quay_length_m / 1_000:,.2f} km" if site.quay_length_m is not None else "unknown"
+        print(f"Footprint       : {area}")
+        print(f"Quay length     : {quay}")
+        print(f"Berths          : {site.berth_count}")
+        print(f"Importance      : {site.importance_score:.1f} ({site.importance_tier.value})")
+        print(f"Strategic       : {bool(site.properties.get('strategic_candidate'))}")
+        print(f"Components      : {len(site.component_ids)}")
     print(f"Position        : {site.latitude:.5f}, {site.longitude:.5f}")
     print(f"Source          : {site.source}")
     print(f"Confidence      : {site.confidence:.2f}")
@@ -162,7 +174,8 @@ async def run() -> int:
     if not DRAW_F10_OVERLAY:
         return 0
     site_color = (
-        (0.46, 0.34, 0.55, 1.0) if isinstance(site, IndustrialSite)
+        (0.09, 0.44, 0.47, 1.0) if isinstance(site, MaritimeSite)
+        else (0.46, 0.34, 0.55, 1.0) if isinstance(site, IndustrialSite)
         else (0.42, 0.35, 0.28, 1.0) if isinstance(site, MilitarySite)
         else (0.75, 0.42, 0.12, 1.0) if isinstance(site, FuelStorageSite)
         else (1.0, 0.75, 0.0, 1.0)

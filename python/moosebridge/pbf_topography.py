@@ -15,14 +15,18 @@ from .topography_coverage import TheaterTopographyCoverage, TopographyDetailLeve
 
 PBF_TAG_FILTER: dict[str, Any] = {
     "natural": ["water", "coastline"],
-    "waterway": ["river", "canal"],
+    "waterway": ["river", "canal", "dock"],
     "highway": ["motorway", "trunk", "primary", "secondary"],
     "railway": ["rail"],
     "place": ["city", "town"],
     "landuse": ["industrial", "commercial", "residential", "retail", "military", "port"],
     "power": ["plant", "substation"],
-    "man_made": ["works", "water_works", "wastewater_plant", "storage_tank", "silo"],
+    "man_made": ["works", "water_works", "wastewater_plant", "storage_tank", "silo", "pier", "quay", "shipyard"],
     "harbour": ["yes"],
+    "amenity": ["ferry_terminal"],
+    "port": True,
+    "cargo": True,
+    "seamark:type": ["harbour", "berth", "harbour_basin", "dock"],
     "bridge": True,
     "industrial": True,
     "boundary": ["administrative"],
@@ -47,6 +51,8 @@ OGR_LAYER_FILTERS: dict[str, str] = {
         "man_made IN ('works','water_works','wastewater_plant','storage_tank','silo') OR "
         "(other_tags LIKE '%\"power\"=>\"plant\"%' OR other_tags LIKE '%\"power\"=>\"substation\"%') OR "
         "other_tags LIKE '%\"harbour\"=>\"yes\"%' OR "
+        "other_tags LIKE '%\"port\"=>%' OR other_tags LIKE '%\"seamark:type\"=>\"harbour\"%' OR "
+        "other_tags LIKE '%\"amenity\"=>\"ferry_terminal\"%' OR "
         "other_tags LIKE '%\"railway\"=>\"station\"%' OR other_tags LIKE '%\"railway\"=>\"halt\"%' OR "
         "other_tags LIKE '%\"railway\"=>\"depot\"%' OR other_tags LIKE '%\"railway\"=>\"freight_terminal\"%' OR "
         "other_tags LIKE '%\"public_transport\"=>\"station\"%'"
@@ -63,6 +69,8 @@ OGR_LAYER_FILTERS: dict[str, str] = {
         "military IS NOT NULL OR (other_tags LIKE '%\"power\"=>\"plant\"%' OR "
         "other_tags LIKE '%\"power\"=>\"substation\"%') OR "
         "other_tags LIKE '%\"harbour\"=>\"yes\"%' OR "
+        "other_tags LIKE '%\"industrial\"=>\"port\"%' OR other_tags LIKE '%\"port\"=>%' OR "
+        "other_tags LIKE '%\"seamark:type\"=>\"harbour\"%' OR "
         "other_tags LIKE '%\"railway\"=>\"station\"%' OR other_tags LIKE '%\"railway\"=>\"depot\"%' OR "
         "other_tags LIKE '%\"railway\"=>\"freight_terminal\"%' OR other_tags LIKE '%\"freight\"=>\"yes\"%' OR "
         "(boundary = 'administrative' AND admin_level IN ('4','6','8'))"
@@ -328,6 +336,145 @@ def energy_features_from_pbf(
             for feature in path_features:
                 features[feature.object_id] = feature
     return tuple(sorted(features.values(), key=lambda feature: feature.object_id))
+
+
+def maritime_features_from_pbf(
+    paths: Iterable[str | Path],
+    *,
+    bounds: tuple[float, float, float, float] | None = None,
+    scenario_reference_year: int | None = None,
+    simplify_meters: float = 10.0,
+    max_workers: int = 4,
+    include_energy: bool = False,
+) -> tuple[TopographyFeature, ...]:
+    """Read ports and useful port components without rebuilding general topography.
+
+    ``include_energy`` lets the full infrastructure build collect its targeted
+    energy candidates in the same PBF pass.
+    """
+
+    try:
+        import pyogrio
+    except ImportError as exc:
+        raise RuntimeError('PBF import requires: python -m pip install -e ".[topography]"') from exc
+
+    bbox = None
+    if bounds is not None:
+        south, west, north, east = bounds
+        bbox = (west, south, east, north)
+    layer_direct_filters = {
+        "points": {"man_made": "IN ('pier','quay','shipyard')"},
+        "lines": {
+            "waterway": "= 'dock'",
+            "man_made": "IN ('pier','quay')",
+        },
+        "multipolygons": {
+            "landuse": "= 'port'",
+            "waterway": "= 'dock'",
+            "man_made": "IN ('pier','quay','shipyard')",
+        },
+    }
+    other_tag_patterns = (
+        *((('"power"=>"plant"', '"power"=>"substation"')) if include_energy else ()),
+        '"harbour"=>"yes"',
+        '"industrial"=>"port"',
+        '"industrial"=>"shipyard"',
+        '"landuse"=>"port"',
+        '"man_made"=>"pier"',
+        '"man_made"=>"quay"',
+        '"man_made"=>"shipyard"',
+        '"waterway"=>"dock"',
+        '"port"=>',
+        '"amenity"=>"ferry_terminal"',
+        '"seamark:type"=>"harbour"',
+        '"seamark:type"=>"berth"',
+        '"seamark:type"=>"harbour_basin"',
+    )
+    materialized_paths = tuple(Path(raw_path) for raw_path in paths)
+    for path in materialized_paths:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+
+    def read_path(path: Path) -> tuple[TopographyFeature, ...]:
+        found: dict[str, TopographyFeature] = {}
+        for layer_name, direct_filters in layer_direct_filters.items():
+            info = pyogrio.read_info(path, layer=layer_name)
+            available_fields = {str(field) for field in info.get("fields", ())}
+            where_parts = [
+                f"{field} {condition}"
+                for field, condition in direct_filters.items()
+                if field in available_fields
+            ]
+            if "other_tags" in available_fields:
+                where_parts.extend(
+                    f"other_tags LIKE '%{pattern}%'"
+                    for pattern in other_tag_patterns
+                )
+            if not where_parts:
+                continue
+            columns = [
+                field
+                for field in ("osm_id", "osm_way_id", "name", "type", "landuse", "man_made", "waterway", "other_tags")
+                if field in available_fields
+            ]
+            frame = pyogrio.read_dataframe(
+                path,
+                layer=layer_name,
+                bbox=bbox,
+                where=" OR ".join(where_parts),
+                columns=columns,
+                use_arrow=True,
+            )
+            if frame is None or frame.empty:
+                continue
+            if simplify_meters > 0:
+                source_crs = frame.crs or "EPSG:4326"
+                frame = frame.to_crs("EPSG:3035")
+                frame.geometry = frame.geometry.simplify(simplify_meters, preserve_topology=True)
+                frame = frame.to_crs(source_crs)
+            for record in frame.iterfeatures():
+                normalized = _normalize_ogr_record(record, layer_name)
+                for feature in features_from_pyrosm_record(
+                    normalized,
+                    scenario_reference_year=scenario_reference_year,
+                    source_snapshot_date=None,
+                    include_buildings=False,
+                ):
+                    allowed_categories = {
+                        "harbour", "port", "ferry_terminal", "shipyard", "pier", "quay", "dock", "berth", "harbour_basin",
+                    }
+                    if include_energy:
+                        allowed_categories.update({"power_plant", "power_substation", "power_converter"})
+                    if feature.layer is TopographyLayer.INFRASTRUCTURE and feature.category in allowed_categories:
+                        found[feature.object_id] = feature
+        return tuple(found.values())
+
+    features: dict[str, TopographyFeature] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(materialized_paths) or 1))) as executor:
+        for path_features in executor.map(read_path, materialized_paths):
+            for feature in path_features:
+                features[feature.object_id] = feature
+    return tuple(sorted(features.values(), key=lambda feature: feature.object_id))
+
+
+def targeted_infrastructure_features_from_pbf(
+    paths: Iterable[str | Path],
+    *,
+    bounds: tuple[float, float, float, float] | None = None,
+    scenario_reference_year: int | None = None,
+    simplify_meters: float = 10.0,
+    max_workers: int = 4,
+) -> tuple[TopographyFeature, ...]:
+    """Read targeted energy and maritime candidates in one PBF pass."""
+
+    return maritime_features_from_pbf(
+        paths,
+        bounds=bounds,
+        scenario_reference_year=scenario_reference_year,
+        simplify_meters=simplify_meters,
+        max_workers=max_workers,
+        include_energy=True,
+    )
 
 
 def _with_detail_level(feature: TopographyFeature, level: TopographyDetailLevel) -> TopographyFeature:

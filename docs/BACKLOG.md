@@ -112,9 +112,10 @@ Priorities:
   above plus converter stations, and record role, source, output, voltage,
   footprint, scale, importance, and strategic-candidate status. GermanyCW
   continues to exclude modern wind, solar, biogas, and battery candidates.
-- [ ] **Cache targeted energy PBF extraction.** Persist the raw bounded
-  power-plant/substation candidate set separately so scoring or admission-rule
-  changes do not repeat the expensive regional PBF scan.
+- [ ] **Cache targeted infrastructure PBF extraction.** Persist the raw bounded
+  energy and maritime results per regional source shard so category rebuilds
+  do not rescan every Geofabrik PBF. The combined reader already extracts both
+  categories in one pass; the remaining work is durable, invalidation-aware caching.
 - [ ] **Validate representative GermanyCW energy sites.** Compare thermal and
   nuclear generation, 110/220/380 kV substations, and converter stations with
   DCS scenery. Record category-specific confidence; OSM evidence alone does
@@ -128,7 +129,7 @@ Priorities:
   theater-aware: the first `EnergySite` model and GermanyCW policy exclude
   modern wind, solar, biogas, and battery sites without imposing that choice
   on other maps. `MilitarySite` is a separate type on the shared site base.
-  The normalized energy, fuel/storage, military, and industrial caches, SDK representations,
+  The normalized energy, fuel/storage, military, industrial, and maritime caches, SDK representations,
   browser markers, and shared bounded DCS scenery-survey example are implemented.
   Fuel/storage uses explicit commodity evidence and category-specific,
   non-transitive clustering so raw tanks do not become independent strategic
@@ -137,11 +138,13 @@ Priorities:
   training/range context non-targetable by default. Industrial sites retain
   typed production roles, products, footprint and scale, exclude generic
   estates, and distinguish ordinary locations from strategic candidates.
-  Port, communications, and public-utility site builders plus
-  persisted DCS verification remain open. Keep the model extensible, but do
+  Maritime sites aggregate civilian ports, terminal roles, cargo evidence,
+  piers, quays, docks, harbour basins, berths, and shipyards while excluding
+  marinas and keeping naval bases military. Communications and public-utility
+  site builders plus persisted DCS verification remain open. Keep the model extensible, but do
   not retain every available OSM tag in the operational model.
 - [ ] **Cluster remaining infrastructure features into meaningful sites.**
-  Energy, fuel/storage, military, industrial, and railway clustering is implemented. Group related
+  Energy, fuel/storage, military, industrial, maritime, and railway clustering is implemented. Group related
   buildings, tanks, yards, platforms, terminals, and equipment into one
   operational location where they represent the same real facility. Use
   category-specific clustering and preserve membership for diagnostics so a
@@ -164,6 +167,12 @@ Priorities:
   centrality or detour impact for rail facilities. Record uncertainty and the
   reason for every tier; avoid applying the road-junction score unchanged to
   unrelated infrastructure.
+- [ ] **Validate maritime sites and add intermodal dependencies.** Compare a
+  representative cargo port, ferry terminal, fishing port, and shipyard with
+  GermanyCW DCS scenery and F10 geography. Then connect admitted ports to the
+  normalized road and railway networks and record whether loss of a bridge,
+  rail junction, fuel terminal, or access corridor materially isolates the
+  site. Keep throughput unknown unless an explicit source provides it.
 - [ ] **Expose typed infrastructure through the SDK and browser map.** Give each
   category a bounded map representation, useful detail panel, importance-based
   styling, zoom-dependent density, and filters for category and

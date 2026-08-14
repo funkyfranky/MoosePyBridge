@@ -67,7 +67,7 @@ scan.
 ## Implemented foundation
 
 The SDK now provides a shared `InfrastructureSite` base with distinct
-`EnergySite`, `FuelStorageSite`, `MilitarySite`, and `IndustrialSite` types. Candidate admission
+`EnergySite`, `FuelStorageSite`, `MilitarySite`, `IndustrialSite`, and `MaritimeSite` types. Candidate admission
 is controlled by an `InfrastructureCandidatePolicy` selected per theater. The
 GermanyCW policy uses 1989 as its scenario reference year and excludes wind,
 solar, biogas, and battery sites. Generic policies exclude nothing, so maps
@@ -80,7 +80,9 @@ python tools/build_infrastructure_sites.py
 ```
 
 The current source produces 2,499 admitted energy sites, 440 fuel or bulk
-storage sites, 1,100 military sites, and 5,727 industrial sites. Use `--include-modern-energy` only for a scenario that
+storage sites, 1,100 military sites, 5,641 industrial sites, and 507 maritime
+sites. Of the maritime sites, 301 have explicit strategic evidence. Use
+`--include-modern-energy` only for a scenario that
 deliberately wants the modern sources. The output is
 `tmp/topography/GermanyCW-infrastructure-sites.geojson`.
 
@@ -137,6 +139,25 @@ Run `python examples/sdk/verify_infrastructure_site.py` with a live DCS mission
 to survey and temporarily mark one candidate and its nearby scenery objects on
 the F10 map. The constants at the top select the typed site category and
 search reference.
+
+### Ports and maritime logistics
+
+Civilian maritime infrastructure is normalized as one site per port or terminal
+complex. Supported roles are local harbour, commercial port, cargo, container,
+bulk, RoRo, ferry, passenger and fishing terminals, plus shipyards. Explicit OSM cargo tags
+are retained as typed cargo evidence. Port areas and named terminal anchors own
+nearby piers, quays, docks, harbour basins and berths; an unassigned pier does
+not become a strategic site by itself. Recreational marinas are excluded, while
+military naval bases remain in the military-site model. A generic `harbour=yes`
+site remains low-weight geographic context and is not treated as commercial or
+strategic without stronger logistics evidence.
+
+Importance is role-led and refined by footprint, approximate quay length,
+explicit berths, component count and cargo diversity. These are transparent
+capacity proxies, not asserted annual throughput. The browser exposes the
+normalized sites in the initially hidden `Ports and maritime logistics` layer.
+OSM remains external evidence until a bounded DCS scenery or visual verification
+updates the site's verification state.
 
 ## Site taxonomy
 
@@ -210,15 +231,15 @@ combined into a hole-free footprint while disconnected works remain a
 `MultiPolygon`. DCS scenery association and scenario approval remain explicit
 later steps. The map uses importance-colored overview markers and switches to
 the normalized footprint at detailed zoom. In the current GermanyCW cache,
-2,123 of 5,727 admitted industrial sites meet the strategic threshold; the
+2,037 of 5,641 admitted industrial sites meet the strategic threshold; the
 remaining sites stay available as geographic and economic context.
 
 ### Ports and maritime logistics
 
 - Cargo ports, container terminals, oil terminals, and shipyards
 - Naval bases remain a separate military role even when sharing port geometry
-- Marinas, leisure harbours, and small fishing facilities are excluded from
-  strategic candidates by default
+- Marinas and leisure harbours are excluded. Generic local harbours and small
+  fishing facilities remain context but are not strategic candidates by default.
 
 ### Rail infrastructure
 
@@ -322,7 +343,8 @@ released and updated in phases.
 3. Rail yards, freight terminals, major stations, and rail junctions
    (implemented candidate normalization; DCS validation remains)
 4. Power-grid sites and dependencies
-5. Cargo ports, terminals, shipyards, dams, mines, tunnels, and communications
+5. Cargo ports, terminals, and shipyards (implemented candidate normalization);
+   dams, tunnels, and communications remain open
 
 The first implementation should include a reusable bounded DCS scenery survey
 so every later category can be checked with the same evidence model.

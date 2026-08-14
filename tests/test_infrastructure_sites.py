@@ -9,6 +9,9 @@ from moosebridge.infrastructure_sites import (
     InfrastructureSiteKind,
     IndustrialRole,
     IndustrialSite,
+    MaritimeCargo,
+    MaritimeRole,
+    MaritimeSite,
     MilitaryRole,
     MilitarySite,
     StoredCommodity,
@@ -17,6 +20,7 @@ from moosebridge.infrastructure_sites import (
     build_fuel_storage_sites,
     build_infrastructure_sites,
     build_industrial_sites,
+    build_maritime_sites,
     build_military_sites,
     infrastructure_policy_for_theater,
 )
@@ -160,6 +164,43 @@ def _industrial_feature(
         confidence=0.55,
         name=name,
         valid_from=valid_from,
+        properties={"osm_tags": tags},
+    )
+
+
+def _maritime_feature(
+    name: str | None,
+    category: str,
+    longitude: float,
+    latitude: float,
+    *,
+    line: bool = False,
+    source_suffix: str | None = None,
+    **tags: str,
+) -> TopographyFeature:
+    source = source_suffix or name or f"{longitude}-{latitude}"
+    geometry = (
+        {"type": "LineString", "coordinates": [[longitude, latitude], [longitude + 0.004, latitude]]}
+        if line else {
+            "type": "Polygon",
+            "coordinates": [[
+                [longitude, latitude],
+                [longitude + 0.004, latitude],
+                [longitude + 0.004, latitude + 0.003],
+                [longitude, latitude + 0.003],
+                [longitude, latitude],
+            ]],
+        }
+    )
+    return TopographyFeature(
+        object_id=f"TOPOGRAPHY:maritime:{source}",
+        layer=TopographyLayer.INFRASTRUCTURE,
+        category=category,
+        geometry=geometry,
+        source="OpenStreetMap",
+        source_id=f"way/{source}",
+        confidence=0.55,
+        name=name,
         properties={"osm_tags": tags},
     )
 
@@ -394,22 +435,22 @@ def test_industrial_builder_admits_supported_works_but_not_generic_estates() -> 
 def test_industrial_builder_clusters_same_site_without_merging_neighbors() -> None:
     artifact = build_industrial_sites(
         [
-            _industrial_feature("Werft Alpha", "shipyard", 12.0, 54.0, source_suffix="a"),
-            _industrial_feature("Werft Alpha", "works", 12.004, 54.0, source_suffix="b", product="steel"),
+            _industrial_feature("Steel Alpha", "works", 12.0, 54.0, source_suffix="a", product="steel"),
+            _industrial_feature("Steel Alpha", "works", 12.004, 54.0, source_suffix="b", product="steel"),
             _industrial_feature("Factory Beta", "factory", 12.005, 54.0, source_suffix="c"),
         ],
         theater_id="GermanyCW",
     )
 
     assert len(artifact.sites) == 2
-    site = next(item for item in artifact.sites if item.name == "Werft Alpha")
+    site = next(item for item in artifact.sites if item.name == "Steel Alpha")
     assert isinstance(site, IndustrialSite)
-    assert site.roles == (IndustrialRole.METALWORKS, IndustrialRole.SHIPYARD)
+    assert site.roles == (IndustrialRole.METALWORKS,)
     assert site.products == ("steel",)
     assert site.properties["member_count"] == 2
     assert site.geometry["type"] == "MultiPolygon"
     assert site.footprint_area_m2 > 0
-    assert site.importance_tier.value == "critical"
+    assert site.importance_tier.value == "high"
 
 
 def test_industrial_builder_fills_internal_footprint_holes() -> None:
@@ -464,6 +505,107 @@ def test_industrial_site_round_trips_typed_properties() -> None:
     assert loaded == artifact
     assert isinstance(loaded.sites[0], IndustrialSite)
     assert loaded.sites[0].roles == (IndustrialRole.MACHINERY,)
+
+
+def test_maritime_builder_aggregates_port_components_and_logistics_roles() -> None:
+    artifact = build_maritime_sites(
+        [
+            _maritime_feature(
+                "Rostock Cargo Port", "port", 12.10, 54.10,
+                landuse="port", port="cargo", cargo="containers;vehicles", operator="Port Authority",
+            ),
+            _maritime_feature(None, "pier", 12.105, 54.101, line=True, man_made="pier"),
+            _maritime_feature(None, "berth", 12.106, 54.101, line=True, **{"seamark:type": "berth"}),
+        ],
+        theater_id="GermanyCW",
+    )
+
+    assert len(artifact.sites) == 1
+    site = artifact.sites[0]
+    assert isinstance(site, MaritimeSite)
+    assert MaritimeRole.COMMERCIAL_PORT in site.roles
+    assert MaritimeRole.CARGO_TERMINAL in site.roles
+    assert MaritimeRole.CONTAINER_TERMINAL in site.roles
+    assert MaritimeRole.RORO_TERMINAL in site.roles
+    assert site.cargo_types == (MaritimeCargo.CONTAINERS, MaritimeCargo.GENERAL_CARGO, MaritimeCargo.VEHICLES)
+    assert site.properties["member_count"] == 3
+    assert site.quay_length_m is not None and site.quay_length_m > 200
+    assert site.berth_count == 1
+    assert site.properties["strategic_candidate"] is True
+    assert site.geometry["type"] == "Polygon"
+
+
+def test_maritime_builder_excludes_marinas_and_unanchored_piers() -> None:
+    artifact = build_maritime_sites(
+        [
+            _maritime_feature("Leisure Marina", "harbour", 12.0, 54.0, harbour="yes", leisure="marina"),
+            _maritime_feature(None, "pier", 13.0, 54.0, line=True, man_made="pier"),
+        ],
+        theater_id="GermanyCW",
+    )
+
+    assert artifact.sites == ()
+    assert artifact.metadata["excluded_maritime_counts"]["recreational"] == 1
+    assert artifact.metadata["excluded_maritime_counts"]["unanchored_component"] == 1
+
+
+def test_maritime_builder_excludes_recreational_harbour_by_name() -> None:
+    artifact = build_maritime_sites(
+        [_maritime_feature("Yachtclub Strelasund", "harbour", 12.0, 54.0, harbour="yes")],
+        theater_id="GermanyCW",
+    )
+
+    assert artifact.sites == ()
+    assert artifact.metadata["excluded_maritime_counts"]["recreational"] == 1
+
+
+def test_maritime_builder_combines_nearby_anonymous_anchor_with_named_port() -> None:
+    artifact = build_maritime_sites(
+        [
+            _maritime_feature("Cargo Alpha", "port", 12.0, 54.0, landuse="port", port="cargo"),
+            _maritime_feature(None, "harbour", 12.003, 54.0, harbour="yes"),
+        ],
+        theater_id="GermanyCW",
+    )
+
+    assert len(artifact.sites) == 1
+    assert artifact.sites[0].properties["member_count"] == 2
+    assert MaritimeRole.HARBOUR in artifact.sites[0].roles
+
+
+def test_generic_harbour_is_context_not_automatically_strategic() -> None:
+    artifact = build_maritime_sites(
+        [_maritime_feature("Local Harbour", "harbour", 12.0, 54.0, harbour="yes")],
+        theater_id="GermanyCW",
+    )
+
+    site = artifact.sites[0]
+    assert site.roles == (MaritimeRole.HARBOUR,)
+    assert site.properties["strategic_candidate"] is False
+
+
+def test_shipyard_belongs_to_maritime_not_industrial_sites() -> None:
+    feature = _maritime_feature("Neptun Werft", "shipyard", 12.0, 54.0, industrial="shipyard")
+
+    maritime = build_maritime_sites((feature,), theater_id="GermanyCW")
+    industrial = build_industrial_sites((feature,), theater_id="GermanyCW")
+
+    assert len(maritime.sites) == 1
+    assert maritime.sites[0].roles == (MaritimeRole.SHIPYARD,)
+    assert industrial.sites == ()
+
+
+def test_maritime_site_round_trips_typed_properties() -> None:
+    artifact = build_maritime_sites(
+        [_maritime_feature("Ferry Alpha", "ferry_terminal", 12.0, 54.0, amenity="ferry_terminal")],
+        theater_id="GermanyCW",
+    )
+
+    loaded = TheaterInfrastructureSites.from_geojson(artifact.to_geojson())
+
+    assert loaded == artifact
+    assert isinstance(loaded.sites[0], MaritimeSite)
+    assert MaritimeRole.FERRY_TERMINAL in loaded.sites[0].roles
 
 
 def test_fuel_storage_requires_explicit_commodity_evidence() -> None:

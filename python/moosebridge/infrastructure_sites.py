@@ -22,6 +22,7 @@ class InfrastructureSiteKind(StrEnum):
     FUEL_STORAGE = "fuel_storage"
     MILITARY = "military"
     INDUSTRIAL = "industrial"
+    MARITIME = "maritime"
 
 
 class InfrastructureVerificationState(StrEnum):
@@ -109,6 +110,35 @@ class IndustrialRole(StrEnum):
     TIMBER_PAPER = "timber_paper"
     SHIPYARD = "shipyard"
     EXTRACTION = "extraction"
+
+
+class MaritimeRole(StrEnum):
+    HARBOUR = "harbour"
+    COMMERCIAL_PORT = "commercial_port"
+    CARGO_TERMINAL = "cargo_terminal"
+    CONTAINER_TERMINAL = "container_terminal"
+    BULK_TERMINAL = "bulk_terminal"
+    RORO_TERMINAL = "roro_terminal"
+    FERRY_TERMINAL = "ferry_terminal"
+    FISHING_PORT = "fishing_port"
+    PASSENGER_TERMINAL = "passenger_terminal"
+    SHIPYARD = "shipyard"
+
+
+class MaritimeCargo(StrEnum):
+    GENERAL_CARGO = "general_cargo"
+    CONTAINERS = "containers"
+    DRY_BULK = "dry_bulk"
+    LIQUID_BULK = "liquid_bulk"
+    PETROLEUM = "petroleum"
+    GAS = "gas"
+    COAL = "coal"
+    ORE = "ore"
+    GRAIN = "grain"
+    TIMBER = "timber"
+    VEHICLES = "vehicles"
+    PASSENGERS = "passengers"
+    FISH = "fish"
 
 
 @dataclass(slots=True, frozen=True)
@@ -207,6 +237,7 @@ class InfrastructureSite:
             "verification_state", "component_ids", "energy_sources", "output_mw", "roles",
             "storage_roles", "commodities", "capacity_m3", "products", "footprint_area_m2",
             "importance_score", "importance_tier", "energy_roles", "voltage_kv",
+            "maritime_roles", "cargo_types", "quay_length_m", "berth_count",
         }
         common = dict(
             site_id=str(properties.get("object_id") or ""),
@@ -265,6 +296,19 @@ class InfrastructureSite:
                 roles=tuple(IndustrialRole(str(value)) for value in properties.get("roles") or ()),
                 products=tuple(str(value) for value in properties.get("products") or ()),
                 footprint_area_m2=_optional_float(properties.get("footprint_area_m2")),
+                importance_score=float(properties.get("importance_score") or 0),
+                importance_tier=InfrastructureImportanceTier(
+                    str(properties.get("importance_tier") or InfrastructureImportanceTier.LOCAL.value)
+                ),
+            )
+        if kind is InfrastructureSiteKind.MARITIME:
+            return MaritimeSite(
+                **common,
+                roles=tuple(MaritimeRole(str(value)) for value in properties.get("maritime_roles") or ()),
+                cargo_types=tuple(MaritimeCargo(str(value)) for value in properties.get("cargo_types") or ()),
+                footprint_area_m2=_optional_float(properties.get("footprint_area_m2")),
+                quay_length_m=_optional_float(properties.get("quay_length_m")),
+                berth_count=int(properties.get("berth_count") or 0),
                 importance_score=float(properties.get("importance_score") or 0),
                 importance_tier=InfrastructureImportanceTier(
                     str(properties.get("importance_tier") or InfrastructureImportanceTier.LOCAL.value)
@@ -397,6 +441,47 @@ class IndustrialSite(InfrastructureSite):
             "roles": [role.value for role in self.roles],
             "products": list(self.products),
             "footprint_area_m2": self.footprint_area_m2,
+            "importance_score": self.importance_score,
+            "importance_tier": self.importance_tier.value,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class MaritimeSite(InfrastructureSite):
+    """A normalized civilian port, terminal, or shipyard complex."""
+
+    roles: tuple[MaritimeRole, ...] = ()
+    cargo_types: tuple[MaritimeCargo, ...] = ()
+    footprint_area_m2: float | None = None
+    quay_length_m: float | None = None
+    berth_count: int = 0
+    importance_score: float = 0.0
+    importance_tier: InfrastructureImportanceTier = InfrastructureImportanceTier.LOCAL
+
+    def __post_init__(self) -> None:
+        InfrastructureSite.__post_init__(self)
+        if self.kind is not InfrastructureSiteKind.MARITIME:
+            raise ValueError("MaritimeSite kind must be maritime")
+        if not self.roles:
+            raise ValueError("maritime site requires at least one role")
+        if self.footprint_area_m2 is not None and self.footprint_area_m2 < 0:
+            raise ValueError("maritime footprint must not be negative")
+        if self.quay_length_m is not None and self.quay_length_m < 0:
+            raise ValueError("maritime quay length must not be negative")
+        if self.berth_count < 0:
+            raise ValueError("maritime berth count must not be negative")
+        if not 0 <= self.importance_score <= 100:
+            raise ValueError("maritime importance score must be between zero and 100")
+
+    def _specific_properties(self) -> dict[str, Any]:
+        return {
+            "category": "maritime_site",
+            "maritime_roles": [role.value for role in self.roles],
+            "map_category": self.roles[0].value,
+            "cargo_types": [cargo.value for cargo in self.cargo_types],
+            "footprint_area_m2": self.footprint_area_m2,
+            "quay_length_m": self.quay_length_m,
+            "berth_count": self.berth_count,
             "importance_score": self.importance_score,
             "importance_tier": self.importance_tier.value,
         }
@@ -948,7 +1033,7 @@ def build_industrial_sites(
         "other_infrastructure_category": 0,
         "outside_scenario_date": 0,
     }
-    supported_categories = {"industrial_area", "works", *_INDUSTRIAL_CATEGORY_ROLES}
+    supported_categories = {"industrial_area", "works", *_INDUSTRIAL_CATEGORY_ROLES} - {"shipyard"}
     for feature in features:
         if feature.layer is not TopographyLayer.INFRASTRUCTURE or feature.category not in supported_categories:
             continue
@@ -960,6 +1045,9 @@ def build_industrial_sites(
             excluded["other_infrastructure_category"] += 1
             continue
         roles, role_sources = _industrial_roles(feature.category, tags, feature.name)
+        if IndustrialRole.SHIPYARD in roles:
+            excluded["other_infrastructure_category"] += 1
+            continue
         products = _industrial_products(tags)
         operator = _optional_string(tags.get("operator"))
         area_m2 = _geometry_area_m2(feature.geometry)
@@ -1007,6 +1095,156 @@ def build_industrial_sites(
     )
 
 
+@dataclass(slots=True, frozen=True)
+class _MaritimeCandidate:
+    feature: TopographyFeature
+    latitude: float
+    longitude: float
+    roles: frozenset[MaritimeRole]
+    cargo_types: frozenset[MaritimeCargo]
+    anchor: bool
+    operator: str | None
+    length_m: float
+
+
+_MARITIME_ANCHOR_CATEGORIES = {"harbour", "port", "ferry_terminal", "shipyard"}
+_MARITIME_COMPONENT_CATEGORIES = {"pier", "quay", "dock", "berth", "harbour_basin"}
+_MARITIME_ROLE_IMPORTANCE = {
+    MaritimeRole.CONTAINER_TERMINAL: 78.0,
+    MaritimeRole.BULK_TERMINAL: 72.0,
+    MaritimeRole.CARGO_TERMINAL: 68.0,
+    MaritimeRole.RORO_TERMINAL: 62.0,
+    MaritimeRole.SHIPYARD: 60.0,
+    MaritimeRole.COMMERCIAL_PORT: 55.0,
+    MaritimeRole.FERRY_TERMINAL: 48.0,
+    MaritimeRole.PASSENGER_TERMINAL: 42.0,
+    MaritimeRole.FISHING_PORT: 30.0,
+    MaritimeRole.HARBOUR: 20.0,
+}
+_MARITIME_CARGO_ALIASES = {
+    "cargo": MaritimeCargo.GENERAL_CARGO,
+    "general": MaritimeCargo.GENERAL_CARGO,
+    "general_cargo": MaritimeCargo.GENERAL_CARGO,
+    "container": MaritimeCargo.CONTAINERS,
+    "containers": MaritimeCargo.CONTAINERS,
+    "bulk": MaritimeCargo.DRY_BULK,
+    "dry_bulk": MaritimeCargo.DRY_BULK,
+    "liquid_bulk": MaritimeCargo.LIQUID_BULK,
+    "oil": MaritimeCargo.PETROLEUM,
+    "petroleum": MaritimeCargo.PETROLEUM,
+    "gas": MaritimeCargo.GAS,
+    "lng": MaritimeCargo.GAS,
+    "coal": MaritimeCargo.COAL,
+    "ore": MaritimeCargo.ORE,
+    "grain": MaritimeCargo.GRAIN,
+    "timber": MaritimeCargo.TIMBER,
+    "wood": MaritimeCargo.TIMBER,
+    "vehicle": MaritimeCargo.VEHICLES,
+    "vehicles": MaritimeCargo.VEHICLES,
+    "ro_ro": MaritimeCargo.VEHICLES,
+    "roro": MaritimeCargo.VEHICLES,
+    "passenger": MaritimeCargo.PASSENGERS,
+    "passengers": MaritimeCargo.PASSENGERS,
+    "ferry": MaritimeCargo.PASSENGERS,
+    "fish": MaritimeCargo.FISH,
+}
+
+
+def build_maritime_sites(
+    features: Iterable[TopographyFeature],
+    *,
+    theater_id: str,
+    policy: InfrastructureCandidatePolicy | None = None,
+    anchor_cluster_radius_m: float = 2_000.0,
+    anonymous_anchor_cluster_radius_m: float = 500.0,
+    component_radius_m: float = 2_500.0,
+) -> TheaterInfrastructureSites:
+    """Normalize civilian ports and their logistics components."""
+
+    if min(anchor_cluster_radius_m, anonymous_anchor_cluster_radius_m, component_radius_m) < 0:
+        raise ValueError("maritime-site cluster radii must not be negative")
+    selected_policy = policy or infrastructure_policy_for_theater(theater_id)
+    candidates: list[_MaritimeCandidate] = []
+    excluded = {"recreational": 0, "military": 0, "unanchored_component": 0, "outside_scenario_date": 0}
+    for feature in features:
+        if feature.layer is not TopographyLayer.INFRASTRUCTURE:
+            continue
+        tags = _osm_tags(feature.properties.get("osm_tags"))
+        if feature.category not in _MARITIME_ANCHOR_CATEGORIES | _MARITIME_COMPONENT_CATEGORIES:
+            continue
+        if not _feature_exists_in_scenario(feature, selected_policy.scenario_reference_year):
+            excluded["outside_scenario_date"] += 1
+            continue
+        if _is_recreational_maritime_feature(feature, tags):
+            excluded["recreational"] += 1
+            continue
+        if tags.get("military") or tags.get("landuse") == "military":
+            excluded["military"] += 1
+            continue
+        anchor = feature.category in _MARITIME_ANCHOR_CATEGORIES or _is_maritime_anchor(tags)
+        roles = _maritime_roles(feature.category, tags)
+        if anchor and not roles:
+            roles = {MaritimeRole.HARBOUR}
+        longitude, latitude = _representative_coordinate(feature.geometry)
+        candidates.append(_MaritimeCandidate(
+            feature=feature,
+            latitude=latitude,
+            longitude=longitude,
+            roles=frozenset(roles),
+            cargo_types=_maritime_cargo_types(tags),
+            anchor=anchor,
+            operator=_optional_string(tags.get("operator")),
+            length_m=_geometry_length_m(feature.geometry),
+        ))
+
+    anchors = sorted((candidate for candidate in candidates if candidate.anchor), key=_maritime_candidate_key)
+    components = sorted((candidate for candidate in candidates if not candidate.anchor), key=_maritime_candidate_key)
+    clusters: list[list[_MaritimeCandidate]] = []
+    for candidate in anchors:
+        identity = _maritime_identity(candidate)
+        eligible = []
+        for cluster in clusters:
+            cluster_identity = next((_maritime_identity(item) for item in cluster if _maritime_identity(item)), "")
+            distance = _candidate_distance_m(candidate, cluster[0])
+            if identity and cluster_identity:
+                matches = identity == cluster_identity and distance <= anchor_cluster_radius_m
+            else:
+                matches = distance <= anonymous_anchor_cluster_radius_m
+            if matches:
+                eligible.append((distance, cluster))
+        matching = min(eligible, key=lambda item: item[0], default=(math.inf, None))[1]
+        if matching is None:
+            clusters.append([candidate])
+        else:
+            matching.append(candidate)
+    for component in components:
+        nearest = min(
+            clusters,
+            key=lambda cluster: _candidate_distance_m(component, cluster[0]),
+            default=None,
+        )
+        if nearest is None or _candidate_distance_m(component, nearest[0]) > component_radius_m:
+            excluded["unanchored_component"] += 1
+            continue
+        nearest.append(component)
+
+    sites = tuple(_maritime_site_from_cluster(cluster, selected_policy) for cluster in clusters)
+    return TheaterInfrastructureSites(
+        theater_id=theater_id,
+        scenario_reference_year=selected_policy.scenario_reference_year,
+        sites=sites,
+        metadata={
+            "raw_maritime_candidate_count": len(candidates),
+            "excluded_maritime_counts": excluded,
+            "maritime_cluster_radii_m": {
+                "named_anchors": anchor_cluster_radius_m,
+                "anonymous_anchors": anonymous_anchor_cluster_radius_m,
+                "components": component_radius_m,
+            },
+        },
+    )
+
+
 def build_infrastructure_sites(
     features: Iterable[TopographyFeature],
     *,
@@ -1020,17 +1258,188 @@ def build_infrastructure_sites(
     fuel = build_fuel_storage_sites(materialized, theater_id=theater_id, policy=policy)
     military = build_military_sites(materialized, theater_id=theater_id, policy=policy)
     industrial = build_industrial_sites(materialized, theater_id=theater_id, policy=policy)
+    maritime = build_maritime_sites(materialized, theater_id=theater_id, policy=policy)
     return TheaterInfrastructureSites(
         theater_id=theater_id,
         scenario_reference_year=energy.scenario_reference_year,
-        sites=(*energy.sites, *fuel.sites, *military.sites, *industrial.sites),
+        sites=(*energy.sites, *fuel.sites, *military.sites, *industrial.sites, *maritime.sites),
         metadata={
             "energy": energy.metadata,
             "fuel_storage": fuel.metadata,
             "military": military.metadata,
             "industrial": industrial.metadata,
+            "maritime": maritime.metadata,
         },
     )
+
+
+def _is_maritime_anchor(tags: Mapping[str, Any]) -> bool:
+    seamark_type = str(tags.get("seamark:type") or "").strip().casefold()
+    return (
+        str(tags.get("harbour") or "").casefold() == "yes"
+        or str(tags.get("landuse") or "").casefold() == "port"
+        or str(tags.get("industrial") or "").casefold() in {"port", "shipyard"}
+        or bool(str(tags.get("port") or "").strip())
+        or str(tags.get("amenity") or "").casefold() == "ferry_terminal"
+        or seamark_type == "harbour"
+    )
+
+
+def _is_recreational_maritime_feature(feature: TopographyFeature, tags: Mapping[str, Any]) -> bool:
+    operational_values: set[str] = set()
+    for key in ("port", "cargo", "industrial", "seamark:harbour:category", "seamark:berth:category"):
+        if tags.get(key) is not None:
+            operational_values.update(_split_tag_values(tags[key]))
+    if (
+        feature.category in {"ferry_terminal", "shipyard"}
+        or str(tags.get("amenity") or "").casefold() == "ferry_terminal"
+        or operational_values.intersection({
+            "port", "shipyard", "cargo", "general_cargo", "freight", "container", "containers",
+            "bulk", "dry_bulk", "liquid_bulk", "coal", "ore", "grain", "oil", "gas", "lng",
+            "ro_ro", "roro", "vehicle", "vehicles", "passenger", "passengers", "ferry", "fishing",
+        })
+    ):
+        return False
+    recreational_values = {
+        str(tags.get("leisure") or "").casefold(),
+        str(tags.get("harbour") or "").casefold(),
+        str(tags.get("sport") or "").casefold(),
+        str(tags.get("club") or "").casefold(),
+        str(tags.get("seamark:harbour:category") or "").casefold(),
+    }
+    if recreational_values.intersection({"marina", "sailing", "yachting", "yacht_club"}):
+        return True
+    normalized_name = (feature.name or "").casefold()
+    return any(marker in normalized_name for marker in (
+        "marina", "yachtclub", "yacht club", "yachthafen", "sportboothafen", "segelhafen",
+    ))
+
+
+def _maritime_roles(category: str, tags: Mapping[str, Any]) -> set[MaritimeRole]:
+    values = set()
+    for key in ("port", "cargo", "harbour", "seamark:harbour:category", "seamark:berth:category"):
+        if tags.get(key) is not None:
+            values.update(_split_tag_values(tags[key]))
+    roles: set[MaritimeRole] = set()
+    if category == "shipyard" or str(tags.get("industrial") or "").casefold() == "shipyard":
+        roles.add(MaritimeRole.SHIPYARD)
+    if category == "ferry_terminal" or str(tags.get("amenity") or "").casefold() == "ferry_terminal" or "ferry" in values:
+        roles.add(MaritimeRole.FERRY_TERMINAL)
+    if values.intersection({"container", "containers", "container_terminal"}):
+        roles.add(MaritimeRole.CONTAINER_TERMINAL)
+    if values.intersection({"bulk", "dry_bulk", "liquid_bulk", "coal", "ore", "grain", "oil", "gas", "lng"}):
+        roles.add(MaritimeRole.BULK_TERMINAL)
+    if values.intersection({"ro_ro", "roro", "vehicle", "vehicles"}):
+        roles.add(MaritimeRole.RORO_TERMINAL)
+    if values.intersection({"cargo", "general_cargo", "freight"}):
+        roles.add(MaritimeRole.CARGO_TERMINAL)
+    if values.intersection({"passenger", "passengers", "cruise"}):
+        roles.add(MaritimeRole.PASSENGER_TERMINAL)
+    if values.intersection({"fishing", "fishery"}):
+        roles.add(MaritimeRole.FISHING_PORT)
+    if (
+        category == "port"
+        or str(tags.get("landuse") or "").casefold() == "port"
+        or str(tags.get("industrial") or "").casefold() == "port"
+        or bool(str(tags.get("port") or "").strip())
+    ):
+        roles.add(MaritimeRole.COMMERCIAL_PORT)
+    if not roles and (
+        category == "harbour"
+        or str(tags.get("harbour") or "").casefold() == "yes"
+        or str(tags.get("seamark:type") or "").casefold() == "harbour"
+    ):
+        roles.add(MaritimeRole.HARBOUR)
+    return roles
+
+
+def _maritime_cargo_types(tags: Mapping[str, Any]) -> frozenset[MaritimeCargo]:
+    values: set[str] = set()
+    for key in ("cargo", "port", "product", "seamark:harbour:category", "seamark:berth:category"):
+        if tags.get(key) is not None:
+            values.update(_split_tag_values(tags[key]))
+    return frozenset(_MARITIME_CARGO_ALIASES[value] for value in values if value in _MARITIME_CARGO_ALIASES)
+
+
+def _maritime_site_from_cluster(
+    cluster: list[_MaritimeCandidate],
+    policy: InfrastructureCandidatePolicy,
+) -> MaritimeSite:
+    ordered = sorted(cluster, key=lambda item: (not item.anchor, _maritime_candidate_key(item)))
+    primary = max(ordered, key=lambda item: (_geometry_area_m2(item.feature.geometry), item.anchor, bool(item.feature.name)))
+    source_keys = tuple(sorted({item.feature.source_id or item.feature.object_id for item in cluster}))
+    digest = hashlib.sha1("|".join(source_keys).encode("utf-8")).hexdigest()[:16]
+    roles = tuple(sorted({role for item in cluster for role in item.roles}, key=lambda role: role.value))
+    cargo_types = tuple(sorted({cargo for item in cluster for cargo in item.cargo_types}, key=lambda cargo: cargo.value))
+    operators = tuple(sorted({item.operator for item in cluster if item.operator}))
+    names = [item.feature.name for item in ordered if item.feature.name]
+    geometry, longitude, latitude = _normalized_feature_footprint(item.feature for item in cluster)
+    footprint_area_m2 = _geometry_area_m2(geometry) or None
+    quay_components = [item for item in cluster if item.feature.category in {"pier", "quay"}]
+    quay_length_m = sum(item.length_m for item in quay_components) or None
+    berth_count = sum(item.feature.category == "berth" for item in cluster)
+    importance_score = _maritime_importance_score(
+        roles,
+        cargo_types,
+        footprint_area_m2=footprint_area_m2,
+        quay_length_m=quay_length_m,
+        berth_count=berth_count,
+        component_count=len(cluster),
+    )
+    return MaritimeSite(
+        site_id=f"MARITIME_SITE:{digest}",
+        kind=InfrastructureSiteKind.MARITIME,
+        geometry=geometry,
+        latitude=latitude,
+        longitude=longitude,
+        source=primary.feature.source,
+        confidence=min(0.95, max(item.feature.confidence for item in cluster) + (0.1 if names or operators else 0.0)),
+        name=names[0] if names else (f"{operators[0]} port" if operators else None),
+        source_ids=source_keys,
+        scenario_reference_year=policy.scenario_reference_year or primary.feature.scenario_reference_year,
+        verification_state=(InfrastructureVerificationState.DCS_VISUAL_ONLY if any(item.feature.dcs_verified for item in cluster) else InfrastructureVerificationState.UNVERIFIED),
+        component_ids=tuple(sorted({item.feature.object_id for item in cluster})),
+        roles=roles,
+        cargo_types=cargo_types,
+        footprint_area_m2=footprint_area_m2,
+        quay_length_m=quay_length_m,
+        berth_count=berth_count,
+        importance_score=importance_score,
+        importance_tier=_infrastructure_importance_tier(importance_score),
+        properties={
+            "member_count": len(cluster),
+            "operators": list(operators),
+            "strategic_candidate": importance_score >= 50,
+            "scale": _industrial_scale(footprint_area_m2),
+            "geometry_method": "hole_free_union_of_source_components",
+            "evidence_categories": sorted({item.feature.category for item in cluster}),
+        },
+    )
+
+
+def _maritime_importance_score(
+    roles: Iterable[MaritimeRole],
+    cargo_types: Iterable[MaritimeCargo],
+    *,
+    footprint_area_m2: float | None,
+    quay_length_m: float | None,
+    berth_count: int,
+    component_count: int,
+) -> float:
+    role_score = max((_MARITIME_ROLE_IMPORTANCE[role] for role in roles), default=0.0)
+    area_bonus = 0.0 if not footprint_area_m2 else min(10.0, max(0.0, math.log10(max(1.0, footprint_area_m2) / 10_000.0) * 4.0))
+    quay_bonus = 0.0 if not quay_length_m else min(10.0, quay_length_m / 500.0 * 2.0)
+    evidence_bonus = min(8.0, berth_count * 1.5 + max(0, component_count - 1) * 0.5)
+    cargo_bonus = min(6.0, len(tuple(cargo_types)) * 2.0)
+    return round(min(100.0, role_score + area_bonus + quay_bonus + evidence_bonus + cargo_bonus), 3)
+
+
+def _maritime_candidate_key(candidate: _MaritimeCandidate) -> tuple[str, str]:
+    return candidate.feature.source_id or "", candidate.feature.object_id
+
+
+def _maritime_identity(candidate: _MaritimeCandidate) -> str:
+    return _normalized_site_name(candidate.feature.name) or _normalized_site_name(candidate.operator)
 
 
 def _cluster_fuel_candidates(
@@ -1135,8 +1544,8 @@ def _fuel_candidate_key(candidate: _FuelCandidate) -> tuple[str, str]:
 
 
 def _candidate_distance_m(
-    first: _EnergyCandidate | _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate,
-    second: _EnergyCandidate | _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate,
+    first: _EnergyCandidate | _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate | _MaritimeCandidate,
+    second: _EnergyCandidate | _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate | _MaritimeCandidate,
 ) -> float:
     latitude = math.radians((first.latitude + second.latitude) / 2)
     dx = math.radians(first.longitude - second.longitude) * math.cos(latitude)
@@ -1805,6 +2214,7 @@ def _site_layer(kind: InfrastructureSiteKind) -> str:
         InfrastructureSiteKind.FUEL_STORAGE: "fuel_storage_sites",
         InfrastructureSiteKind.MILITARY: "military_sites",
         InfrastructureSiteKind.INDUSTRIAL: "industrial_sites",
+        InfrastructureSiteKind.MARITIME: "maritime_sites",
     }[kind]
 
 
@@ -1814,6 +2224,7 @@ def _site_object_type(kind: InfrastructureSiteKind) -> str:
         InfrastructureSiteKind.FUEL_STORAGE: "FUEL_STORAGE_SITE",
         InfrastructureSiteKind.MILITARY: "MILITARY_SITE",
         InfrastructureSiteKind.INDUSTRIAL: "INDUSTRIAL_SITE",
+        InfrastructureSiteKind.MARITIME: "MARITIME_SITE",
     }[kind]
 
 
@@ -1903,6 +2314,29 @@ def _geometry_area_m2(geometry: Mapping[str, Any]) -> float:
     if geometry_type == "MultiPolygon" and isinstance(coordinates, (list, tuple)):
         return sum(_polygon_area_m2(polygon) for polygon in coordinates if isinstance(polygon, (list, tuple)))
     return 0.0
+
+
+def _geometry_length_m(geometry: Mapping[str, Any]) -> float:
+    geometry_type = str(geometry.get("type") or "")
+    coordinates = geometry.get("coordinates")
+    lines: list[Any] = []
+    if geometry_type == "LineString":
+        lines = [coordinates]
+    elif geometry_type == "MultiLineString" and isinstance(coordinates, (list, tuple)):
+        lines = list(coordinates)
+    elif geometry_type == "Polygon" and isinstance(coordinates, (list, tuple)) and coordinates:
+        lines = [coordinates[0]]
+    elif geometry_type == "MultiPolygon" and isinstance(coordinates, (list, tuple)):
+        lines = [polygon[0] for polygon in coordinates if isinstance(polygon, (list, tuple)) and polygon]
+    total = 0.0
+    for line in lines:
+        points = [point for point in line or () if isinstance(point, (list, tuple)) and len(point) >= 2]
+        for first, second in zip(points, points[1:]):
+            latitude = math.radians((float(first[1]) + float(second[1])) / 2)
+            dx = math.radians(float(first[0]) - float(second[0])) * math.cos(latitude)
+            dy = math.radians(float(first[1]) - float(second[1]))
+            total += math.hypot(dx, dy) * 6_371_008.8
+    return total
 
 
 def _polygon_area_m2(rings: Any) -> float:
