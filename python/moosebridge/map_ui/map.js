@@ -39,7 +39,14 @@
         { key: "bridge", label: "Rail bridges", icon: "construction", default: false },
       ],
     },
-    { key: "energy_sites", label: "Energy sites", color: "#b38416", icon: "factory", default: false },
+    {
+      key: "energy_sites", label: "Energy sites", color: "#b38416", icon: "factory", default: false,
+      children: [
+        { key: "generation", label: "Power plants", icon: "factory", default: false },
+        { key: "grid_substation", label: "Grid substations", icon: "network", default: false },
+        { key: "converter_station", label: "Converter stations", icon: "activity", default: false },
+      ],
+    },
     { key: "fuel_storage_sites", label: "Fuel and storage sites", color: "#8a5a32", icon: "fuel", default: false },
     { key: "military_sites", label: "Military sites", color: "#6c5b48", icon: "shield", default: false },
     { key: "industrial_sites", label: "Industrial sites", color: "#76578b", icon: "factory", default: false },
@@ -744,7 +751,7 @@
         continue;
       }
       if (["energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"].includes(spec.key)) {
-        if (["military_sites", "industrial_sites"].includes(spec.key)) {
+        if (["energy_sites", "military_sites", "industrial_sites"].includes(spec.key)) {
           const siteAreaFilter = [
             "all",
             ["==", ["get", "layer"], spec.key],
@@ -753,9 +760,9 @@
           ];
           const siteColor = [
             "match", ["get", "importance_tier"],
-            "critical", spec.key === "military_sites" ? "#873838" : "#6f315f",
-            "high", spec.key === "military_sites" ? "#8a5b37" : "#754b70",
-            "medium", spec.key === "military_sites" ? "#73634c" : "#6d5d78",
+            "critical", spec.key === "energy_sites" ? "#85600d" : spec.key === "military_sites" ? "#873838" : "#6f315f",
+            "high", spec.key === "energy_sites" ? "#a57716" : spec.key === "military_sites" ? "#8a5b37" : "#754b70",
+            "medium", spec.key === "energy_sites" ? "#b38d35" : spec.key === "military_sites" ? "#73634c" : "#6d5d78",
             spec.color,
           ];
           addMapLayer(spec, {
@@ -782,7 +789,7 @@
             },
           });
         }
-        const detailedSite = ["military_sites", "industrial_sites"].includes(spec.key);
+        const detailedSite = ["energy_sites", "military_sites", "industrial_sites"].includes(spec.key);
         const sitePointFilter = [
           "all",
           ["==", ["get", "layer"], spec.key],
@@ -790,12 +797,12 @@
         ];
         const siteCircleColor = detailedSite
           ? ["match", ["get", "importance_tier"],
-            "critical", spec.key === "military_sites" ? "#873838" : "#6f315f",
-            "high", spec.key === "military_sites" ? "#8a5b37" : "#754b70",
-            "medium", spec.key === "military_sites" ? "#73634c" : "#6d5d78",
+            "critical", spec.key === "energy_sites" ? "#85600d" : spec.key === "military_sites" ? "#873838" : "#6f315f",
+            "high", spec.key === "energy_sites" ? "#a57716" : spec.key === "military_sites" ? "#8a5b37" : "#754b70",
+            "medium", spec.key === "energy_sites" ? "#b38d35" : spec.key === "military_sites" ? "#73634c" : "#6d5d78",
             spec.color]
           : spec.color;
-        const siteOverviewOpacity = spec.key === "industrial_sites"
+        const siteOverviewOpacity = ["energy_sites", "industrial_sites"].includes(spec.key)
           ? ["step", ["zoom"],
             ["match", ["get", "importance_tier"], "critical", 0.94, "high", 0.94, 0],
             7, ["match", ["get", "importance_tier"], "critical", 0.94, "high", 0.94, "medium", 0.9, 0],
@@ -818,7 +825,7 @@
           type: "circle",
           source: "infrastructure-sites",
           minzoom: 5,
-          maxzoom: spec.key === "military_sites" ? 9 : spec.key === "industrial_sites" ? 10 : 24,
+          maxzoom: spec.key === "military_sites" ? 9 : ["energy_sites", "industrial_sites"].includes(spec.key) ? 10 : 24,
           filter: sitePointFilter,
           paint: siteCirclePaint,
         });
@@ -1150,7 +1157,7 @@
     for (const feature of latestInfrastructureSites.features) {
       const longitude = Number(feature.properties?.longitude);
       const latitude = Number(feature.properties?.latitude);
-      const isDetailedArea = ["military_sites", "industrial_sites"].includes(feature.properties?.layer)
+      const isDetailedArea = ["energy_sites", "military_sites", "industrial_sites"].includes(feature.properties?.layer)
         && ["Polygon", "MultiPolygon"].includes(feature.geometry?.type);
       if (isDetailedArea) {
         displayFeatures.push({
@@ -1598,6 +1605,8 @@
     track_duration_s: "Track duration", distance_m: "Distance", duration_s: "Duration", average_speed_mps: "Average speed",
     last_update_mission_time: "Last DCS update", footprint_area_m2: "Footprint area",
     importance_score: "Importance score", importance_tier: "Importance tier",
+    energy_roles: "Energy roles", energy_sources: "Energy sources", output_mw: "Electrical output",
+    voltage_kv: "Grid voltage",
     network_analysis_complete: "Analysis", network_disconnected_if_lost: "Loss effect",
     network_alternative_route_found: "Alternative route", network_criticality_score: "Network criticality",
     network_detour_added_m: "Additional distance", network_detour_distance_m: "Detour distance",
@@ -1612,6 +1621,8 @@
   function formattedField(key, value) {
     if (key === "radius_m") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m`;
     if (key === "capacity_m3") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m³`;
+    if (key === "output_mw") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 1 })} MW`;
+    if (key === "voltage_kv") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 1 })} kV`;
     if (key === "footprint_area_m2") {
       const area = Number(value);
       return area >= 1_000_000

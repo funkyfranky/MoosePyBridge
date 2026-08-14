@@ -1626,22 +1626,31 @@ python tools/build_infrastructure_sites.py
 ```
 
 For GermanyCW, modern wind, solar, biogas, and battery sites are excluded by
-policy; other theaters allow them unless their own policy says otherwise. A
+policy; other theaters allow them unless their own policy says otherwise. Power
+plants are clustered by stable identity and proximity. Grid substations require
+at least 110 kV; converter stations are retained separately, while transformers
+and local distribution equipment are excluded. A
 bounded DCS scenery check is available through
 `await bridge.survey_scenery(latitude, longitude, radius_m=500)`.
 The map server loads the normalized cache automatically and exposes it through
 `/api/infrastructure-sites/global.geojson`. `Energy sites`, `Fuel and storage
 sites`, `Military sites`, and `Industrial sites` are separate, initially hidden
-layers under `Infrastructure`. The map uses stable representative site markers while the
-SDK artifact retains source identifiers and the normalized site geometry.
+layers under `Infrastructure`. Energy sites can be filtered into power plants,
+grid substations, and converter stations. The map uses importance-weighted
+representative markers and normalized footprints while the SDK artifact retains
+source identifiers and component membership.
 
-The GermanyCW cache currently contains 2,499 energy sites, 440 fuel or bulk
-storage sites, 1,100 military sites, and 5,728 industrial sites. Fuel admission
+The GermanyCW cache currently contains 3,718 energy sites, 440 fuel or bulk
+storage sites, 1,100 military sites, and 5,727 industrial sites. Fuel admission
 is deliberately conservative: a candidate needs
 explicit fuel-storage, oil-storage, gas-storage, terminal, depot, tank, or
 refinery evidence. A generic oil or gas industry tag is insufficient. Water,
 slurry, and unspecified tanks are not promoted to operational sites. Related
 terminal, refinery, and tank components are clustered into one location.
+Energy sites record normalized role, source, electrical output, maximum grid
+voltage, footprint, scale, importance score and tier. Of the current energy
+sites, 2,733 are generation sites, 928 major substations, and 57 converter
+stations; 452 are currently strategic candidates.
 Military sites retain typed roles such as barracks, depot, ammunition storage,
 radar, communications, naval base, training area, and firing range. Their source
 components are combined into a hole-free footprint with a representative anchor,
@@ -1657,7 +1666,7 @@ combined footprint, scale, importance score and tier, and a separate
 `strategic_candidate` flag. Role is weighted most strongly; size, product,
 operator, and multiple-role evidence refine the score. The map shows weighted
 overview markers and switches to the normalized industrial footprint from zoom
-9. The current GermanyCW cache classifies 2,123 of 5,728 industrial sites as
+9. The current GermanyCW cache classifies 2,123 of 5,727 industrial sites as
 strategic candidates.
 
 To inspect one admitted infrastructure site against nearby addressable DCS

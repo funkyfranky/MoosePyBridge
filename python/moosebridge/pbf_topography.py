@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -19,7 +20,7 @@ PBF_TAG_FILTER: dict[str, Any] = {
     "railway": ["rail"],
     "place": ["city", "town"],
     "landuse": ["industrial", "commercial", "residential", "retail", "military", "port"],
-    "power": ["plant"],
+    "power": ["plant", "substation"],
     "man_made": ["works", "water_works", "wastewater_plant", "storage_tank", "silo"],
     "harbour": ["yes"],
     "bridge": True,
@@ -44,7 +45,8 @@ OGR_LAYER_FILTERS: dict[str, str] = {
     "points": (
         "place IN ('city','town','village','hamlet') OR "
         "man_made IN ('works','water_works','wastewater_plant','storage_tank','silo') OR "
-        "other_tags LIKE '%\"power\"=>\"plant\"%' OR other_tags LIKE '%\"harbour\"=>\"yes\"%' OR "
+        "(other_tags LIKE '%\"power\"=>\"plant\"%' OR other_tags LIKE '%\"power\"=>\"substation\"%') OR "
+        "other_tags LIKE '%\"harbour\"=>\"yes\"%' OR "
         "other_tags LIKE '%\"railway\"=>\"station\"%' OR other_tags LIKE '%\"railway\"=>\"halt\"%' OR "
         "other_tags LIKE '%\"railway\"=>\"depot\"%' OR other_tags LIKE '%\"railway\"=>\"freight_terminal\"%' OR "
         "other_tags LIKE '%\"public_transport\"=>\"station\"%'"
@@ -58,7 +60,8 @@ OGR_LAYER_FILTERS: dict[str, str] = {
         "natural = 'water' OR place IN ('city','town','village','hamlet') OR "
         "landuse IN ('industrial','commercial','residential','retail','military','port') OR "
         "man_made IN ('works','water_works','wastewater_plant','storage_tank','silo') OR "
-        "military IS NOT NULL OR other_tags LIKE '%\"power\"=>\"plant\"%' OR "
+        "military IS NOT NULL OR (other_tags LIKE '%\"power\"=>\"plant\"%' OR "
+        "other_tags LIKE '%\"power\"=>\"substation\"%') OR "
         "other_tags LIKE '%\"harbour\"=>\"yes\"%' OR "
         "other_tags LIKE '%\"railway\"=>\"station\"%' OR other_tags LIKE '%\"railway\"=>\"depot\"%' OR "
         "other_tags LIKE '%\"railway\"=>\"freight_terminal\"%' OR other_tags LIKE '%\"freight\"=>\"yes\"%' OR "
@@ -194,7 +197,9 @@ def topography_detail_level(feature: TopographyFeature) -> TopographyDetailLevel
     if feature.layer is TopographyLayer.LANDUSE:
         return TopographyDetailLevel.LOW if category in {"industrial", "military", "port"} else TopographyDetailLevel.HIGH
     if feature.layer is TopographyLayer.INFRASTRUCTURE:
-        return TopographyDetailLevel.ALL if category in {"power_plant", "harbour"} else TopographyDetailLevel.LOW
+        return TopographyDetailLevel.ALL if category in {
+            "power_plant", "power_substation", "power_converter", "harbour",
+        } else TopographyDetailLevel.LOW
     if feature.layer is TopographyLayer.ADMINISTRATIVE_BOUNDARIES:
         return TopographyDetailLevel.ALL
     return TopographyDetailLevel.HIGH
@@ -253,6 +258,75 @@ def administrative_boundaries_from_pbf(
             ):
                 if feature.layer is TopographyLayer.ADMINISTRATIVE_BOUNDARIES:
                     features[feature.object_id] = feature
+    return tuple(sorted(features.values(), key=lambda feature: feature.object_id))
+
+
+def energy_features_from_pbf(
+    paths: Iterable[str | Path],
+    *,
+    bounds: tuple[float, float, float, float] | None = None,
+    scenario_reference_year: int | None = None,
+    simplify_meters: float = 20.0,
+    max_workers: int = 4,
+) -> tuple[TopographyFeature, ...]:
+    """Read power plants and substations without rebuilding general topography."""
+
+    try:
+        import pyogrio
+    except ImportError as exc:
+        raise RuntimeError('PBF import requires: python -m pip install -e ".[topography]"') from exc
+
+    bbox = None
+    if bounds is not None:
+        south, west, north, east = bounds
+        bbox = (west, south, east, north)
+    where = (
+        "other_tags LIKE '%\"power\"=>\"plant\"%' OR "
+        "other_tags LIKE '%\"power\"=>\"substation\"%'"
+    )
+    materialized_paths = tuple(Path(raw_path) for raw_path in paths)
+    for path in materialized_paths:
+        if not path.is_file():
+            raise FileNotFoundError(path)
+
+    def read_path(path: Path) -> tuple[TopographyFeature, ...]:
+        found: dict[str, TopographyFeature] = {}
+        for layer_name in ("points", "multipolygons"):
+            frame = pyogrio.read_dataframe(
+                path,
+                layer=layer_name,
+                bbox=bbox,
+                where=where,
+                columns=["osm_id", "osm_way_id", "name", "type", "other_tags"],
+                use_arrow=True,
+            )
+            if frame is None or frame.empty:
+                continue
+            if simplify_meters > 0:
+                source_crs = frame.crs or "EPSG:4326"
+                frame = frame.to_crs("EPSG:3035")
+                frame.geometry = frame.geometry.simplify(simplify_meters, preserve_topology=True)
+                frame = frame.to_crs(source_crs)
+            for record in frame.iterfeatures():
+                normalized = _normalize_ogr_record(record, layer_name)
+                for feature in features_from_pyrosm_record(
+                    normalized,
+                    scenario_reference_year=scenario_reference_year,
+                    source_snapshot_date=None,
+                    include_buildings=False,
+                ):
+                    if feature.layer is TopographyLayer.INFRASTRUCTURE and feature.category in {
+                        "power_plant", "power_substation", "power_converter",
+                    }:
+                        found[feature.object_id] = feature
+        return tuple(found.values())
+
+    features: dict[str, TopographyFeature] = {}
+    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(materialized_paths) or 1))) as executor:
+        results = executor.map(read_path, materialized_paths)
+        for path_features in results:
+            for feature in path_features:
+                features[feature.object_id] = feature
     return tuple(sorted(features.values(), key=lambda feature: feature.object_id))
 
 

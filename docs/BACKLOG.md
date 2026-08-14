@@ -107,6 +107,18 @@ Priorities:
   separates raw OSM features, normalized operational sites, bounded DCS
   scenery verification, and scenario-approved strategic objectives. Power
   generation is the recommended first site category.
+- [x] **Normalize energy infrastructure.** Cluster same-site generation
+  components non-transitively, retain only documented grid nodes at 110 kV or
+  above plus converter stations, and record role, source, output, voltage,
+  footprint, scale, importance, and strategic-candidate status. GermanyCW
+  continues to exclude modern wind, solar, biogas, and battery candidates.
+- [ ] **Cache targeted energy PBF extraction.** Persist the raw bounded
+  power-plant/substation candidate set separately so scoring or admission-rule
+  changes do not repeat the expensive regional PBF scan.
+- [ ] **Validate representative GermanyCW energy sites.** Compare thermal and
+  nuclear generation, 110/220/380 kV substations, and converter stations with
+  DCS scenery. Record category-specific confidence; OSM evidence alone does
+  not authorize a strategic target.
 - [ ] **Bring the remaining infrastructure candidates to the transport-cache
   standard.** Define a small, typed taxonomy for energy, fuel and storage,
   industrial sites, ports and harbours, rail facilities, communications, and

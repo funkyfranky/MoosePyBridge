@@ -25,16 +25,24 @@ from moosebridge import (  # noqa: E402
     TopographyLayer,
     build_infrastructure_sites,
 )
+from moosebridge.pbf_topography import energy_features_from_pbf  # noqa: E402
 
 
 DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "topography" / "viewport" / "manifest.json"
 DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-infrastructure-sites.geojson"
+DEFAULT_PBF_DIRECTORY = REPO_ROOT / "tmp" / "topography" / "pbf"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build normalized strategic infrastructure-site candidates")
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--pbf-directory",
+        type=Path,
+        default=DEFAULT_PBF_DIRECTORY,
+        help="Directory containing Geofabrik PBF files for targeted energy extraction.",
+    )
     parser.add_argument(
         "--include-modern-energy",
         action="store_true",
@@ -44,9 +52,22 @@ def main() -> int:
     payload = json.loads(args.manifest.read_text(encoding="utf-8"))
     theater_id = str(payload.get("theater_id") or "")
     features = _load_candidates(args.manifest.parent, payload.get("shards") or [])
+    pbf_paths = sorted(args.pbf_directory.glob("*.osm.pbf")) if args.pbf_directory.is_dir() else []
+    if pbf_paths:
+        print(f"  reading targeted energy data from {len(pbf_paths)} PBF file(s)", flush=True)
+        bounds = _manifest_bounds(payload.get("shards") or [])
+        for feature in energy_features_from_pbf(
+            pbf_paths,
+            bounds=bounds,
+            scenario_reference_year=1989 if theater_id.casefold() == "germanycw" else None,
+        ):
+            features[feature.object_id] = feature
     policy = None
     if args.include_modern_energy:
-        policy = InfrastructureCandidatePolicy(theater_id=theater_id)
+        policy = InfrastructureCandidatePolicy(
+            theater_id=theater_id,
+            scenario_reference_year=1989 if theater_id.casefold() == "germanycw" else None,
+        )
     artifact = build_infrastructure_sites(features.values(), theater_id=theater_id, policy=policy)
     output = artifact.save(args.output)
     energy_count = sum(isinstance(site, EnergySite) for site in artifact.sites)
@@ -66,7 +87,7 @@ def main() -> int:
 
 
 _CANDIDATE_CATEGORIES = (
-    "power_plant", "storage_tank", "refinery", "oil", "oil_storage",
+    "power_plant", "power_substation", "power_converter", "storage_tank", "refinery", "oil", "oil_storage",
     "distillates_storage", "gas", "natural_gas", "gas_storage", "gas_cavern",
     "storage", "depot",
     "military",
@@ -140,6 +161,19 @@ def _integer(value: object) -> int | None:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return None
     return int(value)
+
+
+def _manifest_bounds(shards: list[dict]) -> tuple[float, float, float, float] | None:
+    boxes = [shard.get("bounds") for shard in shards]
+    boxes = [box for box in boxes if isinstance(box, list) and len(box) == 4]
+    if not boxes:
+        return None
+    return (
+        min(float(box[1]) for box in boxes),
+        min(float(box[0]) for box in boxes),
+        max(float(box[3]) for box in boxes),
+        max(float(box[2]) for box in boxes),
+    )
 
 
 if __name__ == "__main__":

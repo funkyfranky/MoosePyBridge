@@ -35,6 +35,7 @@ def build_overpass_query(bounds: tuple[float, float, float, float]) -> str:
   nwr[\"place\"~\"^(city|town)$\"]({bbox});
   nwr[\"landuse\"=\"industrial\"]({bbox});
   nwr[\"power\"=\"plant\"]({bbox});
+  nwr[\"power\"=\"substation\"]({bbox});
   nwr[\"man_made\"~\"^(works|water_works|wastewater_plant|storage_tank|silo)$\"]({bbox});
   nwr[\"harbour\"=\"yes\"]({bbox});
   nwr[\"industrial\"]({bbox});
@@ -204,7 +205,7 @@ def _is_area(tags: dict[str, Any]) -> bool:
     return (
         tags.get("natural") == "water"
         or tags.get("landuse") == "industrial"
-        or tags.get("power") == "plant"
+        or tags.get("power") in {"plant", "substation"}
         or tags.get("man_made") in {"works", "water_works", "wastewater_plant", "storage_tank", "silo"}
         or tags.get("area") == "yes"
     )
@@ -228,6 +229,8 @@ def _infrastructure_category(tags: dict[str, Any]) -> str | None:
         return "bridge"
     if tags.get("power") == "plant":
         return "power_plant"
+    if tags.get("power") == "substation":
+        return "power_converter" if tags.get("substation") == "converter" else "power_substation"
     if tags.get("harbour") == "yes" or tags.get("landuse") == "port":
         return "harbour"
     if tags.get("man_made"):

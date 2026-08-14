@@ -55,6 +55,12 @@ class EnergySource(StrEnum):
     UNKNOWN = "unknown"
 
 
+class EnergyRole(StrEnum):
+    GENERATION = "generation"
+    GRID_SUBSTATION = "grid_substation"
+    CONVERTER_STATION = "converter_station"
+
+
 class FuelStorageRole(StrEnum):
     REFINERY = "refinery"
     TERMINAL = "terminal"
@@ -196,11 +202,11 @@ class InfrastructureSite:
         properties = dict(feature.get("properties") or {})
         kind = InfrastructureSiteKind(str(properties.get("site_kind") or ""))
         known = {
-            "layer", "object_id", "name", "object_type", "site_kind", "category", "coordinate_system",
+            "layer", "object_id", "name", "object_type", "site_kind", "category", "map_category", "coordinate_system",
             "latitude", "longitude", "source", "source_ids", "confidence", "scenario_reference_year",
             "verification_state", "component_ids", "energy_sources", "output_mw", "roles",
             "storage_roles", "commodities", "capacity_m3", "products", "footprint_area_m2",
-            "importance_score", "importance_tier",
+            "importance_score", "importance_tier", "energy_roles", "voltage_kv",
         }
         common = dict(
             site_id=str(properties.get("object_id") or ""),
@@ -222,10 +228,19 @@ class InfrastructureSite:
         if kind is InfrastructureSiteKind.ENERGY:
             return EnergySite(
                 **common,
+                roles=tuple(
+                    EnergyRole(str(value)) for value in properties.get("energy_roles") or (EnergyRole.GENERATION.value,)
+                ),
                 energy_sources=tuple(
                     EnergySource(str(value)) for value in properties.get("energy_sources") or (EnergySource.UNKNOWN.value,)
                 ),
                 output_mw=_optional_float(properties.get("output_mw")),
+                voltage_kv=_optional_float(properties.get("voltage_kv")),
+                footprint_area_m2=_optional_float(properties.get("footprint_area_m2")),
+                importance_score=float(properties.get("importance_score") or 0),
+                importance_tier=InfrastructureImportanceTier(
+                    str(properties.get("importance_tier") or InfrastructureImportanceTier.LOCAL.value)
+                ),
             )
         if kind is InfrastructureSiteKind.FUEL_STORAGE:
             return FuelStorageSite(
@@ -260,23 +275,42 @@ class InfrastructureSite:
 
 @dataclass(slots=True, frozen=True)
 class EnergySite(InfrastructureSite):
-    """Power-generation or storage site admitted by a theater policy."""
+    """Normalized generation site or strategically relevant grid node."""
 
+    roles: tuple[EnergyRole, ...] = (EnergyRole.GENERATION,)
     energy_sources: tuple[EnergySource, ...] = (EnergySource.UNKNOWN,)
     output_mw: float | None = None
+    voltage_kv: float | None = None
+    footprint_area_m2: float | None = None
+    importance_score: float = 0.0
+    importance_tier: InfrastructureImportanceTier = InfrastructureImportanceTier.LOCAL
 
     def __post_init__(self) -> None:
         InfrastructureSite.__post_init__(self)
         if self.kind is not InfrastructureSiteKind.ENERGY:
             raise ValueError("EnergySite kind must be energy")
+        if not self.roles:
+            raise ValueError("energy site requires at least one role")
         if self.output_mw is not None and self.output_mw < 0:
             raise ValueError("energy output must not be negative")
+        if self.voltage_kv is not None and self.voltage_kv < 0:
+            raise ValueError("energy voltage must not be negative")
+        if self.footprint_area_m2 is not None and self.footprint_area_m2 < 0:
+            raise ValueError("energy footprint must not be negative")
+        if not 0 <= self.importance_score <= 100:
+            raise ValueError("energy importance score must be between zero and 100")
 
     def _specific_properties(self) -> dict[str, Any]:
         return {
             "category": "energy_site",
+            "energy_roles": [role.value for role in self.roles],
+            "map_category": self.roles[0].value,
             "energy_sources": [source.value for source in self.energy_sources],
             "output_mw": self.output_mw,
+            "voltage_kv": self.voltage_kv,
+            "footprint_area_m2": self.footprint_area_m2,
+            "importance_score": self.importance_score,
+            "importance_tier": self.importance_tier.value,
         }
 
 
@@ -487,48 +521,79 @@ def build_energy_sites(
     *,
     theater_id: str,
     policy: InfrastructureCandidatePolicy | None = None,
+    named_cluster_radius_m: float = 1_000.0,
+    major_grid_voltage_kv: float = 110.0,
 ) -> TheaterInfrastructureSites:
-    """Normalize OSM power plants while applying only the selected theater policy."""
+    """Normalize generation facilities and strategically relevant grid nodes."""
 
     selected_policy = policy or infrastructure_policy_for_theater(theater_id)
-    sites: list[InfrastructureSite] = []
+    candidates: list[_EnergyCandidate] = []
     excluded: dict[str, int] = {}
     for feature in features:
-        if feature.layer is not TopographyLayer.INFRASTRUCTURE or feature.category != "power_plant":
+        if feature.layer is not TopographyLayer.INFRASTRUCTURE or feature.category not in {
+            "power_plant", "power_substation", "power_converter",
+        }:
+            continue
+        if not _feature_exists_in_scenario(feature, selected_policy.scenario_reference_year):
+            excluded["outside_scenario_period"] = excluded.get("outside_scenario_period", 0) + 1
             continue
         tags = _osm_tags(feature.properties.get("osm_tags"))
-        sources = _energy_sources(tags)
+        roles = _energy_roles(feature.category, tags)
+        sources = _energy_sources(tags) if EnergyRole.GENERATION in roles else frozenset()
         rejected = sources.intersection(selected_policy.excluded_energy_sources)
         if rejected:
             for source in rejected:
                 excluded[source.value] = excluded.get(source.value, 0) + 1
             continue
+        voltage_kv = _parse_voltage_kv(tags)
+        if (
+            EnergyRole.GRID_SUBSTATION in roles
+            and EnergyRole.CONVERTER_STATION not in roles
+            and (voltage_kv is None or voltage_kv < major_grid_voltage_kv)
+        ):
+            excluded["minor_grid_node"] = excluded.get("minor_grid_node", 0) + 1
+            continue
         longitude, latitude = _representative_coordinate(feature.geometry)
-        source_key = feature.source_id or feature.object_id
-        digest = hashlib.sha1(source_key.encode("utf-8")).hexdigest()[:16]
-        sites.append(EnergySite(
-            site_id=f"ENERGY_SITE:{digest}",
-            kind=InfrastructureSiteKind.ENERGY,
-            geometry=feature.geometry,
+        candidates.append(_EnergyCandidate(
+            feature=feature,
             latitude=latitude,
             longitude=longitude,
-            source=feature.source,
-            confidence=feature.confidence,
-            name=feature.name,
-            source_ids=(source_key,),
-            scenario_reference_year=selected_policy.scenario_reference_year or feature.scenario_reference_year,
-            verification_state=(InfrastructureVerificationState.DCS_VISUAL_ONLY if feature.dcs_verified else InfrastructureVerificationState.UNVERIFIED),
-            component_ids=(feature.object_id,),
-            energy_sources=tuple(sorted(sources, key=lambda item: item.value)),
+            roles=roles,
+            sources=sources,
             output_mw=_parse_output_mw(tags),
-            properties={"osm_tags": tags},
+            voltage_kv=voltage_kv,
+            operator=_optional_string(tags.get("operator")),
+            area_m2=_geometry_area_m2(feature.geometry),
         ))
+    clusters = _cluster_energy_candidates(candidates, named_cluster_radius_m)
+    sites = tuple(_energy_site_from_cluster(cluster, selected_policy) for cluster in clusters)
     return TheaterInfrastructureSites(
         theater_id=theater_id,
         scenario_reference_year=selected_policy.scenario_reference_year,
-        sites=tuple(sites),
-        metadata={"excluded_energy_source_counts": excluded},
+        sites=sites,
+        metadata={
+            "raw_energy_candidate_count": len(candidates),
+            "excluded_energy_source_counts": {
+                key: value for key, value in excluded.items() if key in {source.value for source in EnergySource}
+            },
+            "excluded_energy_counts": excluded,
+            "named_cluster_radius_m": named_cluster_radius_m,
+            "major_grid_voltage_kv": major_grid_voltage_kv,
+        },
     )
+
+
+@dataclass(slots=True, frozen=True)
+class _EnergyCandidate:
+    feature: TopographyFeature
+    latitude: float
+    longitude: float
+    roles: frozenset[EnergyRole]
+    sources: frozenset[EnergySource]
+    output_mw: float | None
+    voltage_kv: float | None
+    operator: str | None
+    area_m2: float
 
 
 @dataclass(slots=True, frozen=True)
@@ -1070,8 +1135,8 @@ def _fuel_candidate_key(candidate: _FuelCandidate) -> tuple[str, str]:
 
 
 def _candidate_distance_m(
-    first: _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate,
-    second: _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate,
+    first: _EnergyCandidate | _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate,
+    second: _EnergyCandidate | _FuelCandidate | _MilitaryCandidate | _IndustrialCandidate,
 ) -> float:
     latitude = math.radians((first.latitude + second.latitude) / 2)
     dx = math.radians(first.longitude - second.longitude) * math.cos(latitude)
@@ -1323,6 +1388,166 @@ def _infrastructure_importance_tier(score: float) -> InfrastructureImportanceTie
     if score >= 40:
         return InfrastructureImportanceTier.MEDIUM
     return InfrastructureImportanceTier.LOCAL
+
+
+def _cluster_energy_candidates(
+    candidates: Iterable[_EnergyCandidate],
+    radius_m: float,
+) -> list[list[_EnergyCandidate]]:
+    """Group same-site OSM components without transitive distance chaining."""
+
+    clusters: list[list[_EnergyCandidate]] = []
+    for candidate in sorted(candidates, key=_energy_candidate_key):
+        identity = _energy_identity(candidate)
+        matching = next(
+            (
+                cluster for cluster in clusters
+                if identity
+                and _energy_identity(cluster[0]) == identity
+                and not candidate.roles.isdisjoint(cluster[0].roles)
+                and _candidate_distance_m(candidate, cluster[0]) <= radius_m
+            ),
+            None,
+        )
+        if matching is None:
+            clusters.append([candidate])
+        else:
+            matching.append(candidate)
+    return clusters
+
+
+def _energy_site_from_cluster(
+    cluster: list[_EnergyCandidate],
+    policy: InfrastructureCandidatePolicy,
+) -> EnergySite:
+    ordered = sorted(cluster, key=_energy_candidate_key)
+    primary = max(ordered, key=lambda item: (item.area_m2, bool(item.feature.name)))
+    source_keys = tuple(sorted({item.feature.source_id or item.feature.object_id for item in cluster}))
+    digest = hashlib.sha1("|".join(source_keys).encode("utf-8")).hexdigest()[:16]
+    roles = tuple(sorted({role for item in cluster for role in item.roles}, key=lambda role: role.value))
+    sources = tuple(sorted({source for item in cluster for source in item.sources}, key=lambda source: source.value))
+    if not sources:
+        sources = (EnergySource.UNKNOWN,)
+    operators = tuple(sorted({item.operator for item in cluster if item.operator}))
+    names = [item.feature.name for item in ordered if item.feature.name]
+    outputs = [item.output_mw for item in cluster if item.output_mw is not None]
+    voltages = [item.voltage_kv for item in cluster if item.voltage_kv is not None]
+    geometry, longitude, latitude = _normalized_feature_footprint(item.feature for item in cluster)
+    footprint_area_m2 = _geometry_area_m2(geometry) or None
+    output_mw = max(outputs) if outputs else None
+    voltage_kv = max(voltages) if voltages else None
+    importance_score = _energy_importance_score(
+        roles,
+        sources,
+        output_mw=output_mw,
+        voltage_kv=voltage_kv,
+        footprint_area_m2=footprint_area_m2,
+        has_operator=bool(operators),
+    )
+    return EnergySite(
+        site_id=f"ENERGY_SITE:{digest}",
+        kind=InfrastructureSiteKind.ENERGY,
+        geometry=geometry,
+        latitude=latitude,
+        longitude=longitude,
+        source=primary.feature.source,
+        confidence=min(
+            0.95,
+            max(item.feature.confidence for item in cluster)
+            + (0.1 if names or operators else 0.0)
+            + (0.1 if output_mw is not None or voltage_kv is not None else 0.0),
+        ),
+        name=names[0] if names else (f"{operators[0]} energy site" if operators else None),
+        source_ids=source_keys,
+        scenario_reference_year=policy.scenario_reference_year or primary.feature.scenario_reference_year,
+        verification_state=(
+            InfrastructureVerificationState.DCS_VISUAL_ONLY
+            if any(item.feature.dcs_verified for item in cluster)
+            else InfrastructureVerificationState.UNVERIFIED
+        ),
+        component_ids=tuple(sorted({item.feature.object_id for item in cluster})),
+        roles=roles,
+        energy_sources=sources,
+        output_mw=output_mw,
+        voltage_kv=voltage_kv,
+        footprint_area_m2=footprint_area_m2,
+        importance_score=importance_score,
+        importance_tier=_infrastructure_importance_tier(importance_score),
+        properties={
+            "member_count": len(cluster),
+            "operators": list(operators),
+            "strategic_candidate": importance_score >= 50,
+            "scale": _energy_scale(output_mw, voltage_kv, footprint_area_m2),
+            "geometry_method": "hole_free_union_of_source_components",
+            "evidence_categories": sorted({item.feature.category for item in cluster}),
+        },
+    )
+
+
+_ENERGY_SOURCE_IMPORTANCE: dict[EnergySource, float] = {
+    EnergySource.NUCLEAR: 65.0,
+    EnergySource.COAL: 42.0,
+    EnergySource.OIL: 40.0,
+    EnergySource.GAS: 40.0,
+    EnergySource.HYDRO: 35.0,
+    EnergySource.WASTE: 28.0,
+    EnergySource.BIOMASS: 24.0,
+    EnergySource.WIND: 24.0,
+    EnergySource.SOLAR: 20.0,
+    EnergySource.BIOGAS: 22.0,
+    EnergySource.BATTERY: 30.0,
+    EnergySource.OTHER: 24.0,
+    EnergySource.UNKNOWN: 20.0,
+}
+
+
+def _energy_importance_score(
+    roles: Iterable[EnergyRole],
+    sources: Iterable[EnergySource],
+    *,
+    output_mw: float | None,
+    voltage_kv: float | None,
+    footprint_area_m2: float | None,
+    has_operator: bool,
+) -> float:
+    role_set = frozenset(roles)
+    source_score = max((_ENERGY_SOURCE_IMPORTANCE[source] for source in sources), default=20.0)
+    role_score = 0.0
+    if EnergyRole.CONVERTER_STATION in role_set:
+        role_score = 65.0
+    elif EnergyRole.GRID_SUBSTATION in role_set:
+        role_score = 44.0
+    if EnergyRole.GENERATION not in role_set:
+        source_score = role_score
+    output_bonus = 0.0 if output_mw is None else min(30.0, math.log10(max(1.0, output_mw)) * 10.0)
+    voltage_bonus = 0.0 if voltage_kv is None else min(24.0, max(0.0, voltage_kv - 100.0) / 25.0)
+    area_bonus = 0.0
+    if footprint_area_m2 and footprint_area_m2 > 10_000:
+        area_bonus = min(10.0, math.log10(footprint_area_m2 / 10_000.0) * 4.0)
+    evidence_bonus = 2.0 if has_operator else 0.0
+    return round(min(100.0, max(0.0, source_score + output_bonus + voltage_bonus + area_bonus + evidence_bonus)), 3)
+
+
+def _energy_candidate_key(candidate: _EnergyCandidate) -> tuple[str, str]:
+    return candidate.feature.source_id or "", candidate.feature.object_id
+
+
+def _energy_identity(candidate: _EnergyCandidate) -> str:
+    return _normalized_site_name(candidate.feature.name) or _normalized_site_name(candidate.operator)
+
+
+def _energy_scale(
+    output_mw: float | None,
+    voltage_kv: float | None,
+    footprint_area_m2: float | None,
+) -> str:
+    if (output_mw or 0) >= 500 or (voltage_kv or 0) >= 380 or (footprint_area_m2 or 0) >= 1_000_000:
+        return "very_large"
+    if (output_mw or 0) >= 100 or (voltage_kv or 0) >= 220 or (footprint_area_m2 or 0) >= 200_000:
+        return "large"
+    if (output_mw or 0) >= 10 or (voltage_kv or 0) >= 110 or (footprint_area_m2 or 0) >= 20_000:
+        return "medium"
+    return "small"
 
 
 def _cluster_industrial_candidates(
@@ -1608,6 +1833,32 @@ def _energy_sources(tags: Mapping[str, Any]) -> frozenset[EnergySource]:
         except ValueError:
             resolved.add(EnergySource.OTHER)
     return frozenset(resolved)
+
+
+def _energy_roles(category: str, tags: Mapping[str, Any]) -> frozenset[EnergyRole]:
+    if category == "power_plant":
+        return frozenset({EnergyRole.GENERATION})
+    substation = str(tags.get("substation") or "").strip().casefold()
+    if category == "power_converter" or substation == "converter":
+        return frozenset({EnergyRole.CONVERTER_STATION})
+    return frozenset({EnergyRole.GRID_SUBSTATION})
+
+
+def _parse_voltage_kv(tags: Mapping[str, Any]) -> float | None:
+    values: list[float] = []
+    for item in _split_tag_values(tags.get("voltage")):
+        text = item.strip().casefold().replace(" ", "")
+        multiplier = 0.001
+        if text.endswith("kv"):
+            text = text[:-2]
+            multiplier = 1.0
+        elif text.endswith("v"):
+            text = text[:-1]
+        try:
+            values.append(float(text.replace(",", ".")) * multiplier)
+        except ValueError:
+            continue
+    return max(values) if values else None
 
 
 def _parse_output_mw(tags: Mapping[str, Any]) -> float | None:

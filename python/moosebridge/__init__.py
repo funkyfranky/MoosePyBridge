@@ -234,6 +234,7 @@ from .railway_routing import (
     build_railway_routing_network,
 )
 from .infrastructure_sites import (
+    EnergyRole,
     EnergySite,
     EnergySource,
     FuelStorageRole,
@@ -929,6 +930,7 @@ __all__ = [
     "HierarchicalRoadRouter",
     "build_road_routing_shard_index",
     "format_hierarchical_road_route",
+    "EnergyRole",
     "EnergySite",
     "EnergySource",
     "FuelStorageRole",

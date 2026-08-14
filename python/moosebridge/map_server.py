@@ -376,7 +376,7 @@ class GlobalMapRuntime:
         return self._infrastructure_sites
 
     def infrastructure_sites_geojson(self) -> dict[str, Any]:
-        """Return map-ready sites, preserving normalized military footprints."""
+        """Return map-ready sites, preserving normalized strategic footprints."""
 
         if not self._infrastructure_sites:
             return empty_picture()
@@ -384,7 +384,7 @@ class GlobalMapRuntime:
         for site, feature in zip(self._infrastructure_sites.sites, payload["features"], strict=True):
             source_geometry = feature.get("geometry") or {}
             feature.setdefault("properties", {})["source_geometry_type"] = source_geometry.get("type")
-            if site.kind.value in {"military", "industrial"} and source_geometry.get("type") in {"Polygon", "MultiPolygon"}:
+            if site.kind.value in {"energy", "military", "industrial"} and source_geometry.get("type") in {"Polygon", "MultiPolygon"}:
                 continue
             feature["geometry"] = {
                 "type": "Point",

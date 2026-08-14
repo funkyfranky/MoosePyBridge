@@ -288,7 +288,7 @@ def test_map_runtime_serves_normalized_infrastructure_sites() -> None:
 
     assert payload["features"][0]["properties"]["layer"] == "energy_sites"
     assert payload["features"][0]["properties"]["source_geometry_type"] == "Polygon"
-    assert payload["features"][0]["geometry"] == {"type": "Point", "coordinates": [12.0, 54.0]}
+    assert payload["features"][0]["geometry"]["type"] == "Polygon"
     assert payload["features"][1]["properties"]["layer"] == "fuel_storage_sites"
     assert payload["features"][2]["properties"]["layer"] == "industrial_sites"
     assert payload["features"][2]["properties"]["source_geometry_type"] == "Polygon"

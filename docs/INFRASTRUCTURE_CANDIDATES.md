@@ -80,7 +80,7 @@ python tools/build_infrastructure_sites.py
 ```
 
 The current source produces 2,499 admitted energy sites, 440 fuel or bulk
-storage sites, 1,100 military sites, and 5,728 industrial sites. Use `--include-modern-energy` only for a scenario that
+storage sites, 1,100 military sites, and 5,727 industrial sites. Use `--include-modern-energy` only for a scenario that
 deliberately wants the modern sources. The output is
 `tmp/topography/GermanyCW-infrastructure-sites.geojson`.
 
@@ -127,10 +127,12 @@ The map server exposes `/api/settlements/global.geojson`. The initially hidden
 the raw `Settlement source data` layer remains available for diagnostics.
 
 The browser map loads the normalized artifact through
-`/api/infrastructure-sites/global.geojson`. It displays representative
-location markers in the initially hidden `Energy sites`, `Fuel and storage
-sites`, and `Military sites` layers. This deliberately keeps the strategic
-overview readable; the SDK artifact retains source and component identifiers.
+`/api/infrastructure-sites/global.geojson`. It displays importance-weighted
+anchors and normalized footprints in the initially hidden `Energy sites`,
+`Fuel and storage sites`, and `Military sites` layers. Energy can be filtered
+into power plants, major grid substations, and converter stations. This keeps
+the strategic overview readable; the SDK artifact retains source and component
+identifiers.
 Run `python examples/sdk/verify_infrastructure_site.py` with a live DCS mission
 to survey and temporarily mark one candidate and its nearby scenery objects on
 the F10 map. The constants at the top select the typed site category and
@@ -149,6 +151,17 @@ search reference.
 Power generation is the best first category: DCS explicitly models it, OSM
 usually provides plant boundaries and source tags, and components can be
 clustered into understandable sites.
+
+Implemented normalization clusters same-name and same-role components within a
+bounded 1 km radius, preventing transitive chains. Major substations require a
+documented voltage of at least 110 kV; converter stations are retained even at
+lower documented voltage, while transformers and ordinary distribution nodes
+remain excluded. Each site records role, source, output, maximum voltage,
+hole-free footprint, scale, importance score/tier, and a separate
+`strategic_candidate` flag. Importance is led by output and grid voltage, with
+energy source, footprint, and operator evidence providing context. The current
+GermanyCW artifact contains 2,733 generation sites, 928 major substations, and
+57 converter stations; 452 of 3,718 sites are strategic candidates.
 
 ### Fuel and bulk storage
 
@@ -197,7 +210,7 @@ combined into a hole-free footprint while disconnected works remain a
 `MultiPolygon`. DCS scenery association and scenario approval remain explicit
 later steps. The map uses importance-colored overview markers and switches to
 the normalized footprint at detailed zoom. In the current GermanyCW cache,
-2,123 of 5,728 admitted industrial sites meet the strategic threshold; the
+2,123 of 5,727 admitted industrial sites meet the strategic threshold; the
 remaining sites stay available as geographic and economic context.
 
 ### Ports and maritime logistics

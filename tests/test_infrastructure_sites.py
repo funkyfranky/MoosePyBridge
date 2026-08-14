@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from moosebridge.infrastructure_sites import (
+    EnergyRole,
     EnergySite,
     EnergySource,
     FuelStorageRole,
@@ -38,6 +39,35 @@ def _plant(name: str, source: str) -> TopographyFeature:
                 "plant:output:electricity": "250 MW",
             }
         },
+    )
+
+
+def _energy_feature(
+    name: str,
+    category: str,
+    longitude: float,
+    latitude: float,
+    **tags: str,
+) -> TopographyFeature:
+    return TopographyFeature(
+        object_id=f"TOPOGRAPHY:energy:{category}:{longitude}:{latitude}",
+        layer=TopographyLayer.INFRASTRUCTURE,
+        category=category,
+        geometry={
+            "type": "Polygon",
+            "coordinates": [[
+                [longitude, latitude],
+                [longitude + 0.001, latitude],
+                [longitude + 0.001, latitude + 0.001],
+                [longitude, latitude + 0.001],
+                [longitude, latitude],
+            ]],
+        },
+        source="OpenStreetMap",
+        source_id=f"way/{category}/{longitude}/{latitude}",
+        confidence=0.55,
+        name=name,
+        properties={"osm_tags": tags},
     )
 
 
@@ -154,6 +184,50 @@ def test_other_theaters_can_include_wind_power() -> None:
     assert len(artifact.sites) == 1
     assert artifact.sites[0].scenario_reference_year is None
     assert not infrastructure_policy_for_theater("Kola").excluded_energy_sources
+
+
+def test_energy_builder_clusters_same_named_generation_components() -> None:
+    artifact = build_energy_sites(
+        [
+            _energy_feature(
+                "Alpha Power", "power_plant", 12.0, 54.0,
+                **{"plant:source": "coal", "plant:output:electricity": "500 MW"},
+            ),
+            _energy_feature(
+                "Alpha Power", "power_plant", 12.004, 54.0,
+                **{"plant:source": "coal", "plant:output:electricity": "500 MW"},
+            ),
+        ],
+        theater_id="GermanyCW",
+    )
+
+    assert len(artifact.sites) == 1
+    site = artifact.sites[0]
+    assert isinstance(site, EnergySite)
+    assert site.roles == (EnergyRole.GENERATION,)
+    assert site.output_mw == 500
+    assert site.properties["member_count"] == 2
+    assert site.properties["scale"] == "very_large"
+    assert site.importance_tier.value in {"high", "critical"}
+    assert site.geometry["type"] == "MultiPolygon"
+
+
+def test_energy_builder_keeps_only_major_grid_nodes() -> None:
+    artifact = build_energy_sites(
+        [
+            _energy_feature("Transmission Alpha", "power_substation", 12.0, 54.0, voltage="110000;220000"),
+            _energy_feature("Distribution Alpha", "power_substation", 12.1, 54.0, voltage="20000"),
+            _energy_feature("Converter Alpha", "power_converter", 12.2, 54.0, voltage="60000", substation="converter"),
+        ],
+        theater_id="GermanyCW",
+    )
+
+    assert len(artifact.sites) == 2
+    sites = {site.name: site for site in artifact.sites}
+    assert sites["Transmission Alpha"].roles == (EnergyRole.GRID_SUBSTATION,)
+    assert sites["Converter Alpha"].roles == (EnergyRole.CONVERTER_STATION,)
+    assert sites["Transmission Alpha"].voltage_kv == 220
+    assert artifact.metadata["excluded_energy_counts"]["minor_grid_node"] == 1
 
 
 def test_military_site_is_a_distinct_site_type() -> None:
