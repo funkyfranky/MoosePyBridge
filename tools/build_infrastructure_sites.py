@@ -24,16 +24,23 @@ from moosebridge import (  # noqa: E402
     MaritimeSite,
     MilitarySite,
     TopographyFeature,
+    TopographyDetailLevel,
     TopographyLayer,
     build_infrastructure_sites,
 )
 from moosebridge.theater_data import DEFAULT_THEATER_PROFILE_PATH, TheaterDataProfile  # noqa: E402
-from moosebridge.pbf_topography import targeted_infrastructure_features_from_pbf  # noqa: E402
+from moosebridge.pbf_topography import (  # noqa: E402
+    clip_topography_feature_to_mask,
+    targeted_infrastructure_features_from_pbf,
+    topography_detail_level,
+)
+from moosebridge.topography_coverage import TheaterTopographyCoverage  # noqa: E402
 
 
 DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "viewport" / "manifest.json"
 DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "infrastructure-sites.geojson"
 DEFAULT_PBF_DIRECTORY = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "pbf"
+DEFAULT_COVERAGE = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "verification" / "coverage.geojson"
 
 
 def main() -> int:
@@ -41,6 +48,7 @@ def main() -> int:
     parser.add_argument("--profile", type=Path, default=DEFAULT_THEATER_PROFILE_PATH)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE)
     parser.add_argument(
         "--pbf-directory",
         type=Path,
@@ -59,6 +67,11 @@ def main() -> int:
     if theater_id.casefold() != profile.theater_id.casefold():
         raise ValueError(f"viewport theater {theater_id!r} does not match profile {profile.theater_id!r}")
     features = _load_candidates(args.manifest.parent, payload.get("shards") or [])
+    coverage = TheaterTopographyCoverage.load(args.coverage)
+    coverage_masks = {
+        level: coverage.geometry_for_minimum_level(level)
+        for level in TopographyDetailLevel
+    }
     pbf_paths = sorted(args.pbf_directory.glob("*.osm.pbf")) if args.pbf_directory.is_dir() else []
     if pbf_paths:
         print(f"  reading targeted energy and maritime data from {len(pbf_paths)} PBF file(s)", flush=True)
@@ -69,7 +82,14 @@ def main() -> int:
             scenario_reference_year=profile.infrastructure_reference_year,
             max_workers=8,
         ):
-            features[feature.object_id] = feature
+            required_level = topography_detail_level(feature)
+            mask = coverage_masks[required_level]
+            if mask is None:
+                continue
+            clipped_feature = clip_topography_feature_to_mask(feature, mask, required_level)
+            if clipped_feature is None:
+                continue
+            features[feature.object_id] = clipped_feature
     excluded = () if args.include_modern_energy else profile.excluded_energy_sources
     policy = InfrastructureCandidatePolicy(
         theater_id=theater_id,
@@ -139,13 +159,13 @@ def _load_candidates(directory: Path, shards: list[dict]) -> dict[str, Topograph
                 category=str(row.category),
                 geometry=mapping(row.geometry),
                 source=str(row.source),
-                source_id=_text(row.source_id),
+                source_id=_text(getattr(row, "source_id", None)),
                 confidence=float(row.confidence),
-                name=_text(row.name),
-                scenario_reference_year=_integer(row.scenario_reference_year),
-                valid_from=_integer(row.valid_from),
-                dcs_verified=bool(row.dcs_verified),
-                properties={"osm_tags": _tags(row.osm_tags)},
+                name=_text(getattr(row, "name", None)),
+                scenario_reference_year=_integer(getattr(row, "scenario_reference_year", None)),
+                valid_from=_integer(getattr(row, "valid_from", None)),
+                dcs_verified=bool(getattr(row, "dcs_verified", False)),
+                properties={"osm_tags": _tags(getattr(row, "osm_tags", None))},
             )
     return features
 

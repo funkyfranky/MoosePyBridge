@@ -479,7 +479,7 @@ from .strategic_objectives import (
     generate_strategic_objectives,
 )
 from .strategic_verification import (
-    CONCRETE_COMPONENT_PREFIXES,
+    SCENERY_OBJECT_PREFIX,
     InfrastructureObjectAssessment,
     InfrastructureOperationalState,
     InfrastructureStateAssessment,
@@ -822,7 +822,7 @@ __all__ = [
     "ObservedDcsObject",
     "VerifiedDcsComponent",
     "assess_infrastructure_state",
-    "CONCRETE_COMPONENT_PREFIXES",
+    "SCENERY_OBJECT_PREFIX",
     "StrategicGoal",
     "StrategicGoalAction",
     "StrategicGoalDerivation",

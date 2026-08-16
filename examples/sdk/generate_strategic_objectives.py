@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (
@@ -36,26 +38,23 @@ OBJECTIVE_PREVIEW_LIMIT = 30
 MAX_GEOGRAPHIC_OBJECTIVES_PER_CATEGORY_PER_SCOPE = 10
 
 THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
-_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
-SETTLEMENTS_PATH = THEATER_PATHS.path("settlements")
-TRANSPORT_PATH = THEATER_PATHS.path("transport_infrastructure")
-RAILWAY_PATH = THEATER_PATHS.path("railway_infrastructure")
-INFRASTRUCTURE_PATH = THEATER_PATHS.path("infrastructure_sites")
-VERIFICATIONS_PATH = THEATER_PATHS.path("strategic_verifications")
 
 
-async def run() -> int:
+async def run(profile_path=THEATER_PROFILE) -> int:
+    theater, theater_paths = load_example_theater(profile_path)
     session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
     bridge = session.bridge
     await bridge.refresh_global_picture()
     await bridge.refresh_diplomacy_state()
     scope = bridge.build_strategic_scope()
     result = bridge.generate_strategic_objectives(
-        settlements=TheaterSettlements.load(SETTLEMENTS_PATH),
-        transport=TheaterTransportInfrastructure.load(TRANSPORT_PATH),
-        railway=TheaterRailwayInfrastructure.load(RAILWAY_PATH),
-        infrastructure=TheaterInfrastructureSites.load(INFRASTRUCTURE_PATH),
-        verifications=StrategicVerificationRegistry.load(VERIFICATIONS_PATH),
+        settlements=TheaterSettlements.load(theater_paths.path("settlements")),
+        transport=TheaterTransportInfrastructure.load(theater_paths.path("transport_infrastructure")),
+        railway=TheaterRailwayInfrastructure.load(theater_paths.path("railway_infrastructure")),
+        infrastructure=TheaterInfrastructureSites.load(theater_paths.path("infrastructure_sites")),
+        verifications=StrategicVerificationRegistry.load(
+            theater_paths.path("strategic_verifications")
+        ).bind_theater(theater.theater_id),
         config=StrategicObjectiveGenerationConfig(
             maximum_geographic_objectives_per_category_per_scope=(
                 MAX_GEOGRAPHIC_OBJECTIVES_PER_CATEGORY_PER_SCOPE
@@ -101,5 +100,12 @@ async def run() -> int:
     return 0
 
 
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", default=THEATER_PROFILE)
+    args = parser.parse_args()
+    return run_example(lambda: run(args.profile))
+
+
 if __name__ == "__main__":
-    raise SystemExit(run_example(run))
+    raise SystemExit(main())

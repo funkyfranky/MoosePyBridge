@@ -1,4 +1,4 @@
-"""Tests for scenario-specific DCS component verification."""
+"""Tests for theater-level DCS scenery verification."""
 
 from __future__ import annotations
 
@@ -22,14 +22,13 @@ def test_registry_round_trip_is_versioned_and_atomic(tmp_path) -> None:
             StrategicSiteVerification(
                 source_id="ENERGY_SITE:Alpha",
                 state=StrategicVerificationState.REPRESENTED,
-                observed_objects=(ObservedDcsObject("STATIC:Power-1", type_name="Generator"),),
+                observed_objects=(ObservedDcsObject("SCENERY:Power-1", type_name="Generator"),),
                 observation_complete=True,
-                target_components=(VerifiedDcsComponent("STATIC:Power-1", role="generator", weight=2.5),),
+                target_components=(VerifiedDcsComponent("SCENERY:Power-1", role="generator", weight=2.5),),
                 notes="Confirmed on the DCS F10 map",
             ),
         ),
         theater_id="GermanyCW",
-        scenario_id="Example conflict",
     )
 
     registry.save(path)
@@ -40,33 +39,44 @@ def test_registry_round_trip_is_versioned_and_atomic(tmp_path) -> None:
     assert loaded.get("ENERGY_SITE:Alpha").admitted is True  # type: ignore[union-attr]
 
 
-def test_concrete_component_rejects_coordinates_and_unknown_prefixes() -> None:
-    with pytest.raises(ValueError, match="concrete bridge id"):
+def test_components_and_observations_accept_only_scenery_ids() -> None:
+    with pytest.raises(ValueError, match="SCENERY"):
         VerifiedDcsComponent("COORDINATE:54.1,12.1")
-    with pytest.raises(ValueError, match="concrete bridge id"):
-        VerifiedDcsComponent("OSM:way/123")
+    with pytest.raises(ValueError, match="SCENERY"):
+        VerifiedDcsComponent("STATIC:Power-1")
+    with pytest.raises(ValueError, match="SCENERY"):
+        ObservedDcsObject("UNIT:Truck-1")
 
 
 def test_represented_mapping_requires_explicit_target_components() -> None:
     represented = StrategicSiteVerification(
         source_id="PORT_SITE:Rostock",
         state=StrategicVerificationState.REPRESENTED,
+        observed_objects=(ObservedDcsObject("SCENERY:Port-1"),),
     )
     targetable = StrategicSiteVerification(
         source_id=represented.source_id,
         state=represented.state,
-        target_components=(VerifiedDcsComponent("ZONE:Rostock Port"),),
+        observed_objects=represented.observed_objects,
+        target_components=(VerifiedDcsComponent("SCENERY:Port-1"),),
     )
 
     assert represented.admitted is False
     assert targetable.admitted is True
 
 
-def test_not_represented_mapping_cannot_be_admitted() -> None:
+def test_not_represented_mapping_cannot_have_targets() -> None:
+    with pytest.raises(ValueError, match="cannot contain target components"):
+        StrategicSiteVerification(
+            source_id="ENERGY_SITE:Absent",
+            state=StrategicVerificationState.NOT_REPRESENTED,
+            observed_objects=(ObservedDcsObject("SCENERY:Unrelated"),),
+            target_components=(VerifiedDcsComponent("SCENERY:Unrelated"),),
+        )
+
     verification = StrategicSiteVerification(
         source_id="ENERGY_SITE:Absent",
         state=StrategicVerificationState.NOT_REPRESENTED,
-        target_components=(VerifiedDcsComponent("ZONE:Absent"),),
     )
 
     assert verification.admitted is False
@@ -97,16 +107,16 @@ def test_registry_migrates_version_one_components_to_targets() -> None:
     verification = registry.get("ENERGY_SITE:Legacy")
     assert verification is not None
     assert verification.observed_objects == ()
-    assert verification.target_components[0].object_id == "STATIC:Legacy"
-    assert verification.state is StrategicVerificationState.REPRESENTED
+    assert verification.target_components == ()
+    assert verification.state is StrategicVerificationState.UNVERIFIED
 
 
 def test_registry_migrates_detailed_version_two_states() -> None:
     registry = StrategicVerificationRegistry.from_dict({
         "schema_version": 2,
         "verifications": [
-            {"source_id": "ENERGY_SITE:Matched", "state": "dcs_scenery_matched"},
-            {"source_id": "ENERGY_SITE:Approximate", "state": "approximate", "scenario_approved": True},
+            {"source_id": "ENERGY_SITE:Matched", "state": "dcs_scenery_matched", "observed_objects": [{"object_id": "SCENERY:1"}]},
+            {"source_id": "ENERGY_SITE:Approximate", "state": "approximate", "scenario_approved": True, "observed_objects": [{"object_id": "SCENERY:2"}]},
             {"source_id": "ENERGY_SITE:Historical", "state": "historically_uncertain"},
             {"source_id": "ENERGY_SITE:Absent", "state": "not_represented"},
         ],
@@ -117,6 +127,41 @@ def test_registry_migrates_detailed_version_two_states() -> None:
     assert registry.get("ENERGY_SITE:Historical").state is StrategicVerificationState.UNVERIFIED  # type: ignore[union-attr]
     assert registry.get("ENERGY_SITE:Absent").state is StrategicVerificationState.NOT_REPRESENTED  # type: ignore[union-attr]
     assert "scenario_approved" not in registry.to_dict()["verifications"][0]
+
+
+def test_registry_migrates_version_three_to_theater_scenery_only() -> None:
+    registry = StrategicVerificationRegistry.from_dict({
+        "schema_version": 3,
+        "theater_id": "GermanyCW",
+        "scenario_id": "Old mission",
+        "verifications": [{
+            "source_id": "MILITARY_SITE:Alpha",
+            "state": "represented",
+            "observed_objects": [
+                {"object_id": "SCENERY:1"},
+                {"object_id": "STATIC:Mission object"},
+            ],
+            "target_components": [
+                {"object_id": "SCENERY:1"},
+                {"object_id": "STATIC:Mission object"},
+            ],
+        }],
+    })
+
+    verification = registry.get("MILITARY_SITE:Alpha")
+    assert verification is not None
+    assert [item.object_id for item in verification.observed_objects] == ["SCENERY:1"]
+    assert [item.object_id for item in verification.target_components] == ["SCENERY:1"]
+    assert "scenario_id" not in registry.to_dict()
+
+
+def test_target_components_must_come_from_observed_baseline() -> None:
+    with pytest.raises(ValueError, match="observed scenery baseline"):
+        StrategicSiteVerification(
+            source_id="MILITARY_SITE:Alpha",
+            observed_objects=(ObservedDcsObject("SCENERY:1"),),
+            target_components=(VerifiedDcsComponent("SCENERY:2"),),
+        )
 
 
 def test_complete_matching_baseline_is_operational() -> None:

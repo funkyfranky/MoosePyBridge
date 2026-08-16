@@ -260,13 +260,9 @@ class GlobalMapRuntime:
         self.load_strategic_verifications()
 
     def load_strategic_verifications(self) -> StrategicVerificationRegistry:
-        """Load scenario-specific DCS component mappings."""
+        """Load theater-level DCS scenery mappings."""
 
-        self._strategic_verifications = (
-            StrategicVerificationRegistry.load(self.strategic_verifications_path)
-            if self.strategic_verifications_path is not None
-            else StrategicVerificationRegistry()
-        )
+        self._strategic_verifications = self._read_strategic_verifications()
         LOGGER.info(
             "Loaded %d strategic DCS verifications from %s",
             len(self._strategic_verifications.entries),
@@ -274,18 +270,26 @@ class GlobalMapRuntime:
         )
         return self._strategic_verifications
 
+    def _read_strategic_verifications(self) -> StrategicVerificationRegistry:
+        registry = (
+            StrategicVerificationRegistry.load(self.strategic_verifications_path)
+            if self.strategic_verifications_path is not None
+            else StrategicVerificationRegistry()
+        )
+        return registry.bind_theater(self.theater_id or "")
+
     def strategic_verifications_payload(self) -> dict[str, Any]:
         """Return all verification mappings used by the map and generator."""
 
         if self.strategic_verifications_path is not None:
-            self._strategic_verifications = StrategicVerificationRegistry.load(self.strategic_verifications_path)
+            self._strategic_verifications = self._read_strategic_verifications()
         return self._strategic_verifications.to_dict()
 
     def save_strategic_verification(self, payload: dict[str, Any]) -> StrategicSiteVerification:
         """Validate and persist one source-site mapping."""
 
         if self.strategic_verifications_path is not None:
-            self._strategic_verifications = StrategicVerificationRegistry.load(self.strategic_verifications_path)
+            self._strategic_verifications = self._read_strategic_verifications()
         verification = StrategicSiteVerification(
             source_id=str(payload.get("source_id") or ""),
             state=StrategicVerificationState(str(payload.get("state") or "unverified")),
@@ -315,7 +319,7 @@ class GlobalMapRuntime:
         if bridge is None or not self.connected:
             raise RuntimeError("DCS bridge is not connected")
         if self.strategic_verifications_path is not None:
-            self._strategic_verifications = StrategicVerificationRegistry.load(self.strategic_verifications_path)
+            self._strategic_verifications = self._read_strategic_verifications()
         verification = self._strategic_verifications.get(source_id)
         if verification is None:
             raise KeyError(f"No strategic verification exists for {source_id}")
@@ -672,7 +676,7 @@ class GlobalMapRuntime:
         if self.strategic_verifications_path is not None and self.strategic_verifications_path.is_file():
             verification_stat = self.strategic_verifications_path.stat()
             verification_signature = (verification_stat.st_mtime_ns, verification_stat.st_size)
-            self._strategic_verifications = StrategicVerificationRegistry.load(self.strategic_verifications_path)
+            self._strategic_verifications = self._read_strategic_verifications()
         signature = (
             int(bridge.state.mission_generation),
             tuple(

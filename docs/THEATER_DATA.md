@@ -26,6 +26,12 @@ tmp/theaters/<theater-id>/
 The browser consumes only the indexed topography below `cache/viewport`; a
 multi-gigabyte merged topography GeoJSON is neither generated nor loaded.
 
+The `verification/strategic-verifications.json` registry is also theater data.
+It records only fixed `SCENERY:<id>` objects found by bounded DCS surveys and is
+validated against the profile's theater ID. It never stores mission-defined
+`STATIC`, `UNIT`, or `GROUP` objects. The complete observed baseline is kept
+separate from the small target subset selected for strategic planning.
+
 Artifacts used by the map server must cover the complete theater. Regional
 pilot or validation artifacts may be retained for diagnostics, but must not be
 configured as the runtime transport, settlement, or infrastructure dataset.
@@ -70,6 +76,27 @@ python tools/theater_workflow.py --profile <profile.json> build --stage viewport
 
 Running `build` without `--stage` executes the complete workflow. This is
 expensive and intentionally never happens implicitly.
+
+## Coverage Detail Policy
+
+Coverage levels describe useful DCS fidelity, not the maximum detail available
+from OpenStreetMap. More detailed zones inherit the content of lower levels.
+
+- `Topography All` provides only physical land/water constraints and coastline
+  data. Its exclusive area contains no inferred roads, railways, settlements,
+  or strategic infrastructure.
+- `Topography Low` adds the strategic baseline: motorways, trunk and primary
+  roads, main railway lines, cities, major railway facilities, and selected
+  high-level infrastructure candidates.
+- `Topography High` adds secondary, tertiary and unclassified roads, smaller
+  settlements, minor railways, useful land use, and local infrastructure
+  candidates.
+
+Residential and service streets, tracks, paths, minor POIs, and individual
+buildings remain excluded by default even in `High`. Imported geometries are
+clipped to the coverage that admits them. Road routing, bridges, transport
+junctions, rail facilities, and infrastructure candidates are therefore absent
+from `All`-only areas.
 
 ## Start the Map
 

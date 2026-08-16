@@ -108,7 +108,10 @@ def topography_from_pbf(
             from shapely.geometry import shape as shape_geometry
         except ImportError as exc:
             raise RuntimeError('PBF import requires: python -m pip install -e "[topography]"') from exc
-        coverage_masks = {level: coverage.geometry_for_level(level) for level in TopographyDetailLevel}
+        coverage_masks = {
+            level: coverage.geometry_for_minimum_level(level)
+            for level in TopographyDetailLevel
+        }
         import shapely
         for mask in coverage_masks.values():
             if mask is not None:
@@ -150,17 +153,12 @@ def topography_from_pbf(
                     if coverage is not None:
                         required_level = topography_detail_level(feature)
                         geometry = shape_geometry(feature.geometry)
-                        eligible_levels = {
-                            TopographyDetailLevel.ALL: TopographyDetailLevel,
-                            TopographyDetailLevel.LOW: (TopographyDetailLevel.LOW, TopographyDetailLevel.HIGH),
-                            TopographyDetailLevel.HIGH: (TopographyDetailLevel.HIGH,),
-                        }[required_level]
-                        if not any(
-                            coverage_masks[level] is not None and coverage_masks[level].intersects(geometry)
-                            for level in eligible_levels
-                        ):
+                        mask = coverage_masks[required_level]
+                        if mask is None or not mask.intersects(geometry):
                             continue
-                        feature = _with_detail_level(feature, required_level)
+                        feature = clip_topography_feature_to_mask(feature, mask, required_level)
+                        if feature is None:
+                            continue
                     features[feature.object_id] = feature
     source_snapshot_date = max(snapshots) if snapshots else None
     return TheaterTopography(
@@ -183,33 +181,42 @@ def topography_from_pbf(
 
 
 def topography_detail_level(feature: TopographyFeature) -> TopographyDetailLevel:
-    """Return the minimum DCS-authored coverage level for one OSM feature."""
+    """Return the minimum DCS-authored coverage level for one OSM feature.
+
+    ``ALL`` is intentionally limited to physical land/water constraints.
+    ``LOW`` carries the strategic baseline, while ``HIGH`` adds useful local
+    detail without importing residential streets, paths, or individual
+    buildings by default.
+    """
 
     category = feature.category.lower()
     if feature.layer is TopographyLayer.WATER:
         return TopographyDetailLevel.ALL
     if feature.layer is TopographyLayer.ROADS:
-        if category in {"motorway", "trunk"}:
-            return TopographyDetailLevel.ALL
-        if category in {"primary", "secondary"}:
+        if category in {"motorway", "trunk", "primary"}:
             return TopographyDetailLevel.LOW
         return TopographyDetailLevel.HIGH
     if feature.layer is TopographyLayer.RAILWAYS:
-        return TopographyDetailLevel.ALL if category == "rail" else TopographyDetailLevel.HIGH
+        return TopographyDetailLevel.LOW if category == "rail" else TopographyDetailLevel.HIGH
     if feature.layer is TopographyLayer.SETTLEMENTS:
         if category == "city":
-            return TopographyDetailLevel.ALL
-        return TopographyDetailLevel.LOW if category == "town" else TopographyDetailLevel.HIGH
+            return TopographyDetailLevel.LOW
+        return TopographyDetailLevel.HIGH
     if feature.layer is TopographyLayer.BUILDINGS:
         return TopographyDetailLevel.HIGH
     if feature.layer is TopographyLayer.LANDUSE:
         return TopographyDetailLevel.LOW if category in {"industrial", "military", "port"} else TopographyDetailLevel.HIGH
     if feature.layer is TopographyLayer.INFRASTRUCTURE:
-        return TopographyDetailLevel.ALL if category in {
+        if category in {
+            "railway_station", "railway_depot", "railway_yard", "railway_freight_terminal",
+        }:
+            return TopographyDetailLevel.LOW
+        return TopographyDetailLevel.LOW if category in {
             "power_plant", "power_substation", "power_converter", "harbour",
-        } else TopographyDetailLevel.LOW
+            "port", "refinery", "military",
+        } else TopographyDetailLevel.HIGH
     if feature.layer is TopographyLayer.ADMINISTRATIVE_BOUNDARIES:
-        return TopographyDetailLevel.ALL
+        return TopographyDetailLevel.HIGH
     return TopographyDetailLevel.HIGH
 
 
@@ -477,12 +484,48 @@ def targeted_infrastructure_features_from_pbf(
     )
 
 
-def _with_detail_level(feature: TopographyFeature, level: TopographyDetailLevel) -> TopographyFeature:
+def clip_topography_feature_to_mask(
+    feature: TopographyFeature,
+    mask: Any,
+    level: TopographyDetailLevel,
+) -> TopographyFeature | None:
+    """Clip a feature to one coverage mask without emitting mixed dimensions."""
+
+    import shapely
+    from shapely.geometry import mapping, shape
+
+    source_type = str(feature.geometry.get("type") or "")
+    allowed_types = {
+        "Point": {"Point"},
+        "LineString": {"LineString", "MultiLineString"},
+        "MultiLineString": {"LineString", "MultiLineString"},
+        "Polygon": {"Polygon", "MultiPolygon"},
+        "MultiPolygon": {"Polygon", "MultiPolygon"},
+    }[source_type]
+    source_geometry = shapely.make_valid(shape(feature.geometry))
+    coverage_mask = shapely.make_valid(mask)
+    try:
+        clipped = source_geometry.intersection(coverage_mask)
+    except shapely.GEOSException:
+        # Real-world OSM extracts occasionally contain nearly coincident invalid
+        # rings. A nanodegree precision grid makes the repaired overlay robust
+        # without changing the useful theater-scale geometry.
+        clipped = shapely.intersection(source_geometry, coverage_mask, grid_size=1e-9)
+    if clipped.is_empty:
+        return None
+    if clipped.geom_type not in allowed_types:
+        parts = [part for part in shapely.get_parts(clipped) if part.geom_type in allowed_types]
+        if not parts:
+            return None
+        clipped = shapely.union_all(parts)
+    if clipped.is_empty or clipped.geom_type not in allowed_types:
+        return None
+
     return TopographyFeature(
         object_id=feature.object_id,
         layer=feature.layer,
         category=feature.category,
-        geometry=feature.geometry,
+        geometry=mapping(clipped),
         source=feature.source,
         confidence=feature.confidence,
         name=feature.name,

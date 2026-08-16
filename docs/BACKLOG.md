@@ -117,7 +117,7 @@ Priorities:
 - [x] **Inventory current infrastructure candidates and DCS representation.**
   The initial inventory is documented in `INFRASTRUCTURE_CANDIDATES.md`. It
   separates raw OSM features, normalized operational sites, bounded DCS
-  scenery verification, and scenario-approved strategic objectives. Power
+  scenery verification, and admitted strategic objectives. Power
   generation is the recommended first site category.
 - [x] **Normalize energy infrastructure.** Cluster same-site generation
   components non-transitively, retain only documented grid nodes at 110 kV or
@@ -211,8 +211,8 @@ Priorities:
   `represented`, or `not_represented` result plus notes and provenance instead
   of silently treating modern OSM as authoritative for the DCS era.
 - [x] **Derive strategic objectives only after infrastructure normalization.**
-  A versioned, scenario-specific verification registry now selects
-  `represented` sites with weighted concrete DCS/MOOSE target components.
+  A versioned, theater-specific verification registry now selects
+  `represented` sites with weighted fixed DCS SCENERY target components.
   Geographic candidates without such a mapping remain excluded; discovering
   an OSM facility never creates an attack goal automatically.
 - [x] **Derive physical infrastructure state from immutable DCS baselines.**
@@ -385,7 +385,10 @@ Priorities:
 - [ ] **Pre-clip large PBF sources before Pyrosm network extraction.** Worker
   isolation prevents cumulative memory growth, but Pyrosm still decodes each
   complete source; an osmium/GDAL clipping stage should reduce the high peak
-  memory of sources such as Czechia without changing the resulting graph.
+  memory and import time of sources such as Czechia, Turkey, and Ukraine
+  without changing the resulting graph. The first coverage-filtered Caucasus
+  rebuild still spent about 23 minutes decoding and compiling the twelve road
+  sources before writing the bounded graph.
 - [ ] **Calibrate Python road speeds and connector handling against DCS.** Use
   representative wheeled, tracked, and logistics movements; keep all roads
   bidirectional and unrestricted, with bridges retained as metadata only.
@@ -398,6 +401,14 @@ Priorities:
   ground or naval connection.
 ## Recently completed
 
+- [x] Theater coverage now controls data content rather than only documenting
+  intended resolution. Exclusive `All` areas contain connected land/water and
+  coastline only; `Low` adds generalized strategic roads, railways, cities,
+  and major infrastructure; `High` adds bounded local detail without importing
+  residential/service roads, paths, individual buildings, or minor POIs.
+  Import geometries are clipped to inherited coverage masks, and road,
+  railway, settlement, infrastructure, and maritime derivations observe the
+  same policy.
 - [x] Detailed road graphs now produce a versioned strategic transport cache.
   Connected and nearby OSM bridge structures are grouped into stable point-like
   `TransportBridge` locations with source IDs, approaches, and road classes,

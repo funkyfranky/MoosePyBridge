@@ -47,6 +47,7 @@ from moosebridge.strategic_verification import (
     InfrastructureStateAssessment,
     ObservedDcsObject,
     StrategicSiteVerification,
+    StrategicVerificationRegistry,
 )
 from moosebridge.settlements import (
     Settlement,
@@ -764,27 +765,36 @@ def test_map_app_exposes_dcs_marker_creation_endpoint() -> None:
 
 def test_map_runtime_persists_strategic_verification(tmp_path) -> None:
     path = tmp_path / "verifications.json"
-    runtime = GlobalMapRuntime(strategic_verifications_path=path)
+    runtime = GlobalMapRuntime(theater_id="GermanyCW", strategic_verifications_path=path)
 
     verification = runtime.save_strategic_verification({
         "source_id": "ENERGY_SITE:Alpha",
         "state": "represented",
         "observed_objects": [{
-            "object_id": "STATIC:Generator-1",
+            "object_id": "SCENERY:Generator-1",
             "type_name": "Generator",
             "latitude": 54.0,
             "longitude": 12.0,
         }],
         "observation_complete": True,
-        "target_components": [{"object_id": "STATIC:Generator-1", "role": "generator", "weight": 2}],
+        "target_components": [{"object_id": "SCENERY:Generator-1", "role": "generator", "weight": 2}],
         "notes": "Matched on F10",
     })
 
     assert verification.admitted is True
     assert verification.observation_complete is True
     assert path.is_file()
+    assert runtime.strategic_verifications_payload()["theater_id"] == "GermanyCW"
     assert runtime.strategic_verifications_payload()["verifications"][0]["source_id"] == "ENERGY_SITE:Alpha"
     assert runtime._strategic_objective_signature == ()
+
+
+def test_map_runtime_rejects_verifications_from_another_theater(tmp_path) -> None:
+    path = tmp_path / "verifications.json"
+    StrategicVerificationRegistry(theater_id="Caucasus").save(path)
+
+    with pytest.raises(ValueError, match="theater mismatch"):
+        GlobalMapRuntime(theater_id="GermanyCW", strategic_verifications_path=path)
 
 
 def test_map_app_exposes_strategic_verification_endpoints() -> None:

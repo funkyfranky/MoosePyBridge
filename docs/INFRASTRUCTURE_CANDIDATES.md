@@ -300,8 +300,8 @@ or generically named individual bunkers are also excluded. The GermanyCW 1989
 policy rejects features whose source dates place them outside the scenario.
 Training areas and firing ranges are useful maneuver context; the cache marks
 them non-targetable by default. A military site remains an external geographic
-candidate until bounded DCS scenery or mission-object verification supplies a
-runtime association.
+candidate until bounded DCS scenery verification supplies a fixed theater
+association.
 
 At overview zoom the map shows one importance-weighted marker per military site.
 From zoom level 8 onward it switches to the normalized footprint, avoiding both
@@ -316,7 +316,7 @@ raw OSM fragments and misleading point-only installations.
 4. Assign provenance, historical plausibility, confidence, and an explicit DCS
    verification state.
 5. Run bounded DCS scenery discovery only around selected candidate sites.
-6. Store every confirmed in-footprint DCS object as a scenario observation
+6. Store every confirmed in-footprint SCENERY object as a theater observation
    baseline and select a much smaller target subset independently.
 7. Expose normalized sites through typed SDK objects and bounded map layers.
 8. Calculate category-specific importance and dependencies.
@@ -327,23 +327,30 @@ raw OSM fragments and misleading point-only installations.
 ## DCS verification states
 
 - `unverified`: external source only
-- `represented`: the site is sufficiently represented in DCS, independent of
-  whether its evidence consists of scenery or mission objects
+- `represented`: the site is sufficiently represented by fixed DCS SCENERY
+  objects captured in its observation baseline
 - `not_represented`: no corresponding DCS representation was found
 
 Historical fit, object provenance, and addressability remain separate evidence
 instead of verification states. Verification should also retain DCS map/build
 version because GermanyCW is released and updated in phases.
 
-The scenario mapping is stored separately from immutable source caches. An
+The theater mapping is stored separately from immutable source caches. It is
+bound to the DCS theater ID and is reusable by every mission on that terrain.
+`STATIC`, `UNIT`, and `GROUP` objects are intentionally excluded because mission
+authors can add, remove, or reposition them. `AIRBASE` and `OPSZONE` ownership is
+handled by the separate live-DCS object model rather than this geographic
+verification registry. An
 entry contains the normalized source ID, representation state, notes, all
 observed in-footprint DCS objects, an explicit
 baseline-completeness flag, and a small set of weighted target components.
 Observed objects preserve IDs, DCS type/name evidence, location, life, and
 existence where available. They support later attack and damage assessment but
-do not become mission targets automatically. Only `represented` mappings with
-at least one target component are admitted. `not_represented` always remains
-excluded, and coordinate-only targets are intentionally unsupported.
+do not become mission targets automatically. Target components must use
+`SCENERY:<id>` and must be selected from that baseline. Only `represented`
+mappings with at least one target component are admitted. `not_represented`
+always remains excluded, and coordinate-only targets are intentionally
+unsupported.
 
 ## Recommended implementation order
 

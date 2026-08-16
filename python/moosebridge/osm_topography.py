@@ -104,7 +104,7 @@ def features_from_overpass_element(
     if not osm_id:
         return ()
     source_id = f"OSM:{osm_type}/{osm_id}"
-    name = str(tags.get("name") or tags.get("name:en") or "") or None
+    name = str(tags.get("name:en") or tags.get("int_name") or tags.get("name") or "") or None
     valid_from = _tag_year(tags.get("start_date"))
     valid_to = _tag_year(tags.get("end_date"))
     if valid_from is not None and valid_to is not None and valid_from > valid_to:

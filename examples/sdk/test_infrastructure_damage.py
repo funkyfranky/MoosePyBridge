@@ -24,7 +24,7 @@ CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 
 THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
-_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+THEATER, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
 SITES_PATH = THEATER_PATHS.path("infrastructure_sites")
 VERIFICATIONS_PATH = THEATER_PATHS.path("strategic_verifications")
 
@@ -80,7 +80,7 @@ def print_assessment(title: str, assessment: InfrastructureStateAssessment) -> N
 
 async def run() -> int:
     sites = TheaterInfrastructureSites.load(SITES_PATH)
-    registry = StrategicVerificationRegistry.load(VERIFICATIONS_PATH)
+    registry = StrategicVerificationRegistry.load(VERIFICATIONS_PATH).bind_theater(THEATER.theater_id)
     site = next((item for item in sites.sites if item.site_id == SITE_ID), None)
     if site is None:
         raise ValueError(f"Infrastructure site not found: {SITE_ID}")

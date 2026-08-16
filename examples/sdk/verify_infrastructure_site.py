@@ -40,21 +40,25 @@ CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
-_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+THEATER, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
 SITES_PATH = THEATER_PATHS.path("infrastructure_sites")
 VERIFICATIONS_PATH = THEATER_PATHS.path("strategic_verifications")
 
 # Copy the object ID from the web-map detail panel.
 SITE_ID = "MILITARY_SITE:88ed34fd505620ec"
 
-# Verification workflow options.
-SURVEY_RADIUS_M = 750.0
+# Verification workflow options. None covers the complete normalized footprint
+# with a small context margin; set a value only for a deliberate bounded survey.
+SURVEY_RADIUS_M: float | None = None
 DRAW_F10_OVERLAY = True
 SAVE_OBSERVED_BASELINE = False
 REPLACE_OBSERVED_BASELINE = False
 
 # Internal display and safety limits. These normally do not need adjustment.
-_MAX_SCENERY_OBJECTS = 250
+_DEFAULT_SURVEY_RADIUS_M = 750.0
+_SURVEY_MARGIN_M = 50.0
+_MAX_AUTOMATIC_SURVEY_RADIUS_M = 5_000.0
+_MAX_SCENERY_OBJECTS = 2_000
 _MAX_PRINTED_OBJECTS = 40
 _MAX_DRAWN_OBJECTS = 50
 _MAX_FOOTPRINT_POINTS = 160
@@ -126,7 +130,7 @@ def format_site(site: InfrastructureSite) -> None:
 
 
 def format_strategic_verification(site: InfrastructureSite) -> None:
-    verification = StrategicVerificationRegistry.load(VERIFICATIONS_PATH).get(site.site_id)
+    verification = load_verification_registry().get(site.site_id)
     print("\nStrategic DCS verification")
     print("=" * 88)
     print(f"Registry        : {VERIFICATIONS_PATH}")
@@ -204,6 +208,30 @@ def footprint_fully_covered(site: InfrastructureSite, radius_m: float) -> bool:
     )
 
 
+def survey_radius_m(site: InfrastructureSite) -> float:
+    """Choose a bounded radius that covers the normalized site footprint."""
+
+    if SURVEY_RADIUS_M is not None:
+        if SURVEY_RADIUS_M <= 0:
+            raise ValueError("SURVEY_RADIUS_M must be positive or None")
+        return SURVEY_RADIUS_M
+    footprint = shape(site.geometry)
+    if footprint.is_empty or footprint.geom_type not in {"Polygon", "MultiPolygon"}:
+        return _DEFAULT_SURVEY_RADIUS_M
+    min_lon, min_lat, max_lon, max_lat = footprint.bounds
+    required = max(
+        distance_m(site.latitude, site.longitude, latitude, longitude)
+        for latitude, longitude in (
+            (min_lat, min_lon), (min_lat, max_lon), (max_lat, min_lon), (max_lat, max_lon)
+        )
+    ) + _SURVEY_MARGIN_M
+    return min(max(_DEFAULT_SURVEY_RADIUS_M, required), _MAX_AUTOMATIC_SURVEY_RADIUS_M)
+
+
+def load_verification_registry() -> StrategicVerificationRegistry:
+    return StrategicVerificationRegistry.load(VERIFICATIONS_PATH).bind_theater(THEATER.theater_id)
+
+
 def save_observed_baseline(
     site: InfrastructureSite,
     survey: ScenerySurvey,
@@ -211,8 +239,9 @@ def save_observed_baseline(
 ) -> StrategicSiteVerification:
     """Persist the confirmed footprint inventory without changing target selection."""
 
-    registry = StrategicVerificationRegistry.load(VERIFICATIONS_PATH)
+    registry = load_verification_registry()
     current = registry.get(site.site_id)
+    observed_ids = {item.object_id for item in footprint_objects}
     verification = StrategicSiteVerification(
         source_id=site.site_id,
         state=current.state if current is not None else "unverified",
@@ -229,7 +258,11 @@ def save_observed_baseline(
             for item in footprint_objects
         ),
         observation_complete=not survey.truncated and footprint_fully_covered(site, survey.radius_m),
-        target_components=current.target_components if current is not None else (),
+        target_components=tuple(
+            component
+            for component in (current.target_components if current is not None else ())
+            if component.object_id in observed_ids
+        ),
         notes=current.notes if current is not None else "",
     )
     registry.upsert(verification)
@@ -243,7 +276,7 @@ def assess_current_survey(
     survey: ScenerySurvey,
     footprint_objects: list,
 ) -> None:
-    verification = StrategicVerificationRegistry.load(VERIFICATIONS_PATH).get(site.site_id)
+    verification = load_verification_registry().get(site.site_id)
     if verification is None or not verification.observed_objects:
         print("\nInfrastructure state: no observation baseline exists yet")
         return
@@ -322,12 +355,13 @@ async def run() -> int:
     session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
     bridge: MooseBridgeClient = session.bridge
     site = select_site(TheaterInfrastructureSites.load(SITES_PATH))
+    radius_m = survey_radius_m(site)
     format_site(site)
     format_strategic_verification(site)
     survey = await bridge.survey_scenery(
         site.latitude,
         site.longitude,
-        radius_m=SURVEY_RADIUS_M,
+        radius_m=radius_m,
         max_results=_MAX_SCENERY_OBJECTS,
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
@@ -348,7 +382,7 @@ async def run() -> int:
         (DebugMarkupPoint(site.latitude, site.longitude),),
         color=site_color,
         fill_color=(*site_color[:3], 0.08),
-        radius_m=SURVEY_RADIUS_M,
+        radius_m=radius_m,
     )]
     marks.extend(footprint_markups(site, site_color))
     marks.extend(
@@ -381,7 +415,7 @@ async def run() -> int:
             "Inspect the footprint, green in-footprint objects, and cyan nearby objects in DCS F10, then press Enter ... ",
         )
         if SAVE_OBSERVED_BASELINE:
-            current = StrategicVerificationRegistry.load(VERIFICATIONS_PATH).get(site.site_id)
+            current = load_verification_registry().get(site.site_id)
             if current is not None and current.observed_objects and not REPLACE_OBSERVED_BASELINE:
                 print("Existing observation baseline preserved. Set REPLACE_OBSERVED_BASELINE=True to replace it deliberately.")
             else:

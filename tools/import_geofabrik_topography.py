@@ -132,7 +132,7 @@ def main() -> int:
 
 def _conversion_cache_key(*, coverage_path: Path | None, simplify_meters: float, include_buildings: bool) -> str:
     digest = hashlib.sha256()
-    digest.update(f"v3-ogr|simplify={simplify_meters:g}|buildings={include_buildings}".encode("ascii"))
+    digest.update(f"v4-detail-policy|simplify={simplify_meters:g}|buildings={include_buildings}".encode("ascii"))
     if coverage_path is not None:
         digest.update(coverage_path.read_bytes())
     return digest.hexdigest()[:12]

@@ -25,8 +25,13 @@ from moosebridge import (  # noqa: E402
     build_railway_infrastructure,
     build_railway_routing_network,
 )
-from moosebridge.pbf_topography import _normalize_ogr_record, features_from_pyrosm_record  # noqa: E402
-from moosebridge.topography_coverage import TheaterTopographyCoverage  # noqa: E402
+from moosebridge.pbf_topography import (  # noqa: E402
+    _normalize_ogr_record,
+    clip_topography_feature_to_mask,
+    features_from_pyrosm_record,
+    topography_detail_level,
+)
+from moosebridge.topography_coverage import TheaterTopographyCoverage, TopographyDetailLevel  # noqa: E402
 
 
 DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "viewport" / "manifest.json"
@@ -79,6 +84,7 @@ def main() -> int:
             for shard in manifest.get("shards") or []
         },
     )
+    facilities = _clip_features_to_coverage(facilities, coverage)
     facilities_loaded = perf_counter()
     artifact = build_railway_infrastructure(
         tracks.values(),
@@ -121,6 +127,27 @@ def main() -> int:
         f"{built-facilities_loaded:.2f}s / {analyzed-built:.2f}s / {saved-analyzed:.2f}s"
     )
     return 0
+
+
+def _clip_features_to_coverage(
+    features: dict[str, TopographyFeature],
+    coverage: TheaterTopographyCoverage,
+) -> dict[str, TopographyFeature]:
+    masks = {
+        level: coverage.geometry_for_minimum_level(level)
+        for level in TopographyDetailLevel
+    }
+    clipped: dict[str, TopographyFeature] = {}
+    for object_id, feature in features.items():
+        required_level = topography_detail_level(feature)
+        mask = masks[required_level]
+        if mask is None:
+            continue
+        clipped_feature = clip_topography_feature_to_mask(feature, mask, required_level)
+        if clipped_feature is None:
+            continue
+        clipped[object_id] = clipped_feature
+    return clipped
 
 
 def _load_tracks(

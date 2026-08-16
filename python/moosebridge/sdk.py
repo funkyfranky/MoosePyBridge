@@ -3895,7 +3895,7 @@ class MooseBridgeClient:
         site: InfrastructureSite,
         verification: StrategicSiteVerification,
         *,
-        radius_m: float = 750.0,
+        radius_m: float | None = None,
         max_results: int = 2000,
         timeout: float = 30.0,
     ) -> InfrastructureStateAssessment:
@@ -3903,6 +3903,8 @@ class MooseBridgeClient:
 
         if site.site_id != verification.source_id:
             raise ValueError("infrastructure site and verification source ids do not match")
+        if radius_m is None:
+            radius_m = _site_survey_radius_m(site.latitude, site.longitude, site.geometry)
         survey = await self.survey_scenery(
             site.latitude,
             site.longitude,
@@ -4285,6 +4287,29 @@ def _footprint_within_survey(
             (max_lat, max_lon),
         )
     )
+
+
+def _site_survey_radius_m(
+    latitude: float,
+    longitude: float,
+    geometry: Mapping[str, Any],
+) -> float:
+    """Cover a site's footprint while keeping the DCS query explicitly bounded."""
+
+    footprint = shape(geometry)
+    if footprint.is_empty or footprint.geom_type not in {"Polygon", "MultiPolygon"}:
+        return 750.0
+    min_lon, min_lat, max_lon, max_lat = footprint.bounds
+    required = max(
+        _geographic_distance_m(latitude, longitude, corner_lat, corner_lon)
+        for corner_lat, corner_lon in (
+            (min_lat, min_lon),
+            (min_lat, max_lon),
+            (max_lat, min_lon),
+            (max_lat, max_lon),
+        )
+    ) + 50.0
+    return min(max(750.0, required), 5_000.0)
 
 
 def _geographic_distance_m(

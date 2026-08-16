@@ -296,19 +296,26 @@ values are retained by default. The remainder is reported as
 candidate was omitted. The limit can be adjusted or disabled explicitly:
 
 Normalized geographic candidates do not become objectives merely because they
-exist in OSM. The map detail panel stores a scenario-specific DCS verification
-in `tmp/theaters/GermanyCW/verification/strategic-verifications.json`. Verification uses
-three states: `unverified`, `represented`, and `not_represented`. Each admitted
-site must be `represented` and reference at least one concrete bridge object
-such as `STATIC:`, `SCENERY:`, `AIRBASE:`, `OPSZONE:`, `ZONE:`, `GROUP:`, or
-`UNIT:`. Sites without a concrete DCS representation remain excluded. The
-verification script retains every observed object inside
-the normalized site footprint as an observation baseline. This full inventory
-is separate from the deliberately small target subset used by AUFTRAG planning;
-target lines use `object id | role | weight`. A partial baseline remains marked
-as such when the survey result was truncated or did not cover the complete
-footprint. `Assess current state` in the same map panel performs one bounded DCS
-scenery survey on demand. It combines that survey with mission-scoped
+exist in OSM. The map detail panel stores a theater-level DCS verification in
+`tmp/theaters/GermanyCW/verification/strategic-verifications.json`. Verification
+uses three states: `unverified`, `represented`, and `not_represented`. This
+registry deliberately accepts only fixed `SCENERY:<id>` objects. Mission-defined
+`STATIC`, `UNIT`, and `GROUP` objects are not theater evidence; authoritative
+`AIRBASE` and `OPSZONE` objects use their separate live-DCS workflows. Each
+admitted geographic site must be `represented` and select at least one target
+from its observed scenery baseline. Sites without a fixed DCS representation
+remain excluded.
+
+The verification script retains every observed SCENERY object inside the
+normalized site footprint as an observation baseline. The default survey radius
+automatically covers the complete footprint, up to the bounded 5 km DCS query
+limit, and can retain up to 2,000 objects while keeping console and F10 output
+small. This full inventory is separate from the deliberately small target subset
+used by AUFTRAG planning; target lines use
+`SCENERY:<id> | role | weight`. A partial baseline remains marked as such when
+the survey result was truncated or did not cover the complete footprint.
+`Assess current state` in the same map panel performs one bounded DCS scenery
+survey on demand. It combines that survey with mission-scoped
 `object.destroyed` events and reports `operational`, `damaged`, `disabled`,
 `destroyed`, or `unknown` plus a health range. This is deliberately not a
 periodic full-map poll. Partial baselines cannot produce a definitive disabled
@@ -1460,10 +1467,12 @@ Before the full import, create mission-editor zones using this naming scheme:
 - `Topography All` encloses the complete usable DCS terrain. Multiple `All`
   zones with a suffix are allowed when the terrain cannot be represented by a
   single polygon.
-- `Topography Low <name>` marks broad operational areas. It adds primary and
-  secondary roads, towns, military/industrial land use, and bridges.
+- `Topography Low <name>` marks broad operational areas. It adds motorways,
+  trunk and primary roads, main railway lines, cities, major railway facilities,
+  selected strategic infrastructure, and bridges on the admitted road network.
 - `Topography High <name>` marks focused areas. It additionally includes
-  tertiary and unclassified roads, villages, detailed land use, and minor
+  secondary, tertiary and unclassified roads, towns and villages, useful land
+  use, local infrastructure candidates, and minor
   railways. Generic residential/service roads and individual buildings remain
   excluded from the theater-wide browser cache; `--include-buildings` is
   reserved for deliberately small focused imports. Detailed land use remains
@@ -1474,10 +1483,11 @@ Before the full import, create mission-editor zones using this naming scheme:
 The capture example requests the current zone snapshot and writes
 `tmp/theaters/GermanyCW/verification/coverage.geojson`. Circle and polygon zones are both
 supported. The heavy PBF conversion then runs offline. `all` is deliberately a
-baseline coverage level rather than "all OSM objects": coastlines, water,
-motorways, trunk roads, main railways, cities, harbours, and power plants remain
-available across the complete terrain without making the browser cache
-unmanageably large. Higher levels include every lower level automatically.
+physical baseline rather than "all OSM objects": only land/water constraints
+and coastlines remain available across the complete terrain. Roads, railways,
+settlements, and inferred infrastructure require `low` or `high` coverage.
+Higher levels include every lower level automatically, and geometries are
+clipped to the area whose detail level admits them.
 
 PBF files are written below `tmp/theaters/GermanyCW/sources/pbf/`; normalized
 per-source shards are stored below `tmp/theaters/GermanyCW/cache/import/`.

@@ -246,13 +246,13 @@ def _load_shards(directory: Path, shards: list[dict]):
                 category=str(row.category),
                 geometry=mapping(row.geometry),
                 source=str(row.source),
-                source_id=_text(row.source_id),
+                source_id=_text(getattr(row, "source_id", None)),
                 confidence=float(row.confidence),
-                name=_text(row.name),
-                scenario_reference_year=_integer(row.scenario_reference_year),
-                valid_from=_integer(row.valid_from),
-                dcs_verified=bool(row.dcs_verified),
-                properties={"osm_tags": _tags(row.osm_tags)},
+                name=_text(getattr(row, "name", None)),
+                scenario_reference_year=_integer(getattr(row, "scenario_reference_year", None)),
+                valid_from=_integer(getattr(row, "valid_from", None)),
+                dcs_verified=bool(getattr(row, "dcs_verified", False)),
+                properties={"osm_tags": _tags(getattr(row, "osm_tags", None))},
             )
         yield index, shard, features
 

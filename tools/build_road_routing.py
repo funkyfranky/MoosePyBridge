@@ -17,6 +17,7 @@ if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
 from moosebridge import build_road_routing_network, build_road_routing_shard_index, merge_road_routing_artifacts
+from moosebridge.topography_coverage import TheaterTopographyCoverage, TopographyDetailLevel
 
 
 DEFAULT_CONFIG = PYTHON_ROOT / "moosebridge" / "data" / "GermanyCW_topography.json"
@@ -54,18 +55,16 @@ def main() -> int:
     missing = [path for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError(", ".join(str(path) for path in missing))
-    try:
-        from shapely.geometry import shape
-    except ImportError as exc:
-        raise RuntimeError('road routing requires: python -m pip install -e ".[routing]"') from exc
-
-    coverage_payload = json.loads(args.coverage.read_text(encoding="utf-8"))
-    all_feature = next(
-        feature for feature in coverage_payload.get("features") or ()
-        if (feature.get("properties") or {}).get("detail_level") == "all"
-    )
-    coverage_geometry = shape(all_feature["geometry"])
-    coverage_hash = hashlib.sha256(coverage_geometry.wkb).hexdigest()[:12]
+    coverage = TheaterTopographyCoverage.load(args.coverage)
+    low_geometry = coverage.geometry_for_minimum_level(TopographyDetailLevel.LOW)
+    high_geometry = coverage.geometry_for_minimum_level(TopographyDetailLevel.HIGH)
+    if low_geometry is None:
+        raise ValueError("road routing requires at least one Topography Low or High zone")
+    digest = hashlib.sha256(b"detail-policy-v1")
+    digest.update(low_geometry.wkb)
+    if high_geometry is not None:
+        digest.update(high_geometry.wkb)
+    coverage_hash = digest.hexdigest()[:12]
     args.cache_dir.mkdir(parents=True, exist_ok=True)
     started = perf_counter()
     partials: list[Path] = []
@@ -132,15 +131,13 @@ def _build_partial(
     try:
         import numpy as np
         from pyrosm import OSM
-        from shapely.geometry import shape
     except ImportError as exc:
         raise RuntimeError('road routing requires: python -m pip install -e ".[routing]"') from exc
-    coverage_payload = json.loads(coverage_path.read_text(encoding="utf-8"))
-    all_feature = next(
-        feature for feature in coverage_payload.get("features") or ()
-        if (feature.get("properties") or {}).get("detail_level") == "all"
-    )
-    coverage_geometry = shape(all_feature["geometry"])
+    coverage = TheaterTopographyCoverage.load(coverage_path)
+    low_geometry = coverage.geometry_for_minimum_level(TopographyDetailLevel.LOW)
+    high_geometry = coverage.geometry_for_minimum_level(TopographyDetailLevel.HIGH)
+    if low_geometry is None:
+        raise ValueError("road routing requires at least one Topography Low or High zone")
     nodes, edges = OSM(str(path)).get_network(
         network_type="driving",
         nodes=True,
@@ -150,7 +147,13 @@ def _build_partial(
         print("  no road features inside theater coverage", flush=True)
         empty_marker.touch()
         return 0
-    edges = edges[edges.geometry.intersects(coverage_geometry)].copy()
+    sample_points = edges.geometry.interpolate(0.5, normalized=True)
+    highway = edges["highway"].map(_road_classes)
+    strategic = highway.map(lambda values: bool(values.intersection({"motorway", "trunk", "primary"})))
+    selected = strategic & sample_points.intersects(low_geometry)
+    if high_geometry is not None:
+        selected |= sample_points.intersects(high_geometry)
+    edges = edges[selected].copy()
     if edges.empty:
         print("  no road features inside theater coverage", flush=True)
         empty_marker.touch()
@@ -169,6 +172,16 @@ def _build_partial(
     partial.save(output)
     print(f"  cached {partial.node_count} nodes, {partial.edge_count} edges: {output.name}", flush=True)
     return 0
+
+
+def _road_classes(value: object) -> frozenset[str]:
+    """Normalize Pyrosm's scalar or collection-valued highway class."""
+
+    if isinstance(value, str):
+        return frozenset((value.removesuffix("_link"),))
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return frozenset(str(item).removesuffix("_link") for item in value)
+    return frozenset()
 
 
 if __name__ == "__main__":

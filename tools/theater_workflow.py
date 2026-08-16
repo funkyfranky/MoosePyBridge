@@ -140,7 +140,7 @@ def workflow_stages(profile: TheaterDataProfile, paths: TheaterDataPaths) -> tup
             "Normalize energy, fuel, military, industrial, and maritime candidates.",
             (python, "tools/build_infrastructure_sites.py", "--profile", config,
              "--manifest", p("viewport_manifest"), "--output", p("infrastructure_sites"),
-             "--pbf-directory", p("pbf_directory")),
+             "--pbf-directory", p("pbf_directory"), "--coverage", p("coverage")),
         ),
         WorkflowStage(
             "maritime",

@@ -25,6 +25,7 @@ from moosebridge.strategic_objectives import (
 )
 from moosebridge.strategic_scope import StrategicScopeState, build_strategic_territory_scope
 from moosebridge.strategic_verification import (
+    ObservedDcsObject,
     StrategicSiteVerification,
     StrategicVerificationRegistry,
     StrategicVerificationState,
@@ -37,7 +38,8 @@ def _verifications(*source_ids: str) -> StrategicVerificationRegistry:
         StrategicSiteVerification(
             source_id=source_id,
             state=StrategicVerificationState.REPRESENTED,
-            target_components=(VerifiedDcsComponent(f"STATIC:Target-{index}"),),
+            observed_objects=(ObservedDcsObject(f"SCENERY:Target-{index}"),),
+            target_components=(VerifiedDcsComponent(f"SCENERY:Target-{index}"),),
         )
         for index, source_id in enumerate(source_ids)
     )
@@ -155,11 +157,13 @@ def test_generator_applies_importance_threshold_and_preserves_dcs_components() -
             StrategicSiteVerification(
                 source_id="SETTLEMENT:Important",
                 state=StrategicVerificationState.REPRESENTED,
-                target_components=(VerifiedDcsComponent("ZONE:Important"),),
+                observed_objects=(ObservedDcsObject("SCENERY:Important"),),
+                target_components=(VerifiedDcsComponent("SCENERY:Important"),),
             ),
             StrategicSiteVerification(
                 source_id="FUEL_STORAGE_SITE:Depot",
                 state=StrategicVerificationState.REPRESENTED,
+                observed_objects=(ObservedDcsObject("SCENERY:123"),),
                 target_components=(VerifiedDcsComponent("SCENERY:123"),),
             ),
         )),
@@ -310,7 +314,8 @@ def test_generator_accepts_represented_mapping_with_target_component() -> None:
         StrategicSiteVerification(
             source_id="SETTLEMENT:Approximate",
             state=StrategicVerificationState.REPRESENTED,
-            target_components=(VerifiedDcsComponent("STATIC:Town-Hall", role="administration", weight=2),),
+            observed_objects=(ObservedDcsObject("SCENERY:Town-Hall"),),
+            target_components=(VerifiedDcsComponent("SCENERY:Town-Hall", role="administration", weight=2),),
         ),
     ))
 
@@ -319,7 +324,7 @@ def test_generator_accepts_represented_mapping_with_target_component() -> None:
     )
 
     objective = next(item for item in result.objectives if item.objective_id.endswith("SETTLEMENT:Approximate"))
-    assert objective.components[0].object_id == "STATIC:Town-Hall"
+    assert objective.components[0].object_id == "SCENERY:Town-Hall"
     assert objective.components[0].role == "administration"
     assert objective.components[0].weight == 2
     assert objective.metadata["dcs_verification_state"] == "represented"

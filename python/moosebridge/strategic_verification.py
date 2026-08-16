@@ -10,10 +10,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-SCHEMA_VERSION = 3
-CONCRETE_COMPONENT_PREFIXES = frozenset(
-    {"AIRBASE", "GROUP", "OPSZONE", "SCENERY", "STATIC", "UNIT", "ZONE"}
-)
+SCHEMA_VERSION = 4
+SCENERY_OBJECT_PREFIX = "SCENERY"
 
 
 class StrategicVerificationState(str, Enum):
@@ -36,7 +34,7 @@ class InfrastructureOperationalState(str, Enum):
 
 @dataclass(slots=True, frozen=True)
 class VerifiedDcsComponent:
-    """One concrete DCS or MOOSE object associated with a geographic site."""
+    """One fixed DCS scenery object selected as a target component."""
 
     object_id: str
     role: str = "infrastructure component"
@@ -45,10 +43,8 @@ class VerifiedDcsComponent:
     def __post_init__(self) -> None:
         object_id = self.object_id.strip()
         role = self.role.strip()
-        prefix, separator, _name = object_id.partition(":")
-        if not separator or prefix.upper() not in CONCRETE_COMPONENT_PREFIXES:
-            allowed = ", ".join(sorted(CONCRETE_COMPONENT_PREFIXES))
-            raise ValueError(f"component must use a concrete bridge id ({allowed})")
+        if not _is_scenery_object_id(object_id):
+            raise ValueError("target component must use a fixed SCENERY:<id> object id")
         if not role:
             raise ValueError("component role must not be empty")
         if not math.isfinite(self.weight) or self.weight <= 0:
@@ -70,7 +66,7 @@ class VerifiedDcsComponent:
 
 @dataclass(slots=True, frozen=True)
 class ObservedDcsObject:
-    """One DCS object retained as evidence for a site's observed baseline."""
+    """One fixed DCS scenery object retained in a theater baseline."""
 
     object_id: str
     type_name: str = ""
@@ -82,10 +78,8 @@ class ObservedDcsObject:
 
     def __post_init__(self) -> None:
         object_id = self.object_id.strip()
-        prefix, separator, _name = object_id.partition(":")
-        if not separator or prefix.upper() not in CONCRETE_COMPONENT_PREFIXES:
-            allowed = ", ".join(sorted(CONCRETE_COMPONENT_PREFIXES))
-            raise ValueError(f"observed object must use a concrete bridge id ({allowed})")
+        if not _is_scenery_object_id(object_id):
+            raise ValueError("observed object must use a fixed SCENERY:<id> object id")
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("observed object coordinates must contain both latitude and longitude")
         for label, value in (("latitude", self.latitude), ("longitude", self.longitude), ("life", self.life)):
@@ -121,7 +115,7 @@ class ObservedDcsObject:
 
 @dataclass(slots=True, frozen=True)
 class StrategicSiteVerification:
-    """Scenario-specific verification and component mapping for one source site."""
+    """Theater-level scenery verification and target mapping for one source site."""
 
     source_id: str
     state: StrategicVerificationState = StrategicVerificationState.UNVERIFIED
@@ -134,6 +128,7 @@ class StrategicSiteVerification:
         source_id = self.source_id.strip()
         if not source_id or ":" not in source_id:
             raise ValueError("source_id must be a stable normalized object id")
+        state = _coerce_verification_state(self.state)
         observed_objects = tuple(self.observed_objects)
         observed_ids = [item.object_id for item in observed_objects]
         if len(observed_ids) != len(set(observed_ids)):
@@ -142,8 +137,18 @@ class StrategicSiteVerification:
         target_ids = [item.object_id for item in target_components]
         if len(target_ids) != len(set(target_ids)):
             raise ValueError("target components must have unique object ids")
+        unknown_targets = sorted(set(target_ids).difference(observed_ids))
+        if unknown_targets:
+            raise ValueError(
+                "target components must be selected from the observed scenery baseline: "
+                + ", ".join(unknown_targets)
+            )
+        if state is StrategicVerificationState.REPRESENTED and not observed_objects:
+            raise ValueError("represented verification requires observed scenery objects")
+        if state is StrategicVerificationState.NOT_REPRESENTED and target_components:
+            raise ValueError("not-represented verification cannot contain target components")
         object.__setattr__(self, "source_id", source_id)
-        object.__setattr__(self, "state", _coerce_verification_state(self.state))
+        object.__setattr__(self, "state", state)
         object.__setattr__(self, "observed_objects", observed_objects)
         object.__setattr__(self, "target_components", target_components)
         object.__setattr__(self, "notes", self.notes.strip())
@@ -325,11 +330,24 @@ def _relative_object_health(baseline: ObservedDcsObject, current: ObservedDcsObj
 
 @dataclass(slots=True)
 class StrategicVerificationRegistry:
-    """Versioned collection of scenario-specific DCS component mappings."""
+    """Versioned collection of fixed scenery mappings for one DCS theater."""
 
     theater_id: str = ""
-    scenario_id: str = ""
     entries: dict[str, StrategicSiteVerification] = field(default_factory=dict)
+
+    def bind_theater(self, theater_id: str) -> "StrategicVerificationRegistry":
+        """Bind an unscoped registry or reject data from another theater."""
+
+        expected = theater_id.strip()
+        if not expected:
+            return self
+        if self.theater_id and self.theater_id.casefold() != expected.casefold():
+            raise ValueError(
+                f"strategic verification theater mismatch: expected {expected}, "
+                f"found {self.theater_id}"
+            )
+        self.theater_id = expected
+        return self
 
     def get(self, source_id: str) -> StrategicSiteVerification | None:
         return self.entries.get(source_id)
@@ -348,7 +366,6 @@ class StrategicVerificationRegistry:
         return {
             "schema_version": SCHEMA_VERSION,
             "theater_id": self.theater_id,
-            "scenario_id": self.scenario_id,
             "verifications": [item.to_dict() for item in self.all()],
         }
 
@@ -360,11 +377,14 @@ class StrategicVerificationRegistry:
             version = 2
         if version == 2:
             payload = _migrate_v2_payload(payload)
-        elif version != SCHEMA_VERSION:
+            version = 3
+        if version == 3:
+            payload = _migrate_v3_payload(payload)
+            version = SCHEMA_VERSION
+        if version != SCHEMA_VERSION:
             raise ValueError(f"unsupported strategic verification schema version: {version}")
         registry = cls(
             theater_id=str(payload.get("theater_id") or ""),
-            scenario_id=str(payload.get("scenario_id") or ""),
         )
         for item in payload.get("verifications") or ():
             if isinstance(item, Mapping):
@@ -399,9 +419,8 @@ class StrategicVerificationRegistry:
         entries: Iterable[StrategicSiteVerification],
         *,
         theater_id: str = "",
-        scenario_id: str = "",
     ) -> "StrategicVerificationRegistry":
-        registry = cls(theater_id=theater_id, scenario_id=scenario_id)
+        registry = cls(theater_id=theater_id)
         for entry in entries:
             registry.upsert(entry)
         return registry
@@ -415,6 +434,11 @@ def _optional_float(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _is_scenery_object_id(object_id: str) -> bool:
+    prefix, separator, name = object_id.partition(":")
+    return bool(separator and name.strip() and prefix.upper() == SCENERY_OBJECT_PREFIX)
 
 
 def _coerce_verification_state(value: Any) -> StrategicVerificationState:
@@ -459,7 +483,7 @@ def _migrate_v2_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Collapse detailed v2 evidence labels into the three-state v3 model."""
 
     migrated = dict(payload)
-    migrated["schema_version"] = SCHEMA_VERSION
+    migrated["schema_version"] = 3
     migrated["verifications"] = [
         {
             **{key: value for key, value in dict(item).items() if key != "scenario_approved"},
@@ -469,3 +493,42 @@ def _migrate_v2_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(item, Mapping)
     ]
     return migrated
+
+
+def _migrate_v3_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert scenario mappings into theater-level, scenery-only evidence."""
+
+    migrated_verifications: list[dict[str, Any]] = []
+    for item in payload.get("verifications") or ():
+        if not isinstance(item, Mapping):
+            continue
+        observed = [
+            dict(candidate)
+            for candidate in item.get("observed_objects") or ()
+            if isinstance(candidate, Mapping)
+            and _is_scenery_object_id(str(candidate.get("object_id") or ""))
+        ]
+        observed_ids = {str(candidate.get("object_id") or "") for candidate in observed}
+        targets = [
+            dict(candidate)
+            for candidate in item.get("target_components") or ()
+            if isinstance(candidate, Mapping)
+            and _is_scenery_object_id(str(candidate.get("object_id") or ""))
+            and str(candidate.get("object_id") or "") in observed_ids
+        ]
+        state = _coerce_verification_state(item.get("state"))
+        if state is StrategicVerificationState.REPRESENTED and not observed:
+            state = StrategicVerificationState.UNVERIFIED
+        if state is StrategicVerificationState.NOT_REPRESENTED:
+            targets = []
+        migrated_verifications.append({
+            **dict(item),
+            "state": state.value,
+            "observed_objects": observed,
+            "target_components": targets,
+        })
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "theater_id": str(payload.get("theater_id") or ""),
+        "verifications": migrated_verifications,
+    }

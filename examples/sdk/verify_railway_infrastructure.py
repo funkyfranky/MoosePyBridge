@@ -16,10 +16,12 @@ from moosebridge import (  # noqa: E402
     DebugMarkup,
     DebugMarkupPoint,
     MooseBridgeClient,
+    ObservedDcsObject,
     RailwayLocation,
     RailwayImportanceTier,
     RailwayLocationKind,
     ScenerySurvey,
+    StrategicSiteVerification,
     StrategicVerificationRegistry,
     TheaterRailwayInfrastructure,
 )
@@ -30,7 +32,7 @@ CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
-_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+THEATER, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
 RAILWAY_PATH = THEATER_PATHS.path("railway_infrastructure")
 VERIFICATIONS_PATH = THEATER_PATHS.path("strategic_verifications")
 
@@ -47,7 +49,9 @@ MINIMUM_IMPORTANCE_TIER = RailwayImportanceTier.CRITICAL
 
 SURVEY_RADIUS_M = 1_000.0
 LOCATOR_RADIUS_M = 5_000.0
-MAX_SCENERY_OBJECTS = 300
+SAVE_OBSERVED_BASELINE = False
+REPLACE_OBSERVED_BASELINE = False
+MAX_SCENERY_OBJECTS = 2_000
 MAX_PRINTED_OBJECTS = 50
 DRAW_F10_OVERLAY = True
 MAX_DRAWN_OBJECTS = 75
@@ -136,7 +140,7 @@ def format_location(location: RailwayLocation, reference_distance_m: float | Non
 
 
 def format_strategic_verification(location: RailwayLocation) -> None:
-    verification = StrategicVerificationRegistry.load(VERIFICATIONS_PATH).get(location.location_id)
+    verification = load_verification_registry().get(location.location_id)
     print("\nStrategic DCS verification")
     print("=" * 96)
     print(f"Registry        : {VERIFICATIONS_PATH}")
@@ -177,6 +181,48 @@ def format_survey(location: RailwayLocation, survey: ScenerySurvey) -> None:
         )
     print("\nCopy only visually confirmed object IDs into the web-map DCS verification panel.")
     print("Component format: SCENERY:<id> | railway component | 1.0")
+
+
+def load_verification_registry() -> StrategicVerificationRegistry:
+    return StrategicVerificationRegistry.load(VERIFICATIONS_PATH).bind_theater(THEATER.theater_id)
+
+
+def save_observed_baseline(
+    location: RailwayLocation,
+    survey: ScenerySurvey,
+) -> StrategicSiteVerification:
+    """Persist the bounded scenery inventory without changing valid targets."""
+
+    registry = load_verification_registry()
+    current = registry.get(location.location_id)
+    observed = tuple(
+        ObservedDcsObject(
+            object_id=item.object_id,
+            type_name=item.type_name or "",
+            display_name=item.display_name or item.name or "",
+            latitude=item.latitude,
+            longitude=item.longitude,
+            life=item.life,
+            exists=item.exists,
+        )
+        for item in survey.objects
+    )
+    observed_ids = {item.object_id for item in observed}
+    verification = StrategicSiteVerification(
+        source_id=location.location_id,
+        state=current.state if current is not None else "unverified",
+        observed_objects=observed,
+        observation_complete=not survey.truncated,
+        target_components=tuple(
+            component
+            for component in (current.target_components if current is not None else ())
+            if component.object_id in observed_ids
+        ),
+        notes=current.notes if current is not None else "",
+    )
+    registry.upsert(verification)
+    registry.save(VERIFICATIONS_PATH)
+    return verification
 
 
 def location_color(kind: RailwayLocationKind) -> tuple[float, float, float, float]:
@@ -249,6 +295,17 @@ async def run() -> int:
             input,
             "Inspect the 5 km magenta locator, 1 km survey area, and cyan scenery objects in DCS F10, then press Enter ... ",
         )
+        if SAVE_OBSERVED_BASELINE:
+            current = load_verification_registry().get(location.location_id)
+            if current is not None and current.observed_objects and not REPLACE_OBSERVED_BASELINE:
+                print("Existing observation baseline preserved. Set REPLACE_OBSERVED_BASELINE=True to replace it deliberately.")
+            else:
+                verification = save_observed_baseline(location, survey)
+                completeness = "complete" if verification.observation_complete else "partial"
+                print(
+                    f"Saved {len(verification.observed_objects)} observed object(s) as a {completeness} baseline: "
+                    f"{VERIFICATIONS_PATH}"
+                )
     finally:
         if drawn:
             await bridge.clear_debug_overlay(OVERLAY_ID, timeout=COMMAND_TIMEOUT_SECONDS)

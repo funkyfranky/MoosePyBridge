@@ -1953,6 +1953,7 @@
     componentLabel.textContent = "Target components";
     const componentInput = document.createElement("textarea");
     componentInput.rows = 3;
+    componentInput.placeholder = "SCENERY:<id> | infrastructure component | 1.0";
     componentInput.value = (current.target_components || []).map((item) => {
       const role = item.role || "infrastructure component";
       const weight = Number(item.weight || 1);
@@ -1983,6 +1984,24 @@
           const [objectId, role, weight] = line.split("|").map((part) => part.trim());
           return { object_id: objectId, role: role || "infrastructure component", weight: weight ? Number(weight) : 1 };
         });
+        const observedIds = new Set((current.observed_objects || []).map((item) => item.object_id));
+        if (stateSelect.value === "represented" && !observedIds.size) {
+          throw new Error("Represented requires a captured SCENERY baseline");
+        }
+        if (stateSelect.value === "not_represented" && targetComponents.length) {
+          throw new Error("Not represented cannot contain target components");
+        }
+        for (const component of targetComponents) {
+          if (!String(component.object_id || "").startsWith("SCENERY:")) {
+            throw new Error(`Target must use SCENERY:<id>: ${component.object_id || "empty id"}`);
+          }
+          if (!observedIds.has(component.object_id)) {
+            throw new Error(`Target is not part of the captured SCENERY baseline: ${component.object_id}`);
+          }
+          if (!Number.isFinite(component.weight) || component.weight <= 0) {
+            throw new Error(`Target weight must be positive: ${component.object_id}`);
+          }
+        }
         const response = await fetch(`/api/strategic-verifications/${encodeURIComponent(sourceId)}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },

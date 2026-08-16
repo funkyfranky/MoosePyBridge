@@ -140,17 +140,47 @@ class TheaterTopographyCoverage:
         geometries = [shape(area.geometry) for area in self.areas if area.level is level]
         return shapely.union_all(geometries) if geometries else None
 
+    def geometry_for_minimum_level(self, required_level: TopographyDetailLevel) -> Any:
+        """Return coverage whose configured detail is at least ``required_level``."""
+
+        try:
+            import shapely
+        except ImportError as exc:
+            raise RuntimeError('topography coverage requires: python -m pip install -e ".[topography]"') from exc
+        required_rank = _LEVEL_RANK[required_level]
+        geometries = [
+            geometry
+            for level in TopographyDetailLevel
+            if _LEVEL_RANK[level] >= required_rank
+            if (geometry := self.geometry_for_level(level)) is not None
+        ]
+        return shapely.union_all(geometries) if geometries else None
+
+    def geometry_exclusive_to_level(self, level: TopographyDetailLevel) -> Any:
+        """Return the part of a level not covered by a more detailed area."""
+
+        try:
+            import shapely
+        except ImportError as exc:
+            raise RuntimeError('topography coverage requires: python -m pip install -e ".[topography]"') from exc
+        geometry = self.geometry_for_level(level)
+        if geometry is None:
+            return None
+        more_detailed = [
+            candidate
+            for other_level in TopographyDetailLevel
+            if _LEVEL_RANK[other_level] > _LEVEL_RANK[level]
+            if (candidate := self.geometry_for_level(other_level)) is not None
+        ]
+        if not more_detailed:
+            return geometry
+        return shapely.make_valid(geometry.difference(shapely.union_all(more_detailed)))
+
     def accepts(self, geometry: Any, required_level: TopographyDetailLevel) -> bool:
         """Return whether geometry intersects an area with sufficient detail."""
 
-        required_rank = _LEVEL_RANK[required_level]
-        for level in TopographyDetailLevel:
-            if _LEVEL_RANK[level] < required_rank:
-                continue
-            mask = self.geometry_for_level(level)
-            if mask is not None and mask.intersects(geometry):
-                return True
-        return False
+        mask = self.geometry_for_minimum_level(required_level)
+        return mask is not None and mask.intersects(geometry)
 
 
 def coverage_from_picture(

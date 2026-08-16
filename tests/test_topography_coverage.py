@@ -4,6 +4,7 @@ import pytest
 
 from moosebridge import (
     TheaterTopographyCoverage,
+    TopographyCoverageArea,
     TopographyDetailLevel,
     coverage_from_picture,
 )
@@ -49,3 +50,37 @@ def test_coverage_requires_an_all_zone() -> None:
 
     with pytest.raises(ValueError, match="at least one 'all'"):
         coverage_from_picture(picture, theater_id="GermanyCW")
+
+
+def test_coverage_levels_are_inherited_and_can_be_made_exclusive() -> None:
+    pytest.importorskip("shapely")
+    from shapely.geometry import box
+
+    coverage = TheaterTopographyCoverage(
+        theater_id="Test",
+        areas=(
+            TopographyCoverageArea(
+                object_id="ZONE:All",
+                level=TopographyDetailLevel.ALL,
+                geometry={"type": "Polygon", "coordinates": [[[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]]]},
+            ),
+            TopographyCoverageArea(
+                object_id="ZONE:Low",
+                level=TopographyDetailLevel.LOW,
+                geometry={"type": "Polygon", "coordinates": [[[2, 2], [8, 2], [8, 8], [2, 8], [2, 2]]]},
+            ),
+            TopographyCoverageArea(
+                object_id="ZONE:High",
+                level=TopographyDetailLevel.HIGH,
+                geometry={"type": "Polygon", "coordinates": [[[4, 4], [6, 4], [6, 6], [4, 6], [4, 4]]]},
+            ),
+        ),
+    )
+
+    assert coverage.geometry_for_minimum_level(TopographyDetailLevel.ALL).area == pytest.approx(100)
+    assert coverage.geometry_for_minimum_level(TopographyDetailLevel.LOW).area == pytest.approx(36)
+    assert coverage.geometry_for_minimum_level(TopographyDetailLevel.HIGH).area == pytest.approx(4)
+    assert coverage.geometry_exclusive_to_level(TopographyDetailLevel.ALL).area == pytest.approx(64)
+    assert coverage.geometry_exclusive_to_level(TopographyDetailLevel.LOW).area == pytest.approx(32)
+    assert coverage.accepts(box(4.5, 4.5, 5.5, 5.5), TopographyDetailLevel.LOW)
+    assert not coverage.accepts(box(0.5, 0.5, 1.5, 1.5), TopographyDetailLevel.LOW)

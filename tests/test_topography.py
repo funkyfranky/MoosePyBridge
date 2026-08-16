@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from moosebridge.osm_topography import build_overpass_query, features_from_overpass_element, topography_from_overpass
 from moosebridge.pbf_topography import (
     _normalize_ogr_record,
+    clip_topography_feature_to_mask,
     features_from_pyrosm_record,
     topography_detail_level,
 )
@@ -75,6 +78,37 @@ def test_overpass_element_can_supply_transport_and_bridge_layers() -> None:
     assert {feature.layer for feature in features} == {TopographyLayer.ROADS, TopographyLayer.INFRASTRUCTURE}
     assert {feature.category for feature in features} == {"primary", "bridge"}
     assert all(feature.valid_from == 1938 for feature in features)
+
+
+def test_overpass_element_prefers_english_then_international_name() -> None:
+    english = features_from_overpass_element(
+        {
+            "type": "node",
+            "id": 420,
+            "lat": 45.0,
+            "lon": 42.0,
+            "tags": {
+                "place": "city",
+                "name": "Ставрополь",
+                "int_name": "Stavropol International",
+                "name:en": "Stavropol",
+            },
+        },
+        scenario_reference_year=2008,
+    )
+    international = features_from_overpass_element(
+        {
+            "type": "node",
+            "id": 421,
+            "lat": 45.1,
+            "lon": 42.1,
+            "tags": {"place": "town", "name": "Локальное имя", "int_name": "International Name"},
+        },
+        scenario_reference_year=2008,
+    )
+
+    assert english[0].name == "Stavropol"
+    assert international[0].name == "International Name"
 
 
 def test_overpass_element_classifies_railway_facilities() -> None:
@@ -250,9 +284,85 @@ def test_topography_detail_levels_keep_baseline_small_and_local_detail_rich() ->
         )
 
     assert topography_detail_level(feature(TopographyLayer.WATER, "lake")).value == "all"
+    assert topography_detail_level(feature(TopographyLayer.ROADS, "motorway")).value == "low"
     assert topography_detail_level(feature(TopographyLayer.ROADS, "primary")).value == "low"
+    assert topography_detail_level(feature(TopographyLayer.ROADS, "secondary")).value == "high"
+    assert topography_detail_level(feature(TopographyLayer.RAILWAYS, "rail")).value == "low"
+    assert topography_detail_level(feature(TopographyLayer.SETTLEMENTS, "city")).value == "low"
+    assert topography_detail_level(feature(TopographyLayer.SETTLEMENTS, "town")).value == "high"
     assert topography_detail_level(feature(TopographyLayer.ROADS, "residential")).value == "high"
     assert topography_detail_level(feature(TopographyLayer.BUILDINGS, "industrial")).value == "high"
+    assert topography_detail_level(feature(TopographyLayer.INFRASTRUCTURE, "power_plant")).value == "low"
+    assert topography_detail_level(feature(TopographyLayer.INFRASTRUCTURE, "storage_tank")).value == "high"
+
+
+def test_topography_feature_is_clipped_to_its_detail_mask() -> None:
+    pytest.importorskip("shapely")
+    from shapely.geometry import box
+    from moosebridge import TopographyDetailLevel
+
+    road = TopographyFeature(
+        object_id="TOPOGRAPHY:test:road",
+        layer=TopographyLayer.ROADS,
+        category="primary",
+        geometry={"type": "LineString", "coordinates": [[0, 5], [10, 5]]},
+        source="test",
+        confidence=1.0,
+    )
+
+    clipped = clip_topography_feature_to_mask(road, box(2, 2, 8, 8), TopographyDetailLevel.LOW)
+
+    assert clipped is not None
+    assert clipped.geometry == {"type": "LineString", "coordinates": ((2.0, 5.0), (8.0, 5.0))}
+    assert clipped.properties["detail_level"] == "low"
+
+
+def test_topography_line_touching_mask_at_one_point_is_discarded() -> None:
+    pytest.importorskip("shapely")
+    from shapely.geometry import box
+    from moosebridge import TopographyDetailLevel
+
+    road = TopographyFeature(
+        object_id="TOPOGRAPHY:test:touching-road",
+        layer=TopographyLayer.ROADS,
+        category="primary",
+        geometry={"type": "LineString", "coordinates": [[0, 0], [2, 2]]},
+        source="test",
+        confidence=1.0,
+    )
+
+    assert clip_topography_feature_to_mask(
+        road,
+        box(2, 2, 4, 4),
+        TopographyDetailLevel.LOW,
+    ) is None
+
+
+def test_topography_invalid_polygon_is_repaired_before_clipping() -> None:
+    pytest.importorskip("shapely")
+    from shapely.geometry import box, shape
+    from moosebridge import TopographyDetailLevel
+
+    feature = TopographyFeature(
+        object_id="TOPOGRAPHY:test:invalid-polygon",
+        layer=TopographyLayer.LANDUSE,
+        category="industrial",
+        geometry={
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [4, 4], [0, 4], [4, 0], [0, 0]]],
+        },
+        source="test",
+        confidence=1.0,
+    )
+
+    clipped = clip_topography_feature_to_mask(
+        feature,
+        box(-1, -1, 5, 5),
+        TopographyDetailLevel.LOW,
+    )
+
+    assert clipped is not None
+    assert shape(clipped.geometry).is_valid
 
 
 def test_ogr_record_normalization_preserves_coastline_tags_and_way_identity() -> None:
