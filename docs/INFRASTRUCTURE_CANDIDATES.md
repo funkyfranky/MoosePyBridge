@@ -84,7 +84,7 @@ storage sites, 1,100 military sites, 5,641 industrial sites, and 507 maritime
 sites. Of the maritime sites, 301 have explicit strategic evidence. Use
 `--include-modern-energy` only for a scenario that
 deliberately wants the modern sources. The output is
-`tmp/topography/GermanyCW-infrastructure-sites.geojson`.
+`tmp/theaters/GermanyCW/runtime/infrastructure-sites.geojson`.
 
 The bridge also exposes `await bridge.survey_scenery(latitude, longitude)` for
 local verification. Its defaults are a 500 m radius and 250 objects; the hard
@@ -254,7 +254,7 @@ yard, and depot evidence from the local PBF files. Nearby same-kind source
 features are combined into stable operational locations while retaining their
 source IDs. Mainline graph degree supplies rail-junction candidates; tagged
 track structures supply rail bridges. The output is
-`tmp/topography/GermanyCW-railway-infrastructure.geojson` and is exposed as a
+`tmp/theaters/GermanyCW/runtime/railway-infrastructure.geojson` and is exposed as a
 grouped browser layer with independent station, freight-terminal, rail-yard,
 depot, junction, and bridge controls.
 

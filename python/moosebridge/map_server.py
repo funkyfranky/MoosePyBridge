@@ -36,7 +36,6 @@ from .pictures import GlobalPicture
 from .operational_audit import execution_from_dict
 from .recon import ReconArea, build_recon_coverage_footprints
 from .recon import RECON_EXECUTION_AUDIT_TYPE
-from .topography import TheaterTopography
 from .theater_data import DEFAULT_THEATER_PROFILE_PATH, load_theater_profile
 from .topography_viewport import DEFAULT_VIEWPORT_FEATURE_LIMIT, TopographyViewportStore
 from .transport_infrastructure import TheaterTransportInfrastructure, TransportImportanceTier
@@ -70,15 +69,6 @@ DEFAULT_TERRITORY_TRANSITION_M = 20_000.0
 DEFAULT_PRESSURE_TERRITORY_RATIO = 0.08
 DEFAULT_INCURSION_SUPPORT_RADIUS_M = 30_000.0
 DEFAULT_LODGEMENT_MIN_FORCES = 3
-DEFAULT_MAX_TOPOGRAPHY_BYTES = 256 * 1024 * 1024
-DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
-DEFAULT_TOPOGRAPHY_VIEWPORT_PATH = Path("tmp/topography/viewport/manifest.json")
-DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
-DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-transport-infrastructure.geojson")
-DEFAULT_RAILWAY_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-railway-infrastructure.geojson")
-DEFAULT_INFRASTRUCTURE_SITES_PATH = Path("tmp/topography/GermanyCW-infrastructure-sites.geojson")
-DEFAULT_SETTLEMENTS_PATH = Path("tmp/topography/GermanyCW-settlements.geojson")
-DEFAULT_STRATEGIC_VERIFICATIONS_PATH = Path("tmp/topography/GermanyCW-strategic-verifications.json")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
 
@@ -201,8 +191,6 @@ class GlobalMapRuntime:
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES
     theater_id: str | None = None
-    topography_path: Path | None = None
-    max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES
     topography_viewport_path: Path | None = None
     surface_regions_path: Path | None = None
     transport_infrastructure_path: Path | None = None
@@ -235,8 +223,6 @@ class GlobalMapRuntime:
     _bridge: Any = field(init=False, default=None, repr=False)
     _diplomacy_event_cursor: str | None = None
     _border_violation_signature: tuple[tuple[str, str, float, bool], ...] = ()
-    _topography: TheaterTopography | None = field(init=False, default=None)
-    _topography_load_warning: str | None = field(init=False, default=None)
     _topography_viewport: TopographyViewportStore | None = field(init=False, default=None)
     _topography_viewport_error: str | None = field(init=False, default=None)
     _surface_regions: TheaterSurfaceRegions | None = field(init=False, default=None)
@@ -265,7 +251,6 @@ class GlobalMapRuntime:
                 incursion_lodgement_min_forces=self.lodgement_min_forces,
             )
         )
-        self.load_topography()
         self.load_topography_viewport()
         self.load_surface_regions()
         self.load_transport_infrastructure()
@@ -347,37 +332,6 @@ class GlobalMapRuntime:
             timeout=self.timeout,
         )
         return assessment.to_dict()
-
-    def load_topography(self) -> TheaterTopography | None:
-        """Load the optional static theater cache without touching DCS."""
-
-        self._topography = None
-        self._topography_load_warning = None
-        if self.topography_path is None or not self.topography_path.is_file():
-            return None
-        size_bytes = self.topography_path.stat().st_size
-        if self.max_topography_bytes > 0 and size_bytes > self.max_topography_bytes:
-            self._topography_load_warning = (
-                f"Static topography cache is {size_bytes / (1024 * 1024):.1f} MiB; "
-                f"the configured in-memory limit is {self.max_topography_bytes / (1024 * 1024):.1f} MiB. "
-                "Use a bounded cache or viewport/tile delivery."
-            )
-            LOGGER.warning("Skipping %s: %s", self.topography_path, self._topography_load_warning)
-            return None
-        self._topography = TheaterTopography.load(self.topography_path)
-        self._validate_theater_id(self._topography.theater_id, self.topography_path)
-        LOGGER.info(
-            "Loaded %d %s topography features from %s",
-            len(self._topography.features),
-            self._topography.theater_id,
-            self.topography_path,
-        )
-        return self._topography
-
-    def topography_geojson(self) -> dict[str, Any]:
-        """Return the static theater data independently of mission updates."""
-
-        return self._topography.to_geojson() if self._topography is not None else empty_picture()
 
     def load_topography_viewport(self) -> TopographyViewportStore | None:
         """Load the optional indexed topography manifest without reading its shards."""
@@ -604,9 +558,6 @@ class GlobalMapRuntime:
                 if feature.get("properties", {}).get("layer") == "strategic_objectives"
             ),
             "strategic_objective_error": self._strategic_objective_error,
-            "topography_theater_id": self._topography.theater_id if self._topography else None,
-            "topography_feature_count": len(self._topography.features) if self._topography else 0,
-            "topography_load_warning": self._topography_load_warning,
             "topography_viewport_available": self._topography_viewport is not None,
             "topography_viewport_feature_count": self._topography_viewport.feature_count if self._topography_viewport else 0,
             "topography_viewport_error": self._topography_viewport_error,
@@ -1506,15 +1457,13 @@ def create_app(
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M,
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES,
     theater_id: str | None = None,
-    topography_path: Path | None = DEFAULT_TOPOGRAPHY_PATH,
-    max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES,
-    topography_viewport_path: Path | None = DEFAULT_TOPOGRAPHY_VIEWPORT_PATH,
-    surface_regions_path: Path | None = DEFAULT_SURFACE_REGIONS_PATH,
-    transport_infrastructure_path: Path | None = DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH,
-    railway_infrastructure_path: Path | None = DEFAULT_RAILWAY_INFRASTRUCTURE_PATH,
-    infrastructure_sites_path: Path | None = DEFAULT_INFRASTRUCTURE_SITES_PATH,
-    settlements_path: Path | None = DEFAULT_SETTLEMENTS_PATH,
-    strategic_verifications_path: Path | None = DEFAULT_STRATEGIC_VERIFICATIONS_PATH,
+    topography_viewport_path: Path | None = None,
+    surface_regions_path: Path | None = None,
+    transport_infrastructure_path: Path | None = None,
+    railway_infrastructure_path: Path | None = None,
+    infrastructure_sites_path: Path | None = None,
+    settlements_path: Path | None = None,
+    strategic_verifications_path: Path | None = None,
 ) -> FastAPI:
     """Create the FastAPI map application."""
 
@@ -1536,8 +1485,6 @@ def create_app(
         incursion_support_radius_m=incursion_support_radius_m,
         lodgement_min_forces=lodgement_min_forces,
         theater_id=theater_id,
-        topography_path=topography_path,
-        max_topography_bytes=max_topography_bytes,
         topography_viewport_path=topography_viewport_path,
         surface_regions_path=surface_regions_path,
         transport_infrastructure_path=transport_infrastructure_path,
@@ -1641,10 +1588,6 @@ def create_app(
         except (RuntimeError, TimeoutError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {"ok": True, "assessment": assessment}
-
-    @app.get("/api/topography/global.geojson")
-    async def global_topography() -> dict[str, Any]:
-        return runtime.topography_geojson()
 
     @app.get("/api/topography/viewport.geojson")
     async def viewport_topography(
@@ -1766,13 +1709,6 @@ def main() -> None:
         default=DEFAULT_THEATER_PROFILE_PATH,
         help="Theater profile defining source policy and default artifact paths.",
     )
-    parser.add_argument("--topography", type=Path, default=None, help="Override the profile's static topography cache.")
-    parser.add_argument(
-        "--max-topography-mb",
-        type=float,
-        default=DEFAULT_MAX_TOPOGRAPHY_BYTES / (1024 * 1024),
-        help="Maximum static GeoJSON size loaded into memory; zero disables the guard.",
-    )
     parser.add_argument(
         "--topography-viewport",
         type=Path,
@@ -1846,8 +1782,6 @@ def main() -> None:
         incursion_support_radius_m=max(1.0, args.incursion_support_radius),
         lodgement_min_forces=max(1, args.lodgement_min_forces),
         theater_id=profile.theater_id,
-        topography_path=args.topography or theater_paths.path("topography"),
-        max_topography_bytes=max(0, int(args.max_topography_mb * 1024 * 1024)),
         topography_viewport_path=args.topography_viewport or theater_paths.path("viewport_manifest"),
         surface_regions_path=args.surface_regions or theater_paths.path("surface_regions"),
         transport_infrastructure_path=args.transport_infrastructure or theater_paths.path("transport_infrastructure"),

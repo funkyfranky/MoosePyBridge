@@ -7,12 +7,20 @@ from datetime import UTC, datetime
 import json
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 from urllib.request import urlopen
 from zipfile import ZipFile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PYTHON_ROOT = REPO_ROOT / "python"
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from moosebridge.theater_data import DEFAULT_THEATER_PROFILE_PATH, load_theater_profile
+
+
 DATASETS = {
     "land": (
         "https://osmdata.openstreetmap.de/download/simplified-land-polygons-complete-3857.zip",
@@ -32,14 +40,22 @@ DATASETS = {
 def main() -> int:
     parser = argparse.ArgumentParser(description="Download prepared OpenStreetMap coastline datasets")
     parser.add_argument(
+        "--profile",
+        type=Path,
+        default=DEFAULT_THEATER_PROFILE_PATH,
+        help="Theater profile that owns the downloaded source data.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
-        default=REPO_ROOT / "tmp" / "topography" / "osmcoastline",
+        help="Optional output override; defaults to the profile's OSMCoastline source directory.",
     )
     parser.add_argument("--dataset", choices=tuple(DATASETS), action="append")
     parser.add_argument("--refresh", action="store_true")
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
+    profile = load_theater_profile(args.profile, project_root=REPO_ROOT)
+    output = args.output or profile.paths(project_root=REPO_ROOT).path("osmcoastline_directory")
+    output.mkdir(parents=True, exist_ok=True)
 
     selected = args.dataset or ["land", "water"]
     manifest: dict[str, object] = {
@@ -49,7 +65,7 @@ def main() -> int:
     }
     for dataset in selected:
         url, target_stem = DATASETS[dataset]
-        target = args.output / f"{target_stem}.shp"
+        target = output / f"{target_stem}.shp"
         if target.is_file() and not args.refresh:
             print(f"Reusing {target}")
         else:
@@ -58,14 +74,14 @@ def main() -> int:
                 archive = Path(temporary) / f"{dataset}.zip"
                 with urlopen(url, timeout=180) as response, archive.open("wb") as stream:
                     shutil.copyfileobj(response, stream)
-                _extract_shapefile(archive, args.output, target_stem)
-            print(f"Wrote {dataset} dataset to {args.output}")
+                _extract_shapefile(archive, output, target_stem)
+            print(f"Wrote {dataset} dataset to {output}")
         manifest["datasets"][dataset] = {  # type: ignore[index]
             "url": url,
             "path": target.name,
             "size_bytes": target.stat().st_size,
         }
-    (args.output / "manifest.json").write_text(
+    (output / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )

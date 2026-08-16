@@ -14,7 +14,7 @@ if str(PYTHON_ROOT) not in sys.path:
 from moosebridge import build_road_routing_shard_index
 
 
-CACHE_DIR = REPO_ROOT / "tmp" / "topography" / "road_routing_cache"
+CACHE_DIR = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "road-routing"
 OUTPUT = CACHE_DIR / "manifest.json"
 
 

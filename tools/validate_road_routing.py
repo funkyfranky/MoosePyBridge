@@ -15,7 +15,7 @@ if str(PYTHON_ROOT) not in sys.path:
 from moosebridge import RoadRoutingNetwork, TRACKED_ROAD_PROFILE, format_python_road_route
 
 
-NETWORK_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-road-routing.npz"
+NETWORK_PATH = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "road-routing.npz"
 ROUTES = (
     ("Laage - Gross Mohrdorf", (53.9182, 12.2783), (54.3600, 12.9000)),
     ("Hamburg - Berlin", (53.5511, 9.9937), (52.5200, 13.4050)),

@@ -30,11 +30,11 @@ from moosebridge import (  # noqa: E402
 from moosebridge.pbf_topography import administrative_boundaries_from_pbf  # noqa: E402
 
 
-DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "topography" / "viewport" / "manifest.json"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-settlements.geojson"
+DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "viewport" / "manifest.json"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "settlements.geojson"
 DEFAULT_CONFIG = PYTHON_ROOT / "moosebridge" / "data" / "GermanyCW_topography.json"
-DEFAULT_PBF_DIR = REPO_ROOT / "tmp" / "topography" / "pbf"
-DEFAULT_ADMIN_CACHE = REPO_ROOT / "tmp" / "topography" / "administrative_boundary_cache"
+DEFAULT_PBF_DIR = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "pbf"
+DEFAULT_ADMIN_CACHE = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "administrative-boundaries"
 
 
 def main() -> int:

@@ -23,10 +23,14 @@ from moosebridge.topography_coverage import TheaterTopographyCoverage
 def main() -> int:
     parser = argparse.ArgumentParser(description="Import a Geofabrik PBF baseline for a DCS theater")
     parser.add_argument("--config", type=Path, default=PYTHON_ROOT / "moosebridge" / "data" / "GermanyCW_topography.json")
-    parser.add_argument("--download-dir", type=Path, default=REPO_ROOT / "tmp" / "topography" / "pbf")
-    parser.add_argument("--cache-dir", type=Path, default=REPO_ROOT / "tmp" / "topography" / "import_cache")
-    parser.add_argument("--output", type=Path, default=REPO_ROOT / "tmp" / "topography" / "GermanyCW.geojson")
-    parser.add_argument("--coverage", type=Path, default=REPO_ROOT / "tmp" / "topography" / "GermanyCW-coverage.geojson")
+    parser.add_argument("--download-dir", type=Path, default=REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "pbf")
+    parser.add_argument("--cache-dir", type=Path, default=REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "import")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Optional merged GeoJSON diagnostic output. Normal builds keep only per-source shards.",
+    )
+    parser.add_argument("--coverage", type=Path, default=REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "verification" / "coverage.geojson")
     parser.add_argument("--source", action="append", dest="sources", help="Import only the named source; repeat as needed.")
     parser.add_argument("--refresh", action="store_true", help="Redownload existing PBF files.")
     parser.add_argument("--download-only", action="store_true")
@@ -96,30 +100,33 @@ def main() -> int:
             print(f"  cached {len(shard.features)} features: {cache_path.name}", flush=True)
         shards.append(shard)
 
-    features = {feature.object_id: feature for shard in shards for feature in shard.features}
-    snapshots = [shard.source_snapshot_date for shard in shards if shard.source_snapshot_date]
-    topography = TheaterTopography(
-        theater_id=str(config["theater_id"]),
-        scenario_reference_year=int(config["scenario_reference_year"]),
-        source_snapshot_date=max(snapshots) if snapshots else None,
-        generated_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        bounds=bounds,
-        features=tuple(sorted(features.values(), key=lambda feature: feature.object_id)),
-        metadata={
-            "external_source": "OpenStreetMap Geofabrik PBF",
-            "source_files": [path.name for path in paths],
-            "dcs_verification": "pending",
-            "buildings_included": args.include_buildings,
-            "geometry_simplification_m": args.simplify_meters,
-            "coverage_levels": sorted({area.level.value for area in coverage.areas}) if coverage else None,
-            "coverage_area_count": len(coverage.areas) if coverage else 0,
-            "conversion_cache_key": cache_key,
-        },
-    )
-    topography.save(args.output)
-    print(f"Wrote {len(topography.features)} features to {args.output}")
-    for layer, count in sorted(feature_counts(topography.features).items()):
-        print(f"  {layer}: {count}")
+    if args.output is not None:
+        features = {feature.object_id: feature for shard in shards for feature in shard.features}
+        snapshots = [shard.source_snapshot_date for shard in shards if shard.source_snapshot_date]
+        topography = TheaterTopography(
+            theater_id=str(config["theater_id"]),
+            scenario_reference_year=int(config["scenario_reference_year"]),
+            source_snapshot_date=max(snapshots) if snapshots else None,
+            generated_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            bounds=bounds,
+            features=tuple(sorted(features.values(), key=lambda feature: feature.object_id)),
+            metadata={
+                "external_source": "OpenStreetMap Geofabrik PBF",
+                "source_files": [path.name for path in paths],
+                "dcs_verification": "pending",
+                "buildings_included": args.include_buildings,
+                "geometry_simplification_m": args.simplify_meters,
+                "coverage_levels": sorted({area.level.value for area in coverage.areas}) if coverage else None,
+                "coverage_area_count": len(coverage.areas) if coverage else 0,
+                "conversion_cache_key": cache_key,
+            },
+        )
+        topography.save(args.output)
+        print(f"Wrote {len(topography.features)} features to {args.output}")
+        for layer, count in sorted(feature_counts(topography.features).items()):
+            print(f"  {layer}: {count}")
+    else:
+        print(f"Prepared {len(shards)} reusable import shard(s); no merged GeoJSON requested.")
     return 0
 
 

@@ -13,32 +13,28 @@ DEFAULT_THEATER_PROFILE_PATH = Path(__file__).with_name("data") / "GermanyCW_top
 
 
 DEFAULT_ARTIFACTS: dict[str, str] = {
-    "topography": "{theater_id}.geojson",
-    "topography_preview": "{theater_id}-simplified.geojson",
-    "coverage": "{theater_id}-coverage.geojson",
-    "viewport_manifest": "viewport/manifest.json",
-    "surface_source": "{theater_id}-surface-source.geojson",
-    "surface_regions": "{theater_id}-surface-regions.geojson",
-    "surface_comparison": "{theater_id}-surface-comparison.geojson",
-    "road_routing": "{theater_id}-road-routing.npz",
-    "road_routing_cache": "road_routing_cache",
-    "ground_mobility": "{theater_id}-ground-mobility.json",
-    "transport_infrastructure": "{theater_id}-transport-infrastructure.geojson",
-    "railway_infrastructure": "{theater_id}-railway-infrastructure.geojson",
-    "railway_routing": "{theater_id}-railway-routing.npz",
-    "railway_facility_cache": "railway_facility_cache",
-    "settlements": "{theater_id}-settlements.geojson",
-    "administrative_boundary_cache": "administrative_boundary_cache",
-    "infrastructure_sites": "{theater_id}-infrastructure-sites.geojson",
-    "strategic_verifications": "{theater_id}-strategic-verifications.json",
-    "pbf_directory": "pbf",
-    "import_cache": "import_cache",
-    "osmcoastline_directory": "osmcoastline",
-    "natural_earth_directory": "naturalearth",
+    "coverage": "verification/coverage.geojson",
+    "topography_preview": "verification/topography-preview.geojson",
+    "strategic_verifications": "verification/strategic-verifications.json",
+    "pbf_directory": "sources/pbf",
+    "osmcoastline_directory": "sources/osmcoastline",
+    "import_cache": "cache/import",
+    "viewport_manifest": "cache/viewport/manifest.json",
+    "surface_source": "cache/surface-source.geojson",
+    "road_routing_cache": "cache/road-routing",
+    "railway_facility_cache": "cache/railway-facilities",
+    "administrative_boundary_cache": "cache/administrative-boundaries",
+    "surface_regions": "runtime/surface-regions.geojson",
+    "road_routing": "runtime/road-routing.npz",
+    "ground_mobility": "runtime/ground-mobility.json",
+    "transport_infrastructure": "runtime/transport-infrastructure.geojson",
+    "railway_infrastructure": "runtime/railway-infrastructure.geojson",
+    "railway_routing": "runtime/railway-routing.npz",
+    "settlements": "runtime/settlements.geojson",
+    "infrastructure_sites": "runtime/infrastructure-sites.geojson",
 }
 
-MAP_ARTIFACT_KEYS = (
-    "topography",
+RUNTIME_ARTIFACT_KEYS = (
     "viewport_manifest",
     "surface_regions",
     "transport_infrastructure",
@@ -47,6 +43,9 @@ MAP_ARTIFACT_KEYS = (
     "settlements",
     "strategic_verifications",
 )
+
+# Backwards-compatible public name for callers that report map readiness.
+MAP_ARTIFACT_KEYS = RUNTIME_ARTIFACT_KEYS
 
 
 @dataclass(slots=True, frozen=True)

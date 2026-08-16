@@ -2369,10 +2369,6 @@
       if (healthResponse.ok) {
         const status = await healthResponse.json();
         updateStatus(status);
-        if (!status.topography_viewport_available) {
-          const topographyResponse = await fetch("/api/topography/global.geojson");
-          if (topographyResponse.ok) setTopography(await topographyResponse.json());
-        }
       }
       await refreshTransportInfrastructure();
     } catch (error) {

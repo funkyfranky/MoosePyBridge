@@ -20,10 +20,10 @@ from moosebridge import build_road_routing_network, build_road_routing_shard_ind
 
 
 DEFAULT_CONFIG = PYTHON_ROOT / "moosebridge" / "data" / "GermanyCW_topography.json"
-DEFAULT_COVERAGE = REPO_ROOT / "tmp" / "topography" / "GermanyCW-coverage.geojson"
-DEFAULT_PBF_DIR = REPO_ROOT / "tmp" / "topography" / "pbf"
-DEFAULT_CACHE_DIR = REPO_ROOT / "tmp" / "topography" / "road_routing_cache"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-road-routing.npz"
+DEFAULT_COVERAGE = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "verification" / "coverage.geojson"
+DEFAULT_PBF_DIR = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "pbf"
+DEFAULT_CACHE_DIR = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "road-routing"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "road-routing.npz"
 
 
 def main() -> int:

@@ -23,8 +23,8 @@ from moosebridge import (  # noqa: E402
 )
 
 
-DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "topography" / "viewport" / "manifest.json"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-infrastructure-sites.geojson"
+DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "viewport" / "manifest.json"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "infrastructure-sites.geojson"
 
 
 def main() -> int:

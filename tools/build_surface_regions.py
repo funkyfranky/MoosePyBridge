@@ -24,7 +24,7 @@ def main() -> int:
     parser.add_argument(
         "--topography",
         type=Path,
-        default=REPO_ROOT / "tmp" / "topography" / "GermanyCW.geojson",
+        help="Optional legacy merged topography input used only when no compact cache exists.",
     )
     parser.add_argument(
         "--config",
@@ -34,41 +34,23 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=REPO_ROOT / "tmp" / "topography" / "GermanyCW-surface-regions.geojson",
+        default=REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "surface-regions.geojson",
     )
-    parser.add_argument("--import-cache", type=Path, default=REPO_ROOT / "tmp" / "topography" / "import_cache")
+    parser.add_argument("--import-cache", type=Path, default=REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "import")
     parser.add_argument(
         "--surface-source-output",
         type=Path,
-        default=REPO_ROOT / "tmp" / "topography" / "GermanyCW-surface-source.geojson",
-    )
-    parser.add_argument(
-        "--natural-earth-land",
-        type=Path,
-        default=REPO_ROOT / "tmp" / "topography" / "naturalearth" / "ne_10m_land.shp",
-        help="Natural Earth 1:10m land polygons used as the global land/water baseline.",
-    )
-    parser.add_argument(
-        "--natural-earth-minor-islands",
-        type=Path,
-        default=REPO_ROOT / "tmp" / "topography" / "naturalearth" / "ne_10m_minor_islands.shp",
-        help="Natural Earth 1:10m minor-island polygons added to the land baseline.",
-    )
-    parser.add_argument(
-        "--baseline",
-        choices=("natural-earth", "osm"),
-        default="osm",
-        help="External coastline polygon baseline. The OSM option uses prepared osmcoastline output.",
+        default=REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "surface-source.geojson",
     )
     parser.add_argument(
         "--osm-land",
         type=Path,
-        default=REPO_ROOT / "tmp" / "topography" / "osmcoastline" / "land_polygons.shp",
+        default=REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "osmcoastline" / "land_polygons.shp",
     )
     parser.add_argument(
         "--osm-water",
         type=Path,
-        default=REPO_ROOT / "tmp" / "topography" / "osmcoastline" / "water_polygons.shp",
+        default=REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "osmcoastline" / "water_polygons.shp",
     )
     parser.add_argument("--refresh-surface-source", action="store_true", help="Rebuild the compact surface source from checkpoints.")
     parser.add_argument("--grid-spacing", type=float, default=500.0, help="Analysis grid spacing in meters.")
@@ -83,8 +65,6 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if not args.topography.is_file():
-        raise FileNotFoundError(args.topography)
     expected_source_count = None
     if args.config.is_file():
         config = json.loads(args.config.read_text(encoding="utf-8"))
@@ -92,42 +72,30 @@ def main() -> int:
         if isinstance(sources, list):
             expected_source_count = len(sources)
 
-    if (
-        args.topography.stat().st_size > 512 * 1024 * 1024
-        and args.surface_source_output.is_file()
-        and not args.refresh_surface_source
-    ):
+    if args.surface_source_output.is_file() and not args.refresh_surface_source:
         print(f"Loading compact surface source: {args.surface_source_output}", flush=True)
         topography = TheaterTopography.load(args.surface_source_output)
-    elif args.topography.stat().st_size > 512 * 1024 * 1024 and args.import_cache.is_dir():
+    elif args.import_cache.is_dir():
         print(f"Building compact surface source from import checkpoints: {args.import_cache}", flush=True)
         topography = _surface_topography_from_cache(args.import_cache)
         topography.save(args.surface_source_output)
         print(f"Wrote {len(topography.features)} coastline/water features to {args.surface_source_output}", flush=True)
-    else:
+    elif args.topography is not None and args.topography.is_file():
         print(f"Loading topography: {args.topography}", flush=True)
         topography = TheaterTopography.load(args.topography)
+    else:
+        raise FileNotFoundError(
+            "surface build requires a compact surface source, import cache, or explicit --topography input"
+        )
     if args.bounds:
         requested_bounds = tuple(args.bounds)
         if requested_bounds[0] >= requested_bounds[2] or requested_bounds[1] >= requested_bounds[3]:
             raise ValueError("bounds must be SOUTH WEST NORTH EAST")
         topography = replace(topography, bounds=requested_bounds)
-    if args.baseline == "osm":
-        baseline_water = _load_polygon_baseline((args.osm_water,), topography.bounds, "OSM water")
-        baseline_land = None
-        baseline_land_source = "GermanyCW bounds minus OpenStreetMap prepared sea polygons"
-        baseline_water_source = "OpenStreetMap prepared sea polygons"
-        refine_baseline = False
-    else:
-        baseline_land = _load_polygon_baseline(
-            (args.natural_earth_land, args.natural_earth_minor_islands),
-            topography.bounds,
-            "Natural Earth land",
-        )
-        baseline_water = None
-        baseline_land_source = "Natural Earth 1:10m land and minor islands"
-        baseline_water_source = None
-        refine_baseline = True
+    baseline_water = _load_polygon_baseline((args.osm_water,), topography.bounds, "OSM water")
+    baseline_land = None
+    baseline_land_source = f"{topography.theater_id} bounds minus OpenStreetMap prepared sea polygons"
+    baseline_water_source = "OpenStreetMap prepared sea polygons"
     print(
         f"Building {topography.theater_id} surface regions at {args.grid_spacing:.0f} m resolution ...",
         flush=True,
@@ -138,7 +106,7 @@ def main() -> int:
         baseline_land_source=baseline_land_source,
         baseline_water_geometry=baseline_water,
         baseline_water_source=baseline_water_source,
-        refine_baseline_with_coastlines=refine_baseline,
+        refine_baseline_with_coastlines=False,
         grid_spacing_m=args.grid_spacing,
         minimum_region_area_m2=args.minimum_area_km2 * 1_000_000,
         simplify_meters=args.simplify_meters,

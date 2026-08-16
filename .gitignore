@@ -29,7 +29,7 @@ moosebridge_raw.jsonl
 tmp/frontline_prototype.geojson
 tmp/frontline_prototype.html
 tmp/dcs-lua-datamine/
-tmp/topography/
+tmp/theaters/
 
 # Local environment files
 .env

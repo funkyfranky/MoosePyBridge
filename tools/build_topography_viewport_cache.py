@@ -11,8 +11,8 @@ import re
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INPUT = REPO_ROOT / "tmp" / "topography" / "import_cache"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "viewport"
+DEFAULT_INPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "import"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "viewport"
 KEY_PATTERN = re.compile(r"-([0-9a-f]{12})\.geojson$")
 
 

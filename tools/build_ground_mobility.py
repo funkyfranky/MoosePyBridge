@@ -23,9 +23,9 @@ from moosebridge import (
 )
 
 
-DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "topography" / "viewport" / "manifest.json"
-DEFAULT_SURFACES = REPO_ROOT / "tmp" / "topography" / "GermanyCW-surface-regions.geojson"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
+DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "viewport" / "manifest.json"
+DEFAULT_SURFACES = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "surface-regions.geojson"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "ground-mobility.json"
 
 
 def main() -> int:

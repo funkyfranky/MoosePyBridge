@@ -15,7 +15,6 @@ from moosebridge.pictures import GlobalPicture
 from moosebridge.sdk import GeographicPoint
 from moosebridge.state import MooseBridgeState
 from moosebridge.strategic import ObjectiveKind, OwnershipPolicy, StrategicObjective
-from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer
 from moosebridge.surface_regions import (
     SurfaceClass,
     SurfaceRegion,
@@ -128,9 +127,6 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
         "recon_coverage_error": None,
         "strategic_objective_count": 0,
         "strategic_objective_error": None,
-        "topography_theater_id": None,
-        "topography_feature_count": 0,
-        "topography_load_warning": None,
         "topography_viewport_available": False,
         "topography_viewport_feature_count": 0,
         "topography_viewport_error": None,
@@ -144,40 +140,6 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
             "strategic_verification_count": 0,
             "diplomacy": None,
     }
-
-
-def test_map_runtime_serves_topography_separately_from_dynamic_picture() -> None:
-    runtime = GlobalMapRuntime()
-    runtime._topography = TheaterTopography(
-        theater_id="GermanyCW",
-        features=(
-            TopographyFeature(
-                object_id="TOPOGRAPHY:road/1",
-                layer=TopographyLayer.ROADS,
-                category="primary",
-                geometry={"type": "LineString", "coordinates": [[12.0, 54.0], [12.1, 54.1]]},
-                source="OpenStreetMap",
-                confidence=0.75,
-            ),
-        ),
-    )
-
-    payload = runtime.topography_geojson()
-
-    assert runtime.picture == empty_picture()
-    assert len(payload["features"]) == 1
-    assert payload["features"][0]["properties"]["layer"] == "topography_roads"
-
-
-def test_map_runtime_skips_topography_above_memory_limit(tmp_path) -> None:
-    cache = tmp_path / "large.geojson"
-    cache.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
-
-    runtime = GlobalMapRuntime(topography_path=cache, max_topography_bytes=8)
-
-    assert runtime.topography_geojson() == empty_picture()
-    assert runtime.status_payload()["topography_feature_count"] == 0
-    assert "configured in-memory limit" in runtime.status_payload()["topography_load_warning"]
 
 
 def test_map_runtime_serves_surface_regions_separately_from_mission_state() -> None:

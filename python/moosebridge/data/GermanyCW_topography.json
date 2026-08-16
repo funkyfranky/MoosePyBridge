@@ -4,16 +4,13 @@
   "display_name": "Germany Cold War",
   "scenario_reference_year": 1999,
   "infrastructure_reference_year": 1989,
-  "data_root": "tmp/topography",
+  "data_root": "tmp/theaters/GermanyCW",
   "excluded_energy_sources": [
     "solar",
     "wind",
     "biogas",
     "battery"
   ],
-  "artifacts": {
-    "topography_preview": "GermanyCW-mv-simplified.geojson"
-  },
   "pilot_bounds": {
     "south": 53.0,
     "west": 10.0,

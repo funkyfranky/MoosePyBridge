@@ -20,8 +20,8 @@ from moosebridge import (
 )
 
 
-STRATEGIC_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
-SHARD_INDEX_PATH = REPO_ROOT / "tmp" / "topography" / "road_routing_cache" / "manifest.json"
+STRATEGIC_PATH = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "ground-mobility.json"
+SHARD_INDEX_PATH = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "road-routing" / "manifest.json"
 CORRIDOR_BUFFER_M = 50_000.0
 ROUTES = (
     ("Laage - Gross Mohrdorf", (53.9182, 12.2783), (54.3600, 12.9000)),

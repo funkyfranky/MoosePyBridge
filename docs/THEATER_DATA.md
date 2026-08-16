@@ -12,10 +12,19 @@ The released Germany Cold War profile is:
 python/moosebridge/data/GermanyCW_topography.json
 ```
 
-It deliberately points to the existing `tmp/topography` layout, so the current
-multi-gigabyte cache does not need to be moved or rebuilt. A new theater should
-normally use the default isolated layout `tmp/theaters/{theater_id}`. This lets
-multiple theater datasets coexist without sharing caches or verification data.
+Every theater uses an isolated `tmp/theaters/{theater_id}` root. Generated data
+is separated by lifecycle:
+
+```text
+tmp/theaters/<theater-id>/
+  sources/       downloaded external inputs
+  cache/         reproducible build intermediates
+  runtime/       products consumed by planning and the map server
+  verification/  DCS coverage and manually reviewed evidence
+```
+
+The browser consumes only the indexed topography below `cache/viewport`; a
+multi-gigabyte merged topography GeoJSON is neither generated nor loaded.
 
 Artifacts used by the map server must cover the complete theater. Regional
 pilot or validation artifacts may be retained for diagnostics, but must not be
@@ -38,7 +47,8 @@ The stages are ordered as follows:
 
 1. `coverage`: capture mission-editor `Topography All`, `Topography Low ...`,
    and `Topography High ...` zones from DCS.
-2. `import`: download and normalize configured Geofabrik PBF extracts.
+2. `import`: download and normalize configured Geofabrik PBF extracts into
+   reusable per-source shards.
 3. `viewport`: build the browser-map spatial index.
 4. `surfaces`: build connected land and water regions.
 5. `road-routing`: build the unrestricted military road graph.

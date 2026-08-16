@@ -81,7 +81,6 @@ configuration and is not intended to be run directly.
 | `verify_topography_overlay.py` | Overlay | Draw a bounded sample of normalized topography in DCS F10. |
 | `verify_road_alignment.py` | Overlay | Compare OSM road samples with native DCS roads. |
 | `verify_surface_alignment.py` | Overlay | Compare normalized land/water samples with DCS surface types. |
-| `verify_coastline_baselines.py` | Overlay | Compare coastline classifications with native DCS surfaces. |
 | `draw_coastline_overlay.py` | Overlay | Draw the normalized coastline in DCS F10. |
 | `inspect_ground_route.py` | Overlay | Compare strategic Python routing with a native DCS road route. |
 | `benchmark_road_routing.py` | Read-only | Benchmark Python A* and native DCS path calculation. |

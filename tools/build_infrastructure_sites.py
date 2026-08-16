@@ -31,9 +31,9 @@ from moosebridge.theater_data import DEFAULT_THEATER_PROFILE_PATH, TheaterDataPr
 from moosebridge.pbf_topography import targeted_infrastructure_features_from_pbf  # noqa: E402
 
 
-DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "topography" / "viewport" / "manifest.json"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-infrastructure-sites.geojson"
-DEFAULT_PBF_DIRECTORY = REPO_ROOT / "tmp" / "topography" / "pbf"
+DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "viewport" / "manifest.json"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "infrastructure-sites.geojson"
+DEFAULT_PBF_DIRECTORY = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "pbf"
 
 
 def main() -> int:

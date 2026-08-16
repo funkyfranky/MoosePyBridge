@@ -15,7 +15,7 @@ if str(PYTHON_ROOT) not in sys.path:
 from moosebridge import GroundMobilityNetwork, TRACKED_GROUND_PROFILE, format_ground_route
 
 
-DEFAULT_NETWORK = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
+DEFAULT_NETWORK = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "ground-mobility.json"
 MAINLAND = (54.3090, 13.0670)
 RUGEN = (54.4180, 13.4330)
 BORNHOLM = (55.1000, 14.7060)

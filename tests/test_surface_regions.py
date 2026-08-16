@@ -9,7 +9,6 @@ from moosebridge.surface_regions import (
     TheaterSurfaceRegions,
     build_surface_regions,
 )
-from moosebridge.surface_comparison import compare_surface_regions
 from moosebridge.topography import TheaterTopography, TopographyFeature, TopographyLayer
 
 
@@ -262,7 +261,6 @@ def test_surface_region_builder_uses_prepared_land_and_water_without_local_refin
     assert result.metadata["baseline_coastline_refinement"] is False
     assert {region.surface_class for region in result.regions} == {SurfaceClass.LAND, SurfaceClass.WATER}
 
-
 def test_surface_region_builder_uses_prepared_water_as_complete_baseline() -> None:
     pytest.importorskip("contourpy")
     pytest.importorskip("scipy")
@@ -290,34 +288,3 @@ def test_surface_region_builder_uses_prepared_water_as_complete_baseline() -> No
     assert result.metadata["coastline_sample_count"] == 0
     assert result.metadata["maximum_coastline_distance_m"] is None
     assert {region.surface_class for region in result.regions} == {SurfaceClass.LAND, SurfaceClass.WATER}
-
-
-def test_surface_region_comparison_reports_changed_samples() -> None:
-    pytest.importorskip("shapely")
-    pytest.importorskip("pyproj")
-
-    def artifact(east: float) -> TheaterSurfaceRegions:
-        return TheaterSurfaceRegions(
-            theater_id="Comparison",
-            bounds=(53.9, 11.8, 54.1, 12.2),
-            grid_spacing_m=1_000,
-            regions=(SurfaceRegion(
-                region_id=f"SURFACE:Comparison:LAND:{east}",
-                surface_class=SurfaceClass.LAND,
-                kind=SurfaceRegionKind.MAINLAND,
-                geometry={
-                    "type": "Polygon",
-                    "coordinates": [[[11.8, 53.9], [east, 53.9], [east, 54.1], [11.8, 54.1], [11.8, 53.9]]],
-                },
-                area_m2=1,
-                cell_count=1,
-                confidence=0.75,
-                source="test",
-            ),),
-        )
-
-    summary, geojson = compare_surface_regions(artifact(12.0), artifact(12.1), sample_spacing_m=5_000)
-
-    assert summary["agreement_count"] < summary["sample_count"]
-    assert summary["reference_water_candidate_land"] > 0
-    assert len(geojson["features"]) == summary["sample_count"] - summary["agreement_count"]

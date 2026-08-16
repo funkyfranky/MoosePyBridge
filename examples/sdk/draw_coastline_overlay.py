@@ -22,7 +22,7 @@ CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 
 LAND_POLYGONS_PATH = (
-    REPO_ROOT / "tmp" / "topography" / "osmcoastline" / "land_polygons.shp"
+    REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "osmcoastline" / "land_polygons.shp"
 )
 CENTER_OBJECT_ID = "AIRBASE:Laage"
 RADIUS_KM = 100.0

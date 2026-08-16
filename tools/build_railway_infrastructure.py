@@ -29,13 +29,13 @@ from moosebridge.pbf_topography import _normalize_ogr_record, features_from_pyro
 from moosebridge.topography_coverage import TheaterTopographyCoverage  # noqa: E402
 
 
-DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "topography" / "viewport" / "manifest.json"
+DEFAULT_MANIFEST = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "viewport" / "manifest.json"
 DEFAULT_CONFIG = PYTHON_ROOT / "moosebridge" / "data" / "GermanyCW_topography.json"
-DEFAULT_PBF_DIR = REPO_ROOT / "tmp" / "topography" / "pbf"
-DEFAULT_COVERAGE = REPO_ROOT / "tmp" / "topography" / "GermanyCW-coverage.geojson"
-DEFAULT_FACILITY_CACHE = REPO_ROOT / "tmp" / "topography" / "railway_facility_cache"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-railway-infrastructure.geojson"
-DEFAULT_ROUTING_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-railway-routing.npz"
+DEFAULT_PBF_DIR = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "sources" / "pbf"
+DEFAULT_COVERAGE = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "verification" / "coverage.geojson"
+DEFAULT_FACILITY_CACHE = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "cache" / "railway-facilities"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "railway-infrastructure.geojson"
+DEFAULT_ROUTING_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "railway-routing.npz"
 
 
 def main() -> int:

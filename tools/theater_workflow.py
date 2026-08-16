@@ -81,10 +81,10 @@ def workflow_stages(profile: TheaterDataProfile, paths: TheaterDataPaths) -> tup
         ),
         WorkflowStage(
             "import",
-            "Download and normalize the configured Geofabrik sources.",
+            "Download and normalize the configured Geofabrik sources into reusable shards.",
             (python, "tools/import_geofabrik_topography.py", "--config", config,
              "--download-dir", p("pbf_directory"), "--cache-dir", p("import_cache"),
-             "--output", p("topography"), "--coverage", p("coverage")),
+             "--coverage", p("coverage")),
         ),
         WorkflowStage(
             "viewport",
@@ -95,8 +95,8 @@ def workflow_stages(profile: TheaterDataProfile, paths: TheaterDataPaths) -> tup
         WorkflowStage(
             "surfaces",
             "Build connected land and water regions.",
-            (python, "tools/build_surface_regions.py", "--topography", p("topography"),
-             "--config", config, "--output", p("surface_regions"), "--import-cache", p("import_cache"),
+            (python, "tools/build_surface_regions.py", "--config", config,
+             "--output", p("surface_regions"), "--import-cache", p("import_cache"),
              "--surface-source-output", p("surface_source"),
              "--osm-land", str(paths.path("osmcoastline_directory") / "land_polygons.shp"),
              "--osm-water", str(paths.path("osmcoastline_directory") / "water_polygons.shp")),

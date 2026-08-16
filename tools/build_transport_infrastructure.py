@@ -25,8 +25,8 @@ from moosebridge import (  # noqa: E402
 )
 
 
-DEFAULT_INPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-road-routing.npz"
-DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "topography" / "GermanyCW-transport-infrastructure.geojson"
+DEFAULT_INPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "road-routing.npz"
+DEFAULT_OUTPUT = REPO_ROOT / "tmp" / "theaters" / "GermanyCW" / "runtime" / "transport-infrastructure.geojson"
 
 
 def main() -> int:

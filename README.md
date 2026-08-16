@@ -297,7 +297,7 @@ candidate was omitted. The limit can be adjusted or disabled explicitly:
 
 Normalized geographic candidates do not become objectives merely because they
 exist in OSM. The map detail panel stores a scenario-specific DCS verification
-in `tmp/topography/GermanyCW-strategic-verifications.json`. Verification uses
+in `tmp/theaters/GermanyCW/verification/strategic-verifications.json`. Verification uses
 three states: `unverified`, `represented`, and `not_represented`. Each admitted
 site must be `represented` and reference at least one concrete bridge object
 such as `STATIC:`, `SCENERY:`, `AIRBASE:`, `OPSZONE:`, `ZONE:`, `GROUP:`, or
@@ -1472,14 +1472,15 @@ Before the full import, create mission-editor zones using this naming scheme:
   imported theater-wide.
 
 The capture example requests the current zone snapshot and writes
-`tmp/topography/GermanyCW-coverage.geojson`. Circle and polygon zones are both
+`tmp/theaters/GermanyCW/verification/coverage.geojson`. Circle and polygon zones are both
 supported. The heavy PBF conversion then runs offline. `all` is deliberately a
 baseline coverage level rather than "all OSM objects": coastlines, water,
 motorways, trunk roads, main railways, cities, harbours, and power plants remain
 available across the complete terrain without making the browser cache
 unmanageably large. Higher levels include every lower level automatically.
 
-PBF files and the normalized cache are written below `tmp/topography/`.
+PBF files are written below `tmp/theaters/GermanyCW/sources/pbf/`; normalized
+per-source shards are stored below `tmp/theaters/GermanyCW/cache/import/`.
 Subsequent imports reuse the downloads unless `--refresh` is specified.
 Use repeated `--source <id>` arguments for a smaller regional development
 import; the source IDs are listed in `GermanyCW_topography.json`. Geometries are
@@ -1490,7 +1491,7 @@ by default; add `--include-buildings` when they are needed for a focused test.
 The complete GermanyCW import currently contains more than 4.5 million features
 and is an offline analysis source, not a single browser payload. The viewport
 builder converts each non-empty import checkpoint to spatially indexed
-FlatGeobuf and writes `tmp/topography/viewport/manifest.json`. It is incremental:
+FlatGeobuf and writes `tmp/theaters/GermanyCW/cache/viewport/manifest.json`. It is incremental:
 unchanged source shards are reused unless `--refresh` is specified.
 
 The map server discovers that manifest by default. The browser consumes one
@@ -1502,19 +1503,10 @@ start at zoom 8, omit large raw OSM tag dictionaries, and are cached by the
 server and browser. The bounded `/api/topography/viewport.geojson` endpoint
 remains available for diagnostics and exports; it limits responses to 20,000
 features by default and reports `properties.truncated=true` when necessary.
-The server refuses to load a static GeoJSON larger than 256 MiB by default and
-exposes the reason in `/api/health`; use `--max-topography-mb` to change the
-guard. A deliberately bounded legacy cache can still be selected with
-`--topography <path>`. Static data is independent of the five-second DCS picture
-stream. The external layers are disabled initially and grouped under
+Static data is independent of the five-second DCS picture stream. The browser
+uses only the indexed viewport cache; no merged theater-wide GeoJSON fallback
+is loaded. The external layers are disabled initially and grouped under
 `Topography` in the viewer.
-
-The Overpass importer remains available for small experiments and targeted
-updates:
-
-```powershell
-python tools/import_osm_topography.py
-```
 
 Imported features retain their source, confidence, scenario reference year,
 source snapshot date, optional validity dates, and `dcs_verified` state.
@@ -1579,7 +1571,7 @@ python tools/build_surface_regions.py
 
 The default 500 m full-theater analysis grid uses four-neighbor connectivity so regions
 that touch only at a corner remain separate. Output is written to
-`tmp/topography/GermanyCW-surface-regions.geojson` and records mainland,
+`tmp/theaters/GermanyCW/runtime/surface-regions.geojson` and records mainland,
 island, maritime, and inland-water components with area, source confidence,
 grid resolution, and source-completeness metadata. The map server loads this
 artifact by default; use `--surface-regions <path>` to select another file.
@@ -1589,46 +1581,18 @@ depth constraints belong to the later mobility graph. Output simplification is
 disabled by default because simplifying adjacent components independently can
 create overlaps along their shared coastline. For a complete large import the
 builder first creates and subsequently reuses
-`GermanyCW-surface-source.geojson`, which contains only directed coastlines and
+`cache/surface-source.geojson`, which contains only directed coastlines and
 closed water polygons; use `--refresh-surface-source` after replacing import
-checkpoints. The Natural Earth files are stored below
-`tmp/topography/osmcoastline/` and are reused unless the download command is
-called with `--refresh`. Natural Earth remains available through
-`--baseline natural-earth` as an independent comparison reference.
+checkpoints. Prepared OSMCoastline files are stored below
+`sources/osmcoastline/` and are reused unless the download command is called
+with `--refresh`.
 
 The downloader defaults to the official simplified OSMCoastline Mercator
-datasets, whose detail is appropriate for the 500 m strategic grid; the
-full-resolution global archives remain optional because each is currently
-close to 1 GB. Natural Earth and OSMCoastline can be compared on a bounded area
-without replacing the production artifact:
-
-```powershell
-python tools/download_osm_coastline_data.py
-python tools/build_surface_regions.py --baseline natural-earth --bounds 53 9 56 16 --grid-spacing 1000 --minimum-area-km2 25 --output tmp/topography/GermanyCW-surface-regions-naturalearth-test.geojson
-python tools/build_surface_regions.py --baseline osm --bounds 53 9 56 16 --grid-spacing 1000 --minimum-area-km2 25 --output tmp/topography/GermanyCW-surface-regions-osm-test.geojson
-python tools/compare_surface_regions.py --reference tmp/topography/GermanyCW-surface-regions-naturalearth-test.geojson --candidate tmp/topography/GermanyCW-surface-regions-osm-test.geojson
-```
-
-The OSM mode loads the spatially split sea polygons and derives land as their
+datasets, whose detail is appropriate for the 500 m strategic grid. The
+surface builder loads the spatially split sea polygons and derives land as their
 exact complement inside the requested theater bounds. Detailed inland water
-continues to come from the regional Geofabrik imports. The comparison writes
-every sampled disagreement to
-`tmp/topography/GermanyCW-surface-comparison.geojson` for inspection in a GIS.
-The initial north-Germany and western-Baltic comparison agreed at 99.67% of
-6,055 independent 5 km samples, with 20 changed classifications.
-
-With the daemon and a GermanyCW mission running, validate exactly those changed
-points against native DCS terrain data:
-
-```powershell
-python examples/sdk/verify_coastline_baselines.py
-```
-
-The script calls DCS `land.getSurfaceType()` for every disagreement, prints
-which baseline matches DCS, and draws the points on the F10 map. Green means
-the prepared OSMCoastline result matches DCS; orange means the current
-Natural Earth/local-coastline reference matches DCS. The production surface
-artifact is not changed by this diagnostic.
+continues to come from the regional Geofabrik imports. Representative points
+can be checked against native DCS terrain with `verify_surface_alignment.py`.
 
 To inspect the prepared OSMCoastline geometry directly on the native DCS F10
 map, run:
@@ -1709,7 +1673,7 @@ infrastructure objects:
 python tools/build_transport_infrastructure.py
 ```
 
-This writes `tmp/topography/GermanyCW-transport-infrastructure.geojson`.
+This writes `tmp/theaters/GermanyCW/runtime/transport-infrastructure.geojson`.
 
 Normalized energy and fuel-storage candidates use a separate, theater-aware
 site artifact:
@@ -1808,14 +1772,8 @@ python tools/build_settlements.py
 The builder prefers matching OSM administrative boundaries and retains the
 urban footprint as a fallback. German city states, independent cities, and
 municipalities are matched across administrative levels 4, 6, and 8 by
-Wikidata or normalized name. To compare Hamburg without reading every PBF:
-
-```powershell
-python tools/build_settlements.py --boundary-source hamburg --output tmp/topography/GermanyCW-settlements-administrative-test.geojson
-./run_map.ps1 --settlements tmp/topography/GermanyCW-settlements-administrative-test.geojson
-```
-
-Use `--boundary-mode urban` to reproduce the previous footprint-only artifact.
+Wikidata or normalized name. Use `--boundary-mode urban` to reproduce a
+footprint-only diagnostic artifact.
 Administrative boundaries are modern comparison evidence and are identified by
 `boundary_kind=administrative`, `administrative_level`, and their OSM relation.
 `administrative_area_m2` records the municipal area, while `urban_area_m2`
@@ -1826,7 +1784,7 @@ discarded; inland water, parks, and other internal gaps remain part of the strat
 city area. The core is clipped to the administrative boundary. The map renders it as the stronger fill
 and keeps the administrative boundary as a restrained dashed outline.
 
-By default this writes `tmp/topography/GermanyCW-settlements.geojson` and is loaded by the
+By default this writes `tmp/theaters/GermanyCW/runtime/settlements.geojson` and is loaded by the
 map server through `/api/settlements/global.geojson`. The current cache contains
 2,625 cities and towns, including 2,336 administrative boundaries, 2,274
 clipped urban envelopes, 288 urban-footprint fallbacks, and 2,318 source
@@ -1860,17 +1818,8 @@ They are intended as route dependencies and candidates for later strategic
 objective and damage-state modelling.
 
 Route criticality is an explicit offline refinement because it is substantially
-more expensive than extracting locations. Run it against a regional detailed
-graph when needed:
-
-```powershell
-python tools/build_transport_infrastructure.py `
-  --input tmp/topography/GermanyCW-road-routing-mv.npz `
-  --output tmp/topography/GermanyCW-transport-infrastructure-mv.geojson `
-  --analyze-criticality
-```
-
-For each location, Python blocks a bounded area, identifies opposite strategic
+more expensive than extracting locations. For each location, Python blocks a
+bounded area, identifies opposite strategic
 road portals, and searches up to three alternatives within 50 km. The artifact
 stores road-hierarchy importance, alternative distance, added detour, detour
 ratio, a 0-100 score, and `low`, `medium`, `high`, or `critical`. A missing
@@ -1907,12 +1856,12 @@ alternative route. The expensive analysis is not run by the map server.
 This reads ordinary railway lines from the indexed topography shards and only
 the relevant station, halt, freight, yard, and depot tags from the local
 Geofabrik PBF files. Per-source facility reads are cached below
-`tmp/topography/railway_facility_cache`, so an interrupted theater-wide build
+`tmp/theaters/GermanyCW/cache/railway-facilities`, so an interrupted theater-wide build
 can be resumed. Use `--refresh-facilities` only when the PBF inputs or railway
 classification have changed. A bounded regional diagnostic can be generated
 with `--source mecklenburg-vorpommern`.
 
-The resulting `tmp/topography/GermanyCW-railway-infrastructure.geojson`
+The resulting `tmp/theaters/GermanyCW/runtime/railway-infrastructure.geojson`
 contains aggregated stations, freight terminals, rail yards, depots,
 rail junctions, and rail bridges. Ordinary track remains in the Topography
 layer and is not duplicated as infrastructure. Each operational location keeps

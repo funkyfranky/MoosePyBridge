@@ -441,15 +441,9 @@ Priorities:
   unused directed-coast distance arrays, uses broadcast grid coordinates, and
   rasterizes each inland-water polygon only inside its local grid window. The
   complete 18,561-region artifact builds in bounded memory in about 140 seconds.
-- [x] Prepared official OSMCoastline sea polygons can now replace the Natural
-  Earth baseline in the shared surface-region builder. A downloader, bounded
-  regional build mode, and independent comparison GeoJSON support reproducible
-  A/B tests; the first north-Germany/western-Baltic run agreed at 99.67% of
-  6,055 sampled points.
-- [x] Connected GermanyCW land and water regions now combine a globally
-  consistent Natural Earth 1:10m land baseline with local directed OSM
-  coastline refinement and detailed OSM inland water. This removes distant
-  nearest-coast Voronoi artifacts while retaining the 500 m strategic grid.
+- [x] Connected GermanyCW land and water regions use prepared OSMCoastline sea
+  polygons with detailed OSM inland water. This removes distant nearest-coast
+  artifacts while retaining the 500 m strategic grid.
 - [x] The complete GermanyCW topography is served through spatially indexed
   FlatGeobuf shards and dynamic per-layer Mapbox Vector Tiles. The browser loads
   only visible, enabled layers, applies `all`/`low`/`high` by zoom, caches tiles,
