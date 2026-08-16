@@ -76,6 +76,7 @@ class MooseBridgeState:
     lost_intel_contacts: dict[str, dict[str, Any]] = field(default_factory=dict)
     intel_clusters: dict[str, dict[str, Any]] = field(default_factory=dict)
     loss_reports: dict[str, dict[str, Any]] = field(default_factory=dict)
+    destroyed_object_ids: set[str] = field(default_factory=set)
     opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
     territory_objects: dict[str, Territory] = field(default_factory=dict)
     opsgroup_objects: dict[str, OpsGroup] = field(default_factory=dict)
@@ -125,6 +126,7 @@ class MooseBridgeState:
                 self.ammunition.clear()
                 self.ammunition_objects.clear()
                 self.loss_reports.clear()
+                self.destroyed_object_ids.clear()
                 self.lost_intel_contact_objects.clear()
                 self.lost_intel_contacts.clear()
             self.clock = next_clock
@@ -456,6 +458,8 @@ class MooseBridgeState:
             object_payload = payload.get("object") if isinstance(payload.get("object"), dict) else {}
             object_id = str(payload.get("object_id") or object_payload.get("object_id") or "")
             object_type = str(payload.get("object_type") or object_payload.get("object_type") or "").upper()
+            if object_id:
+                self.destroyed_object_ids.add(object_id)
             if object_id and object_type in {"UNIT", "STATIC"}:
                 collection = self.units if object_type == "UNIT" else self.statics
                 updated = {**collection.get(object_id, {}), **object_payload}

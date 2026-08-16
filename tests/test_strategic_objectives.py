@@ -24,6 +24,23 @@ from moosebridge.strategic_objectives import (
     generate_strategic_objectives,
 )
 from moosebridge.strategic_scope import StrategicScopeState, build_strategic_territory_scope
+from moosebridge.strategic_verification import (
+    StrategicSiteVerification,
+    StrategicVerificationRegistry,
+    StrategicVerificationState,
+    VerifiedDcsComponent,
+)
+
+
+def _verifications(*source_ids: str) -> StrategicVerificationRegistry:
+    return StrategicVerificationRegistry.from_entries(
+        StrategicSiteVerification(
+            source_id=source_id,
+            state=StrategicVerificationState.REPRESENTED,
+            target_components=(VerifiedDcsComponent(f"STATIC:Target-{index}"),),
+        )
+        for index, source_id in enumerate(source_ids)
+    )
 
 
 def _territory(object_id: str, coalition: str, bounds: tuple[float, float, float, float]) -> Territory:
@@ -134,6 +151,18 @@ def test_generator_applies_importance_threshold_and_preserves_dcs_components() -
         scope,  # type: ignore[arg-type]
         settlements=settlements,
         infrastructure=sites,
+        verifications=StrategicVerificationRegistry.from_entries((
+            StrategicSiteVerification(
+                source_id="SETTLEMENT:Important",
+                state=StrategicVerificationState.REPRESENTED,
+                target_components=(VerifiedDcsComponent("ZONE:Important"),),
+            ),
+            StrategicSiteVerification(
+                source_id="FUEL_STORAGE_SITE:Depot",
+                state=StrategicVerificationState.REPRESENTED,
+                target_components=(VerifiedDcsComponent("SCENERY:123"),),
+            ),
+        )),
     )
     by_id = {item.objective_id: item for item in result.objectives}
 
@@ -172,6 +201,7 @@ def test_generator_limits_ranked_geographic_categories_per_scope() -> None:
         state,
         scope,  # type: ignore[arg-type]
         settlements=settlements,
+        verifications=_verifications(*(item.settlement_id for item in settlements.settlements)),
         config=StrategicObjectiveGenerationConfig(
             maximum_geographic_objectives_per_category_per_scope=3,
         ),
@@ -216,6 +246,7 @@ def test_generator_can_disable_geographic_category_limit() -> None:
         state,
         scope,  # type: ignore[arg-type]
         settlements=settlements,
+        verifications=_verifications(*(item.settlement_id for item in settlements.settlements)),
         config=StrategicObjectiveGenerationConfig(
             maximum_geographic_objectives_per_category_per_scope=None,
         ),
@@ -223,3 +254,73 @@ def test_generator_can_disable_geographic_category_limit() -> None:
 
     assert sum(item.kind is ObjectiveKind.TERRITORY for item in result.objectives) == 12
     assert result.category_scope_limit_count == 0
+
+
+def test_generator_excludes_unverified_geographic_candidates() -> None:
+    scope, state = _scope_and_state()
+    settlements = TheaterSettlements(
+        theater_id="Test",
+        settlements=(
+            Settlement(
+                settlement_id="SETTLEMENT:Unverified",
+                name="Unverified",
+                kind=SettlementKind.CITY,
+                size_class=SettlementSizeClass.LARGE_CITY,
+                geometry={"type": "Point", "coordinates": [0.05, 0.05]},
+                latitude=0.05,
+                longitude=0.05,
+                source="OpenStreetMap",
+                confidence=0.8,
+                importance_score=80,
+                importance_tier=SettlementImportanceTier.HIGH,
+            ),
+        ),
+    )
+
+    result = generate_strategic_objectives(state, scope, settlements=settlements)  # type: ignore[arg-type]
+
+    assert "OBJECTIVE:SETTLEMENT:Unverified" not in {item.objective_id for item in result.objectives}
+    assert any(
+        item.object_id == "SETTLEMENT:Unverified" and item.reason == "no_dcs_verification"
+        for item in result.exclusions
+    )
+
+
+def test_generator_accepts_represented_mapping_with_target_component() -> None:
+    scope, state = _scope_and_state()
+    settlements = TheaterSettlements(
+        theater_id="Test",
+        settlements=(
+            Settlement(
+                settlement_id="SETTLEMENT:Approximate",
+                name="Approximate",
+                kind=SettlementKind.TOWN,
+                size_class=SettlementSizeClass.SMALL_CITY,
+                geometry={"type": "Point", "coordinates": [0.05, 0.05]},
+                latitude=0.05,
+                longitude=0.05,
+                source="OpenStreetMap",
+                confidence=0.7,
+                importance_score=70,
+                importance_tier=SettlementImportanceTier.HIGH,
+            ),
+        ),
+    )
+    registry = StrategicVerificationRegistry.from_entries((
+        StrategicSiteVerification(
+            source_id="SETTLEMENT:Approximate",
+            state=StrategicVerificationState.REPRESENTED,
+            target_components=(VerifiedDcsComponent("STATIC:Town-Hall", role="administration", weight=2),),
+        ),
+    ))
+
+    result = generate_strategic_objectives(
+        state, scope, settlements=settlements, verifications=registry  # type: ignore[arg-type]
+    )
+
+    objective = next(item for item in result.objectives if item.objective_id.endswith("SETTLEMENT:Approximate"))
+    assert objective.components[0].object_id == "STATIC:Town-Hall"
+    assert objective.components[0].role == "administration"
+    assert objective.components[0].weight == 2
+    assert objective.metadata["dcs_verification_state"] == "represented"
+    assert "scenario_approved" not in objective.metadata

@@ -292,6 +292,38 @@ values are retained by default. The remainder is reported as
 `category_scope_limit`, so reducing the working set does not hide why a
 candidate was omitted. The limit can be adjusted or disabled explicitly:
 
+Normalized geographic candidates do not become objectives merely because they
+exist in OSM. The map detail panel stores a scenario-specific DCS verification
+in `tmp/topography/GermanyCW-strategic-verifications.json`. Verification uses
+three states: `unverified`, `represented`, and `not_represented`. Each admitted
+site must be `represented` and reference at least one concrete bridge object
+such as `STATIC:`, `SCENERY:`, `AIRBASE:`, `OPSZONE:`, `ZONE:`, `GROUP:`, or
+`UNIT:`. Sites without a concrete DCS representation remain excluded. The
+verification script retains every observed object inside
+the normalized site footprint as an observation baseline. This full inventory
+is separate from the deliberately small target subset used by AUFTRAG planning;
+target lines use `object id | role | weight`. A partial baseline remains marked
+as such when the survey result was truncated or did not cover the complete
+footprint. `Assess current state` in the same map panel performs one bounded DCS
+scenery survey on demand. It combines that survey with mission-scoped
+`object.destroyed` events and reports `operational`, `damaged`, `disabled`,
+`destroyed`, or `unknown` plus a health range. This is deliberately not a
+periodic full-map poll. Partial baselines cannot produce a definitive disabled
+or destroyed state, and an existing baseline is only replaced when explicitly
+requested by the verification script.
+
+For a controlled live-DCS damage check, configure and run:
+
+```powershell
+python examples/sdk/test_infrastructure_damage.py
+```
+
+The script first performs a dry run against the saved baseline. After
+`SITE_ID`, `TARGET_OBJECT_ID`, and explosion power have been reviewed, set
+`ARM_EXPLOSION=True`. It explodes the current surveyed DCS point, retains any
+destruction event, performs a bounded follow-up survey, and prints the physical
+state and damage transition. It never replaces the baseline.
+
 ```python
 from moosebridge import StrategicObjectiveGenerationConfig
 

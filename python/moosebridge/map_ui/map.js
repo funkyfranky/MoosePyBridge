@@ -197,6 +197,7 @@
   let latestRailwayInfrastructure = EMPTY;
   let latestInfrastructureSites = EMPTY;
   let latestSettlements = EMPTY;
+  const strategicVerifications = new Map();
   let topographyViewportAvailable = false;
   let fitted = false;
   let reconnectTimer = null;
@@ -1698,6 +1699,9 @@
     network_detour_added_m: "Additional distance", network_detour_distance_m: "Detour distance",
     network_detour_ratio: "Detour ratio", network_portal_pair_count: "Tested route pairs",
     network_analysis_radius_m: "Analysis radius", network_analysis_limit_m: "Route limit",
+    verification_state: "Verification status",
+    observed_object_count: "Observed DCS objects", observation_complete: "Observation complete",
+    target_component_count: "Target components",
   };
 
   function humanizeKey(key) {
@@ -1705,6 +1709,15 @@
   }
 
   function formattedField(key, value) {
+    if (key === "verification_state") {
+      const labels = {
+        unverified: "Unverified",
+        represented: "Represented",
+        not_represented: "Not represented",
+        not_represented_in_dcs: "Not represented",
+      };
+      return labels[String(value)] || readableValue(value);
+    }
     if (key === "radius_m") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m`;
     if (key === "capacity_m3") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 0 })} m³`;
     if (key === "output_mw") return `${Number(value).toLocaleString("en-US", { maximumFractionDigits: 1 })} MW`;
@@ -1845,6 +1858,163 @@
     refreshControl();
   }
 
+  function addStrategicVerificationControls(properties) {
+    const sourceId = String(properties.object_id || "");
+    const eligibleLayers = new Set([
+      "settlements", "transport_bridges", "transport_junctions", "railway_infrastructure",
+      "energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites", "maritime_sites",
+    ]);
+    if (!sourceId || !eligibleLayers.has(properties.layer)) return;
+
+    const current = strategicVerifications.get(sourceId) || {
+      source_id: sourceId, state: "unverified",
+      observed_objects: [], observation_complete: false, target_components: [], notes: "",
+    };
+    const isAdmitted = (verification) => {
+      return verification.state === "represented" && Boolean(verification.target_components?.length);
+    };
+    const section = document.createElement("section");
+    section.className = "detail-section verification-controls";
+    const heading = document.createElement("h3");
+    heading.className = "detail-section-title";
+    heading.innerHTML = '<i data-lucide="badge-check"></i><span>DCS verification</span>';
+
+    const stateLabel = document.createElement("label");
+    stateLabel.textContent = "Status";
+    const stateSelect = document.createElement("select");
+    for (const [value, label] of [
+      ["unverified", "Unverified"], ["represented", "Represented"],
+      ["not_represented", "Not represented"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = current.state === value;
+      stateSelect.appendChild(option);
+    }
+
+    const observedLabel = document.createElement("label");
+    observedLabel.textContent = "Observed DCS objects";
+    const observedInput = document.createElement("textarea");
+    observedInput.rows = 5;
+    observedInput.readOnly = true;
+    observedInput.placeholder = "Run the infrastructure verification script to capture the baseline.";
+    observedInput.value = (current.observed_objects || []).map((item) => {
+      const typeName = item.type_name || "unknown type";
+      const displayName = item.display_name ? ` | ${item.display_name}` : "";
+      return `${item.object_id} | ${typeName}${displayName}`;
+    }).join("\n");
+
+    const componentLabel = document.createElement("label");
+    componentLabel.textContent = "Target components";
+    const componentInput = document.createElement("textarea");
+    componentInput.rows = 3;
+    componentInput.value = (current.target_components || []).map((item) => {
+      const role = item.role || "infrastructure component";
+      const weight = Number(item.weight || 1);
+      return `${item.object_id} | ${role} | ${weight}`;
+    }).join("\n");
+
+    const notesLabel = document.createElement("label");
+    notesLabel.textContent = "Notes";
+    const notesInput = document.createElement("input");
+    notesInput.type = "text";
+    notesInput.value = current.notes || "";
+
+    const status = document.createElement("div");
+    status.className = "goal-control-status";
+    const observationStatus = current.observation_complete ? "complete baseline" : "partial baseline";
+    status.textContent = `${current.observed_objects?.length || 0} observed (${observationStatus}) · `
+      + `${current.target_components?.length || 0} target(s) · ${isAdmitted(current) ? "admitted" : "not admitted"}`;
+    const saveButton = document.createElement("button");
+    saveButton.className = "command-button";
+    saveButton.type = "button";
+    saveButton.innerHTML = '<i data-lucide="save"></i><span>Save verification</span>';
+    saveButton.addEventListener("click", async () => {
+      saveButton.disabled = true;
+      status.classList.remove("is-error");
+      status.textContent = "Saving...";
+      try {
+        const targetComponents = componentInput.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((line) => {
+          const [objectId, role, weight] = line.split("|").map((part) => part.trim());
+          return { object_id: objectId, role: role || "infrastructure component", weight: weight ? Number(weight) : 1 };
+        });
+        const response = await fetch(`/api/strategic-verifications/${encodeURIComponent(sourceId)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            state: stateSelect.value,
+            observed_objects: current.observed_objects || [],
+            observation_complete: current.observation_complete === true,
+            target_components: targetComponents,
+            notes: notesInput.value,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "Verification could not be saved");
+        strategicVerifications.set(sourceId, result.verification);
+        const saved = result.verification;
+        status.textContent = `${saved.observed_objects.length} observed (${saved.observation_complete ? "complete baseline" : "partial baseline"}) · `
+          + `${saved.target_components.length} target(s) · ${result.admitted ? "admitted" : "not admitted"}`;
+        if (selectedFeature?.properties?.object_id === sourceId) {
+          Object.assign(selectedFeature.properties, strategicVerificationDetailProperties(saved));
+          showDetails(selectedFeature);
+        }
+      } catch (error) {
+        status.textContent = String(error.message || error);
+        status.classList.add("is-error");
+      } finally {
+        saveButton.disabled = false;
+      }
+    });
+
+    const assessmentStatus = document.createElement("div");
+    assessmentStatus.className = "goal-control-status";
+    assessmentStatus.textContent = "Current state not assessed";
+    const assessButton = document.createElement("button");
+    assessButton.className = "command-button";
+    assessButton.type = "button";
+    assessButton.disabled = !(current.observed_objects || []).length;
+    assessButton.innerHTML = '<i data-lucide="activity"></i><span>Assess current state</span>';
+    assessButton.addEventListener("click", async () => {
+      assessButton.disabled = true;
+      assessmentStatus.classList.remove("is-error");
+      assessmentStatus.textContent = "Surveying DCS scenery...";
+      try {
+        const response = await fetch(`/api/strategic-verifications/${encodeURIComponent(sourceId)}/assess`, {
+          method: "POST",
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.detail || "Current state could not be assessed");
+        const assessment = result.assessment;
+        const minDamage = assessment.damage_min == null ? "?" : `${Math.round(assessment.damage_min * 100)}%`;
+        const maxDamage = assessment.damage_max == null ? "?" : `${Math.round(assessment.damage_max * 100)}%`;
+        const damage = minDamage === maxDamage ? minDamage : `${minDamage}-${maxDamage}`;
+        assessmentStatus.textContent = `${assessment.state} · damage ${damage} · `
+          + `${assessment.destroyed_count} destroyed, ${assessment.damaged_count} damaged, `
+          + `${assessment.unknown_count} unknown · ${assessment.complete ? "complete" : "bounded estimate"}`;
+      } catch (error) {
+        assessmentStatus.textContent = String(error.message || error);
+        assessmentStatus.classList.add("is-error");
+      } finally {
+        assessButton.disabled = !(current.observed_objects || []).length;
+      }
+    });
+
+    const grid = document.createElement("div");
+    grid.className = "verification-grid";
+    stateLabel.appendChild(stateSelect);
+    componentLabel.appendChild(componentInput);
+    notesLabel.appendChild(notesInput);
+    observedLabel.appendChild(observedInput);
+    grid.append(
+      stateLabel, observedLabel, componentLabel, notesLabel,
+      saveButton, status, assessButton, assessmentStatus,
+    );
+    section.append(heading, grid);
+    elements.detailSections.appendChild(section);
+  }
+
   function detailRows(properties, keys, consumed) {
     const rows = [];
     for (const key of keys) {
@@ -1853,6 +2023,22 @@
       consumed.add(key);
     }
     return rows;
+  }
+
+  function strategicVerificationDetailProperties(verification) {
+    return {
+      verification_state: verification.state,
+      observed_object_count: verification.observed_objects?.length || 0,
+      observation_complete: verification.observation_complete === true,
+      target_component_count: verification.target_components?.length || 0,
+    };
+  }
+
+  function withCurrentStrategicVerification(properties) {
+    const verification = strategicVerifications.get(String(properties.object_id || ""));
+    return verification
+      ? { ...properties, ...strategicVerificationDetailProperties(verification) }
+      : properties;
   }
 
   function railNetworkImpactRows(properties, consumed) {
@@ -1894,7 +2080,7 @@
 
   function showDetails(feature) {
     selectedFeature = feature;
-    const properties = feature.properties || {};
+    const properties = withCurrentStrategicVerification(feature.properties || {});
     selectedObjectId = properties.object_id || null;
     const layerLabel = layerSpecs.find((spec) => spec.key === properties.layer)?.label || properties.object_type || "Object";
     elements.detailType.textContent = [layerLabel, properties.category].filter(Boolean).join(" · ");
@@ -1934,6 +2120,7 @@
 
     const consumed = new Set(["name", "layer", "map_symbol", "map_coalition", "map_status", "map_category", "objective_owner", "objective_category", "objective_rank", "coordinate_system", "dcs_name", "latitude", "longitude", "x", "y", "z", "category", "coalition", "owner", "state", "alive", "active", "object_type", "dcs_category"]);
     if (properties.layer === "strategic_objectives") addStrategicGoalControls(properties);
+    addStrategicVerificationControls(properties);
     const operational = detailRows(properties, ["mission_type", "status", "target", "target_id", "threat_level", "threat_level_max", "threat_level_sum", "threat_level_avg", "unit_count", "alive_unit_count", "size", "speed", "radius_m", "derived_speed_kts", "derived_heading_deg", "track_distance_m", "track_duration_s", "last_update_mission_time", "sample_count", "distance_m", "duration_s", "average_speed_mps"], consumed);
     if (properties.unit_count !== undefined && properties.alive_unit_count !== undefined) {
       const start = operational.findIndex(([label]) => label === fieldLabels.unit_count);
@@ -2116,13 +2303,14 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, surfaceRegionsResponse, transportResponse, railwayResponse, infrastructureResponse, settlementsResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, surfaceRegionsResponse, transportResponse, railwayResponse, infrastructureResponse, settlementsResponse, verificationsResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
         fetch("/api/surface-regions/global.geojson"),
         fetch("/api/transport-infrastructure/global.geojson"),
         fetch("/api/railway-infrastructure/global.geojson"),
         fetch("/api/infrastructure-sites/global.geojson"),
         fetch("/api/settlements/global.geojson"),
+        fetch("/api/strategic-verifications"),
         fetch("/api/health"),
       ]);
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
@@ -2131,6 +2319,11 @@
       if (railwayResponse.ok) setRailwayInfrastructure(await railwayResponse.json());
       if (infrastructureResponse.ok) setInfrastructureSites(await infrastructureResponse.json());
       if (settlementsResponse.ok) setSettlements(await settlementsResponse.json());
+      if (verificationsResponse.ok) {
+        const payload = await verificationsResponse.json();
+        strategicVerifications.clear();
+        for (const item of payload.verifications || []) strategicVerifications.set(item.source_id, item);
+      }
       if (healthResponse.ok) {
         const status = await healthResponse.json();
         updateStatus(status);

@@ -43,6 +43,13 @@ from .railway_infrastructure import TheaterRailwayInfrastructure
 from .infrastructure_sites import TheaterInfrastructureSites
 from .settlements import TheaterSettlements
 from .strategic_goals import generate_strategic_goals
+from .strategic_verification import (
+    ObservedDcsObject,
+    StrategicSiteVerification,
+    StrategicVerificationRegistry,
+    StrategicVerificationState,
+    VerifiedDcsComponent,
+)
 from .surface_regions import TheaterSurfaceRegions
 
 LOGGER = logging.getLogger(__name__)
@@ -66,10 +73,11 @@ DEFAULT_MAX_TOPOGRAPHY_BYTES = 256 * 1024 * 1024
 DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
 DEFAULT_TOPOGRAPHY_VIEWPORT_PATH = Path("tmp/topography/viewport/manifest.json")
 DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
-DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-transport-infrastructure.geojson")
+DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-transport-infrastructure-mv.geojson")
 DEFAULT_RAILWAY_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-railway-infrastructure.geojson")
 DEFAULT_INFRASTRUCTURE_SITES_PATH = Path("tmp/topography/GermanyCW-infrastructure-sites.geojson")
 DEFAULT_SETTLEMENTS_PATH = Path("tmp/topography/GermanyCW-settlements.geojson")
+DEFAULT_STRATEGIC_VERIFICATIONS_PATH = Path("tmp/topography/GermanyCW-strategic-verifications.json")
 MAP_UI_DIR = Path(__file__).with_name("map_ui")
 TRACKED_LAYERS = frozenset({"groups", "units", "opsgroups", "friendly_opsgroups", "intel_contacts", "known_enemy_contacts"})
 
@@ -199,6 +207,7 @@ class GlobalMapRuntime:
     railway_infrastructure_path: Path | None = None
     infrastructure_sites_path: Path | None = None
     settlements_path: Path | None = None
+    strategic_verifications_path: Path | None = None
     picture: dict[str, Any] = field(default_factory=empty_picture)
     connected: bool = False
     error: str | None = None
@@ -233,6 +242,7 @@ class GlobalMapRuntime:
     _railway_infrastructure: TheaterRailwayInfrastructure | None = field(init=False, default=None)
     _infrastructure_sites: TheaterInfrastructureSites | None = field(init=False, default=None)
     _settlements: TheaterSettlements | None = field(init=False, default=None)
+    _strategic_verifications: StrategicVerificationRegistry = field(init=False)
     _frontline_tracker: FrontlineForceTracker = field(init=False)
     _frontline_engine: FrontlineEngine = field(init=False)
 
@@ -260,6 +270,81 @@ class GlobalMapRuntime:
         self.load_railway_infrastructure()
         self.load_infrastructure_sites()
         self.load_settlements()
+        self.load_strategic_verifications()
+
+    def load_strategic_verifications(self) -> StrategicVerificationRegistry:
+        """Load scenario-specific DCS component mappings."""
+
+        self._strategic_verifications = (
+            StrategicVerificationRegistry.load(self.strategic_verifications_path)
+            if self.strategic_verifications_path is not None
+            else StrategicVerificationRegistry()
+        )
+        LOGGER.info(
+            "Loaded %d strategic DCS verifications from %s",
+            len(self._strategic_verifications.entries),
+            self.strategic_verifications_path or "memory",
+        )
+        return self._strategic_verifications
+
+    def strategic_verifications_payload(self) -> dict[str, Any]:
+        """Return all verification mappings used by the map and generator."""
+
+        if self.strategic_verifications_path is not None:
+            self._strategic_verifications = StrategicVerificationRegistry.load(self.strategic_verifications_path)
+        return self._strategic_verifications.to_dict()
+
+    def save_strategic_verification(self, payload: dict[str, Any]) -> StrategicSiteVerification:
+        """Validate and persist one source-site mapping."""
+
+        if self.strategic_verifications_path is not None:
+            self._strategic_verifications = StrategicVerificationRegistry.load(self.strategic_verifications_path)
+        verification = StrategicSiteVerification(
+            source_id=str(payload.get("source_id") or ""),
+            state=StrategicVerificationState(str(payload.get("state") or "unverified")),
+            observed_objects=tuple(
+                ObservedDcsObject.from_dict(item)
+                for item in payload.get("observed_objects") or ()
+                if isinstance(item, dict)
+            ),
+            observation_complete=payload.get("observation_complete") is True,
+            target_components=tuple(
+                VerifiedDcsComponent.from_dict(item)
+                for item in payload.get("target_components") or ()
+                if isinstance(item, dict)
+            ),
+            notes=str(payload.get("notes") or ""),
+        )
+        self._strategic_verifications.upsert(verification)
+        if self.strategic_verifications_path is not None:
+            self._strategic_verifications.save(self.strategic_verifications_path)
+        self._strategic_objective_signature = ()
+        return verification
+
+    async def assess_strategic_verification(self, source_id: str) -> dict[str, object]:
+        """Run one bounded DCS survey against an immutable infrastructure baseline."""
+
+        bridge = self._bridge
+        if bridge is None or not self.connected:
+            raise RuntimeError("DCS bridge is not connected")
+        if self.strategic_verifications_path is not None:
+            self._strategic_verifications = StrategicVerificationRegistry.load(self.strategic_verifications_path)
+        verification = self._strategic_verifications.get(source_id)
+        if verification is None:
+            raise KeyError(f"No strategic verification exists for {source_id}")
+        if not verification.observed_objects:
+            raise ValueError(f"Strategic verification has no DCS observation baseline: {source_id}")
+        if self._infrastructure_sites is None:
+            raise ValueError("Normalized infrastructure sites are not loaded")
+        site = next((item for item in self._infrastructure_sites.sites if item.site_id == source_id), None)
+        if site is None:
+            raise ValueError(f"Current state assessment is not supported for this feature type: {source_id}")
+        assessment = await bridge.assess_infrastructure_site(
+            site,
+            verification,
+            timeout=self.timeout,
+        )
+        return assessment.to_dict()
 
     def load_topography(self) -> TheaterTopography | None:
         """Load the optional static theater cache without touching DCS."""
@@ -502,6 +587,7 @@ class GlobalMapRuntime:
             ),
             "infrastructure_site_count": len(self._infrastructure_sites.sites) if self._infrastructure_sites else 0,
             "settlement_count": len(self._settlements.settlements) if self._settlements else 0,
+            "strategic_verification_count": len(self._strategic_verifications.entries),
             "diplomacy": properties.get("diplomacy"),
         }
 
@@ -593,6 +679,11 @@ class GlobalMapRuntime:
     def update_strategic_objectives(self, picture: GlobalPicture, bridge: Any) -> None:
         """Generate and synchronize the map server's mission-scoped objective view."""
 
+        verification_signature: tuple[int, int] | tuple[()] = ()
+        if self.strategic_verifications_path is not None and self.strategic_verifications_path.is_file():
+            verification_stat = self.strategic_verifications_path.stat()
+            verification_signature = (verification_stat.st_mtime_ns, verification_stat.st_size)
+            self._strategic_verifications = StrategicVerificationRegistry.load(self.strategic_verifications_path)
         signature = (
             int(bridge.state.mission_generation),
             tuple(
@@ -605,6 +696,7 @@ class GlobalMapRuntime:
             bool(self._transport_infrastructure),
             bool(self._railway_infrastructure),
             bool(self._infrastructure_sites),
+            verification_signature,
         )
         try:
             if signature != self._strategic_objective_signature:
@@ -613,6 +705,7 @@ class GlobalMapRuntime:
                     transport=self._transport_infrastructure,
                     railway=self._railway_infrastructure,
                     infrastructure=self._infrastructure_sites,
+                    verifications=self._strategic_verifications,
                     register=True,
                     replace=True,
                 )
@@ -1382,6 +1475,7 @@ def create_app(
     railway_infrastructure_path: Path | None = DEFAULT_RAILWAY_INFRASTRUCTURE_PATH,
     infrastructure_sites_path: Path | None = DEFAULT_INFRASTRUCTURE_SITES_PATH,
     settlements_path: Path | None = DEFAULT_SETTLEMENTS_PATH,
+    strategic_verifications_path: Path | None = DEFAULT_STRATEGIC_VERIFICATIONS_PATH,
 ) -> FastAPI:
     """Create the FastAPI map application."""
 
@@ -1410,6 +1504,7 @@ def create_app(
         railway_infrastructure_path=railway_infrastructure_path,
         infrastructure_sites_path=infrastructure_sites_path,
         settlements_path=settlements_path,
+        strategic_verifications_path=strategic_verifications_path,
     )
 
     @asynccontextmanager
@@ -1478,6 +1573,34 @@ def create_app(
         except (RuntimeError, TimeoutError) as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         return {"ok": True, "marker": marker}
+
+    @app.get("/api/strategic-verifications")
+    async def strategic_verifications() -> dict[str, Any]:
+        return runtime.strategic_verifications_payload()
+
+    @app.put("/api/strategic-verifications/{source_id:path}")
+    async def save_strategic_verification(source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            verification = runtime.save_strategic_verification({**payload, "source_id": source_id})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "verification": verification.to_dict(),
+            "admitted": verification.admitted,
+        }
+
+    @app.post("/api/strategic-verifications/{source_id:path}/assess")
+    async def assess_strategic_verification(source_id: str) -> dict[str, Any]:
+        try:
+            assessment = await runtime.assess_strategic_verification(source_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (RuntimeError, TimeoutError) as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"ok": True, "assessment": assessment}
 
     @app.get("/api/topography/global.geojson")
     async def global_topography() -> dict[str, Any]:
@@ -1623,6 +1746,12 @@ def main() -> None:
         default=DEFAULT_SETTLEMENTS_PATH,
         help="Normalized city and town GeoJSON cache.",
     )
+    parser.add_argument(
+        "--strategic-verifications",
+        type=Path,
+        default=DEFAULT_STRATEGIC_VERIFICATIONS_PATH,
+        help="Scenario-specific DCS component verification JSON file.",
+    )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
 
@@ -1660,6 +1789,7 @@ def main() -> None:
         railway_infrastructure_path=args.railway_infrastructure,
         infrastructure_sites_path=args.infrastructure_sites,
         settlements_path=args.settlements,
+        strategic_verifications_path=args.strategic_verifications,
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 

@@ -159,6 +159,13 @@ button, input { font: inherit; letter-spacing: 0; }
 .command-button svg { width: 16px; height: 16px; }
 .goal-control-status { min-height: 18px; padding: 0 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .goal-control-status.is-error { color: var(--red); }
+.verification-controls { display: grid; gap: 8px; }
+.verification-grid { display: grid; gap: 8px; padding: 0 4px; }
+.verification-grid > label:not(.verification-check) { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+.verification-grid select, .verification-grid input[type="text"], .verification-grid textarea { width: 100%; min-width: 0; padding: 6px 7px; color: var(--text); background: #fff; border: 1px solid var(--border); border-radius: 4px; }
+.verification-grid textarea { resize: vertical; line-height: 1.35; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+.verification-check { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 12px; }
+.verification-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
 .property-list { display: grid; grid-template-columns: minmax(116px, 0.75fr) minmax(0, 1.25fr); gap: 0; margin: 0; }
 .property-list dt,
 .property-list dd { margin: 0; padding: 6px 4px; overflow-wrap: anywhere; }

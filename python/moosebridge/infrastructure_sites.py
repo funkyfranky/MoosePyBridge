@@ -27,10 +27,22 @@ class InfrastructureSiteKind(StrEnum):
 
 class InfrastructureVerificationState(StrEnum):
     UNVERIFIED = "unverified"
-    DCS_SCENERY_MATCHED = "dcs_scenery_matched"
-    DCS_MISSION_OBJECT_MATCHED = "dcs_mission_object_matched"
-    DCS_VISUAL_ONLY = "dcs_visual_only"
-    NOT_REPRESENTED_IN_DCS = "not_represented_in_dcs"
+    REPRESENTED = "represented"
+    NOT_REPRESENTED = "not_represented"
+
+    @classmethod
+    def from_value(cls, value: Any) -> "InfrastructureVerificationState":
+        if isinstance(value, cls):
+            return value
+        raw = str(value or cls.UNVERIFIED.value)
+        if raw in {
+            "confirmed", "dcs_scenery_matched", "dcs_mission_object_matched",
+            "dcs_visual_only", "approximate", cls.REPRESENTED.value,
+        }:
+            return cls.REPRESENTED
+        if raw in {"not_represented_in_dcs", cls.NOT_REPRESENTED.value}:
+            return cls.NOT_REPRESENTED
+        return cls.UNVERIFIED
 
 
 class InfrastructureImportanceTier(StrEnum):
@@ -250,9 +262,7 @@ class InfrastructureSite:
             name=_optional_string(properties.get("name")),
             source_ids=tuple(str(value) for value in properties.get("source_ids") or ()),
             scenario_reference_year=_optional_int(properties.get("scenario_reference_year")),
-            verification_state=InfrastructureVerificationState(
-                str(properties.get("verification_state") or InfrastructureVerificationState.UNVERIFIED.value)
-            ),
+            verification_state=InfrastructureVerificationState.from_value(properties.get("verification_state")),
             component_ids=tuple(str(value) for value in properties.get("component_ids") or ()),
             properties={key: value for key, value in properties.items() if key not in known},
         )
@@ -1397,7 +1407,7 @@ def _maritime_site_from_cluster(
         name=names[0] if names else (f"{operators[0]} port" if operators else None),
         source_ids=source_keys,
         scenario_reference_year=policy.scenario_reference_year or primary.feature.scenario_reference_year,
-        verification_state=(InfrastructureVerificationState.DCS_VISUAL_ONLY if any(item.feature.dcs_verified for item in cluster) else InfrastructureVerificationState.UNVERIFIED),
+        verification_state=(InfrastructureVerificationState.REPRESENTED if any(item.feature.dcs_verified for item in cluster) else InfrastructureVerificationState.UNVERIFIED),
         component_ids=tuple(sorted({item.feature.object_id for item in cluster})),
         roles=roles,
         cargo_types=cargo_types,
@@ -1523,7 +1533,7 @@ def _fuel_site_from_cluster(
         source_ids=source_keys,
         scenario_reference_year=policy.scenario_reference_year or primary.feature.scenario_reference_year,
         verification_state=(
-            InfrastructureVerificationState.DCS_VISUAL_ONLY
+            InfrastructureVerificationState.REPRESENTED
             if any(item.feature.dcs_verified for item in cluster)
             else InfrastructureVerificationState.UNVERIFIED
         ),
@@ -1689,7 +1699,7 @@ def _military_site_from_cluster(
         source_ids=source_keys,
         scenario_reference_year=policy.scenario_reference_year or primary.feature.scenario_reference_year,
         verification_state=(
-            InfrastructureVerificationState.DCS_VISUAL_ONLY
+            InfrastructureVerificationState.REPRESENTED
             if any(item.feature.dcs_verified for item in cluster)
             else InfrastructureVerificationState.UNVERIFIED
         ),
@@ -1870,7 +1880,7 @@ def _energy_site_from_cluster(
         source_ids=source_keys,
         scenario_reference_year=policy.scenario_reference_year or primary.feature.scenario_reference_year,
         verification_state=(
-            InfrastructureVerificationState.DCS_VISUAL_ONLY
+            InfrastructureVerificationState.REPRESENTED
             if any(item.feature.dcs_verified for item in cluster)
             else InfrastructureVerificationState.UNVERIFIED
         ),
@@ -2023,7 +2033,7 @@ def _industrial_site_from_cluster(
         source_ids=source_keys,
         scenario_reference_year=policy.scenario_reference_year or primary.feature.scenario_reference_year,
         verification_state=(
-            InfrastructureVerificationState.DCS_VISUAL_ONLY
+            InfrastructureVerificationState.REPRESENTED
             if any(item.feature.dcs_verified for item in cluster)
             else InfrastructureVerificationState.UNVERIFIED
         ),

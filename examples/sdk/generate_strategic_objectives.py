@@ -16,6 +16,7 @@ from moosebridge import (
     ConflictControllerConfig,
     RuleBasedConflictController,
     StrategicObjectiveGenerationConfig,
+    StrategicVerificationRegistry,
     TheaterInfrastructureSites,
     TheaterRailwayInfrastructure,
     TheaterSettlements,
@@ -47,6 +48,7 @@ SETTLEMENTS_PATH = TOPOGRAPHY_DIR / "GermanyCW-settlements.geojson"
 TRANSPORT_PATH = TOPOGRAPHY_DIR / "GermanyCW-transport-infrastructure-mv.geojson"
 RAILWAY_PATH = TOPOGRAPHY_DIR / "GermanyCW-railway-infrastructure-mv.geojson"
 INFRASTRUCTURE_PATH = TOPOGRAPHY_DIR / "GermanyCW-infrastructure-sites.geojson"
+VERIFICATIONS_PATH = TOPOGRAPHY_DIR / "GermanyCW-strategic-verifications.json"
 
 
 async def run() -> int:
@@ -65,6 +67,7 @@ async def run() -> int:
         transport=TheaterTransportInfrastructure.load(TRANSPORT_PATH),
         railway=TheaterRailwayInfrastructure.load(RAILWAY_PATH),
         infrastructure=TheaterInfrastructureSites.load(INFRASTRUCTURE_PATH),
+        verifications=StrategicVerificationRegistry.load(VERIFICATIONS_PATH),
         config=StrategicObjectiveGenerationConfig(
             maximum_geographic_objectives_per_category_per_scope=(
                 MAX_GEOGRAPHIC_OBJECTIVES_PER_CATEGORY_PER_SCOPE

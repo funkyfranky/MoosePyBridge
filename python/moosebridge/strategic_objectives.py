@@ -23,6 +23,7 @@ from .strategic import (
     StrategicObjective,
 )
 from .strategic_scope import StrategicScopeState, StrategicTerritoryScope
+from .strategic_verification import StrategicVerificationRegistry
 from .transport_infrastructure import (
     TheaterTransportInfrastructure,
     TransportBridge,
@@ -88,6 +89,17 @@ class StrategicObjectiveGenerationResult:
     def category_scope_limit_count(self) -> int:
         return sum(item.reason == "category_scope_limit" for item in self.exclusions)
 
+    @property
+    def verification_exclusion_count(self) -> int:
+        return sum(
+            item.reason in {
+                "no_dcs_verification",
+                "no_concrete_dcs_components",
+                "dcs_verification_not_approved",
+            }
+            for item in self.exclusions
+        )
+
 
 def generate_strategic_objectives(
     state: MooseBridgeState,
@@ -97,6 +109,7 @@ def generate_strategic_objectives(
     transport: TheaterTransportInfrastructure | None = None,
     railway: TheaterRailwayInfrastructure | None = None,
     infrastructure: TheaterInfrastructureSites | None = None,
+    verifications: StrategicVerificationRegistry | None = None,
     config: StrategicObjectiveGenerationConfig | None = None,
 ) -> StrategicObjectiveGenerationResult:
     """Generate mission objectives admitted by the TERRITORY-derived scope."""
@@ -206,6 +219,7 @@ def generate_strategic_objectives(
             exclusions,
             metadata={"source_kind": "settlement", "settlement_kind": settlement.kind.value},
             selection_category="settlement",
+            verifications=verifications,
         )
 
     if transport:
@@ -225,6 +239,7 @@ def generate_strategic_objectives(
                 selection_category=(
                     "transport_bridge" if isinstance(item, TransportBridge) else "transport_junction"
                 ),
+                verifications=verifications,
             )
 
     for item in railway.locations if railway else ():
@@ -240,6 +255,7 @@ def generate_strategic_objectives(
             exclusions,
             metadata={"source_kind": "railway", "railway_kind": item.kind.value},
             selection_category="railway",
+            verifications=verifications,
         )
 
     for site in infrastructure.sites if infrastructure else ():
@@ -248,11 +264,6 @@ def generate_strategic_objectives(
         if isinstance(site, FuelStorageSite) and resolved.include_unscored_fuel_storage:
             score = score or 60.0
             threshold = 0.0
-        components = tuple(
-            ObjectiveComponent(component_id, role="infrastructure component")
-            for component_id in site.component_ids
-            if ":" in component_id
-        )
         kind = ObjectiveKind.PORT if isinstance(site, MaritimeSite) else (
             ObjectiveKind.DEPOT if isinstance(site, FuelStorageSite) else ObjectiveKind.INFRASTRUCTURE
         )
@@ -266,9 +277,9 @@ def generate_strategic_objectives(
             scope,
             admit,
             exclusions,
-            components=components,
             metadata={"source_kind": "infrastructure_site", "infrastructure_kind": site.kind.value},
             selection_category=f"infrastructure_{site.kind.value}",
+            verifications=verifications,
         )
 
     objectives = _limit_geographic_objectives(
@@ -294,13 +305,27 @@ def _admit_geographic_candidate(
     admit: Any,
     exclusions: list[StrategicObjectiveExclusion],
     *,
-    components: tuple[ObjectiveComponent, ...] = (),
     metadata: dict[str, Any] | None = None,
     selection_category: str,
+    verifications: StrategicVerificationRegistry | None,
 ) -> None:
     if score < threshold:
         exclusions.append(StrategicObjectiveExclusion(source_id, "below_importance_threshold"))
         return
+    verification = verifications.get(source_id) if verifications is not None else None
+    if verification is None:
+        exclusions.append(StrategicObjectiveExclusion(source_id, "no_dcs_verification"))
+        return
+    if not verification.target_components:
+        exclusions.append(StrategicObjectiveExclusion(source_id, "no_concrete_dcs_components"))
+        return
+    if not verification.admitted:
+        exclusions.append(StrategicObjectiveExclusion(source_id, "dcs_site_not_represented"))
+        return
+    components = tuple(
+        ObjectiveComponent(component.object_id, role=component.role, weight=component.weight)
+        for component in verification.target_components
+    )
     scope_state = scope.classify_geographic_point(item.latitude, item.longitude)
     admit(
         source_id=source_id,
@@ -314,6 +339,7 @@ def _admit_geographic_candidate(
             "longitude": item.longitude,
             "source": getattr(item, "source", None),
             "selection_category": selection_category,
+            "dcs_verification_state": verification.state.value,
             **(metadata or {}),
         },
     )

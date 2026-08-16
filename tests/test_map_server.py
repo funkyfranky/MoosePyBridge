@@ -33,6 +33,7 @@ from moosebridge.infrastructure_sites import (
     FuelStorageRole,
     FuelStorageSite,
     InfrastructureSiteKind,
+    InfrastructureSite,
     IndustrialRole,
     IndustrialSite,
     MaritimeRole,
@@ -41,6 +42,12 @@ from moosebridge.infrastructure_sites import (
     MilitarySite,
     StoredCommodity,
     TheaterInfrastructureSites,
+)
+from moosebridge.strategic_verification import (
+    InfrastructureOperationalState,
+    InfrastructureStateAssessment,
+    ObservedDcsObject,
+    StrategicSiteVerification,
 )
 from moosebridge.settlements import (
     Settlement,
@@ -133,8 +140,9 @@ def test_map_runtime_status_uses_picture_metadata() -> None:
             "transport_junction_count": 0,
             "railway_infrastructure_count": 0,
             "infrastructure_site_count": 0,
-        "settlement_count": 0,
-        "diplomacy": None,
+            "settlement_count": 0,
+            "strategic_verification_count": 0,
+            "diplomacy": None,
     }
 
 
@@ -792,6 +800,91 @@ def test_map_app_exposes_dcs_marker_creation_endpoint() -> None:
     assert "POST" in route.methods
 
 
+def test_map_runtime_persists_strategic_verification(tmp_path) -> None:
+    path = tmp_path / "verifications.json"
+    runtime = GlobalMapRuntime(strategic_verifications_path=path)
+
+    verification = runtime.save_strategic_verification({
+        "source_id": "ENERGY_SITE:Alpha",
+        "state": "represented",
+        "observed_objects": [{
+            "object_id": "STATIC:Generator-1",
+            "type_name": "Generator",
+            "latitude": 54.0,
+            "longitude": 12.0,
+        }],
+        "observation_complete": True,
+        "target_components": [{"object_id": "STATIC:Generator-1", "role": "generator", "weight": 2}],
+        "notes": "Matched on F10",
+    })
+
+    assert verification.admitted is True
+    assert verification.observation_complete is True
+    assert path.is_file()
+    assert runtime.strategic_verifications_payload()["verifications"][0]["source_id"] == "ENERGY_SITE:Alpha"
+    assert runtime._strategic_objective_signature == ()
+
+
+def test_map_app_exposes_strategic_verification_endpoints() -> None:
+    app = create_app()
+    routes = {getattr(route, "path", None): route for route in app.routes}
+
+    assert "GET" in routes["/api/strategic-verifications"].methods
+    assert "PUT" in routes["/api/strategic-verifications/{source_id:path}"].methods
+    assert "POST" in routes["/api/strategic-verifications/{source_id:path}/assess"].methods
+
+
+def test_map_runtime_assesses_verified_infrastructure_on_demand(tmp_path) -> None:
+    async def run() -> None:
+        path = tmp_path / "verifications.json"
+        site = InfrastructureSite(
+            site_id="MILITARY_SITE:Barracks",
+            kind=InfrastructureSiteKind.MILITARY,
+            geometry={"type": "Point", "coordinates": [12.0, 54.0]},
+            latitude=54.0,
+            longitude=12.0,
+            source="OpenStreetMap",
+            confidence=0.75,
+        )
+        verification = StrategicSiteVerification(
+            source_id=site.site_id,
+            observed_objects=(ObservedDcsObject("SCENERY:1"),),
+            observation_complete=True,
+        )
+        runtime = GlobalMapRuntime(strategic_verifications_path=path)
+        runtime._strategic_verifications.upsert(verification)
+        runtime._strategic_verifications.save(path)
+        runtime._infrastructure_sites = TheaterInfrastructureSites("GermanyCW", (site,))
+
+        class FakeBridge:
+            async def assess_infrastructure_site(self, candidate, baseline, *, timeout):
+                assert candidate is site
+                assert baseline.source_id == site.site_id
+                assert timeout == runtime.timeout
+                return InfrastructureStateAssessment(
+                    source_id=site.site_id,
+                    state=InfrastructureOperationalState.OPERATIONAL,
+                    baseline_count=1,
+                    intact_count=1,
+                    damaged_count=0,
+                    destroyed_count=0,
+                    unknown_count=0,
+                    health_min=1.0,
+                    health_max=1.0,
+                    complete=True,
+                )
+
+        runtime._bridge = FakeBridge()
+        runtime.connected = True
+
+        result = await runtime.assess_strategic_verification(site.site_id)
+
+        assert result["state"] == "operational"
+        assert result["complete"] is True
+
+    asyncio.run(run())
+
+
 def test_map_ui_does_not_apply_tactical_filters_to_topography() -> None:
     map_script = (
         Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui" / "map.js"
@@ -823,6 +916,24 @@ def test_map_ui_exposes_selected_object_f10_marker_action() -> None:
     assert 'fetch("/api/dcs-markers"' in map_script
     assert "function markerPointForFeature(feature)" in map_script
     assert 'elements.detailF10Marker.addEventListener("click", createF10Marker)' in map_script
+
+
+def test_map_ui_exposes_strategic_dcs_verification_controls() -> None:
+    map_script = (
+        Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui" / "map.js"
+    ).read_text(encoding="utf-8")
+
+    assert 'function addStrategicVerificationControls(properties)' in map_script
+    assert 'fetch("/api/strategic-verifications")' in map_script
+    assert '/api/strategic-verifications/${encodeURIComponent(sourceId)}' in map_script
+    assert '/api/strategic-verifications/${encodeURIComponent(sourceId)}/assess' in map_script
+    assert "Assess current state" in map_script
+    assert 'addStrategicVerificationControls(properties)' in map_script
+    assert "function withCurrentStrategicVerification(properties)" in map_script
+    assert "strategicVerificationDetailProperties(saved)" in map_script
+    assert '["unverified", "Unverified"], ["represented", "Represented"]' in map_script
+    assert 'not_represented: "Not represented"' in map_script
+    assert "Scenario approved" not in map_script
 
 
 def test_map_ui_exposes_grouped_railway_infrastructure() -> None:

@@ -316,25 +316,34 @@ raw OSM fragments and misleading point-only installations.
 4. Assign provenance, historical plausibility, confidence, and an explicit DCS
    verification state.
 5. Run bounded DCS scenery discovery only around selected candidate sites.
-6. Store matched scenery identities and component geometry in the theater
-   cache.
+6. Store every confirmed in-footprint DCS object as a scenario observation
+   baseline and select a much smaller target subset independently.
 7. Expose normalized sites through typed SDK objects and bounded map layers.
 8. Calculate category-specific importance and dependencies.
 9. Allow scenario policy to create multi-component strategic objectives from
-   approved sites.
+   approved sites. Implemented through the versioned strategic-verification
+   registry and the browser map's `DCS verification` detail controls.
 
 ## DCS verification states
 
 - `unverified`: external source only
-- `dcs_scenery_matched`: one or more addressable scenery components found
-- `dcs_mission_object_matched`: explicit AIRBASE, STATIC, UNIT, or zone matched
-- `dcs_visual_only`: visually represented but no useful addressable component
-- `not_represented_in_dcs`: no corresponding DCS representation found
-- `historically_uncertain`: modern external site is not reliable for the
-  scenario reference year
+- `represented`: the site is sufficiently represented in DCS, independent of
+  whether its evidence consists of scenery or mission objects
+- `not_represented`: no corresponding DCS representation was found
 
-Verification should also retain DCS map/build version because GermanyCW is
-released and updated in phases.
+Historical fit, object provenance, and addressability remain separate evidence
+instead of verification states. Verification should also retain DCS map/build
+version because GermanyCW is released and updated in phases.
+
+The scenario mapping is stored separately from immutable source caches. An
+entry contains the normalized source ID, representation state, notes, all
+observed in-footprint DCS objects, an explicit
+baseline-completeness flag, and a small set of weighted target components.
+Observed objects preserve IDs, DCS type/name evidence, location, life, and
+existence where available. They support later attack and damage assessment but
+do not become mission targets automatically. Only `represented` mappings with
+at least one target component are admitted. `not_represented` always remains
+excluded, and coordinate-only targets are intentionally unsupported.
 
 ## Recommended implementation order
 

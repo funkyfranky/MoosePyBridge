@@ -198,30 +198,33 @@ Priorities:
   picture.
 - [ ] **Validate infrastructure against the GermanyCW DCS theater.** Compare
   high-value candidates with the DCS F10 map, Mission Editor, local scenery,
-  and available historical sources. Retain `confirmed`, `approximate`,
-  `historically_uncertain`, and `not_represented_in_dcs` evidence instead of
-  silently treating modern OSM as authoritative for the DCS era.
-- [ ] **Derive strategic objectives only after infrastructure normalization.**
-  Add an explicit policy that selects confirmed or scenario-approved sites and
-  converts them into multi-component `StrategicObjective` objects. Objective
-  value, ownership, desired effect, targetability, and component weights must
-  remain scenario/Python decisions; discovering an OSM facility must never
-  create an attack goal automatically.
-- [ ] **Model infrastructure state and effects separately from geography.**
-  Associate known DCS statics, map objects, airbases, zones, or scenario
-  components with a normalized site and derive operational, damaged, disabled,
-  destroyed, repaired, or captured state from events and snapshots. Keep the
-  immutable source site intact so damage and coalition control do not rewrite
-  the geographic cache.
+  and available historical sources. Record the simplified `unverified`,
+  `represented`, or `not_represented` result plus notes and provenance instead
+  of silently treating modern OSM as authoritative for the DCS era.
+- [x] **Derive strategic objectives only after infrastructure normalization.**
+  A versioned, scenario-specific verification registry now selects
+  `represented` sites with weighted concrete DCS/MOOSE target components.
+  Geographic candidates without such a mapping remain excluded; discovering
+  an OSM facility never creates an attack goal automatically.
+- [x] **Derive physical infrastructure state from immutable DCS baselines.**
+  The verification registry retains every observed in-footprint DCS object
+  separately from the small target subset. Mission-scoped destruction events
+  and an explicit bounded follow-up survey now derive `operational`, `damaged`,
+  `disabled`, `destroyed`, or uncertainty-bounded `unknown` state. Partial
+  baselines cannot claim definitive site destruction, and routine verification
+  does not overwrite an established baseline.
+- [ ] **Add infrastructure recovery, control, and operational effects.** Model
+  attacked/repaired history and coalition capture separately from physical
+  health, then connect disabled facilities to supply, movement, production, or
+  objective effects without rewriting the immutable geographic source site.
 
 ## P2 - Deferred railway infrastructure
 
 - [ ] **Finish representative GermanyCW validation.** Complete and record the
   F10/scenery comparison for a major station, freight terminal or rail yard,
-  junction, and the mainland-Rugen railway bridge. Persist `confirmed`,
-  `dcs_visual_only`, `approximate`, `historically_uncertain`, and
-  `not_represented_in_dcs` evidence instead of keeping test conclusions only in
-  example output.
+  junction, and the mainland-Rugen railway bridge. Persist the simplified
+  representation state, object evidence, and reviewer notes instead of keeping
+  test conclusions only in example output.
 - [ ] **Calibrate railway classification and importance.** Refine station
   importance with station category, service, passenger or freight role, and
   measured network impact. Review rail-yard and bridge aggregation thresholds,

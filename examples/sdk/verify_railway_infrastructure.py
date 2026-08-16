@@ -26,6 +26,7 @@ from moosebridge import (  # noqa: E402
     RailwayImportanceTier,
     RailwayLocationKind,
     ScenerySurvey,
+    StrategicVerificationRegistry,
     TheaterRailwayInfrastructure,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient  # noqa: E402
@@ -36,6 +37,7 @@ CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 RAILWAY_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-railway-infrastructure.geojson"
+VERIFICATIONS_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-strategic-verifications.json"
 
 # Select STATION, FREIGHT_TERMINAL, RAIL_YARD, DEPOT, JUNCTION, or BRIDGE.
 # Set an exact location name or object ID, or leave both None to select the
@@ -138,6 +140,26 @@ def format_location(location: RailwayLocation, reference_distance_m: float | Non
         print(f"  Impact score  : {float(location.properties.get('network_criticality_score') or 0):.1f}")
 
 
+def format_strategic_verification(location: RailwayLocation) -> None:
+    verification = StrategicVerificationRegistry.load(VERIFICATIONS_PATH).get(location.location_id)
+    print("\nStrategic DCS verification")
+    print("=" * 96)
+    print(f"Registry        : {VERIFICATIONS_PATH}")
+    if verification is None:
+        print("Status          : not mapped")
+        print("Next step       : Select concrete objects below and add them in the web-map DCS verification panel.")
+        return
+    print(f"Status          : {verification.state.value}")
+    print(f"Admitted        : {verification.admitted}")
+    completeness = "complete" if verification.observation_complete else "partial"
+    print(f"Observed objects: {len(verification.observed_objects)} ({completeness})")
+    print(f"Target components: {len(verification.target_components)}")
+    for component in verification.target_components:
+        print(f"  {component.object_id} | {component.role} | {component.weight:g}")
+    if verification.notes:
+        print(f"Notes           : {verification.notes}")
+
+
 def format_survey(location: RailwayLocation, survey: ScenerySurvey) -> None:
     objects = sorted(
         survey.objects,
@@ -158,6 +180,8 @@ def format_survey(location: RailwayLocation, survey: ScenerySurvey) -> None:
             f"{distance:8.0f}m  {item.object_id[:24]:<24} "
             f"{(item.type_name or '-')[:27]:<27} {item.display_name or '-'}"
         )
+    print("\nCopy only visually confirmed object IDs into the web-map DCS verification panel.")
+    print("Component format: SCENERY:<id> | railway component | 1.0")
 
 
 def location_color(kind: RailwayLocationKind) -> tuple[float, float, float, float]:
@@ -191,6 +215,7 @@ async def run() -> int:
         TheaterRailwayInfrastructure.load(RAILWAY_PATH),
     )
     format_location(location, reference_distance)
+    format_strategic_verification(location)
     survey = await bridge.survey_scenery(
         location.latitude,
         location.longitude,

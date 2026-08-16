@@ -380,12 +380,25 @@ def test_object_destroyed_event_updates_state_without_snapshot() -> None:
     assert state.groups["GROUP:Armor-1"]["alive_unit_count"] == 1
     assert "UNIT:Armor-1-1" not in state.ammunition
     assert "UNIT:Armor-1-1" not in state.ammunition_objects
+    assert "UNIT:Armor-1-1" in state.destroyed_object_ids
     report = state.loss_reports["LOSS:event-unit-lost-1"]
     assert report["target_object_id"] == "UNIT:Armor-1-1"
     assert report["victim_coalition"] == "red"
     assert report["visible_to"] == ["blue", "red"]
     assert report["confidence"] == "confirmed"
     assert report["longitude"] == 12.2
+
+
+def test_destroyed_scenery_object_is_retained_for_infrastructure_assessment() -> None:
+    state = MooseBridgeState()
+    message = destroyed_message()
+    message["payload"]["object_id"] = "SCENERY:42"  # type: ignore[index]
+    message["payload"]["object_type"] = "SCENERY"  # type: ignore[index]
+    message["payload"]["object"] = {"object_id": "SCENERY:42", "category": "Scenery"}  # type: ignore[index]
+
+    state.apply_message(message)
+
+    assert "SCENERY:42" in state.destroyed_object_ids
 
 
 def test_loss_report_is_visible_in_both_tactical_pictures_and_global_truth() -> None:

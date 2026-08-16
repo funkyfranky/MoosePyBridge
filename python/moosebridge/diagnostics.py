@@ -81,6 +81,7 @@ def format_strategic_objective_generation(
         (
             f"  out_of_scope={result.out_of_scope_count} "
             f"below_threshold={result.below_threshold_count} "
+            f"dcs_verification={result.verification_exclusion_count} "
             f"category_scope_limit={result.category_scope_limit_count} contested={contested}"
         ),
     ]

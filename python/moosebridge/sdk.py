@@ -8,12 +8,26 @@ from dataclasses import dataclass
 import math
 from typing import Any
 
+from shapely.geometry import Point, shape
+
 from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, WeaponRole, select_task_weapon
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsTime
 from .dcs_events import DestroyedObjectEvent, KillEvent
 from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
-from .infrastructure_sites import GeographicSurveyPoint, SceneryObjectSnapshot, ScenerySurvey, TheaterInfrastructureSites
+from .infrastructure_sites import (
+    GeographicSurveyPoint,
+    InfrastructureSite,
+    SceneryObjectSnapshot,
+    ScenerySurvey,
+    TheaterInfrastructureSites,
+)
+from .strategic_verification import (
+    InfrastructureStateAssessment,
+    ObservedDcsObject,
+    StrategicSiteVerification,
+    assess_infrastructure_state,
+)
 from .diplomacy import (
     BorderViolationTracker,
     CoalitionDoctrine,
@@ -115,6 +129,7 @@ from .strategic_objectives import (
     StrategicObjectiveGenerationResult,
     generate_strategic_objectives,
 )
+from .strategic_verification import StrategicVerificationRegistry
 from .strategic_goals import (
     StrategicGoalGenerationConfig,
     StrategicGoalGenerationResult,
@@ -798,6 +813,7 @@ class MooseBridgeClient:
         transport: TheaterTransportInfrastructure | None = None,
         railway: TheaterRailwayInfrastructure | None = None,
         infrastructure: TheaterInfrastructureSites | None = None,
+        verifications: StrategicVerificationRegistry | None = None,
         config: StrategicObjectiveGenerationConfig | None = None,
         register: bool = True,
         replace: bool = False,
@@ -815,9 +831,15 @@ class MooseBridgeClient:
             transport=transport,
             railway=railway,
             infrastructure=infrastructure,
+            verifications=verifications,
             config=config,
         )
         if register:
+            generated_ids = {objective.objective_id for objective in result.objectives}
+            if replace:
+                for existing in self.objectives.all():
+                    if existing.metadata.get("generated") and existing.objective_id not in generated_ids:
+                        self.objectives.remove(existing)
             for objective in result.objectives:
                 existing = self.objectives.get(objective.objective_id)
                 if existing is not None and not replace:
@@ -3868,6 +3890,59 @@ class MooseBridgeClient:
             truncated=result.get("truncated") is True,
         )
 
+    async def assess_infrastructure_site(
+        self,
+        site: InfrastructureSite,
+        verification: StrategicSiteVerification,
+        *,
+        radius_m: float = 750.0,
+        max_results: int = 2000,
+        timeout: float = 30.0,
+    ) -> InfrastructureStateAssessment:
+        """Compare a verified site's immutable object baseline with current DCS scenery."""
+
+        if site.site_id != verification.source_id:
+            raise ValueError("infrastructure site and verification source ids do not match")
+        survey = await self.survey_scenery(
+            site.latitude,
+            site.longitude,
+            radius_m=radius_m,
+            max_results=max_results,
+            timeout=timeout,
+        )
+        footprint = shape(site.geometry)
+        current = tuple(
+            ObservedDcsObject(
+                object_id=item.object_id,
+                type_name=item.type_name or "",
+                display_name=item.display_name or item.name or "",
+                latitude=item.latitude,
+                longitude=item.longitude,
+                life=item.life,
+                exists=item.exists,
+            )
+            for item in survey.objects
+            if footprint.is_empty or footprint.covers(Point(item.longitude, item.latitude))
+        )
+        destroyed_ids = set(self.state.destroyed_object_ids)
+        destroyed_ids.update({
+            str(report.get("target_object_id"))
+            for report in self.state.loss_reports.values()
+            if report.get("target_object_id")
+        })
+        footprint_covered = _footprint_within_survey(
+            site.latitude,
+            site.longitude,
+            site.geometry,
+            survey.radius_m,
+        )
+        return assess_infrastructure_state(
+            verification,
+            current,
+            destroyed_object_ids=destroyed_ids,
+            current_observation_complete=not survey.truncated and footprint_covered,
+        )
+
     async def distance(self, object_id_a: str, object_id_b: str, timeout: float = 10.0) -> DistanceResult:
         """Measure distance between two bridge object ids.
 
@@ -4189,3 +4264,38 @@ class MooseBridgeClient:
 
         ranked.sort(key=lambda value: value.distance_m)
         return ranked[: max(0, limit)]
+
+
+def _footprint_within_survey(
+    latitude: float,
+    longitude: float,
+    geometry: Mapping[str, Any],
+    radius_m: float,
+) -> bool:
+    footprint = shape(geometry)
+    if footprint.is_empty or footprint.geom_type not in {"Polygon", "MultiPolygon"}:
+        return False
+    min_lon, min_lat, max_lon, max_lat = footprint.bounds
+    return all(
+        _geographic_distance_m(latitude, longitude, corner_lat, corner_lon) <= radius_m
+        for corner_lat, corner_lon in (
+            (min_lat, min_lon),
+            (min_lat, max_lon),
+            (max_lat, min_lon),
+            (max_lat, max_lon),
+        )
+    )
+
+
+def _geographic_distance_m(
+    latitude_a: float,
+    longitude_a: float,
+    latitude_b: float,
+    longitude_b: float,
+) -> float:
+    lat_a = math.radians(latitude_a)
+    lat_b = math.radians(latitude_b)
+    delta_lat = lat_b - lat_a
+    delta_lon = math.radians(longitude_b - longitude_a)
+    value = math.sin(delta_lat / 2) ** 2 + math.cos(lat_a) * math.cos(lat_b) * math.sin(delta_lon / 2) ** 2
+    return 2 * 6_371_008.8 * math.asin(min(1.0, math.sqrt(value)))
