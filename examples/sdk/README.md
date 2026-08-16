@@ -1,0 +1,114 @@
+# SDK Example Catalog
+
+These examples exercise the public Python SDK against the MoosePyBridge daemon
+and a live DCS/MOOSE mission. Unless noted otherwise, start `run_server.ps1`,
+start the DCS mission, and edit the constants near the top of the selected
+script before running it.
+
+```powershell
+python examples/sdk/monitor_global_picture.py
+```
+
+## Safety Classes
+
+| Class | Meaning |
+|---|---|
+| Read-only | Refreshes snapshots or reads retained events without changing DCS. |
+| Overlay | Temporarily draws and removes F10 map diagnostics. |
+| Mission-changing | Creates AUFTRAGs, changes ownership, or changes diplomacy. |
+| Destructive | Deliberately damages or destroys a DCS object. |
+| Offline/build | Generates or inspects local datasets; DCS may be optional. |
+
+Stop periodic monitors with `Ctrl+C`. Examples use English output and the
+default control endpoint `127.0.0.1:42001`.
+
+## Start Here
+
+| Example | Class | Purpose |
+|---|---|---|
+| `release_smoke_test.py` | Overlay | Validate the SDK, bridge, snapshots, map datasets, and one temporary F10 markup. |
+| `monitor_global_picture.py` | Read-only | Print and validate the complete global picture periodically. |
+| `run_auftrag_lifecycle.py` | Mission-changing | Run the representative bounded ONGUARD lifecycle used by the release test. |
+| `test_mission_reset.py` | Mission-changing | Verify mission-end/restart generations and mission-scoped state cleanup. |
+
+`auftrag.py` remains as a compatibility entry point for
+`run_auftrag_lifecycle.py`.
+
+`example_support.py` provides shared repository bootstrap, daemon connection,
+and error handling for executable examples. It contains no mission-specific
+configuration and is not intended to be run directly.
+
+## Monitoring
+
+| Example | Class | Purpose |
+|---|---|---|
+| `monitor_commanders.py` | Read-only | Print COMMANDER, LEGION, asset, and mission status. |
+| `monitor_legion.py` | Read-only | Print one LEGION or all LEGION objects periodically. |
+| `monitor_intel.py` | Read-only | Print INTEL agents, contacts, and clusters. |
+| `monitor_group_distance.py` | Read-only | Track the distance between configured groups. |
+| `monitor_relationship.py` | Read-only | Print diplomacy state, escalation, incidents, and doctrine. |
+| `monitor_airbase_capture.py` | Read-only | Observe airbase ownership and objective transitions. |
+| `monitor_unit_lost.py` | Destructive | Trigger an explosion and verify the resulting destruction event and snapshots. |
+| `territories.py` | Read-only by default | Inspect passive TERRITORY objects; optional owner changes are disabled by default. |
+
+## Missions And Planning
+
+| Example | Class | Purpose |
+|---|---|---|
+| `recon_intel_test.py` | Mission-changing | Assign RECON and assess detections attributed to its assets. |
+| `test_arty_weapon_selection.py` | Mission-changing | Validate artillery ranges, weapon flags, synchronization, and execution. |
+| `select_arty_cohort.py` | Mission-changing | Rank fire-support candidates and execute the selected option. |
+| `plan_capture_goal.py` | Mission-changing | Build, approve, and execute a CAPTURE strategic plan. |
+| `plan_defend_goal.py` | Mission-changing | Build, approve, and execute a DEFEND strategic plan. |
+| `plan_destroy_goal.py` | Mission-changing | Execute DESTROY strike rounds until weighted damage is sufficient. |
+| `plan_deny_runway_goal.py` | Mission-changing | Plan and execute runway denial. |
+| `run_blue_conflict_controller.py` | Mission-changing | Run one bounded rule-based strategic decision cycle. |
+| `generate_strategic_objectives.py` | Offline/build and read-only DCS | Generate scoped objectives from territories and normalized infrastructure. |
+
+## Diplomacy And Events
+
+| Example | Class | Purpose |
+|---|---|---|
+| `declare_war.py` | Mission-changing | Explicitly transition the coalition relationship to war. |
+| `test_border_violation.py` | Mission-changing | Validate tolerance timing, deduplication, and incursion escalation. |
+| `test_opszone_relationship.py` | Mission-changing | Validate future OPSZONE capture events and diplomacy scoring. |
+
+## Topography And Routing
+
+| Example | Class | Purpose |
+|---|---|---|
+| `capture_topography_coverage.py` | Offline/build | Export mission-defined all/low/high topography coverage areas. |
+| `verify_topography_overlay.py` | Overlay | Draw a bounded sample of normalized topography in DCS F10. |
+| `verify_road_alignment.py` | Overlay | Compare OSM road samples with native DCS roads. |
+| `verify_surface_alignment.py` | Overlay | Compare normalized land/water samples with DCS surface types. |
+| `verify_coastline_baselines.py` | Overlay | Compare coastline classifications with native DCS surfaces. |
+| `draw_coastline_overlay.py` | Overlay | Draw the normalized coastline in DCS F10. |
+| `inspect_ground_route.py` | Overlay | Compare strategic Python routing with a native DCS road route. |
+| `benchmark_road_routing.py` | Read-only | Benchmark Python A* and native DCS path calculation. |
+
+## Infrastructure
+
+| Example | Class | Purpose |
+|---|---|---|
+| `verify_infrastructure_site.py` | Overlay/build | Survey scenery, draw candidates, and optionally save an immutable baseline. |
+| `verify_energy_site.py` | Overlay/build | Compatibility preset for an energy site. |
+| `verify_industrial_site.py` | Overlay/build | Compatibility preset for an industrial site. |
+| `verify_military_site.py` | Overlay/build | Compatibility preset for a military site. |
+| `verify_maritime_site.py` | Overlay/build | Maritime preset with a larger survey radius. |
+| `verify_railway_infrastructure.py` | Overlay | Locate and visually verify normalized railway infrastructure. |
+| `test_infrastructure_damage.py` | Destructive | Explode a confirmed scenery target and assess baseline damage. |
+
+## Inspection
+
+| Example | Class | Purpose |
+|---|---|---|
+| `inspect_ammunition.py` | Read-only | Print classified ammunition for configured groups. |
+
+## Conventions
+
+- Configuration belongs in named constants near the top of each script.
+- Object IDs, zones, LEGIONs, and COMMANDERs must match the active mission.
+- Read-only examples do not create AUFTRAGs or persist strategic state.
+- Overlay examples remove their own F10 markups before exiting.
+- Destructive examples require an explicit armed switch or a verified target.
+- Compatibility entry points contain no independent workflow logic.

@@ -1077,6 +1077,10 @@ trace.
 
 ## Python SDK examples
 
+The categorized [SDK example catalog](examples/sdk/README.md) identifies each
+script's prerequisites and whether it is read-only, mission-changing, or
+destructive. Use it as the primary entry point for live-DCS examples.
+
 Server-backed SDK:
 
 ```python

@@ -9,19 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from pathlib import Path
-import sys
 
+from example_support import REPO_ROOT, open_example_session, run_example
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
-
-from moosebridge import MooseBridgeCommandError, format_global_picture_status
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge import format_global_picture_status
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
@@ -49,13 +42,8 @@ def write_geojson(path: Path, data: dict[str, object]) -> None:
 async def run() -> int:
     """Connect to the daemon and monitor the global picture."""
 
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge = session.bridge
 
     while True:
         picture = await bridge.refresh_global_picture()
@@ -71,26 +59,10 @@ async def run() -> int:
         await asyncio.sleep(INTERVAL_SECONDS)
 
 
-async def async_main() -> int:
-    """Run the global-picture monitor with readable errors."""
-
-    try:
-        return await run()
-    except MooseBridgeCommandError as exc:
-        print(f"DCS rejected the global snapshot command: {exc}")
-        print(f"ACK: {exc.ack}")
-        return 4
-
-
 def main() -> int:
     """Run the example entry point."""
 
-    logging.basicConfig(level=logging.DEBUG if DEBUG else logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
-    try:
-        return asyncio.run(async_main())
-    except KeyboardInterrupt:
-        print()
-        return 130
+    return run_example(run, debug=DEBUG)
 
 
 if __name__ == "__main__":

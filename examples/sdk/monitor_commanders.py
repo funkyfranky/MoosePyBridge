@@ -1,32 +1,25 @@
+"""Periodically print one COMMANDER or all known COMMANDER objects."""
+
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import open_example_session, run_example
 
 from moosebridge import MooseBridgeClient, format_commander_status
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 INTERVAL_SECONDS = 10.0
-COMMANDER_ID: str | None = None  # For example: "COMMANDER:Blue Command"
-COMMANDER_ID="COMMANDER:Blue Commander"
+COMMAND_TIMEOUT_SECONDS = 10.0
+COMMANDER_ID: str | None = "COMMANDER:Blue Commander"  # Use None for all.
 
 
-async def main() -> None:
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status()
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return
-
-    bridge: MooseBridgeClient = sdk_from_control_client(control, timeout=10.0)
+async def run() -> int:
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge: MooseBridgeClient = session.bridge
     while True:
         await bridge.refresh_legion_state()
         print()
@@ -34,5 +27,9 @@ async def main() -> None:
         await asyncio.sleep(INTERVAL_SECONDS)
 
 
+def main() -> int:
+    return run_example(run)
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(main())

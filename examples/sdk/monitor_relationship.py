@@ -9,16 +9,11 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from pathlib import Path
-import sys
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import open_example_session, run_example
 
 from moosebridge import format_coalition_doctrine, format_relationship
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
@@ -30,19 +25,15 @@ INCIDENT_LIMIT = 20
 
 
 async def run() -> int:
-    control = MooseBridgeControlClient(
+    session = await open_example_session(
         CONTROL_HOST,
         CONTROL_PORT,
+        COMMAND_TIMEOUT_SECONDS,
         client_id="relationship-monitor",
         display_name="Relationship Monitor",
     )
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
-    await control.get_state(("groups", "territories"), timeout=COMMAND_TIMEOUT_SECONDS)
+    bridge = session.bridge
+    await session.control.get_state(("groups", "territories"), timeout=COMMAND_TIMEOUT_SECONDS)
 
     while True:
         restored = await bridge.refresh_diplomacy_state()
@@ -59,11 +50,7 @@ async def run() -> int:
 
 
 def main() -> int:
-    try:
-        return asyncio.run(run())
-    except KeyboardInterrupt:
-        print()
-        return 130
+    return run_example(run)
 
 
 if __name__ == "__main__":

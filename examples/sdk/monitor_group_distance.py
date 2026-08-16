@@ -12,18 +12,11 @@ Run against an already running MoosePyBridge daemon/control server:
 from __future__ import annotations
 
 import asyncio
-import logging
-import sys
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import open_example_session, run_example
 
-from moosebridge import MooseBridgeClient, MooseBridgeCommandError
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge import MooseBridgeClient
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 GROUP_A = "GROUP:Aerial-1"
@@ -56,36 +49,22 @@ async def print_distance_loop(bridge: MooseBridgeClient, group_a: str, group_b: 
 async def run() -> int:
     """Use an already running daemon/control server and monitor distances."""
 
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
-    await print_distance_loop(bridge, GROUP_A, GROUP_B, INTERVAL_SECONDS, RUN_ONCE, COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    await print_distance_loop(
+        session.bridge,
+        GROUP_A,
+        GROUP_B,
+        INTERVAL_SECONDS,
+        RUN_ONCE,
+        COMMAND_TIMEOUT_SECONDS,
+    )
     return 0
-
-
-async def async_main() -> int:
-    """Run the monitor client."""
-
-    try:
-        return await run()
-    except MooseBridgeCommandError as exc:
-        print(f"DCS rejected distance command: {exc}")
-        print(f"ACK: {exc.ack}")
-        return 4
-    except KeyboardInterrupt:
-        print()
-        return 130
 
 
 def main() -> int:
     """Run the script entry point."""
 
-    logging.basicConfig(level=logging.DEBUG if DEBUG else logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
-    return asyncio.run(async_main())
+    return run_example(run, debug=DEBUG)
 
 
 if __name__ == "__main__":

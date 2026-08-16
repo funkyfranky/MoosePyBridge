@@ -20,7 +20,8 @@ submit an AUFTRAG or damage mission objects.
 
 After it passes, complete two manual checks:
 
-1. Run one representative AUFTRAG example suitable for the release mission and
+1. Run `python examples/sdk/run_auftrag_lifecycle.py` (or another representative
+   AUFTRAG example suitable for the release mission) and
    confirm `Planned -> Queued -> Requested -> Scheduled -> Started` followed by
    a valid terminal result.
 2. Run `python examples/sdk/test_mission_reset.py`, end and restart the mission
