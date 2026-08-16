@@ -6,19 +6,10 @@ be running. Change the constants below while experimenting with the SDK.
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import open_example_session, run_example
 
 from moosebridge import MooseBridgeClient, Territory
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
@@ -68,16 +59,11 @@ async def inspect_territories(bridge: MooseBridgeClient) -> None:
 async def run() -> int:
     """Connect to the existing daemon and inspect its territory mirror."""
 
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge = session.bridge
     await inspect_territories(bridge)
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

@@ -11,28 +11,21 @@ from __future__ import annotations
 import asyncio
 from collections import Counter
 import json
-from pathlib import Path
-import sys
 from typing import Any
 
+from example_support import load_example_theater, open_example_session, run_example
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
-
-from moosebridge import DebugMarkup, DebugMarkupPoint, MooseBridgeClient
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge import DEFAULT_THEATER_PROFILE_PATH, DebugMarkup, DebugMarkupPoint, MooseBridgeClient
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 
-COMPARISON_PATH = (
-    REPO_ROOT / "tmp" / "topography" / "GermanyCW-surface-comparison.geojson"
-)
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+COMPARISON_PATH = THEATER_PATHS.path("surface_comparison")
 OVERLAY_ID = "coastline-baseline-verification"
 POINT_RADIUS_M = 1_500.0
 
@@ -68,12 +61,6 @@ async def run() -> int:
         print("Run tools/compare_surface_regions.py first.")
         return 4
 
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
     disagreements = load_disagreements(COMPARISON_PATH)
     if not disagreements:
         print("The comparison artifact contains no coastline disagreements.")
@@ -86,10 +73,8 @@ async def run() -> int:
         )
         for feature in disagreements
     ]
-    bridge: MooseBridgeClient = sdk_from_control_client(
-        control,
-        timeout=COMMAND_TIMEOUT_SECONDS,
-    )
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge: MooseBridgeClient = session.bridge
 
     print(f"Loading disagreements: {COMPARISON_PATH}", flush=True)
     print(f"Comparing {len(points)} points with native DCS surfaces ...", flush=True)
@@ -183,4 +168,4 @@ async def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

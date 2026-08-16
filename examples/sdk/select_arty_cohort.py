@@ -6,19 +6,12 @@ constants below; this example takes no command-line arguments.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Mapping
-from pathlib import Path
-import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import open_example_session, run_example
 
 from moosebridge import Auftrag_ARTY, MooseBridgeClient, StrategicMissionResolver
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 from test_arty_weapon_selection import coalition_ammunition, prepare_target_data
 
@@ -69,19 +62,15 @@ def print_candidates(resolution: object) -> None:
         )
 
 
-async def main() -> int:
-    control = MooseBridgeControlClient(
+async def run() -> int:
+    session = await open_example_session(
         CONTROL_HOST,
         CONTROL_PORT,
+        COMMAND_TIMEOUT_SECONDS,
         client_id="arty-cohort-selection-test",
         display_name="ARTY COHORT Selection Test",
     )
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the MooseBridge daemon.")
-        return 1
-
-    bridge: MooseBridgeClient = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    bridge: MooseBridgeClient = session.bridge
     await bridge.refresh_legion_state()
     await bridge.snapshot_groups()
     await bridge.snapshot_units()
@@ -155,5 +144,9 @@ async def main() -> int:
     return 0
 
 
+def main() -> int:
+    return run_example(run)
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(main())

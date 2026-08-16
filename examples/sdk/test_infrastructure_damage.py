@@ -8,30 +8,25 @@ saved verification baseline.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (  # noqa: E402
+    DEFAULT_THEATER_PROFILE_PATH,
     InfrastructureStateAssessment,
     StrategicVerificationRegistry,
     TheaterInfrastructureSites,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient  # noqa: E402
-from moosebridge.control_sdk import sdk_from_control_client  # noqa: E402
+from moosebridge.control import DEFAULT_CONTROL_PORT  # noqa: E402
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 
-SITES_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-infrastructure-sites.geojson"
-VERIFICATIONS_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-strategic-verifications.json"
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+SITES_PATH = THEATER_PATHS.path("infrastructure_sites")
+VERIFICATIONS_PATH = THEATER_PATHS.path("strategic_verifications")
 
 # Select a verified infrastructure site and one object from its observed DCS
 # baseline. The defaults match the Recknitztal-Kaserne example.
@@ -112,12 +107,8 @@ async def run() -> int:
             print(f"  {item.object_id} | {item.type_name or 'unknown type'}")
         return 2
 
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the MooseBridge daemon.")
-        return 1
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge = session.bridge
 
     print("Infrastructure damage test")
     print("=" * 88)
@@ -206,4 +197,4 @@ async def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

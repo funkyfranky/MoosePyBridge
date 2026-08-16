@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
-import sys
 import uuid
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (
+    DEFAULT_THEATER_PROFILE_PATH,
     GroundMobilityNetwork,
     ObjectiveComponent,
     ObjectiveKind,
@@ -21,14 +18,15 @@ from moosebridge import (
     format_operational_plan_assessment,
     format_operational_plan_execution,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 10.0
-GROUND_MOBILITY_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+GROUND_MOBILITY_PATH = THEATER_PATHS.path("ground_mobility")
 CLIENT_ID = "destroy-planner-example"
 CLIENT_DISPLAY_NAME = "Destroy Planner Example"
 
@@ -52,23 +50,16 @@ APPROVE_IF_FEASIBLE = True
 EXECUTE_IF_APPROVED = True
 
 
-async def main() -> int:
-    control = MooseBridgeControlClient(
+async def run() -> int:
+    session = await open_example_session(
         CONTROL_HOST,
         CONTROL_PORT,
+        COMMAND_TIMEOUT_SECONDS,
         client_id=CLIENT_ID,
         display_name=CLIENT_DISPLAY_NAME,
+        sdk_options={"ground_mobility": GroundMobilityNetwork.load(GROUND_MOBILITY_PATH)},
     )
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the MooseBridge daemon.")
-        return 1
-
-    bridge = sdk_from_control_client(
-        control,
-        timeout=COMMAND_TIMEOUT_SECONDS,
-        ground_mobility=GroundMobilityNetwork.load(GROUND_MOBILITY_PATH),
-    )
+    bridge = session.bridge
     await bridge.snapshot_statics()
     mission_time = bridge.state.clock.mission_time if bridge.state.clock else None
     if mission_time is None:
@@ -137,5 +128,9 @@ async def main() -> int:
     return 2
 
 
+def main() -> int:
+    return run_example(run)
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(main())

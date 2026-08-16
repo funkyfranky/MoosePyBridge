@@ -9,18 +9,12 @@ from __future__ import annotations
 import asyncio
 import math
 from pathlib import Path
-import sys
 from typing import Any
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import REPO_ROOT, open_example_session, run_example
 
 from moosebridge import DebugMarkup, DebugMarkupPoint, MooseBridgeClient
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
@@ -150,16 +144,8 @@ async def run() -> int:
         print("Run tools/download_osm_coastline_data.py first.")
         return 4
 
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
-    bridge: MooseBridgeClient = sdk_from_control_client(
-        control,
-        timeout=COMMAND_TIMEOUT_SECONDS,
-    )
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge: MooseBridgeClient = session.bridge
     center = await bridge.coords(
         CENTER_OBJECT_ID,
         format="ll",
@@ -215,4 +201,4 @@ async def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 import hashlib
 import json
@@ -24,6 +24,13 @@ DEFAULT_STRATEGIC_HIGHWAYS = (
 DEFAULT_INTERCHANGE_CLUSTER_RADIUS_M = 300.0
 DEFAULT_JUNCTION_CLUSTER_RADIUS_M = 100.0
 DEFAULT_BRIDGE_CLUSTER_RADIUS_M = 150.0
+
+_ROAD_IMPORTANCE = {
+    "motorway": 100.0,
+    "trunk": 90.0,
+    "primary": 75.0,
+    "secondary": 55.0,
+}
 
 
 class TransportJunctionKind(StrEnum):
@@ -255,19 +262,49 @@ class TheaterTransportInfrastructure:
         if len(ids) != len(set(ids)):
             raise ValueError("transport infrastructure IDs must be unique")
 
-    def to_geojson(self) -> dict[str, Any]:
+    def to_geojson(
+        self,
+        *,
+        bounds: tuple[float, float, float, float] | None = None,
+        minimum_importance_tier: TransportImportanceTier | None = None,
+    ) -> dict[str, Any]:
+        rank = {
+            TransportImportanceTier.LOW: 0,
+            TransportImportanceTier.MEDIUM: 1,
+            TransportImportanceTier.HIGH: 2,
+            TransportImportanceTier.CRITICAL: 3,
+        }
+
+        def included(latitude: float, longitude: float, tier: TransportImportanceTier) -> bool:
+            if minimum_importance_tier is not None and rank[tier] < rank[minimum_importance_tier]:
+                return False
+            if bounds is None:
+                return True
+            west, south, east, north = bounds
+            return west <= longitude <= east and south <= latitude <= north
+
+        bridges = tuple(
+            bridge for bridge in self.bridges
+            if included(bridge.latitude, bridge.longitude, bridge.importance_tier)
+        )
+        junctions = tuple(
+            junction for junction in self.junctions
+            if included(junction.latitude, junction.longitude, junction.importance_tier)
+        )
         return {
             "type": "FeatureCollection",
             "features": [
-                *(bridge.to_geojson_feature() for bridge in self.bridges),
-                *(junction.to_geojson_feature() for junction in self.junctions),
+                *(bridge.to_geojson_feature() for bridge in bridges),
+                *(junction.to_geojson_feature() for junction in junctions),
             ],
             "properties": {
                 "schema": TRANSPORT_INFRASTRUCTURE_SCHEMA,
                 "schema_version": self.schema_version,
                 "theater_id": self.theater_id,
-                "bridge_count": len(self.bridges),
-                "junction_count": len(self.junctions),
+                "bridge_count": len(bridges),
+                "junction_count": len(junctions),
+                "source_bridge_count": len(self.bridges),
+                "source_junction_count": len(self.junctions),
                 "strategic_highways": list(self.strategic_highways),
                 "minimum_junction_arms": self.minimum_junction_arms,
                 **self.metadata,
@@ -289,6 +326,7 @@ class TheaterTransportInfrastructure:
                 junctions.append(TransportJunction.from_geojson_feature(feature))
         known = {
             "schema", "schema_version", "theater_id", "bridge_count", "junction_count",
+            "source_bridge_count", "source_junction_count",
             "strategic_highways", "minimum_junction_arms",
         }
         return cls(
@@ -341,6 +379,8 @@ def build_transport_infrastructure(
         interchange_cluster_radius_m=interchange_cluster_radius_m,
         junction_cluster_radius_m=junction_cluster_radius_m,
     )
+    bridges = tuple(_classify_bridge(bridge) for bridge in bridges)
+    junctions = tuple(_classify_junction(junction) for junction in junctions)
     return TheaterTransportInfrastructure(
         theater_id=network.theater_id,
         bridges=bridges,
@@ -354,8 +394,54 @@ def build_transport_infrastructure(
             "interchange_cluster_radius_m": interchange_cluster_radius_m,
             "junction_cluster_radius_m": junction_cluster_radius_m,
             "bridge_cluster_radius_m": bridge_cluster_radius_m,
+            "importance_method": "road_class_and_connectivity_baseline",
         },
     )
+
+
+def _classify_bridge(bridge: TransportBridge) -> TransportBridge:
+    road_score = _road_importance(bridge.highway_classes)
+    connectivity_score = min(100.0, bridge.approach_count * 15.0)
+    score = 0.8 * road_score + 0.2 * connectivity_score
+    return replace(
+        bridge,
+        road_importance=road_score,
+        importance_score=score,
+        importance_tier=_importance_tier(score, (95.0, 82.0, 55.0)),
+    )
+
+
+def _classify_junction(junction: TransportJunction) -> TransportJunction:
+    road_score = _road_importance(junction.highway_classes)
+    connectivity_score = min(100.0, junction.arm_count * 20.0)
+    score = 0.75 * road_score + 0.25 * connectivity_score
+    return replace(
+        junction,
+        road_importance=road_score,
+        importance_score=score,
+        importance_tier=_importance_tier(score, (95.0, 85.0, 65.0)),
+    )
+
+
+def _road_importance(highway_classes: Iterable[str]) -> float:
+    return max(
+        (_ROAD_IMPORTANCE.get(str(value).removesuffix("_link"), 25.0) for value in highway_classes),
+        default=25.0,
+    )
+
+
+def _importance_tier(
+    score: float,
+    thresholds: tuple[float, float, float],
+) -> TransportImportanceTier:
+    critical, high, medium = thresholds
+    if score >= critical:
+        return TransportImportanceTier.CRITICAL
+    if score >= high:
+        return TransportImportanceTier.HIGH
+    if score >= medium:
+        return TransportImportanceTier.MEDIUM
+    return TransportImportanceTier.LOW
 
 
 @dataclass(slots=True, frozen=True)
@@ -463,20 +549,11 @@ def _cluster_bridges(
     """Collapse nearby bridge structures into non-chained operational locations."""
 
     remaining = sorted(candidates, key=lambda item: (-item.bridge.edge_count, item.bridge.bridge_id))
-    radius_squared = radius_m * radius_m
-    result: list[TransportBridge] = []
-    while remaining:
-        seed = remaining.pop(0)
-        members = [seed]
-        keep: list[_BridgeCandidate] = []
-        for candidate in remaining:
-            distance_squared = (candidate.x - seed.x) ** 2 + (candidate.y - seed.y) ** 2
-            if distance_squared <= radius_squared:
-                members.append(candidate)
-            else:
-                keep.append(candidate)
-        remaining = keep
-        result.append(_bridge_from_members(members))
+    clusters = _non_chained_spatial_clusters(
+        [(candidate.x, candidate.y) for candidate in remaining],
+        radius_m=radius_m,
+    )
+    result = [_bridge_from_members([remaining[index] for index in cluster]) for cluster in clusters]
     return tuple(sorted(result, key=lambda item: item.bridge_id))
 
 
@@ -575,24 +652,57 @@ def _cluster_junctions(
     result: list[TransportJunction] = []
     for kind, remaining in unassigned.items():
         radius = interchange_radius_m if kind is TransportJunctionKind.INTERCHANGE else junction_radius_m
-        radius_squared = radius * radius
-        while remaining:
-            seed_node, seed = remaining.pop(0)
-            seed_x, seed_y = float(network.node_x[seed_node]), float(network.node_y[seed_node])
-            members = [(seed_node, seed)]
-            keep: list[tuple[int, TransportJunction]] = []
-            for node, junction in remaining:
-                distance_squared = (
-                    (float(network.node_x[node]) - seed_x) ** 2
-                    + (float(network.node_y[node]) - seed_y) ** 2
-                )
-                if distance_squared <= radius_squared:
-                    members.append((node, junction))
-                else:
-                    keep.append((node, junction))
-            remaining = keep
-            result.append(_junction_from_members(kind, members))
+        clusters = _non_chained_spatial_clusters(
+            [(float(network.node_x[node]), float(network.node_y[node])) for node, _ in remaining],
+            radius_m=radius,
+        )
+        result.extend(
+            _junction_from_members(kind, [remaining[index] for index in cluster])
+            for cluster in clusters
+        )
     return tuple(sorted(result, key=lambda item: item.junction_id))
+
+
+def _non_chained_spatial_clusters(
+    points: list[tuple[float, float]],
+    *,
+    radius_m: float,
+) -> list[list[int]]:
+    """Group each ordered seed with nearby unassigned points using a spatial grid."""
+
+    if not points:
+        return []
+    cell_size = radius_m if radius_m > 0 else 1.0
+    buckets: dict[tuple[int, int], list[int]] = {}
+    for index, (x, y) in enumerate(points):
+        key = (int(np.floor(x / cell_size)), int(np.floor(y / cell_size)))
+        buckets.setdefault(key, []).append(index)
+
+    radius_squared = radius_m * radius_m
+    unassigned = set(range(len(points)))
+    clusters: list[list[int]] = []
+    for seed_index, (seed_x, seed_y) in enumerate(points):
+        if seed_index not in unassigned:
+            continue
+        unassigned.remove(seed_index)
+        members = [seed_index]
+        cell_x = int(np.floor(seed_x / cell_size))
+        cell_y = int(np.floor(seed_y / cell_size))
+        nearby = (
+            candidate
+            for offset_x in (-1, 0, 1)
+            for offset_y in (-1, 0, 1)
+            for candidate in buckets.get((cell_x + offset_x, cell_y + offset_y), ())
+        )
+        for candidate_index in sorted(nearby):
+            if candidate_index not in unassigned:
+                continue
+            x, y = points[candidate_index]
+            if (x - seed_x) ** 2 + (y - seed_y) ** 2 <= radius_squared:
+                unassigned.remove(candidate_index)
+                members.append(candidate_index)
+        clusters.append(members)
+    return clusters
 
 
 def _junction_from_members(

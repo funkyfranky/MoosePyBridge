@@ -7,25 +7,15 @@ are required.
 
 from __future__ import annotations
 
-import asyncio
-import logging
-import sys
-from pathlib import Path
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import open_example_session, run_example
 
 from moosebridge import (
     MooseBridgeClient,
-    MooseBridgeCommandError,
     UnitAmmunition,
     format_group_capabilities,
     format_weapon_range,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 GROUP_IDS = (
@@ -146,13 +136,8 @@ def print_group_ammunition(bridge: MooseBridgeClient, group_id: str) -> None:
 async def run() -> int:
     """Request one ammunition snapshot and print the configured objects."""
 
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
-    bridge: MooseBridgeClient = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge: MooseBridgeClient = session.bridge
     all_units = await bridge.refresh_ammunition()
 
     for group_id in GROUP_IDS:
@@ -163,29 +148,9 @@ async def run() -> int:
     return 0
 
 
-async def async_main() -> int:
-    """Run the SDK example with readable error reporting."""
-
-    try:
-        return await run()
-    except MooseBridgeCommandError as exc:
-        print(f"DCS rejected the ammunition snapshot: {exc}")
-        print(f"ACK: {exc.ack}")
-        return 4
-    except (ConnectionError, OSError, asyncio.TimeoutError) as exc:
-        print(f"Could not reach the MoosePyBridge daemon: {exc}")
-        return 5
-
-
 def main() -> int:
     """Run the script entry point."""
-
-    logging.basicConfig(level=logging.DEBUG if DEBUG else logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
-    try:
-        return asyncio.run(async_main())
-    except KeyboardInterrupt:
-        print()
-        return 130
+    return run_example(run, debug=DEBUG)
 
 
 if __name__ == "__main__":

@@ -91,10 +91,6 @@ configuration and is not intended to be run directly.
 | Example | Class | Purpose |
 |---|---|---|
 | `verify_infrastructure_site.py` | Overlay/build | Survey scenery, draw candidates, and optionally save an immutable baseline. |
-| `verify_energy_site.py` | Overlay/build | Compatibility preset for an energy site. |
-| `verify_industrial_site.py` | Overlay/build | Compatibility preset for an industrial site. |
-| `verify_military_site.py` | Overlay/build | Compatibility preset for a military site. |
-| `verify_maritime_site.py` | Overlay/build | Maritime preset with a larger survey radius. |
 | `verify_railway_infrastructure.py` | Overlay | Locate and visually verify normalized railway infrastructure. |
 | `test_infrastructure_damage.py` | Destructive | Explode a confirmed scenery target and assess baseline damage. |
 

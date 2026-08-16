@@ -9,6 +9,7 @@ from moosebridge import (
     RoadRoutingNetwork,
     TheaterTransportInfrastructure,
     TransportCriticalityConfig,
+    TransportImportanceTier,
     TransportJunctionKind,
     analyze_transport_criticality,
     build_transport_infrastructure,
@@ -239,6 +240,42 @@ def test_criticality_analysis_records_alternative_route_impact() -> None:
     assert junction.analysis_limit_m == 5_000
     assert 0 <= junction.importance_score <= 100
     assert analyzed.metadata["criticality_method"] == "bounded_location_block_and_alternative_route"
+
+
+def test_extraction_assigns_cheap_baseline_importance() -> None:
+    infrastructure = build_transport_infrastructure(_network())
+
+    assert infrastructure.metadata["importance_method"] == "road_class_and_connectivity_baseline"
+    assert infrastructure.bridges[0].road_importance == 75
+    assert infrastructure.bridges[0].importance_score > 0
+    assert infrastructure.bridges[0].importance_tier.value != "low"
+    assert infrastructure.junctions[0].road_importance == 90
+    assert infrastructure.junctions[0].importance_score > 0
+
+
+def test_geojson_can_filter_transport_by_viewport_and_importance() -> None:
+    infrastructure = build_transport_infrastructure(_network())
+    junction = infrastructure.junctions[0]
+    filtered = replace(
+        infrastructure,
+        junctions=(
+            replace(junction, importance_tier=TransportImportanceTier.HIGH),
+            replace(
+                junction,
+                junction_id="JUNCTION:OSM:outside",
+                longitude=20.0,
+                importance_tier=TransportImportanceTier.CRITICAL,
+            ),
+        ),
+        bridges=tuple(
+            replace(bridge, importance_tier=TransportImportanceTier.MEDIUM)
+            for bridge in infrastructure.bridges
+        ),
+    ).to_geojson(bounds=(11.0, 53.0, 13.0, 55.0), minimum_importance_tier=TransportImportanceTier.HIGH)
+
+    assert [feature["properties"]["object_id"] for feature in filtered["features"]] == [junction.junction_id]
+    assert filtered["properties"]["junction_count"] == 1
+    assert filtered["properties"]["source_junction_count"] == 2
 
 
 def test_importance_tiers_are_calibrated_per_infrastructure_type() -> None:

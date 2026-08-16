@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (
+    DEFAULT_THEATER_PROFILE_PATH,
     ConflictControllerConfig,
     GroundMobilityNetwork,
     MooseBridgeClient,
@@ -24,15 +19,16 @@ from moosebridge import (
     format_relationship,
     format_strategic_goal_portfolio,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 15.0
 EXECUTE_SELECTED_PLAN = True
-GROUND_MOBILITY_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+GROUND_MOBILITY_PATH = THEATER_PATHS.path("ground_mobility")
 
 COALITION = "blue"
 INTEL_ID = "INTEL:Blue Intel"
@@ -82,24 +78,17 @@ def add_scenario_objectives(bridge: MooseBridgeClient) -> None:
     )
 
 
-async def main() -> int:
-    control = MooseBridgeControlClient(
+async def run() -> int:
+    ground_mobility = GroundMobilityNetwork.load(GROUND_MOBILITY_PATH)
+    session = await open_example_session(
         CONTROL_HOST,
         CONTROL_PORT,
+        COMMAND_TIMEOUT_SECONDS,
         client_id="blue-conflict-controller",
         display_name="Blue Conflict Controller",
+        sdk_options={"ground_mobility": ground_mobility},
     )
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the MoosePyBridge daemon.")
-        return 3
-
-    ground_mobility = GroundMobilityNetwork.load(GROUND_MOBILITY_PATH)
-    bridge = sdk_from_control_client(
-        control,
-        timeout=COMMAND_TIMEOUT_SECONDS,
-        ground_mobility=ground_mobility,
-    )
+    bridge = session.bridge
     add_scenario_objectives(bridge)
     controller = RuleBasedConflictController(
         bridge,
@@ -138,5 +127,9 @@ async def main() -> int:
     return 0 if cycle.portfolio.selected and not cycle.issues else 2
 
 
+def main() -> int:
+    return run_example(run)
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(main())

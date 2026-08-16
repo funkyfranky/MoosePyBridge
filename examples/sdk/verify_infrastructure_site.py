@@ -10,17 +10,13 @@ from __future__ import annotations
 import asyncio
 import math
 from pathlib import Path
-import sys
 
 from shapely.geometry import Point, shape
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (  # noqa: E402
+    DEFAULT_THEATER_PROFILE_PATH,
     DebugMarkup,
     DebugMarkupPoint,
     EnergySite,
@@ -37,15 +33,16 @@ from moosebridge import (  # noqa: E402
     TheaterInfrastructureSites,
     assess_infrastructure_state,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient  # noqa: E402
-from moosebridge.control_sdk import sdk_from_control_client  # noqa: E402
+from moosebridge.control import DEFAULT_CONTROL_PORT  # noqa: E402
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
-SITES_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-infrastructure-sites.geojson"
-VERIFICATIONS_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-strategic-verifications.json"
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+SITES_PATH = THEATER_PATHS.path("infrastructure_sites")
+VERIFICATIONS_PATH = THEATER_PATHS.path("strategic_verifications")
 
 # Copy the object ID from the web-map detail panel.
 SITE_ID = "MILITARY_SITE:88ed34fd505620ec"
@@ -53,7 +50,7 @@ SITE_ID = "MILITARY_SITE:88ed34fd505620ec"
 # Verification workflow options.
 SURVEY_RADIUS_M = 750.0
 DRAW_F10_OVERLAY = True
-SAVE_OBSERVED_BASELINE = True
+SAVE_OBSERVED_BASELINE = False
 REPLACE_OBSERVED_BASELINE = False
 
 # Internal display and safety limits. These normally do not need adjustment.
@@ -322,16 +319,8 @@ async def run() -> int:
         print(f"Infrastructure-site artifact not found: {SITES_PATH}")
         print("Run: python tools/build_infrastructure_sites.py")
         return 2
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    try:
-        status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    except OSError as exc:
-        print(f"MoosePyBridge daemon is not reachable at {CONTROL_HOST}:{CONTROL_PORT}: {exc}")
-        return 3
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 4
-    bridge: MooseBridgeClient = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge: MooseBridgeClient = session.bridge
     site = select_site(TheaterInfrastructureSites.load(SITES_PATH))
     format_site(site)
     format_strategic_verification(site)
@@ -409,4 +398,4 @@ async def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

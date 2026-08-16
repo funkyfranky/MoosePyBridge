@@ -3,31 +3,27 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import statistics
-import sys
 from time import perf_counter
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (
+    DEFAULT_THEATER_PROFILE_PATH,
     GroundMobilityNetwork,
     HierarchicalRoadRouter,
     RoadRoutingShardIndex,
     TRACKED_ROAD_PROFILE,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
-STRATEGIC_NETWORK_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-ground-mobility.json"
-ROAD_SHARD_INDEX_PATH = REPO_ROOT / "tmp" / "topography" / "road_routing_cache" / "manifest.json"
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+STRATEGIC_NETWORK_PATH = THEATER_PATHS.path("ground_mobility")
+ROAD_SHARD_INDEX_PATH = THEATER_PATHS.path("road_routing_cache") / "manifest.json"
 ROAD_CORRIDOR_BUFFER_M = 50_000.0
 START_OBJECT_ID = "AIRBASE:Laage"
 END_OBJECT_ID = "AIRBASE:Gross Mohrdorf"
@@ -46,12 +42,8 @@ async def run() -> int:
         print(f"Python routing artifact not found: {missing[0]}")
         print("Run: python tools/build_road_routing.py")
         return 4
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=10)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-    bridge = sdk_from_control_client(control, timeout=60)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, 60.0)
+    bridge = session.bridge
     start = await bridge.coords(START_OBJECT_ID, format="ll")
     end = await bridge.coords(END_OBJECT_ID, format="ll")
     coordinates = (start.latitude, start.longitude, end.latitude, end.longitude)
@@ -127,4 +119,4 @@ async def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

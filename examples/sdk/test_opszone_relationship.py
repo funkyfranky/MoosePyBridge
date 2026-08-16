@@ -11,16 +11,10 @@ Edit WATCHED_OPSZONES when using different OPSZONEs in another test mission.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import open_example_session, run_example
 
 from moosebridge import EscalationIncidentType, RelationshipState, format_relationship
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
@@ -87,18 +81,15 @@ def print_capture_result(
 
 
 async def run() -> int:
-    control = MooseBridgeControlClient(
+    session = await open_example_session(
         CONTROL_HOST,
         CONTROL_PORT,
+        COMMAND_TIMEOUT_SECONDS,
         client_id="opszone-relationship-test",
         display_name="OPSZONE Relationship Test",
     )
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    control = session.control
+    bridge = session.bridge
     retained = await control.query_events("opszone.owner_changed", timeout=COMMAND_TIMEOUT_SECONDS)
     cursor = str(retained.get("latest_event_id") or "") or None
     await bridge.snapshot_opszones()
@@ -218,11 +209,7 @@ async def run() -> int:
 
 
 def main() -> int:
-    try:
-        return asyncio.run(run())
-    except KeyboardInterrupt:
-        print()
-        return 130
+    return run_example(run)
 
 
 if __name__ == "__main__":

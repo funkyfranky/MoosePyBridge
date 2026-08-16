@@ -16,6 +16,7 @@ if str(PYTHON_ROOT) not in sys.path:
     sys.path.insert(0, str(PYTHON_ROOT))
 
 from moosebridge import (  # noqa: E402
+    EnergySource,
     EnergySite,
     FuelStorageSite,
     InfrastructureCandidatePolicy,
@@ -26,6 +27,7 @@ from moosebridge import (  # noqa: E402
     TopographyLayer,
     build_infrastructure_sites,
 )
+from moosebridge.theater_data import DEFAULT_THEATER_PROFILE_PATH, TheaterDataProfile  # noqa: E402
 from moosebridge.pbf_topography import targeted_infrastructure_features_from_pbf  # noqa: E402
 
 
@@ -36,6 +38,7 @@ DEFAULT_PBF_DIRECTORY = REPO_ROOT / "tmp" / "topography" / "pbf"
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build normalized strategic infrastructure-site candidates")
+    parser.add_argument("--profile", type=Path, default=DEFAULT_THEATER_PROFILE_PATH)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(
@@ -47,11 +50,14 @@ def main() -> int:
     parser.add_argument(
         "--include-modern-energy",
         action="store_true",
-        help="Disable GermanyCW's wind, solar, biogas, and battery exclusions.",
+        help="Disable the theater profile's historical energy-source exclusions.",
     )
     args = parser.parse_args()
+    profile = TheaterDataProfile.load(args.profile)
     payload = json.loads(args.manifest.read_text(encoding="utf-8"))
     theater_id = str(payload.get("theater_id") or "")
+    if theater_id.casefold() != profile.theater_id.casefold():
+        raise ValueError(f"viewport theater {theater_id!r} does not match profile {profile.theater_id!r}")
     features = _load_candidates(args.manifest.parent, payload.get("shards") or [])
     pbf_paths = sorted(args.pbf_directory.glob("*.osm.pbf")) if args.pbf_directory.is_dir() else []
     if pbf_paths:
@@ -60,16 +66,16 @@ def main() -> int:
         for feature in targeted_infrastructure_features_from_pbf(
             pbf_paths,
             bounds=bounds,
-            scenario_reference_year=1989 if theater_id.casefold() == "germanycw" else None,
+            scenario_reference_year=profile.infrastructure_reference_year,
             max_workers=8,
         ):
             features[feature.object_id] = feature
-    policy = None
-    if args.include_modern_energy:
-        policy = InfrastructureCandidatePolicy(
-            theater_id=theater_id,
-            scenario_reference_year=1989 if theater_id.casefold() == "germanycw" else None,
-        )
+    excluded = () if args.include_modern_energy else profile.excluded_energy_sources
+    policy = InfrastructureCandidatePolicy(
+        theater_id=theater_id,
+        scenario_reference_year=profile.infrastructure_reference_year,
+        excluded_energy_sources=frozenset(EnergySource(value) for value in excluded),
+    )
     artifact = build_infrastructure_sites(features.values(), theater_id=theater_id, policy=policy)
     output = artifact.save(args.output)
     energy_count = sum(isinstance(site, EnergySite) for site in artifact.sites)

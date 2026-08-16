@@ -1444,6 +1444,10 @@ major roads, railways, cities, towns, land use, and infrastructure candidates.
 The primary import downloads regional Geofabrik PBF extracts and filters them
 locally, outside the running DCS mission:
 
+The profile-driven, portable build and validation workflow is documented in
+[`docs/THEATER_DATA.md`](docs/THEATER_DATA.md). The same profile also supplies
+the map server and theater-aware SDK examples with their artifact paths.
+
 ```powershell
 python -m pip install -e ".[topography]"
 python examples/sdk/capture_topography_coverage.py
@@ -1783,13 +1787,10 @@ parameter-free example:
 python examples/sdk/verify_infrastructure_site.py
 ```
 
-By default it selects the admitted fuel-storage site nearest `AIRBASE:Laage`,
-prints the bounded scenery survey, and draws a temporary F10 verification
-overlay. Edit the typed constants at the top of the file to select energy,
-another site, reference, or radius. `verify_energy_site.py` remains a compact
-energy-specific entry point using the same implementation;
-`verify_military_site.py` selects the military layer and
-`verify_industrial_site.py` selects industry. Maritime sites normalize civilian
+Set `SITE_ID` at the top of the file to the object ID copied from the web map.
+The script prints the bounded scenery survey, draws a temporary F10 verification
+overlay, and can save the observed baseline. The same unambiguous workflow is
+used for energy, fuel, military, industrial, and maritime sites. Maritime sites normalize civilian
 ports, cargo/container/bulk/RoRo and ferry terminals, fishing ports, passenger
 terminals, and shipyards. Piers, quays, docks, harbour basins, and berths are
 retained as components of their nearest port rather than promoted to independent

@@ -9,16 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import math
-from pathlib import Path
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (  # noqa: E402
+    DEFAULT_THEATER_PROFILE_PATH,
     DebugMarkup,
     DebugMarkupPoint,
     MooseBridgeClient,
@@ -29,15 +23,16 @@ from moosebridge import (  # noqa: E402
     StrategicVerificationRegistry,
     TheaterRailwayInfrastructure,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient  # noqa: E402
-from moosebridge.control_sdk import sdk_from_control_client  # noqa: E402
+from moosebridge.control import DEFAULT_CONTROL_PORT  # noqa: E402
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
-RAILWAY_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-railway-infrastructure.geojson"
-VERIFICATIONS_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-strategic-verifications.json"
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+RAILWAY_PATH = THEATER_PATHS.path("railway_infrastructure")
+VERIFICATIONS_PATH = THEATER_PATHS.path("strategic_verifications")
 
 # Select STATION, FREIGHT_TERMINAL, RAIL_YARD, DEPOT, JUNCTION, or BRIDGE.
 # Set an exact location name or object ID, or leave both None to select the
@@ -200,16 +195,8 @@ async def run() -> int:
         print(f"Railway-infrastructure artifact not found: {RAILWAY_PATH}")
         print("Run: python tools/build_railway_infrastructure.py")
         return 2
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    try:
-        status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    except OSError as exc:
-        print(f"MoosePyBridge daemon is not reachable at {CONTROL_HOST}:{CONTROL_PORT}: {exc}")
-        return 3
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 4
-    bridge: MooseBridgeClient = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge: MooseBridgeClient = session.bridge
     location, reference_distance = await select_location(
         bridge,
         TheaterRailwayInfrastructure.load(RAILWAY_PATH),
@@ -269,4 +256,4 @@ async def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

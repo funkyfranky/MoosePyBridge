@@ -8,16 +8,10 @@ Load the updated MooseBridge.lua into the mission before running it.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (
+    DEFAULT_THEATER_PROFILE_PATH,
     DebugMarkup,
     DebugMarkupPoint,
     MooseBridgeClient,
@@ -25,15 +19,16 @@ from moosebridge import (
     TopographyLayer,
     build_topography_debug_overlay,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
 CONTROL_PORT = DEFAULT_CONTROL_PORT
 COMMAND_TIMEOUT_SECONDS = 30.0
 
-TOPOGRAPHY_PATH = REPO_ROOT / "tmp" / "topography" / "GermanyCW-mv-simplified.geojson"
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+TOPOGRAPHY_PATH = THEATER_PATHS.path("topography_preview")
 CENTER_OBJECT_ID = "AIRBASE:Laage"
 RADIUS_KM = 10.0
 # Test one layer at a time. For water, small ponds and fragments are excluded
@@ -48,16 +43,12 @@ COALITION = "all"
 
 
 async def run() -> int:
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
     if not TOPOGRAPHY_PATH.is_file():
         print(f"Topography cache not found: {TOPOGRAPHY_PATH}")
         return 4
 
-    bridge: MooseBridgeClient = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge: MooseBridgeClient = session.bridge
     center = await bridge.coords(CENTER_OBJECT_ID, format="ll", timeout=COMMAND_TIMEOUT_SECONDS)
     if center.latitude is None or center.longitude is None:
         print(f"DCS did not return WGS84 coordinates for {CENTER_OBJECT_ID}.")
@@ -115,4 +106,4 @@ async def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

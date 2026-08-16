@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import sys
 import uuid
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import open_example_session, run_example
 
 from moosebridge import (
     ObjectiveKind,
@@ -19,8 +15,7 @@ from moosebridge import (
     format_operational_plan_assessment,
     format_operational_plan_execution,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 from moosebridge.pictures import TacticalPicture
 
 
@@ -40,19 +35,15 @@ APPROVE_IF_FEASIBLE = True
 EXECUTE_IF_APPROVED = True
 
 
-async def main() -> int:
-    control = MooseBridgeControlClient(
+async def run() -> int:
+    session = await open_example_session(
         CONTROL_HOST,
         CONTROL_PORT,
+        COMMAND_TIMEOUT_SECONDS,
         client_id=CLIENT_ID,
         display_name=CLIENT_DISPLAY_NAME,
     )
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the MooseBridge daemon.")
-        return 1
-
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    bridge = session.bridge
     await bridge.snapshot_airbases()
     airbase = bridge.state.airbases.get(AIRBASE_ID)
     if airbase is None:
@@ -123,5 +114,9 @@ async def main() -> int:
     return 0 if goal.status.value == "achieved" else 2
 
 
+def main() -> int:
+    return run_example(run)
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(main())

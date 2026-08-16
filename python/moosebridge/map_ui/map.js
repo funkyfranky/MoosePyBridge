@@ -201,6 +201,8 @@
   let topographyViewportAvailable = false;
   let fitted = false;
   let reconnectTimer = null;
+  let transportRefreshTimer = null;
+  let transportRequestSequence = 0;
   let selectedFeature = null;
   let selectedObjectId = null;
   let selectionCandidates = [];
@@ -754,15 +756,17 @@
           filter: ["==", ["get", "layer"], spec.key],
           paint: {
             "circle-radius": [
-              "interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1],
-              1, 5, 3, 6.5, 8, 8,
+              "interpolate", ["linear"], ["zoom"],
+              4, ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 2.5, 3, 3.25, 8, 4],
+              8, ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 4, 3, 5.2, 8, 6.4],
+              11, ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 5, 3, 6.5, 8, 8],
             ],
             "circle-color": [
               "match", ["get", "importance_tier"],
               "critical", "#b83232", "high", "#d17822", "medium", spec.color, "#7d8581",
             ],
             "circle-stroke-color": "rgba(255,255,255,0.96)",
-            "circle-stroke-width": 1.8,
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, 0.8, 9, 1.4, 11, 1.8],
             "circle-opacity": infrastructureVisibilityOpacity(),
             "circle-stroke-opacity": infrastructureVisibilityOpacity(),
           },
@@ -773,20 +777,29 @@
         addMapLayer(spec, {
           type: "circle",
           source: "transport-infrastructure",
-          minzoom: 8,
           filter: ["==", ["get", "layer"], spec.key],
           paint: {
             "circle-radius": [
-              "+",
-              ["match", ["get", "junction_kind"], "interchange", 6, "major_junction", 5, 4],
-              ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 0, 4, 1.5, 12, 3],
+              "interpolate", ["linear"], ["zoom"],
+              4, ["*", 0.5, ["+",
+                ["match", ["get", "junction_kind"], "interchange", 6, "major_junction", 5, 4],
+                ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 0, 4, 1.5, 12, 3],
+              ]],
+              8, ["*", 0.8, ["+",
+                ["match", ["get", "junction_kind"], "interchange", 6, "major_junction", 5, 4],
+                ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 0, 4, 1.5, 12, 3],
+              ]],
+              11, ["+",
+                ["match", ["get", "junction_kind"], "interchange", 6, "major_junction", 5, 4],
+                ["interpolate", ["linear"], ["coalesce", ["get", "member_count"], 1], 1, 0, 4, 1.5, 12, 3],
+              ],
             ],
             "circle-color": [
               "match", ["get", "importance_tier"],
               "critical", "#b83232", "high", "#d17822", "medium", spec.color, "#7d8581",
             ],
             "circle-stroke-color": "rgba(255,255,255,0.96)",
-            "circle-stroke-width": 1.8,
+            "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, 0.8, 9, 1.4, 11, 1.8],
             "circle-opacity": infrastructureVisibilityOpacity(),
             "circle-stroke-opacity": infrastructureVisibilityOpacity(),
           },
@@ -1214,6 +1227,37 @@
     if (!source) return;
     source.setData(latestTransportInfrastructure);
     updateCounts();
+  }
+
+  function transportInfrastructureUrl() {
+    const bounds = map.getBounds();
+    const zoom = map.getZoom();
+    const minimumTier = zoom < 7 ? "critical" : zoom < 9 ? "high" : zoom < 11 ? "medium" : "low";
+    const parameters = new URLSearchParams({
+      west: String(bounds.getWest()),
+      south: String(bounds.getSouth()),
+      east: String(bounds.getEast()),
+      north: String(bounds.getNorth()),
+      minimum_tier: minimumTier,
+    });
+    return `/api/transport-infrastructure/global.geojson?${parameters}`;
+  }
+
+  async function refreshTransportInfrastructure() {
+    const requestSequence = ++transportRequestSequence;
+    try {
+      const response = await fetch(transportInfrastructureUrl());
+      if (!response.ok || requestSequence !== transportRequestSequence) return;
+      const payload = await response.json();
+      if (requestSequence === transportRequestSequence) setTransportInfrastructure(payload);
+    } catch (_) {
+      // A later move or reconnect will retry the static viewport request.
+    }
+  }
+
+  function scheduleTransportInfrastructureRefresh() {
+    clearTimeout(transportRefreshTimer);
+    transportRefreshTimer = setTimeout(refreshTransportInfrastructure, 150);
   }
 
   function setRailwayInfrastructure(infrastructure) {
@@ -2303,10 +2347,9 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, surfaceRegionsResponse, transportResponse, railwayResponse, infrastructureResponse, settlementsResponse, verificationsResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, surfaceRegionsResponse, railwayResponse, infrastructureResponse, settlementsResponse, verificationsResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
         fetch("/api/surface-regions/global.geojson"),
-        fetch("/api/transport-infrastructure/global.geojson"),
         fetch("/api/railway-infrastructure/global.geojson"),
         fetch("/api/infrastructure-sites/global.geojson"),
         fetch("/api/settlements/global.geojson"),
@@ -2315,7 +2358,6 @@
       ]);
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
       if (surfaceRegionsResponse.ok) setSurfaceRegions(await surfaceRegionsResponse.json());
-      if (transportResponse.ok) setTransportInfrastructure(await transportResponse.json());
       if (railwayResponse.ok) setRailwayInfrastructure(await railwayResponse.json());
       if (infrastructureResponse.ok) setInfrastructureSites(await infrastructureResponse.json());
       if (settlementsResponse.ok) setSettlements(await settlementsResponse.json());
@@ -2332,6 +2374,7 @@
           if (topographyResponse.ok) setTopography(await topographyResponse.json());
         }
       }
+      await refreshTransportInfrastructure();
     } catch (error) {
       updateStatus({ connected: false, error: String(error) });
     }
@@ -2402,6 +2445,7 @@
     connect();
   });
   map.on("idle", updateCounts);
+  map.on("moveend", scheduleTransportInfrastructureRefresh);
   map.on("sourcedata", (event) => {
     if (!String(event.sourceId || "").startsWith("topography-")) return;
     clearTimeout(countUpdateTimer);

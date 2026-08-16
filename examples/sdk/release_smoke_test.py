@@ -10,15 +10,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import json
-from pathlib import Path
-import sys
 from typing import Any
 from urllib.error import URLError
 from urllib.request import urlopen
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import REPO_ROOT
 
 import moosebridge  # noqa: E402
 from moosebridge import DebugMarkup, DebugMarkupPoint, MooseBridgeClient  # noqa: E402

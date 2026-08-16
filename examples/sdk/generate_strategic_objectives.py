@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_PYTHON_DIR = REPO_ROOT / "python"
-if LOCAL_PYTHON_DIR.exists():
-    sys.path.insert(0, str(LOCAL_PYTHON_DIR))
+from example_support import load_example_theater, open_example_session, run_example
 
 from moosebridge import (
+    DEFAULT_THEATER_PROFILE_PATH,
     ConflictControllerConfig,
     RuleBasedConflictController,
     StrategicObjectiveGenerationConfig,
@@ -27,8 +20,7 @@ from moosebridge import (
     format_relationship,
     format_strategic_scope,
 )
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
@@ -43,22 +35,18 @@ MANAGE_RELATIONSHIP = False
 OBJECTIVE_PREVIEW_LIMIT = 30
 MAX_GEOGRAPHIC_OBJECTIVES_PER_CATEGORY_PER_SCOPE = 10
 
-TOPOGRAPHY_DIR = REPO_ROOT / "tmp" / "topography"
-SETTLEMENTS_PATH = TOPOGRAPHY_DIR / "GermanyCW-settlements.geojson"
-TRANSPORT_PATH = TOPOGRAPHY_DIR / "GermanyCW-transport-infrastructure-mv.geojson"
-RAILWAY_PATH = TOPOGRAPHY_DIR / "GermanyCW-railway-infrastructure-mv.geojson"
-INFRASTRUCTURE_PATH = TOPOGRAPHY_DIR / "GermanyCW-infrastructure-sites.geojson"
-VERIFICATIONS_PATH = TOPOGRAPHY_DIR / "GermanyCW-strategic-verifications.json"
+THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH
+_, THEATER_PATHS = load_example_theater(THEATER_PROFILE)
+SETTLEMENTS_PATH = THEATER_PATHS.path("settlements")
+TRANSPORT_PATH = THEATER_PATHS.path("transport_infrastructure")
+RAILWAY_PATH = THEATER_PATHS.path("railway_infrastructure")
+INFRASTRUCTURE_PATH = THEATER_PATHS.path("infrastructure_sites")
+VERIFICATIONS_PATH = THEATER_PATHS.path("strategic_verifications")
 
 
 async def run() -> int:
-    control = MooseBridgeControlClient(CONTROL_HOST, CONTROL_PORT)
-    status = await control.status(timeout=COMMAND_TIMEOUT_SECONDS)
-    if not status.get("connected"):
-        print("DCS is not connected to the running MoosePyBridge daemon.")
-        return 3
-
-    bridge = sdk_from_control_client(control, timeout=COMMAND_TIMEOUT_SECONDS)
+    session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
+    bridge = session.bridge
     await bridge.refresh_global_picture()
     await bridge.refresh_diplomacy_state()
     scope = bridge.build_strategic_scope()
@@ -114,4 +102,4 @@ async def run() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(run()))
+    raise SystemExit(run_example(run))

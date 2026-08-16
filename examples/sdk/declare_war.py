@@ -2,17 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-import sys
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import open_example_session, run_example
 
 from moosebridge import RelationshipState, format_relationship
-from moosebridge.control import DEFAULT_CONTROL_PORT, MooseBridgeControlClient
-from moosebridge.control_sdk import sdk_from_control_client
+from moosebridge.control import DEFAULT_CONTROL_PORT
 
 
 CONTROL_HOST = "127.0.0.1"
@@ -21,19 +14,15 @@ DECLARING_COALITION = "blue"
 DECLARATION_REASON = "Start the autonomous conflict simulation"
 
 
-async def main() -> int:
-    control = MooseBridgeControlClient(
+async def run() -> int:
+    session = await open_example_session(
         CONTROL_HOST,
         CONTROL_PORT,
+        10.0,
         client_id="war-declaration-example",
         display_name="War Declaration Example",
     )
-    status = await control.status()
-    if not status.get("connected"):
-        print("DCS is not connected to the MoosePyBridge daemon.")
-        return 3
-
-    bridge = sdk_from_control_client(control)
+    bridge = session.bridge
     await bridge.refresh_diplomacy_state()
     if bridge.relationship.state is RelationshipState.WAR:
         print("The coalitions are already at war.")
@@ -52,5 +41,9 @@ async def main() -> int:
     return 0
 
 
+def main() -> int:
+    return run_example(run)
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(main())

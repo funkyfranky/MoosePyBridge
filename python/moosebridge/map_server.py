@@ -37,8 +37,9 @@ from .operational_audit import execution_from_dict
 from .recon import ReconArea, build_recon_coverage_footprints
 from .recon import RECON_EXECUTION_AUDIT_TYPE
 from .topography import TheaterTopography
+from .theater_data import DEFAULT_THEATER_PROFILE_PATH, load_theater_profile
 from .topography_viewport import DEFAULT_VIEWPORT_FEATURE_LIMIT, TopographyViewportStore
-from .transport_infrastructure import TheaterTransportInfrastructure
+from .transport_infrastructure import TheaterTransportInfrastructure, TransportImportanceTier
 from .railway_infrastructure import TheaterRailwayInfrastructure
 from .infrastructure_sites import TheaterInfrastructureSites
 from .settlements import TheaterSettlements
@@ -73,7 +74,7 @@ DEFAULT_MAX_TOPOGRAPHY_BYTES = 256 * 1024 * 1024
 DEFAULT_TOPOGRAPHY_PATH = Path("tmp/topography/GermanyCW.geojson")
 DEFAULT_TOPOGRAPHY_VIEWPORT_PATH = Path("tmp/topography/viewport/manifest.json")
 DEFAULT_SURFACE_REGIONS_PATH = Path("tmp/topography/GermanyCW-surface-regions.geojson")
-DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-transport-infrastructure-mv.geojson")
+DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-transport-infrastructure.geojson")
 DEFAULT_RAILWAY_INFRASTRUCTURE_PATH = Path("tmp/topography/GermanyCW-railway-infrastructure.geojson")
 DEFAULT_INFRASTRUCTURE_SITES_PATH = Path("tmp/topography/GermanyCW-infrastructure-sites.geojson")
 DEFAULT_SETTLEMENTS_PATH = Path("tmp/topography/GermanyCW-settlements.geojson")
@@ -199,6 +200,7 @@ class GlobalMapRuntime:
     pressure_territory_ratio: float = DEFAULT_PRESSURE_TERRITORY_RATIO
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES
+    theater_id: str | None = None
     topography_path: Path | None = None
     max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES
     topography_viewport_path: Path | None = None
@@ -363,6 +365,7 @@ class GlobalMapRuntime:
             LOGGER.warning("Skipping %s: %s", self.topography_path, self._topography_load_warning)
             return None
         self._topography = TheaterTopography.load(self.topography_path)
+        self._validate_theater_id(self._topography.theater_id, self.topography_path)
         LOGGER.info(
             "Loaded %d %s topography features from %s",
             len(self._topography.features),
@@ -389,6 +392,7 @@ class GlobalMapRuntime:
             self._topography_viewport_error = str(exc)
             LOGGER.warning("Could not load topography viewport manifest %s: %s", self.topography_viewport_path, exc)
             return None
+        self._validate_theater_id(self._topography_viewport.theater_id, self.topography_viewport_path)
         LOGGER.info(
             "Loaded %d-feature %s topography viewport index from %s",
             self._topography_viewport.feature_count,
@@ -425,6 +429,7 @@ class GlobalMapRuntime:
         if self.surface_regions_path is None or not self.surface_regions_path.is_file():
             return None
         self._surface_regions = TheaterSurfaceRegions.load(self.surface_regions_path)
+        self._validate_theater_id(self._surface_regions.theater_id, self.surface_regions_path)
         LOGGER.info(
             "Loaded %d %s surface regions from %s",
             len(self._surface_regions.regions),
@@ -447,6 +452,10 @@ class GlobalMapRuntime:
         if self.transport_infrastructure_path is None or not self.transport_infrastructure_path.is_file():
             return None
         self._transport_infrastructure = TheaterTransportInfrastructure.load(self.transport_infrastructure_path)
+        self._validate_theater_id(
+            self._transport_infrastructure.theater_id,
+            self.transport_infrastructure_path,
+        )
         LOGGER.info(
             "Loaded %d bridges and %d strategic junctions for %s from %s",
             len(self._transport_infrastructure.bridges),
@@ -456,11 +465,25 @@ class GlobalMapRuntime:
         )
         return self._transport_infrastructure
 
-    def transport_infrastructure_geojson(self) -> dict[str, Any]:
+    def transport_infrastructure_geojson(
+        self,
+        *,
+        bounds: tuple[float, float, float, float] | None = None,
+        minimum_importance_tier: str | None = None,
+    ) -> dict[str, Any]:
         """Return static bridge and junction features."""
 
+        tier = None
+        if minimum_importance_tier is not None:
+            try:
+                tier = TransportImportanceTier(minimum_importance_tier)
+            except ValueError as exc:
+                raise ValueError(f"invalid transport importance tier: {minimum_importance_tier}") from exc
         return (
-            self._transport_infrastructure.to_geojson()
+            self._transport_infrastructure.to_geojson(
+                bounds=bounds,
+                minimum_importance_tier=tier,
+            )
             if self._transport_infrastructure is not None else empty_picture()
         )
 
@@ -471,6 +494,10 @@ class GlobalMapRuntime:
         if self.railway_infrastructure_path is None or not self.railway_infrastructure_path.is_file():
             return None
         self._railway_infrastructure = TheaterRailwayInfrastructure.load(self.railway_infrastructure_path)
+        self._validate_theater_id(
+            self._railway_infrastructure.theater_id,
+            self.railway_infrastructure_path,
+        )
         LOGGER.info(
             "Loaded %d railway infrastructure locations for %s from %s",
             len(self._railway_infrastructure.locations),
@@ -491,6 +518,7 @@ class GlobalMapRuntime:
         if self.infrastructure_sites_path is None or not self.infrastructure_sites_path.is_file():
             return None
         self._infrastructure_sites = TheaterInfrastructureSites.load(self.infrastructure_sites_path)
+        self._validate_theater_id(self._infrastructure_sites.theater_id, self.infrastructure_sites_path)
         LOGGER.info(
             "Loaded %d normalized infrastructure sites for %s from %s",
             len(self._infrastructure_sites.sites),
@@ -523,6 +551,7 @@ class GlobalMapRuntime:
         if self.settlements_path is None or not self.settlements_path.is_file():
             return None
         self._settlements = TheaterSettlements.load(self.settlements_path)
+        self._validate_theater_id(self._settlements.theater_id, self.settlements_path)
         LOGGER.info(
             "Loaded %d normalized settlements for %s from %s",
             len(self._settlements.settlements),
@@ -530,6 +559,15 @@ class GlobalMapRuntime:
             self.settlements_path,
         )
         return self._settlements
+
+    def _validate_theater_id(self, actual: str, path: Path) -> None:
+        """Reject accidental mixtures of artifacts from different theaters."""
+
+        if self.theater_id and actual.casefold() != self.theater_id.casefold():
+            raise ValueError(
+                f"theater artifact mismatch: expected {self.theater_id}, "
+                f"found {actual or '<missing>'} in {path}"
+            )
 
     def settlements_geojson(self) -> dict[str, Any]:
         """Return normalized city and town objects with their urban footprints."""
@@ -1467,6 +1505,7 @@ def create_app(
     pressure_territory_ratio: float = DEFAULT_PRESSURE_TERRITORY_RATIO,
     incursion_support_radius_m: float = DEFAULT_INCURSION_SUPPORT_RADIUS_M,
     lodgement_min_forces: int = DEFAULT_LODGEMENT_MIN_FORCES,
+    theater_id: str | None = None,
     topography_path: Path | None = DEFAULT_TOPOGRAPHY_PATH,
     max_topography_bytes: int = DEFAULT_MAX_TOPOGRAPHY_BYTES,
     topography_viewport_path: Path | None = DEFAULT_TOPOGRAPHY_VIEWPORT_PATH,
@@ -1496,6 +1535,7 @@ def create_app(
         pressure_territory_ratio=pressure_territory_ratio,
         incursion_support_radius_m=incursion_support_radius_m,
         lodgement_min_forces=lodgement_min_forces,
+        theater_id=theater_id,
         topography_path=topography_path,
         max_topography_bytes=max_topography_bytes,
         topography_viewport_path=topography_viewport_path,
@@ -1650,8 +1690,25 @@ def create_app(
         return runtime.surface_regions_geojson()
 
     @app.get("/api/transport-infrastructure/global.geojson")
-    async def global_transport_infrastructure() -> dict[str, Any]:
-        return runtime.transport_infrastructure_geojson()
+    async def global_transport_infrastructure(
+        west: float | None = None,
+        south: float | None = None,
+        east: float | None = None,
+        north: float | None = None,
+        minimum_tier: str | None = None,
+    ) -> dict[str, Any]:
+        coordinates = (west, south, east, north)
+        if any(value is not None for value in coordinates) and not all(value is not None for value in coordinates):
+            raise HTTPException(status_code=400, detail="transport bounds require west, south, east, and north")
+        bounds = None if west is None else (west, south, east, north)
+        assert bounds is None or all(value is not None for value in bounds)
+        try:
+            return runtime.transport_infrastructure_geojson(
+                bounds=bounds,  # type: ignore[arg-type]
+                minimum_importance_tier=minimum_tier,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/railway-infrastructure/global.geojson")
     async def global_railway_infrastructure() -> dict[str, Any]:
@@ -1703,7 +1760,13 @@ def main() -> None:
     parser.add_argument("--pressure-territory-ratio", type=float, default=DEFAULT_PRESSURE_TERRITORY_RATIO, help="Weak territory prior used by the force pressure line.")
     parser.add_argument("--incursion-support-radius", type=float, default=DEFAULT_INCURSION_SUPPORT_RADIUS_M, help="Ground-force connection radius in meters.")
     parser.add_argument("--lodgement-min-forces", type=int, default=DEFAULT_LODGEMENT_MIN_FORCES, help="Connected hostile groups required to establish a lodgement.")
-    parser.add_argument("--topography", type=Path, default=DEFAULT_TOPOGRAPHY_PATH, help="Static theater-topography GeoJSON cache.")
+    parser.add_argument(
+        "--theater-profile",
+        type=Path,
+        default=DEFAULT_THEATER_PROFILE_PATH,
+        help="Theater profile defining source policy and default artifact paths.",
+    )
+    parser.add_argument("--topography", type=Path, default=None, help="Override the profile's static topography cache.")
     parser.add_argument(
         "--max-topography-mb",
         type=float,
@@ -1713,47 +1776,48 @@ def main() -> None:
     parser.add_argument(
         "--topography-viewport",
         type=Path,
-        default=DEFAULT_TOPOGRAPHY_VIEWPORT_PATH,
+        default=None,
         help="Indexed topography viewport manifest.",
     )
     parser.add_argument(
         "--surface-regions",
         type=Path,
-        default=DEFAULT_SURFACE_REGIONS_PATH,
+        default=None,
         help="Connected static land/water surface-region GeoJSON cache.",
     )
     parser.add_argument(
         "--transport-infrastructure",
         type=Path,
-        default=DEFAULT_TRANSPORT_INFRASTRUCTURE_PATH,
+        default=None,
         help="Static strategic bridge and road-junction GeoJSON cache.",
     )
     parser.add_argument(
         "--railway-infrastructure",
         type=Path,
-        default=DEFAULT_RAILWAY_INFRASTRUCTURE_PATH,
+        default=None,
         help="Aggregated static railway-infrastructure GeoJSON cache.",
     )
     parser.add_argument(
         "--infrastructure-sites",
         type=Path,
-        default=DEFAULT_INFRASTRUCTURE_SITES_PATH,
+        default=None,
         help="Normalized static infrastructure-site GeoJSON cache.",
     )
     parser.add_argument(
         "--settlements",
         type=Path,
-        default=DEFAULT_SETTLEMENTS_PATH,
+        default=None,
         help="Normalized city and town GeoJSON cache.",
     )
     parser.add_argument(
         "--strategic-verifications",
         type=Path,
-        default=DEFAULT_STRATEGIC_VERIFICATIONS_PATH,
+        default=None,
         help="Scenario-specific DCS component verification JSON file.",
     )
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args()
+    profile, theater_paths = load_theater_profile(args.theater_profile, project_root=Path.cwd())
 
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
@@ -1781,15 +1845,16 @@ def main() -> None:
         pressure_territory_ratio=max(0.0, args.pressure_territory_ratio),
         incursion_support_radius_m=max(1.0, args.incursion_support_radius),
         lodgement_min_forces=max(1, args.lodgement_min_forces),
-        topography_path=args.topography,
+        theater_id=profile.theater_id,
+        topography_path=args.topography or theater_paths.path("topography"),
         max_topography_bytes=max(0, int(args.max_topography_mb * 1024 * 1024)),
-        topography_viewport_path=args.topography_viewport,
-        surface_regions_path=args.surface_regions,
-        transport_infrastructure_path=args.transport_infrastructure,
-        railway_infrastructure_path=args.railway_infrastructure,
-        infrastructure_sites_path=args.infrastructure_sites,
-        settlements_path=args.settlements,
-        strategic_verifications_path=args.strategic_verifications,
+        topography_viewport_path=args.topography_viewport or theater_paths.path("viewport_manifest"),
+        surface_regions_path=args.surface_regions or theater_paths.path("surface_regions"),
+        transport_infrastructure_path=args.transport_infrastructure or theater_paths.path("transport_infrastructure"),
+        railway_infrastructure_path=args.railway_infrastructure or theater_paths.path("railway_infrastructure"),
+        infrastructure_sites_path=args.infrastructure_sites or theater_paths.path("infrastructure_sites"),
+        settlements_path=args.settlements or theater_paths.path("settlements"),
+        strategic_verifications_path=args.strategic_verifications or theater_paths.path("strategic_verifications"),
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level.lower())
 

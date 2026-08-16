@@ -10,6 +10,15 @@ Priorities:
 - **P2**: Valuable after the current decision and execution loop is stable.
 - **P3**: Longer-term hardening or extension.
 
+## Theater portability
+
+- [ ] **Validate the profile-driven workflow on a second DCS theater.** Create
+  an isolated profile and pilot coverage area, then compare roads, connected
+  surfaces, settlements, transport, railway, and representative infrastructure
+  against DCS before building the full map.
+- [ ] **Expose the active DCS theater ID through the bridge.** Use it to warn
+  when the running mission does not match the selected theater-data profile.
+
 ## P1 - Decision and execution
 
 - [x] **Add a minimal autonomous conflict controller.** Run one bounded Python

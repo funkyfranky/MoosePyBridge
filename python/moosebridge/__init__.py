@@ -168,6 +168,15 @@ from .topography import (
     feature_counts as topography_feature_counts,
     merge_topography_features,
 )
+from .theater_data import (
+    DEFAULT_THEATER_PROFILE_PATH,
+    MAP_ARTIFACT_KEYS,
+    THEATER_PROFILE_SCHEMA_VERSION,
+    TheaterDataPaths,
+    TheaterDataProfile,
+    TheaterSource,
+    load_theater_profile,
+)
 from .topography_coverage import (
     TheaterTopographyCoverage,
     TopographyCoverageArea,
@@ -1048,4 +1057,11 @@ __all__ = [
     "settlement_importance_score",
     "settlement_importance_tier",
     "settlement_size_class",
+    "DEFAULT_THEATER_PROFILE_PATH",
+    "MAP_ARTIFACT_KEYS",
+    "THEATER_PROFILE_SCHEMA_VERSION",
+    "TheaterDataPaths",
+    "TheaterDataProfile",
+    "TheaterSource",
+    "load_theater_profile",
 ]

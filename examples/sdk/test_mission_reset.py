@@ -8,13 +8,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from pathlib import Path
-import sys
 from typing import Any
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "python"))
+from example_support import REPO_ROOT
 
 from moosebridge import (
     ObjectiveKind,
