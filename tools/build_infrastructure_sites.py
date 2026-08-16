@@ -125,6 +125,9 @@ def _load_candidates(directory: Path, shards: list[dict]) -> dict[str, Topograph
             continue
         categories = ",".join(repr(category) for category in _CANDIDATE_CATEGORIES)
         frame = pyogrio.read_dataframe(path, where=f"category IN ({categories})", columns=columns)
+        for column in columns:
+            if column not in frame.columns:
+                frame[column] = None
         print(f"  shard {index}/{len(shards)}: {path.name} ({len(frame)} candidates)", flush=True)
         for row in frame.itertuples(index=False):
             if row.geometry is None or row.geometry.is_empty:

@@ -50,3 +50,31 @@ def test_germany_profile_preserves_existing_artifact_layout() -> None:
     assert paths.path("transport_infrastructure").as_posix().endswith(
         "tmp/theaters/GermanyCW/runtime/transport-infrastructure.geojson"
     )
+
+
+def test_caucasus_profile_uses_an_isolated_portable_layout() -> None:
+    profile_path = DEFAULT_THEATER_PROFILE_PATH.with_name("Caucasus_topography.json")
+    profile, paths = load_theater_profile(profile_path, project_root=Path.cwd())
+
+    assert profile.theater_id == "Caucasus"
+    assert profile.scenario_reference_year == 2008
+    assert profile.infrastructure_reference_year == 2008
+    assert profile.excluded_energy_sources == ()
+    assert {source.source_id for source in profile.geofabrik_sources} == {
+        "armenia",
+        "azerbaijan",
+        "bulgaria",
+        "georgia",
+        "iran",
+        "kazakhstan",
+        "moldova",
+        "romania",
+        "south-fed-district",
+        "north-caucasus-fed-district",
+        "turkey",
+        "ukraine",
+    }
+    assert paths.root.as_posix().endswith("tmp/theaters/Caucasus")
+    assert paths.path("coverage").as_posix().endswith(
+        "tmp/theaters/Caucasus/verification/coverage.geojson"
+    )

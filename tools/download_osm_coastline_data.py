@@ -53,8 +53,8 @@ def main() -> int:
     parser.add_argument("--dataset", choices=tuple(DATASETS), action="append")
     parser.add_argument("--refresh", action="store_true")
     args = parser.parse_args()
-    profile = load_theater_profile(args.profile, project_root=REPO_ROOT)
-    output = args.output or profile.paths(project_root=REPO_ROOT).path("osmcoastline_directory")
+    _, theater_paths = load_theater_profile(args.profile, project_root=REPO_ROOT)
+    output = args.output or theater_paths.path("osmcoastline_directory")
     output.mkdir(parents=True, exist_ok=True)
 
     selected = args.dataset or ["land", "water"]

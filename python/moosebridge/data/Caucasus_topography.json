@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "theater_id": "Caucasus",
+  "display_name": "Caucasus",
+  "scenario_reference_year": 2008,
+  "infrastructure_reference_year": 2008,
+  "data_root": "tmp/theaters/Caucasus",
+  "excluded_energy_sources": [],
+  "source_policy": {
+    "physical_constraints": "DCS verification required",
+    "external_baseline": "OpenStreetMap",
+    "historical_settlement_epoch": 2008
+  },
+  "geofabrik_sources": [
+    {
+      "id": "georgia",
+      "url": "https://download.geofabrik.de/europe/georgia-latest.osm.pbf"
+    },
+    {
+      "id": "armenia",
+      "url": "https://download.geofabrik.de/asia/armenia-latest.osm.pbf"
+    },
+    {
+      "id": "azerbaijan",
+      "url": "https://download.geofabrik.de/asia/azerbaijan-latest.osm.pbf"
+    },
+    {
+      "id": "bulgaria",
+      "url": "https://download.geofabrik.de/europe/bulgaria-latest.osm.pbf"
+    },
+    {
+      "id": "iran",
+      "url": "https://download.geofabrik.de/asia/iran-latest.osm.pbf"
+    },
+    {
+      "id": "kazakhstan",
+      "url": "https://download.geofabrik.de/asia/kazakhstan-latest.osm.pbf"
+    },
+    {
+      "id": "moldova",
+      "url": "https://download.geofabrik.de/europe/moldova-latest.osm.pbf"
+    },
+    {
+      "id": "romania",
+      "url": "https://download.geofabrik.de/europe/romania-latest.osm.pbf"
+    },
+    {
+      "id": "south-fed-district",
+      "url": "https://download.geofabrik.de/russia/south-fed-district-latest.osm.pbf"
+    },
+    {
+      "id": "north-caucasus-fed-district",
+      "url": "https://download.geofabrik.de/russia/north-caucasus-fed-district-latest.osm.pbf"
+    },
+    {
+      "id": "turkey",
+      "url": "https://download.geofabrik.de/europe/turkey-latest.osm.pbf"
+    },
+    {
+      "id": "ukraine",
+      "url": "https://download.geofabrik.de/europe/ukraine-latest.osm.pbf"
+    }
+  ]
+}
