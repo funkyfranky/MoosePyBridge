@@ -33,12 +33,12 @@ async def main() -> int:
     #auftrag = Auftrag_CAP(zone="ZONE:Town Fight", altitude_ft=15000, speed_kts=300, heading_deg=0, leg_nm=20, target_types=["Air"])
     #auftrag= Auftrag_NOTHING(zone="ZONE:Test Alpha")
     #auftrag = Auftrag_PATROLZONE(zone="ZONE:Test Alpha")
-    #auftrag = Auftrag_ONGUARD(target="ZONE:Test Alpha")
-    #auftrag.set_duration(duration=60)
-    #auftrag.set_required_assets(min_count=3, max_count=4)
+    auftrag = Auftrag_ONGUARD(target="ZONE:Test Alpha")
+    auftrag.set_duration(duration=60)
+    auftrag.set_required_assets(min_count=3, max_count=4)
 
-    auftrag = AuftragCAPTUREZONE(opszone="OPSZONE:Capture Alpha", capture_coalition="blue")
-    auftrag.set_required_assets(min_count=2, max_count=5)
+    #auftrag = AuftragCAPTUREZONE(opszone="OPSZONE:Capture Alpha", capture_coalition="blue")
+    #auftrag.set_required_assets(min_count=2, max_count=5)
 
     #ack = await bridge.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Laage")
     ack = await bridge.add_auftrag(auftrag=auftrag, legion="LEGION:Brigade Laage")
@@ -53,9 +53,9 @@ async def main() -> int:
     summary = await bridge.get_auftrag_summary(auftrag, on_status=print)
 
     if summary.success is True:
-        print("BAI erfolgreich")
+        print(f"{summary.mission_type} erfolgreich")
     else:
-        print("BAI nicht erfolgreich")
+        print(f"{summary.mission_type} nicht erfolgreich")
 
     print(summary.to_dict())
     return 0

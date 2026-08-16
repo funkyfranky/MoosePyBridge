@@ -3,6 +3,9 @@
 MoosePyBridge is a semantic Python control plane for Digital Combat Simulator
 (DCS) missions that use the MOOSE framework.
 
+Current release: **0.1.0**, the first named development baseline. See
+[RELEASE_NOTES.md](RELEASE_NOTES.md) for its scope and known limitations.
+
 See [the roadmap](docs/ROADMAP.md) for the architectural direction and
 [the backlog](docs/BACKLOG.md) for concrete pending work.
 

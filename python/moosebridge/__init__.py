@@ -1,5 +1,12 @@
 """MOOSE Bridge Python package."""
 
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("moosebridge")
+except PackageNotFoundError:
+    __version__ = "0.1.0"
+
 from .advisory import AdvisoryIssue, AuftragAdvisoryResult, AuftragCandidate, evaluate_auftrag_request
 from .ammunition import (
     AmmunitionTracker,
