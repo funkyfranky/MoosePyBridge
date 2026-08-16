@@ -490,6 +490,11 @@ from .strategic_verification import (
     VerifiedDcsComponent,
     assess_infrastructure_state,
 )
+from .scenery_verification import (
+    SCENERY_VERIFICATION_ARTIFACT_KEYS,
+    SceneryVerificationFeature,
+    resolve_scenery_verification_feature,
+)
 from .strategic_goals import (
     StrategicGoalDerivation,
     StrategicGoalGenerationConfig,
@@ -823,6 +828,9 @@ __all__ = [
     "VerifiedDcsComponent",
     "assess_infrastructure_state",
     "SCENERY_OBJECT_PREFIX",
+    "SCENERY_VERIFICATION_ARTIFACT_KEYS",
+    "SceneryVerificationFeature",
+    "resolve_scenery_verification_feature",
     "StrategicGoal",
     "StrategicGoalAction",
     "StrategicGoalDerivation",

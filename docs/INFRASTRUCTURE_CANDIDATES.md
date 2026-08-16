@@ -135,10 +135,13 @@ anchors and normalized footprints in the initially hidden `Energy sites`,
 into power plants, major grid substations, and converter stations. This keeps
 the strategic overview readable; the SDK artifact retains source and component
 identifiers.
-Run `python examples/sdk/verify_infrastructure_site.py` with a live DCS mission
-to survey and temporarily mark one candidate and its nearby scenery objects on
-the F10 map. The constants at the top select the typed site category and
-search reference.
+Run `python examples/sdk/verify_scenery_representation.py` with a live DCS
+mission to survey and temporarily mark one normalized feature and its nearby
+fixed scenery objects on the F10 map. Copy `OBJECT_ID` from the web map; the
+common resolver supports infrastructure sites, railway locations, settlements,
+road bridges, and transport junctions. Only `SCENERY` objects can enter the
+theater baseline or target selection. Mission-defined units and statics are
+deliberately excluded.
 
 ### Ports and maritime logistics
 

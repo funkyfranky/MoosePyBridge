@@ -88,13 +88,13 @@ async def run() -> int:
     if verification is None:
         print(f"No saved DCS verification exists for: {SITE_ID}")
         print("Create the immutable baseline first:")
-        print("  1. Set SITE_ID in examples/sdk/verify_infrastructure_site.py.")
+        print("  1. Set OBJECT_ID to this site in examples/sdk/verify_scenery_representation.py.")
         print("  2. Keep SAVE_OBSERVED_BASELINE=True and run that script with DCS connected.")
         print("  3. Inspect the overlay and press Enter to save the baseline.")
         return 2
     if not verification.observed_objects:
         print(f"The saved verification has no observed-object baseline: {SITE_ID}")
-        print("Run examples/sdk/verify_infrastructure_site.py once before this damage test.")
+        print("Run examples/sdk/verify_scenery_representation.py once before this damage test.")
         return 2
     baseline = next(
         (item for item in verification.observed_objects if item.object_id == TARGET_OBJECT_ID),

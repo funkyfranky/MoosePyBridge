@@ -31,6 +31,11 @@ It records only fixed `SCENERY:<id>` objects found by bounded DCS surveys and is
 validated against the profile's theater ID. It never stores mission-defined
 `STATIC`, `UNIT`, or `GROUP` objects. The complete observed baseline is kept
 separate from the small target subset selected for strategic planning.
+`examples/sdk/verify_scenery_representation.py` provides the single verification
+workflow for normalized infrastructure, railway, settlement, road-bridge, and
+transport-junction features. The example searches all bundled theater profiles
+for `OBJECT_ID` by default and writes evidence only to the matching theater's
+verification registry. Set `THEATER_PROFILE` only if an object ID is ambiguous.
 
 Artifacts used by the map server must cover the complete theater. Regional
 pilot or validation artifacts may be retained for diagnostics, but must not be

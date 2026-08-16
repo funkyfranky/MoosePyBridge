@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
+from moosebridge.scenery_verification import resolve_scenery_verification_feature
 from moosebridge.strategic_verification import (
     InfrastructureOperationalState,
     ObservedDcsObject,
@@ -13,6 +16,67 @@ from moosebridge.strategic_verification import (
     VerifiedDcsComponent,
     assess_infrastructure_state,
 )
+
+
+def test_common_scenery_resolver_loads_all_supported_artifacts(tmp_path) -> None:
+    artifact_paths = {}
+    expected_ids = set()
+    for index, artifact_key in enumerate((
+        "infrastructure_sites",
+        "railway_infrastructure",
+        "settlements",
+        "transport_infrastructure",
+    )):
+        prefix = (
+            "MILITARY_SITE",
+            "RAILWAY_STATION",
+            "SETTLEMENT",
+            "BRIDGE",
+        )[index]
+        object_id = f"{prefix}:{index}"
+        expected_ids.add(object_id)
+        path = tmp_path / f"{artifact_key}.geojson"
+        path.write_text(json.dumps({
+            "type": "FeatureCollection",
+            "properties": {"theater_id": "TestTheater"},
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [12.0 + index, 54.0]},
+                "properties": {
+                    "object_id": object_id,
+                    "name": f"Feature {index}",
+                    "layer": artifact_key,
+                    "category": "test",
+                    "source": "test",
+                },
+            }],
+        }), encoding="utf-8")
+        artifact_paths[artifact_key] = path
+
+    resolved = {
+        object_id: resolve_scenery_verification_feature("TestTheater", object_id, artifact_paths)
+        for object_id in expected_ids
+    }
+
+    assert set(resolved) == expected_ids
+    assert resolved["SETTLEMENT:2"].artifact_key == "settlements"  # type: ignore[union-attr]
+
+
+def test_common_scenery_resolver_rejects_theater_mismatch(tmp_path) -> None:
+    path = tmp_path / "settlements.geojson"
+    path.write_text(json.dumps({
+        "type": "FeatureCollection",
+        "properties": {"theater_id": "OtherTheater"},
+        "features": [],
+    }), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="belongs to theater"):
+        resolve_scenery_verification_feature("TestTheater", "SETTLEMENT:1", {"settlements": path})
+
+
+def test_common_scenery_resolver_rejects_mission_defined_objects() -> None:
+    with pytest.raises(ValueError, match="cannot be verified"):
+        resolve_scenery_verification_feature("TestTheater", "STATIC:Depot", {})
 
 
 def test_registry_round_trip_is_versioned_and_atomic(tmp_path) -> None:

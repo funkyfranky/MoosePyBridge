@@ -89,8 +89,7 @@ configuration and is not intended to be run directly.
 
 | Example | Class | Purpose |
 |---|---|---|
-| `verify_infrastructure_site.py` | Overlay/build | Survey scenery, draw candidates, and optionally save an immutable baseline. |
-| `verify_railway_infrastructure.py` | Overlay | Locate and visually verify normalized railway infrastructure. |
+| `verify_scenery_representation.py` | Overlay/build | Verify any normalized infrastructure, railway, settlement, bridge, or junction feature against fixed DCS scenery. |
 | `test_infrastructure_damage.py` | Destructive | Explode a confirmed scenery target and assess baseline damage. |
 
 ## Inspection

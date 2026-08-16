@@ -306,11 +306,12 @@ admitted geographic site must be `represented` and select at least one target
 from its observed scenery baseline. Sites without a fixed DCS representation
 remain excluded.
 
-The verification script retains every observed SCENERY object inside the
-normalized site footprint as an observation baseline. The default survey radius
-automatically covers the complete footprint, up to the bounded 5 km DCS query
-limit, and can retain up to 2,000 objects while keeping console and F10 output
-small. This full inventory is separate from the deliberately small target subset
+The common verification script retains every observed SCENERY object inside a
+normalized polygon footprint, or inside the bounded environment of a point
+feature, as an observation baseline. The default survey radius automatically
+covers the complete footprint up to the 5 km DCS query limit and can retain up
+to 2,000 objects while keeping console and F10 output small. This full inventory
+is separate from the deliberately small target subset
 used by AUFTRAG planning; target lines use
 `SCENERY:<id> | role | weight`. A partial baseline remains marked as such when
 the survey result was truncated or did not cover the complete footprint.
@@ -1758,13 +1759,17 @@ scenery, start DCS, the bridge daemon, and a mission, then run the
 parameter-free example:
 
 ```powershell
-python examples/sdk/verify_infrastructure_site.py
+python examples/sdk/verify_scenery_representation.py
 ```
 
-Set `SITE_ID` at the top of the file to the object ID copied from the web map.
-The script prints the bounded scenery survey, draws a temporary F10 verification
-overlay, and can save the observed baseline. The same unambiguous workflow is
-used for energy, fuel, military, industrial, and maritime sites. Maritime sites normalize civilian
+Set `OBJECT_ID` at the top of the file to the object ID copied from the web map.
+The script automatically finds the matching bundled theater profile and resolves
+infrastructure sites, railway locations, settlements, road bridges, and transport
+junctions from that theater data. Set `THEATER_PROFILE` only to disambiguate an ID.
+It surveys only fixed DCS `SCENERY` objects, draws a temporary F10 verification
+overlay, and can save the observed baseline. Mission-defined units, groups, and
+static objects are never part of this theater-level verification. The same
+unambiguous workflow is used for energy, fuel, military, industrial, and maritime sites. Maritime sites normalize civilian
 ports, cargo/container/bulk/RoRo and ferry terminals, fishing ports, passenger
 terminals, and shipyards. Piers, quays, docks, harbour basins, and berths are
 retained as components of their nearest port rather than promoted to independent
