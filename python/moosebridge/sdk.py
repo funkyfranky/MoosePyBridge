@@ -18,6 +18,7 @@ from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMark
 from .infrastructure_sites import (
     GeographicSurveyPoint,
     InfrastructureSite,
+    SceneryObjectResolution,
     SceneryObjectSnapshot,
     ScenerySurvey,
     TheaterInfrastructureSites,
@@ -3904,6 +3905,73 @@ class MooseBridgeClient:
             truncated=result.get("truncated") is True,
         )
 
+    async def resolve_scenery_objects(
+        self,
+        object_ids: Iterable[str],
+        *,
+        positions: Mapping[str, tuple[float, float]] | None = None,
+        zone_names: Mapping[str, str] | None = None,
+        search_radius_m: float = 150.0,
+        timeout: float = 30.0,
+    ) -> SceneryObjectResolution:
+        """Resolve known SCENERY IDs near saved positions or Assign-As zones."""
+
+        search_radius_m = float(search_radius_m)
+        if not math.isfinite(search_radius_m) or not 0 < search_radius_m <= 500:
+            raise ValueError("search_radius_m must be finite and in range 0..500")
+        position_by_id = positions or {}
+        zone_by_id = zone_names or {}
+        references: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for value in object_ids:
+            object_id = str(value).strip()
+            if not object_id or object_id in seen:
+                continue
+            if not object_id.startswith("SCENERY:"):
+                raise ValueError(f"scenery object id must start with SCENERY: {object_id}")
+            seen.add(object_id)
+            reference: dict[str, Any] = {"object_id": object_id}
+            zone_name = str(zone_by_id.get(object_id) or "").strip()
+            if zone_name:
+                reference["zone_name"] = zone_name
+            else:
+                position = position_by_id.get(object_id)
+                if position is None or len(position) != 2:
+                    raise ValueError(f"missing position or Assign-As zone for {object_id}")
+                latitude, longitude = (float(position[0]), float(position[1]))
+                if not math.isfinite(latitude) or not -90 <= latitude <= 90:
+                    raise ValueError(f"invalid latitude for {object_id}")
+                if not math.isfinite(longitude) or not -180 <= longitude <= 180:
+                    raise ValueError(f"invalid longitude for {object_id}")
+                reference.update(latitude=latitude, longitude=longitude)
+            references.append(reference)
+        if len(references) > 500:
+            raise ValueError("resolve_scenery_objects accepts at most 500 object IDs")
+        if not references:
+            return SceneryObjectResolution(())
+        ack = require_ok(await self.server.send_command(
+            BridgeCommand(action="scenery.resolve", params={
+                "references": references,
+                "search_radius_m": search_radius_m,
+            }),
+            timeout=timeout,
+        ))
+        result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
+        objects = result.get("objects") if isinstance(result.get("objects"), list) else []
+        unresolved = result.get("unresolved") if isinstance(result.get("unresolved"), list) else []
+        return SceneryObjectResolution(
+            objects=tuple(
+                SceneryObjectSnapshot.from_payload(item)
+                for item in objects
+                if isinstance(item, dict)
+            ),
+            unresolved_object_ids=tuple(
+                str(item.get("object_id") or "")
+                for item in unresolved
+                if isinstance(item, dict) and item.get("object_id")
+            ),
+        )
+
     async def assess_infrastructure_site(
         self,
         site: InfrastructureSite,
@@ -3940,16 +4008,17 @@ class MooseBridgeClient:
 
         if feature.object_id != verification.source_id:
             raise ValueError("scenery feature and verification source ids do not match")
-        if radius_m is None:
-            radius_m = _verification_survey_radius_m(feature, verification)
-        survey = await self.survey_scenery(
-            feature.latitude,
-            feature.longitude,
-            radius_m=radius_m,
-            max_results=max_results,
+        baseline_ids = tuple(item.object_id for item in verification.observed_objects)
+        exact_positions = {
+            item.object_id: (item.latitude, item.longitude)
+            for item in verification.observed_objects
+            if item.latitude is not None and item.longitude is not None
+        }
+        resolution = await self.resolve_scenery_objects(
+            baseline_ids,
+            positions=exact_positions,
             timeout=timeout,
         )
-        baseline_ids = {item.object_id for item in verification.observed_objects}
         current = tuple(
             ObservedDcsObject(
                 object_id=item.object_id,
@@ -3960,8 +4029,8 @@ class MooseBridgeClient:
                 life=item.life,
                 exists=item.exists,
             )
-            for item in survey.objects
-            if item.object_id in baseline_ids
+            for item in resolution.objects
+            if item.queryable
         )
         destroyed_ids = set(self.state.destroyed_object_ids)
         destroyed_ids.update({
@@ -3969,12 +4038,11 @@ class MooseBridgeClient:
             for report in self.state.loss_reports.values()
             if report.get("target_object_id")
         })
-        feature_covered = _verification_within_survey(feature, verification, survey.radius_m)
         return assess_infrastructure_state(
             verification,
             current,
             destroyed_object_ids=destroyed_ids,
-            current_observation_complete=not survey.truncated and feature_covered,
+            current_observation_complete=not resolution.unresolved_object_ids,
         )
 
     async def distance(self, object_id_a: str, object_id_b: str, timeout: float = 10.0) -> DistanceResult:

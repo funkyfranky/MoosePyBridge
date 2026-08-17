@@ -41,9 +41,14 @@ object and name its zone after the normalized feature ID. DCS-numbered variants
 such as `<feature-id>-1` and `<feature-id>-2` are collected as additional
 components. The bridge exports the scalar `ZONE.Properties`, and the example
 reads `OBJECT ID` as the authoritative `SCENERY:<id>` target mapping. The
-assigned objects form the exact observation baseline for point features such
-as bridges and junctions; other surveyed objects remain visual context. For
-polygon features, assigned targets augment the complete in-footprint baseline.
+assignment remains part of the immutable baseline even when DCS omits that map
+model from `world.searchObjects`. Such objects keep their exact Mission Editor
+position and model name, but their live condition remains `unknown` until DCS
+provides runtime evidence or a destruction event.
+Assigned objects form the exact observation baseline for both point and area
+features; other surveyed objects remain visual context. Point-feature
+assignments are promoted to targets automatically. Area features retain the
+small, explicitly selected target subset from the verification registry.
 A bounded proximity survey remains the fallback when no Assign As zone exists.
 
 Artifacts used by the map server must cover the complete theater. Regional

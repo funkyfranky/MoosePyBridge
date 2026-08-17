@@ -20,9 +20,11 @@ from moosebridge import (  # noqa: E402
     DEFAULT_THEATER_PROFILE_PATH,
     MooseBridgeClient,
     MooseBridgeCommandError,
+    SceneryVerificationFeature,
     TheaterDataPaths,
     TheaterDataProfile,
     load_theater_profile,
+    resolve_scenery_verification_feature,
 )
 from moosebridge.control import MooseBridgeControlClient  # noqa: E402
 from moosebridge.control_sdk import sdk_from_control_client  # noqa: E402
@@ -47,6 +49,67 @@ def load_example_theater(
     """Resolve an editable example theater profile against the repository."""
 
     return load_theater_profile(profile_path, project_root=REPO_ROOT)
+
+
+def load_example_scenery_feature(
+    object_id: str,
+    profile_path: str | Path | None = None,
+) -> tuple[TheaterDataProfile, TheaterDataPaths, SceneryVerificationFeature]:
+    """Find one normalized scenery-verifiable feature across theater profiles."""
+
+    profile_paths = (
+        (Path(profile_path),)
+        if profile_path is not None
+        else tuple(sorted(DEFAULT_THEATER_PROFILE_PATH.parent.glob("*_topography.json")))
+    )
+    if not profile_paths:
+        raise ValueError("No theater profiles are available for automatic object lookup")
+
+    loaded_profiles = [load_example_theater(path) for path in profile_paths]
+    id_parts = object_id.split(":")
+    theater_hint = id_parts[1].casefold() if len(id_parts) >= 3 else None
+    hinted_profiles = [
+        item
+        for item in loaded_profiles
+        if theater_hint is not None and item[0].theater_id.casefold() == theater_hint
+    ]
+    candidates = hinted_profiles or loaded_profiles
+    matches: list[tuple[TheaterDataProfile, TheaterDataPaths, SceneryVerificationFeature]] = []
+    failures: list[str] = []
+    for theater, theater_paths in candidates:
+        try:
+            feature = resolve_scenery_verification_feature(
+                theater.theater_id,
+                object_id,
+                {
+                    key: theater_paths.path(key)
+                    for key in (
+                        "infrastructure_sites",
+                        "railway_infrastructure",
+                        "settlements",
+                        "transport_infrastructure",
+                    )
+                },
+            )
+        except ValueError as exc:
+            failures.append(f"{theater.theater_id}: {exc}")
+            continue
+        if feature is not None:
+            matches.append((theater, theater_paths, feature))
+
+    if len(matches) > 1:
+        theaters = ", ".join(item[0].theater_id for item in matches)
+        raise ValueError(
+            f"Normalized theater feature is ambiguous across {theaters}: {object_id}. "
+            "Set THEATER_PROFILE explicitly."
+        )
+    if not matches:
+        searched = ", ".join(item[0].theater_id for item in candidates)
+        detail = f" ({'; '.join(failures)})" if failures else ""
+        raise ValueError(
+            f"Normalized theater feature not found in {searched}: {object_id}{detail}"
+        )
+    return matches[0]
 
 
 async def open_example_session(

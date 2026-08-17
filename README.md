@@ -328,14 +328,16 @@ requested by the verification script.
 For a controlled live-DCS damage check, configure and run:
 
 ```powershell
-python examples/sdk/test_infrastructure_damage.py
+python examples/sdk/test_scenery_damage.py
 ```
 
 The script first performs a dry run against the saved baseline. After
-`SITE_ID`, `TARGET_OBJECT_ID`, and explosion power have been reviewed, set
-`ARM_EXPLOSION=True`. It explodes the current surveyed DCS point, retains any
-destruction event, performs a bounded follow-up survey, and prints the physical
-state and damage transition. It never replaces the baseline.
+`FEATURE_ID`, `TARGET_OBJECT_ID`, and explosion power have been reviewed, set
+`ARM_EXPLOSION=True`. It supports every normalized scenery-verifiable feature,
+including bridges and maritime sites. Only live-queryable DCS scenery objects
+may be exploded so that the before/after comparison remains meaningful. The
+script retains any destruction event, reassesses the generic feature baseline,
+and never replaces that baseline.
 
 ```python
 from moosebridge import StrategicObjectiveGenerationConfig

@@ -576,6 +576,8 @@ class SceneryObjectSnapshot:
     longitude: float
     life: float | None = None
     exists: bool | None = None
+    queryable: bool = True
+    resolution_source: str | None = None
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "SceneryObjectSnapshot":
@@ -591,6 +593,8 @@ class SceneryObjectSnapshot:
             latitude=float(payload["latitude"]), longitude=float(payload["longitude"]),
             life=_optional_float(payload.get("life")),
             exists=payload.get("exists") if isinstance(payload.get("exists"), bool) else None,
+            queryable=payload.get("queryable") is not False,
+            resolution_source=_optional_string(payload.get("resolution_source")),
         )
 
 
@@ -600,6 +604,14 @@ class ScenerySurvey:
     radius_m: float
     objects: tuple[SceneryObjectSnapshot, ...]
     truncated: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class SceneryObjectResolution:
+    """Result of resolving fixed scenery IDs near exact DCS references."""
+
+    objects: tuple[SceneryObjectSnapshot, ...]
+    unresolved_object_ids: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)

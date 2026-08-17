@@ -90,7 +90,7 @@ configuration and is not intended to be run directly.
 | Example | Class | Purpose |
 |---|---|---|
 | `verify_scenery_representation.py` | Overlay/build | Verify any normalized infrastructure, railway, settlement, bridge, or junction feature against fixed DCS scenery. |
-| `test_infrastructure_damage.py` | Destructive | Explode a confirmed scenery target and assess baseline damage. |
+| `test_scenery_damage.py` | Destructive | Explode any confirmed fixed scenery target and assess its generic feature baseline. |
 
 ## Inspection
 

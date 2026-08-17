@@ -13,7 +13,7 @@ from pathlib import Path
 
 from shapely.geometry import Point, shape
 
-from example_support import load_example_theater, open_example_session, run_example
+from example_support import load_example_scenery_feature, open_example_session, run_example
 
 from moosebridge import (  # noqa: E402
     DEFAULT_THEATER_PROFILE_PATH,
@@ -27,11 +27,8 @@ from moosebridge import (  # noqa: E402
     StrategicSiteVerification,
     StrategicVerificationRegistry,
     StrategicVerificationState,
-    TheaterDataPaths,
-    TheaterDataProfile,
     VerifiedDcsComponent,
     assess_infrastructure_state,
-    resolve_scenery_verification_feature,
     scenery_zone_assignments,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT  # noqa: E402
@@ -44,7 +41,7 @@ COMMAND_TIMEOUT_SECONDS = 30.0
 # Copy the object ID from the web-map detail panel. Supported normalized source
 # types are infrastructure sites, railway locations, settlements, road bridges,
 # and transport junctions.
-OBJECT_ID = "BRIDGE:Caucasus:4d482fb330eb"
+OBJECT_ID = "MARITIME_SITE:faee9372f262ce51"
 
 # None searches the bundled theater profiles and selects the one containing
 # OBJECT_ID. Set a profile path only to resolve a deliberately ambiguous ID.
@@ -78,61 +75,6 @@ def distance_m(latitude_a: float, longitude_a: float, latitude_b: float, longitu
     delta_lon = math.radians(longitude_b - longitude_a)
     value = math.sin(delta_lat / 2) ** 2 + math.cos(lat_a) * math.cos(lat_b) * math.sin(delta_lon / 2) ** 2
     return 2 * 6_371_008.8 * math.asin(min(1.0, math.sqrt(value)))
-
-
-def select_feature() -> tuple[TheaterDataProfile, TheaterDataPaths, SceneryVerificationFeature]:
-    profile_paths = (
-        (Path(THEATER_PROFILE),)
-        if THEATER_PROFILE is not None
-        else tuple(sorted(DEFAULT_THEATER_PROFILE_PATH.parent.glob("*_topography.json")))
-    )
-    if not profile_paths:
-        raise ValueError("No theater profiles are available for automatic object lookup")
-
-    loaded_profiles = [load_example_theater(path) for path in profile_paths]
-    id_parts = OBJECT_ID.split(":")
-    theater_hint = id_parts[1].casefold() if len(id_parts) >= 3 else None
-    hinted_profiles = [
-        item for item in loaded_profiles
-        if theater_hint is not None and item[0].theater_id.casefold() == theater_hint
-    ]
-    candidates = hinted_profiles or loaded_profiles
-    matches: list[tuple[TheaterDataProfile, TheaterDataPaths, SceneryVerificationFeature]] = []
-    failures: list[str] = []
-    for theater, theater_paths in candidates:
-        try:
-            feature = resolve_scenery_verification_feature(
-                theater.theater_id,
-                OBJECT_ID,
-                {
-                    key: theater_paths.path(key)
-                    for key in (
-                        "infrastructure_sites",
-                        "railway_infrastructure",
-                        "settlements",
-                        "transport_infrastructure",
-                    )
-                },
-            )
-        except ValueError as exc:
-            failures.append(f"{theater.theater_id}: {exc}")
-            continue
-        if feature is not None:
-            matches.append((theater, theater_paths, feature))
-
-    if len(matches) > 1:
-        theaters = ", ".join(item[0].theater_id for item in matches)
-        raise ValueError(
-            f"Normalized theater feature is ambiguous across {theaters}: {OBJECT_ID}. "
-            "Set THEATER_PROFILE explicitly."
-        )
-    if not matches:
-        searched = ", ".join(item[0].theater_id for item in candidates)
-        detail = f" ({'; '.join(failures)})" if failures else ""
-        raise ValueError(
-            f"Normalized theater feature not found in {searched}: {OBJECT_ID}{detail}"
-        )
-    return matches[0]
 
 
 def feature_geometry(feature: SceneryVerificationFeature):
@@ -173,7 +115,7 @@ def survey_radius_m(feature: SceneryVerificationFeature) -> float:
 
 def footprint_fully_covered(feature: SceneryVerificationFeature, radius_m: float) -> bool:
     required = required_footprint_radius_m(feature)
-    return required is None or required <= radius_m
+    return required is None or required <= radius_m + 1.0
 
 
 def classify_survey_objects(
@@ -202,10 +144,24 @@ def observation_complete(
 ) -> bool:
     assigned_ids = {item.scenery_object_id for item in assignments}
     surveyed_ids = {item.object_id for item in survey.objects}
-    return (
-        not survey.truncated
-        and footprint_fully_covered(feature, survey.radius_m)
-        and assigned_ids.issubset(surveyed_ids)
+    if assigned_ids:
+        return assigned_ids.issubset(surveyed_ids)
+    return not survey.truncated and footprint_fully_covered(feature, survey.radius_m)
+
+
+def merge_survey_objects(
+    survey: ScenerySurvey,
+    exact_objects: tuple,
+) -> ScenerySurvey:
+    """Add exact Assign-As resolutions without duplicating spatial results."""
+
+    by_id = {item.object_id: item for item in survey.objects}
+    by_id.update({item.object_id: item for item in exact_objects})
+    return ScenerySurvey(
+        center=survey.center,
+        radius_m=survey.radius_m,
+        objects=tuple(by_id.values()),
+        truncated=survey.truncated,
     )
 
 
@@ -275,13 +231,22 @@ def format_survey(
     print(f"Baseline set    : {len(included)}")
     print(f"Nearby context  : {len(nearby)}")
     print(f"Completeness    : {'complete' if complete else 'partial'}")
-    if not footprint_fully_covered(feature, survey.radius_m):
+    if assignments:
+        queryable_count = sum(item.queryable for item in included)
+        print(f"Live queryable  : {queryable_count}/{len(included)}")
+    if not assignments and not footprint_fully_covered(feature, survey.radius_m):
         required = required_footprint_radius_m(feature)
-        print(
-            "Warning         : footprint exceeds the 5 km DCS survey limit "
-            f"(approximately {required / 1_000:.1f} km required)"
-        )
-    if survey.truncated:
+        if required is not None and required > MAXIMUM_SURVEY_RADIUS_M:
+            print(
+                "Warning         : footprint exceeds the 5 km DCS survey limit "
+                f"(approximately {required / 1_000:.1f} km required)"
+            )
+        elif required is not None:
+            print(
+                "Warning         : survey does not cover the complete footprint "
+                f"({required:.0f} m required, {survey.radius_m:.0f} m surveyed)"
+            )
+    if survey.truncated and not assignments:
         print("Warning         : DCS returned the maximum number of scenery objects")
     if assignments and not complete:
         missing_ids = sorted(
@@ -301,12 +266,18 @@ def format_survey(
             f"{distance:8.0f}m  {item.object_id[:24]:<24} "
             f"{(item.type_name or '-')[:27]:<27} {item.display_name or '-'}"
         )
-    if assignments and not has_area_footprint(feature):
-        print("\nAssign As objects form the exact baseline for this point feature.")
+    if assignments:
+        print("\nAssign As objects form the exact DCS observation baseline.")
         print("Other surveyed objects are retained only as visual context.")
+        if any(not item.queryable for item in included):
+            print("Objects omitted by the DCS runtime scan retain an unknown live state.")
+        if has_area_footprint(feature):
+            print("Select a small target subset in the web-map panel after saving the baseline.")
     else:
         print("\nThe complete baseline set is retained for later damage assessment.")
-    print("Assign As zones select exact targets; the web-map panel remains available for manual edits.")
+    if not has_area_footprint(feature):
+        print("Point-feature Assign As objects are also selected as exact targets.")
+    print("The web-map panel remains available for manual target edits.")
     print("Target format: SCENERY:<id> | infrastructure component | 1.0")
 
 
@@ -314,7 +285,7 @@ def format_assignments(
     assignments: tuple[SceneryZoneAssignment, ...],
     survey: ScenerySurvey,
 ) -> None:
-    surveyed_ids = {item.object_id for item in survey.objects}
+    surveyed_by_id = {item.object_id: item for item in survey.objects}
     print("\nMission Editor Assign As")
     print("=" * 96)
     if not assignments:
@@ -323,7 +294,13 @@ def format_assignments(
         return
     print(f"Assignments     : {len(assignments)}")
     for assignment in assignments:
-        availability = "found in survey" if assignment.scenery_object_id in surveyed_ids else "not found in survey"
+        found = surveyed_by_id.get(assignment.scenery_object_id)
+        if found is None:
+            availability = "reference unavailable"
+        elif found.queryable:
+            availability = "resolved in DCS"
+        else:
+            availability = "assigned; live state unavailable"
         print(f"  {assignment.zone_name} -> {assignment.scenery_object_id} ({availability})")
 
 
@@ -351,10 +328,9 @@ def include_assigned_objects(
             [item for item in ordered if item.object_id in assigned_ids],
             [item for item in ordered if item.object_id not in assigned_ids],
         )
-    included_ids = {item.object_id for item in included} | assigned_ids
     return (
-        [item for item in ordered if item.object_id in included_ids],
-        [item for item in ordered if item.object_id not in included_ids],
+        [item for item in ordered if item.object_id in assigned_ids],
+        [item for item in ordered if item.object_id not in assigned_ids],
     )
 
 
@@ -386,7 +362,7 @@ def save_observed_baseline(
         for assignment in assignments
         if assignment.scenery_object_id in observed_ids
     }
-    if assignments:
+    if assignments and not has_area_footprint(feature):
         target_components = tuple(
             VerifiedDcsComponent(
                 object_id=object_id,
@@ -404,7 +380,7 @@ def save_observed_baseline(
         source_id=feature.object_id,
         state=(
             StrategicVerificationState.REPRESENTED
-            if target_components
+            if observed
             else current.state if current is not None else StrategicVerificationState.UNVERIFIED
         ),
         observed_objects=observed,
@@ -441,12 +417,16 @@ def assess_current_survey(
             exists=item.exists,
         )
         for item in included
+        if item.queryable
     )
     assessment = assess_infrastructure_state(
         verification,
         current,
         destroyed_object_ids=bridge.state.destroyed_object_ids,
-        current_observation_complete=observation_complete(feature, survey, assignments),
+        current_observation_complete=(
+            observation_complete(feature, survey, assignments)
+            and all(item.queryable for item in included)
+        ),
     )
     health = "unknown" if assessment.health_min is None else f"{assessment.health_min * 100:.1f}%"
     if assessment.health_max != assessment.health_min and assessment.health_max is not None:
@@ -568,7 +548,7 @@ def survey_objects_for_ids(objects, object_ids: set[str]) -> list:
 
 
 async def run() -> int:
-    theater, theater_paths, feature = select_feature()
+    theater, theater_paths, feature = load_example_scenery_feature(OBJECT_ID, THEATER_PROFILE)
     verifications_path = theater_paths.path("strategic_verifications")
     radius_m = survey_radius_m(feature)
     session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
@@ -585,21 +565,27 @@ async def run() -> int:
         max_results=MAX_SCENERY_OBJECTS,
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
+    if assignments:
+        resolution = await bridge.resolve_scenery_objects(
+            (item.scenery_object_id for item in assignments),
+            zone_names={item.scenery_object_id: item.zone_name for item in assignments},
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+        survey = merge_survey_objects(survey, resolution.objects)
     included, nearby = classify_survey_objects(feature, survey)
     included, nearby = include_assigned_objects(feature, included, nearby, survey, assignments)
     format_survey(feature, survey, included, nearby, assignments)
     format_assignments(assignments, survey)
-    assess_current_survey(
-        bridge,
-        feature,
-        survey,
-        included,
-        assignments,
-        theater.theater_id,
-        verifications_path,
-    )
-
     if not DRAW_F10_OVERLAY:
+        assess_current_survey(
+            bridge,
+            feature,
+            survey,
+            included,
+            assignments,
+            theater.theater_id,
+            verifications_path,
+        )
         return 0
     drawn = False
     try:
@@ -625,12 +611,25 @@ async def run() -> int:
                 theater.theater_id,
                 verifications_path,
             ).get(feature.object_id)
-            if current is not None and current.observed_objects and not REPLACE_OBSERVED_BASELINE:
+            upgrade_incomplete_assignment_baseline = (
+                current is not None
+                and not current.observation_complete
+                and bool(assignments)
+                and observation_complete(feature, survey, assignments)
+            )
+            if (
+                current is not None
+                and current.observed_objects
+                and not REPLACE_OBSERVED_BASELINE
+                and not upgrade_incomplete_assignment_baseline
+            ):
                 print(
                     "Existing observation baseline preserved. "
                     "Set REPLACE_OBSERVED_BASELINE=True to replace it deliberately."
                 )
             else:
+                if upgrade_incomplete_assignment_baseline:
+                    print("Upgrading the partial baseline from the complete Assign As mapping.")
                 verification = save_observed_baseline(
                     feature,
                     survey,
@@ -644,6 +643,15 @@ async def run() -> int:
                     f"Saved {len(verification.observed_objects)} SCENERY object(s) as a "
                     f"{completeness} baseline: {verifications_path}"
                 )
+        assess_current_survey(
+            bridge,
+            feature,
+            survey,
+            included,
+            assignments,
+            theater.theater_id,
+            verifications_path,
+        )
     finally:
         if drawn:
             await bridge.clear_debug_overlay(OVERLAY_ID, timeout=COMMAND_TIMEOUT_SECONDS)

@@ -156,6 +156,48 @@ class FakeSdkServer:
                     }],
                 },
             }
+        if command.action == "scenery.resolve":
+            requested_ids = [item["object_id"] for item in command.params["references"]]
+            objects = []
+            if "SCENERY:42" in requested_ids:
+                objects.append({
+                    "object_id": "SCENERY:42",
+                    "name": "42",
+                    "type_name": "Industrial building",
+                    "display_name": "Factory",
+                    "x": 110,
+                    "y": 20,
+                    "z": 205,
+                    "latitude": 54.0001,
+                    "longitude": 12.0001,
+                    "life": 100,
+                    "exists": True,
+                })
+            if "SCENERY:assigned-only" in requested_ids:
+                objects.append({
+                    "object_id": "SCENERY:assigned-only",
+                    "name": "assigned-only",
+                    "type_name": "PORT_CRANE",
+                    "x": 120,
+                    "y": 20,
+                    "z": 210,
+                    "latitude": 54.0002,
+                    "longitude": 12.0002,
+                    "queryable": False,
+                    "resolution_source": "mission_editor_assignment_unqueryable",
+                })
+            return {
+                "ok": True,
+                "result": {
+                    "action": command.action,
+                    "objects": objects,
+                    "unresolved": [
+                        {"object_id": object_id, "reason": "not_found_near_reference"}
+                        for object_id in requested_ids
+                        if object_id != "SCENERY:42"
+                    ],
+                },
+            }
         if command.action == "terrain.closest_road_points":
             return {
                 "ok": True,
@@ -564,6 +606,92 @@ def test_sdk_surveys_bounded_dcs_scenery() -> None:
     asyncio.run(scenario())
 
 
+def test_sdk_resolves_exact_scenery_objects_from_assign_as_zones() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        result = await client.resolve_scenery_objects(
+            ["SCENERY:42", "SCENERY:missing"],
+            zone_names={
+                "SCENERY:42": "BRIDGE:Caucasus:test",
+                "SCENERY:missing": "BRIDGE:Caucasus:test-1",
+            },
+        )
+
+        assert [item.object_id for item in result.objects] == ["SCENERY:42"]
+        assert result.unresolved_object_ids == ("SCENERY:missing",)
+        command, timeout = server.commands[0]
+        assert command.action == "scenery.resolve"
+        assert command.params == {
+            "references": [
+                {"object_id": "SCENERY:42", "zone_name": "BRIDGE:Caucasus:test"},
+                {"object_id": "SCENERY:missing", "zone_name": "BRIDGE:Caucasus:test-1"},
+            ],
+            "search_radius_m": 150.0,
+        }
+        assert timeout == 30
+
+    asyncio.run(scenario())
+
+
+def test_sdk_retains_unqueryable_assign_as_reference() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+
+        result = await client.resolve_scenery_objects(
+            ["SCENERY:assigned-only"],
+            zone_names={"SCENERY:assigned-only": "MARITIME_SITE:test"},
+        )
+
+        assert len(result.objects) == 1
+        assert result.objects[0].queryable is False
+        assert result.objects[0].type_name == "PORT_CRANE"
+        assert result.objects[0].resolution_source == "mission_editor_assignment_unqueryable"
+        assert result.unresolved_object_ids == ("SCENERY:assigned-only",)
+
+    asyncio.run(scenario())
+
+
+def test_sdk_does_not_treat_unqueryable_assignment_as_intact() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        feature = SceneryVerificationFeature(
+            object_id="MARITIME_SITE:test",
+            name="Test port",
+            layer="infrastructure_sites",
+            category="maritime",
+            geometry={"type": "Point", "coordinates": [12.0, 54.0]},
+            latitude=54.0,
+            longitude=12.0,
+            source="OpenStreetMap",
+            artifact_key="infrastructure_sites",
+        )
+        verification = StrategicSiteVerification(
+            source_id=feature.object_id,
+            observed_objects=(
+                ObservedDcsObject(
+                    "SCENERY:assigned-only",
+                    type_name="PORT_CRANE",
+                    latitude=54.0002,
+                    longitude=12.0002,
+                ),
+            ),
+            observation_complete=True,
+        )
+
+        result = await client.assess_scenery_verification(feature, verification)
+
+        assert result.state is InfrastructureOperationalState.UNKNOWN
+        assert result.unknown_count == 1
+        assert result.intact_count == 0
+        assert result.complete is False
+
+    asyncio.run(scenario())
+
+
 def test_sdk_assesses_point_feature_from_exact_scenery_baseline() -> None:
     async def scenario() -> None:
         server = FakeSdkServer()
@@ -600,8 +728,12 @@ def test_sdk_assesses_point_feature_from_exact_scenery_baseline() -> None:
         assert result.intact_count == 1
         assert result.complete is True
         command, _ = server.commands[0]
-        assert command.action == "scenery.search"
-        assert command.params["radius_m"] == 750.0
+        assert command.action == "scenery.resolve"
+        assert command.params["references"] == [{
+            "object_id": "SCENERY:42",
+            "latitude": 54.0001,
+            "longitude": 12.0001,
+        }]
 
     asyncio.run(scenario())
 
