@@ -1178,7 +1178,12 @@ Confirmed destruction events are stored separately as loss reports. They are
 visible in both coalition tactical pictures: as a friendly loss for the owning
 coalition and as an enemy loss for the opposing coalition. The global picture
 shows the same report as confirmed truth. Loss reports preserve the last known
-position and remain separate from MOOSE INTEL contacts.
+position and remain separate from MOOSE INTEL contacts. Fixed `SCENERY` losses
+do not create generic loss reports. When a destroyed scenery object belongs to
+the observed baseline of a currently registered strategic objective, the SDK
+instead maintains one aggregate `strategic_damage` report for that objective.
+Further destroyed baseline objects update the same report and its confirmed
+minimum damage; unverified or non-strategic scenery remains global state only.
 Both picture types export standard WGS84 GeoJSON. DCS `x/y/z` coordinates stay
 available as feature properties, while geometry coordinates use
 `[longitude, latitude]` values produced by DCS `coord.LOtoLL`.

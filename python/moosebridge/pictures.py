@@ -457,7 +457,11 @@ class TacticalPicture:
         features: list[GeoJsonFeature | None] = []
         for report in self.loss_reports:
             victim_coalition = str(report.get("victim_coalition") or "").lower()
-            perspective = "friendly_loss" if victim_coalition == self.coalition.lower() else "enemy_loss"
+            perspective = (
+                "strategic_damage"
+                if report.get("report_kind") == "strategic_damage"
+                else "friendly_loss" if victim_coalition == self.coalition.lower() else "enemy_loss"
+            )
             features.append(_raw_point_feature(report, "loss_reports", {"perspective": perspective}))
         return features
 

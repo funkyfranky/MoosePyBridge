@@ -51,7 +51,7 @@ THEATER_PROFILE: str | Path | None = None
 # default radius. Set an explicit value for a deliberately different survey.
 SURVEY_RADIUS_M: float | None = None
 SAVE_OBSERVED_BASELINE = True
-REPLACE_OBSERVED_BASELINE = False
+REPLACE_OBSERVED_BASELINE = True
 DRAW_F10_OVERLAY = True
 
 # Safety and display limits. DCS scenery.search accepts at most 5 km and 2,000

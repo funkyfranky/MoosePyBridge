@@ -30,13 +30,16 @@ COMMAND_TIMEOUT_SECONDS = 30.0
 
 # Copy a normalized Object ID from the web map. None searches all bundled
 # theater profiles; set an explicit profile path only to resolve ambiguity.
-FEATURE_ID = "BRIDGE:Caucasus:4d482fb330eb"
+#FEATURE_ID = "BRIDGE:Caucasus:4d482fb330eb"
+FEATURE_ID = "MARITIME_SITE:faee9372f262ce51"
 THEATER_PROFILE: str | Path | None = None
 
 # Select one object from the saved observation baseline. None chooses the first
 # live-queryable target component, then the first live-queryable baseline object.
 # Batumi examples: SCENERY:85667046, SCENERY:71976691, SCENERY:71977578.
-TARGET_OBJECT_ID: str | None = "SCENERY:70254625"
+#TARGET_OBJECT_ID: str | None = "SCENERY:70254625"
+TARGET_OBJECT_ID: str | None = "SCENERY:71978148"
+
 
 # Destructive live-DCS action. Run once with False and review the exact target.
 ARM_EXPLOSION = True

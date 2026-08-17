@@ -50,6 +50,11 @@ features; other surveyed objects remain visual context. Point-feature
 assignments are promoted to targets automatically. Area features retain the
 small, explicitly selected target subset from the verification registry.
 A bounded proximity survey remains the fallback when no Assign As zone exists.
+During a mission, destruction events for any object in the complete observed
+baseline update one stable strategic-damage loss report for the corresponding
+registered objective. This is deliberately broader than the target subset so
+collateral damage remains visible, while unrelated scenery destruction does
+not clutter the Loss reports layer.
 
 Artifacts used by the map server must cover the complete theater. Regional
 pilot or validation artifacts may be retained for diagnostics, but must not be

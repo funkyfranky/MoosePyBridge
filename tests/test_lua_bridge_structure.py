@@ -119,6 +119,11 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert 'self:SendEvent("combat.kill"' in source
     assert 'self:SendEvent("mission.ended"' in source
     assert "self:_FlushOutQueue()" in source
+    assert "function MOOSE_BRIDGE:_BuildObjectDestroyedPayload(EventData)" in source
+    assert "EventData.IniObjectCategory == Object.Category.SCENERY" in source
+    assert 'local object_type = is_scenery and "SCENERY"' in source
+    assert 'return self:_ScenerySnapshot(' in source
+    assert '"destruction_event"' in source
 
 
 def test_opszone_capture_fsm_event_composes_public_callback_without_touching_internal_fsm() -> None:

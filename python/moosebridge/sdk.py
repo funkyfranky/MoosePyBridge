@@ -644,6 +644,10 @@ class MooseBridgeClient:
         self._strategic_feedback_message_ids: set[str] = set()
         self._strategic_feedback_tasks: set[asyncio.Task[Any]] = set()
         self._strategic_goal_generation_number = 0
+        self._strategic_verifications: StrategicVerificationRegistry | None = None
+        self._strategic_scenery_objectives: dict[str, set[str]] = {}
+        self._strategic_scenery_baselines: dict[str, tuple[str, ...]] = {}
+        self._strategic_scenery_baseline_complete: dict[str, bool] = {}
         self.strategic_feedback.add_listener(self._on_strategic_feedback_policy_event)
         add_listener = getattr(server, "add_message_listener", None)
         if callable(add_listener):
@@ -676,6 +680,10 @@ class MooseBridgeClient:
         self._auftrag_ids_by_object.clear()
         self._strategic_feedback_message_ids.clear()
         self._strategic_goal_generation_number = 0
+        self._strategic_verifications = None
+        self._strategic_scenery_objectives.clear()
+        self._strategic_scenery_baselines.clear()
+        self._strategic_scenery_baseline_complete.clear()
         if reset_state:
             self.state.reset_mission()
 
@@ -804,6 +812,7 @@ class MooseBridgeClient:
         """Add a Python-owned strategic objective during the mission."""
 
         added = self.objectives.add(objective, replace=replace)
+        self._rebuild_strategic_scenery_index()
         if sync:
             self.sync_strategic_objectives(source="current_state")
         return added
@@ -837,6 +846,8 @@ class MooseBridgeClient:
             config=config,
         )
         if register:
+            if verifications is not None:
+                self._strategic_verifications = verifications
             generated_ids = {objective.objective_id for objective in result.objectives}
             if replace:
                 for existing in self.objectives.all():
@@ -847,6 +858,7 @@ class MooseBridgeClient:
                 if existing is not None and not replace:
                     continue
                 self.objectives.add(objective, replace=existing is not None)
+            self._rebuild_strategic_scenery_index()
             self.sync_strategic_objectives(source="strategic_objective_generation")
         return result
 
@@ -854,6 +866,7 @@ class MooseBridgeClient:
         """Remove a strategic objective during the mission."""
 
         removed = self.objectives.remove(objective)
+        self._rebuild_strategic_scenery_index()
         self.goals.sync(mission_time=self._current_mission_time(), source="objective.removed")
         return removed
 
@@ -1938,10 +1951,10 @@ class MooseBridgeClient:
         timeout: float = 600.0,
         after_id: str | None = None,
     ) -> DestroyedObjectEvent:
-        """Wait for one UNIT or STATIC destruction reported by DCS."""
+        """Wait for one UNIT, STATIC, or SCENERY destruction reported by DCS."""
 
-        if not object_id.startswith(("UNIT:", "STATIC:")):
-            raise ValueError("object_id must start with UNIT: or STATIC:")
+        if not object_id.startswith(("UNIT:", "STATIC:", "SCENERY:")):
+            raise ValueError("object_id must start with UNIT:, STATIC:, or SCENERY:")
         message = await self.server.wait_for_event(
             "object.destroyed",
             filters={"object_id": object_id},
@@ -1949,6 +1962,142 @@ class MooseBridgeClient:
             after_id=after_id,
         )
         return DestroyedObjectEvent.from_message(message)
+
+    def _rebuild_strategic_scenery_index(self) -> None:
+        """Index fixed scenery baselines belonging to current objectives."""
+
+        by_scenery: dict[str, set[str]] = {}
+        baselines: dict[str, tuple[str, ...]] = {}
+        baseline_complete: dict[str, bool] = {}
+        for objective in self.objectives.all():
+            source_id = str(objective.metadata.get("source_object_id") or "")
+            verification = (
+                self._strategic_verifications.get(source_id)
+                if self._strategic_verifications is not None and source_id
+                else None
+            )
+            if verification is not None and verification.observed_objects:
+                object_ids = tuple(item.object_id for item in verification.observed_objects)
+                is_complete = verification.observation_complete
+            else:
+                object_ids = tuple(
+                    component.object_id
+                    for component in objective.components
+                    if component.object_id.startswith("SCENERY:")
+                )
+                is_complete = bool(object_ids)
+            if not object_ids:
+                continue
+            baselines[objective.objective_id] = object_ids
+            baseline_complete[objective.objective_id] = is_complete
+            for object_id in object_ids:
+                by_scenery.setdefault(object_id, set()).add(objective.objective_id)
+
+        self._strategic_scenery_objectives = by_scenery
+        self._strategic_scenery_baselines = baselines
+        self._strategic_scenery_baseline_complete = baseline_complete
+
+        current_objective_ids = set(baselines)
+        for report_id, report in tuple(self.state.loss_reports.items()):
+            if (
+                report.get("report_kind") == "strategic_damage"
+                and report.get("target_object_id") not in current_objective_ids
+            ):
+                del self.state.loss_reports[report_id]
+        for objective_id, object_ids in baselines.items():
+            if self.state.destroyed_object_ids.intersection(object_ids):
+                self._update_strategic_scenery_loss_report(objective_id)
+
+    def _record_strategic_scenery_loss(self, event: DestroyedObjectEvent) -> None:
+        """Update affected strategic-objective reports after one scenery loss."""
+
+        if event.object_type != "SCENERY":
+            return
+        for objective_id in sorted(self._strategic_scenery_objectives.get(event.object_id, ())):
+            self._update_strategic_scenery_loss_report(objective_id, event=event)
+
+    def _update_strategic_scenery_loss_report(
+        self,
+        objective_id: str,
+        *,
+        event: DestroyedObjectEvent | None = None,
+    ) -> None:
+        """Create or refresh one stable aggregate report for an objective."""
+
+        objective = self.objectives.get(objective_id)
+        baseline = self._strategic_scenery_baselines.get(objective_id, ())
+        if objective is None or not baseline:
+            return
+        destroyed = tuple(
+            object_id for object_id in baseline if object_id in self.state.destroyed_object_ids
+        )
+        if not destroyed:
+            return
+
+        report_id = f"LOSS:STRATEGIC:{objective_id}"
+        previous = self.state.loss_reports.get(report_id, {})
+        destroyed_fraction = len(destroyed) / len(baseline)
+        status = "destroyed" if len(destroyed) == len(baseline) else "damaged"
+        event_object = event.object if event is not None else {}
+        latitude = _optional_float(objective.metadata.get("latitude"))
+        longitude = _optional_float(objective.metadata.get("longitude"))
+        if latitude is None:
+            latitude = _optional_float(event_object.get("latitude"))
+        if longitude is None:
+            longitude = _optional_float(event_object.get("longitude"))
+        x = _optional_float(objective.metadata.get("x"))
+        y = _optional_float(objective.metadata.get("y"))
+        z = _optional_float(objective.metadata.get("z"))
+        if x is None:
+            x = _optional_float(event_object.get("x"))
+        if y is None:
+            y = _optional_float(event_object.get("y"))
+        if z is None:
+            z = _optional_float(event_object.get("z"))
+        owner = normalize_coalition(objective.owner)
+        mission_time = event.mission_time if event is not None else self._current_mission_time()
+        source_id = str(objective.metadata.get("source_object_id") or objective.objective_id)
+
+        self.state.loss_reports[report_id] = {
+            "object_id": report_id,
+            "dcs_name": objective.name,
+            "object_type": "LOSS_REPORT",
+            "report_kind": "strategic_damage",
+            "target_object_id": objective.objective_id,
+            "target_object_type": "STRATEGIC_OBJECTIVE",
+            "strategic_source_id": source_id,
+            "objective_kind": objective.kind.value,
+            "victim_coalition": owner,
+            "coalition": owner,
+            "visible_to": ["blue", "red"],
+            "status": status,
+            "alive": False,
+            "confidence": "confirmed",
+            "source": (
+                event.dcs_event_name
+                if event is not None and event.dcs_event_name
+                else previous.get("source") or "DCS_DESTRUCTION_STATE"
+            ),
+            "mission_time": mission_time,
+            "first_mission_time": previous.get("first_mission_time", mission_time),
+            "dcs_event_time": (
+                event.dcs_event_time if event is not None else previous.get("dcs_event_time")
+            ),
+            "category": "strategic_damage",
+            "dcs_type": "Strategic infrastructure",
+            "last_component_id": event.object_id if event is not None else destroyed[-1],
+            "destroyed_component_ids": list(destroyed),
+            "destroyed_component_count": len(destroyed),
+            "baseline_component_count": len(baseline),
+            "baseline_complete": self._strategic_scenery_baseline_complete.get(objective_id, False),
+            "damage_min": destroyed_fraction,
+            "damage_percent_min": destroyed_fraction * 100.0,
+            "x": x,
+            "y": y,
+            "z": z,
+            "latitude": latitude,
+            "longitude": longitude,
+        }
 
     def _on_bridge_message(self, message: dict[str, Any]) -> None:
         """Update strategic objectives after relevant state messages arrive."""
@@ -1966,6 +2115,8 @@ class MooseBridgeClient:
         if message_type == "event" and event_name == "mission.ended":
             self.reset_mission(reset_state=False)
             return
+        if message_type == "event" and event_name == "object.destroyed" and feedback_message_is_new:
+            self._record_strategic_scenery_loss(DestroyedObjectEvent.from_message(message))
         if message_type == "event" and event_name == "combat.kill" and feedback_message_is_new:
             kill = KillEvent.from_message(message)
             killer = normalize_coalition(kill.killer_coalition)
