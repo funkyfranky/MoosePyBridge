@@ -70,8 +70,14 @@ from moosebridge.sdk import (
     TacticalPicture,
 )
 from moosebridge.infrastructure_sites import ScenerySurvey
+from moosebridge.scenery_verification import SceneryVerificationFeature
 from moosebridge.state import MooseBridgeState
 from moosebridge.strategic import ObjectiveKind, ObjectiveStatus, OwnershipPolicy, StrategicObjective
+from moosebridge.strategic_verification import (
+    InfrastructureOperationalState,
+    ObservedDcsObject,
+    StrategicSiteVerification,
+)
 
 
 class FakeSdkServer:
@@ -554,6 +560,48 @@ def test_sdk_surveys_bounded_dcs_scenery() -> None:
             "max_results": 50,
         }
         assert timeout == 30
+
+    asyncio.run(scenario())
+
+
+def test_sdk_assesses_point_feature_from_exact_scenery_baseline() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        feature = SceneryVerificationFeature(
+            object_id="BRIDGE:Caucasus:test",
+            name="Test bridge",
+            layer="transport_bridges",
+            category="bridge",
+            geometry={"type": "Point", "coordinates": [12.0, 54.0]},
+            latitude=54.0,
+            longitude=12.0,
+            source="OpenStreetMap",
+            artifact_key="transport_infrastructure",
+        )
+        verification = StrategicSiteVerification(
+            source_id=feature.object_id,
+            observed_objects=(
+                ObservedDcsObject(
+                    "SCENERY:42",
+                    latitude=54.0001,
+                    longitude=12.0001,
+                    life=100.0,
+                    exists=True,
+                ),
+            ),
+            observation_complete=True,
+        )
+
+        result = await client.assess_scenery_verification(feature, verification)
+
+        assert result.state is InfrastructureOperationalState.OPERATIONAL
+        assert result.baseline_count == 1
+        assert result.intact_count == 1
+        assert result.complete is True
+        command, _ = server.commands[0]
+        assert command.action == "scenery.search"
+        assert command.params["radius_m"] == 750.0
 
     asyncio.run(scenario())
 
@@ -2681,6 +2729,25 @@ def test_sdk_add_strike_auftrag_to_legion_uses_strike_params() -> None:
             "target": "ZONE:Factory",
             "altitude_ft": 2000,
             "engage_weapon_type": 1,
+            "legion_id": "LEGION:Wing Parchim",
+        }
+
+    asyncio.run(scenario())
+
+
+def test_sdk_add_scenery_strike_uses_geographic_coordinates() -> None:
+    async def scenario() -> None:
+        server = FakeSdkServer()
+        client = MooseBridgeClient(server)  # type: ignore[arg-type]
+        auftrag = Auftrag_STRIKE(latitude=41.664066994884, longitude=41.681539555042)
+
+        await client.add_auftrag(auftrag=auftrag, legion="LEGION:Wing Parchim")
+
+        command = server.commands[0][0]
+        assert command.action == "auftrag.create_strike"
+        assert command.params == {
+            "latitude": 41.664066994884,
+            "longitude": 41.681539555042,
             "legion_id": "LEGION:Wing Parchim",
         }
 

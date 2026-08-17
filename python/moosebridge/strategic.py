@@ -219,7 +219,18 @@ class ObjectiveComponent:
     def is_destroy_target(self) -> bool:
         """Return whether the operational planner can attack this component."""
 
-        return self.object_id.partition(":")[0].upper() in {"GROUP", "UNIT", "STATIC"}
+        prefix = self.object_id.partition(":")[0].upper()
+        if prefix in {"GROUP", "UNIT", "STATIC"}:
+            return True
+        if prefix not in {"SCENERY", "MAPOBJECT"}:
+            return False
+        return (
+            self.metadata.get("latitude") is not None
+            and self.metadata.get("longitude") is not None
+        ) or (
+            self.metadata.get("x") is not None
+            and self.metadata.get("z") is not None
+        )
 
 
 @dataclass(slots=True, frozen=True)

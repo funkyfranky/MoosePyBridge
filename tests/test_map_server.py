@@ -23,6 +23,8 @@ from moosebridge.surface_regions import (
 )
 from moosebridge.transport_infrastructure import (
     TheaterTransportInfrastructure,
+    TransportBridge,
+    TransportImportanceTier,
     TransportJunction,
     TransportJunctionKind,
 )
@@ -829,8 +831,9 @@ def test_map_runtime_assesses_verified_infrastructure_on_demand(tmp_path) -> Non
         runtime._infrastructure_sites = TheaterInfrastructureSites("GermanyCW", (site,))
 
         class FakeBridge:
-            async def assess_infrastructure_site(self, candidate, baseline, *, timeout):
-                assert candidate is site
+            async def assess_scenery_verification(self, candidate, baseline, *, timeout):
+                assert candidate.object_id == site.site_id
+                assert candidate.artifact_key == "infrastructure_sites"
                 assert baseline.source_id == site.site_id
                 assert timeout == runtime.timeout
                 return InfrastructureStateAssessment(
@@ -853,6 +856,67 @@ def test_map_runtime_assesses_verified_infrastructure_on_demand(tmp_path) -> Non
 
         assert result["state"] == "operational"
         assert result["complete"] is True
+
+    asyncio.run(run())
+
+
+def test_map_runtime_assesses_verified_transport_bridge_on_demand(tmp_path) -> None:
+    async def run() -> None:
+        path = tmp_path / "verifications.json"
+        bridge_feature = TransportBridge(
+            bridge_id="BRIDGE:Caucasus:4d482fb330eb",
+            geometry={"type": "Point", "coordinates": [41.68362, 41.66473]},
+            latitude=41.66473,
+            longitude=41.68362,
+            length_m=120.0,
+            highway_classes=("primary",),
+            edge_count=1,
+            approach_count=2,
+            endpoint_osm_ids=(1, 2),
+            importance_score=66.0,
+            importance_tier=TransportImportanceTier.MEDIUM,
+        )
+        verification = StrategicSiteVerification(
+            source_id=bridge_feature.bridge_id,
+            observed_objects=(ObservedDcsObject("SCENERY:70254625"),),
+            observation_complete=True,
+        )
+        runtime = GlobalMapRuntime(theater_id="Caucasus", strategic_verifications_path=path)
+        runtime._strategic_verifications.upsert(verification)
+        runtime._strategic_verifications.save(path)
+        runtime._transport_infrastructure = TheaterTransportInfrastructure(
+            "Caucasus",
+            (bridge_feature,),
+            (),
+        )
+
+        class FakeBridge:
+            async def assess_scenery_verification(self, candidate, baseline, *, timeout):
+                assert candidate.object_id == bridge_feature.bridge_id
+                assert candidate.artifact_key == "transport_infrastructure"
+                assert candidate.category == "bridge"
+                assert baseline == verification
+                assert timeout == runtime.timeout
+                return InfrastructureStateAssessment(
+                    source_id=bridge_feature.bridge_id,
+                    state=InfrastructureOperationalState.OPERATIONAL,
+                    baseline_count=1,
+                    intact_count=1,
+                    damaged_count=0,
+                    destroyed_count=0,
+                    unknown_count=0,
+                    health_min=1.0,
+                    health_max=1.0,
+                    complete=True,
+                )
+
+        runtime._bridge = FakeBridge()
+        runtime.connected = True
+
+        result = await runtime.assess_strategic_verification(bridge_feature.bridge_id)
+
+        assert result["state"] == "operational"
+        assert result["baseline_count"] == 1
 
     asyncio.run(run())
 
@@ -900,6 +964,10 @@ def test_map_ui_exposes_strategic_dcs_verification_controls() -> None:
     assert '/api/strategic-verifications/${encodeURIComponent(sourceId)}' in map_script
     assert '/api/strategic-verifications/${encodeURIComponent(sourceId)}/assess' in map_script
     assert "Assess current state" in map_script
+    assert "const strategicVerificationAssessments = new Map();" in map_script
+    assert "strategicVerificationAssessments.set(sourceId, assessment);" in map_script
+    assert "strategicVerificationAssessments.delete(sourceId);" in map_script
+    assert "strategicVerificationAssessments.clear();" in map_script
     assert 'addStrategicVerificationControls(properties)' in map_script
     assert "function withCurrentStrategicVerification(properties)" in map_script
     assert "strategicVerificationDetailProperties(saved)" in map_script

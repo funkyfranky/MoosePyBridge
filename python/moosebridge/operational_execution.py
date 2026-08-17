@@ -27,6 +27,7 @@ from .auftraege import (
     Auftrag_RECON,
     Auftrag_REARMING,
     Auftrag_SEAD,
+    Auftrag_STRIKE,
     AuftragCommand,
     AuftragEvent,
 )
@@ -2040,6 +2041,14 @@ def build_plan_auftrag(
             raise ValueError(f"BOMBRUNWAY intent {intent.intent_id} requires an AIRBASE target")
         params.setdefault("target", target)
         command = Auftrag_BOMBRUNWAY(**params)
+    elif mission_type == "STRIKE":
+        if not target or not target.startswith(("SCENERY:", "MAPOBJECT:")):
+            raise ValueError(f"STRIKE intent {intent.intent_id} requires a SCENERY or MAPOBJECT target")
+        has_local_point = params.get("x") is not None and params.get("z") is not None
+        has_geographic_point = params.get("latitude") is not None and params.get("longitude") is not None
+        if not has_local_point and not has_geographic_point:
+            raise ValueError(f"STRIKE intent {intent.intent_id} requires exact target coordinates")
+        command = Auftrag_STRIKE(**params)
     elif mission_type in {"SEAD", "ANTISHIP", "INTERCEPT"}:
         if not target or not target.startswith(("GROUP:", "UNIT:")):
             raise ValueError(f"{mission_type} intent {intent.intent_id} requires a GROUP or UNIT target")

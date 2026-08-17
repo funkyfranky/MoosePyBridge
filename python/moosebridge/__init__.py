@@ -493,7 +493,9 @@ from .strategic_verification import (
 from .scenery_verification import (
     SCENERY_VERIFICATION_ARTIFACT_KEYS,
     SceneryVerificationFeature,
+    SceneryZoneAssignment,
     resolve_scenery_verification_feature,
+    scenery_zone_assignments,
 )
 from .strategic_goals import (
     StrategicGoalDerivation,
@@ -830,7 +832,9 @@ __all__ = [
     "SCENERY_OBJECT_PREFIX",
     "SCENERY_VERIFICATION_ARTIFACT_KEYS",
     "SceneryVerificationFeature",
+    "SceneryZoneAssignment",
     "resolve_scenery_verification_feature",
+    "scenery_zone_assignments",
     "StrategicGoal",
     "StrategicGoalAction",
     "StrategicGoalDerivation",

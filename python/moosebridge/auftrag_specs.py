@@ -425,6 +425,20 @@ RADIUS_M_PARAMETER = AuftragParameterSpec(
     description="Optional artillery impact radius in meters. MOOSE defaults to 100 m when omitted.",
 )
 
+LATITUDE_PARAMETER = AuftragParameterSpec(
+    name="latitude",
+    optional=True,
+    accepted_objects=("float",),
+    description="WGS84 latitude in degrees. Required with longitude when no DCS x/z coordinate is supplied.",
+)
+
+LONGITUDE_PARAMETER = AuftragParameterSpec(
+    name="longitude",
+    optional=True,
+    accepted_objects=("float",),
+    description="WGS84 longitude in degrees. Required with latitude when no DCS x/z coordinate is supplied.",
+)
+
 SPEED_KTS_PARAMETER = AuftragParameterSpec(
     name="speed_kts",
     optional=True,
@@ -1026,6 +1040,8 @@ AUFTRAG_TYPE_SPECS: dict[str, AuftragTypeSpec] = {
             X_COORDINATE_PARAMETER,
             Y_COORDINATE_PARAMETER,
             Z_COORDINATE_PARAMETER,
+            LATITUDE_PARAMETER,
+            LONGITUDE_PARAMETER,
             ALTITUDE_PARAMETER,
             AuftragParameterSpec(
                 name="engage_weapon_type",

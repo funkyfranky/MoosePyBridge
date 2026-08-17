@@ -1203,6 +1203,20 @@ function MOOSE_BRIDGE:_ZonePolygonVertices(zone)
   return vertices
 end
 
+function MOOSE_BRIDGE:_ZoneProperties(zone)
+  local source = zone and zone.Properties
+  if type(source) ~= "table" then return nil end
+  local properties = {}
+  for key, value in pairs(source) do
+    local value_type = type(value)
+    if value_type == "string" or value_type == "number" or value_type == "boolean" then
+      properties[safe_tostring(key)] = value
+    end
+  end
+  if next(properties) == nil then return nil end
+  return properties
+end
+
 function MOOSE_BRIDGE:_BuildZoneSnapshotItem(zone_name, zone, source)
   local name = self:_ZoneName(zone_name, zone)
   if not name then return nil end
@@ -1215,7 +1229,7 @@ function MOOSE_BRIDGE:_BuildZoneSnapshotItem(zone_name, zone, source)
   local vertices = self:_ZonePolygonVertices(zone)
   local radius = nil
   if not vertices then radius = self:_SafeCall(zone, "GetRadius") or zone.radius end
-  local item = {object_id="ZONE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="ZONE",category="ZONE",class_name=zone.ClassName,shape=vertices and "polygon" or "circle",source=source,radius=radius,vertices=vertices}
+  local item = {object_id="ZONE:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="ZONE",category="ZONE",class_name=zone.ClassName,shape=vertices and "polygon" or "circle",source=source,radius=radius,vertices=vertices,properties=self:_ZoneProperties(zone)}
   if point then self:_AddPointFields(item, point) end
   return item
 end

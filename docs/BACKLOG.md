@@ -540,3 +540,7 @@ Priorities:
 - [ ] Apply the strategic mission scope to frontline calculation bounds and
   diplomatic border classification. Each consumer should reject invalid
   overlap instead of inventing a fallback.
+- [ ] Feed verified SCENERY baseline assessments into strategic component
+  health before and after STRIKE execution. Exact SCENERY targets can now be
+  tasked through their stored coordinates, but weighted DESTROY completion
+  still needs automatic post-strike reassessment and evidence persistence.

@@ -6,7 +6,10 @@ import json
 
 import pytest
 
-from moosebridge.scenery_verification import resolve_scenery_verification_feature
+from moosebridge.scenery_verification import (
+    resolve_scenery_verification_feature,
+    scenery_zone_assignments,
+)
 from moosebridge.strategic_verification import (
     InfrastructureOperationalState,
     ObservedDcsObject,
@@ -77,6 +80,58 @@ def test_common_scenery_resolver_rejects_theater_mismatch(tmp_path) -> None:
 def test_common_scenery_resolver_rejects_mission_defined_objects() -> None:
     with pytest.raises(ValueError, match="cannot be verified"):
         resolve_scenery_verification_feature("TestTheater", "STATIC:Depot", {})
+
+
+def test_scenery_zone_assignments_accept_dcs_numeric_suffixes() -> None:
+    feature_id = "BRIDGE:Caucasus:4d482fb330eb"
+    assignments = scenery_zone_assignments(feature_id, {
+        f"ZONE:{feature_id}": {
+            "object_id": f"ZONE:{feature_id}",
+            "dcs_name": feature_id,
+            "properties": {"OBJECT ID": 70254625},
+        },
+        f"ZONE:{feature_id}-2": {
+            "object_id": f"ZONE:{feature_id}-2",
+            "dcs_name": f"{feature_id}-2",
+            "properties": {"object id": "SCENERY:270213120"},
+        },
+        f"ZONE:{feature_id}-1": {
+            "object_id": f"ZONE:{feature_id}-1",
+            "dcs_name": f"{feature_id}-1",
+            "properties": {"OBJECT ID": 270213121.0},
+        },
+    })
+
+    assert [item.zone_name for item in assignments] == [
+        feature_id,
+        f"{feature_id}-1",
+        f"{feature_id}-2",
+    ]
+    assert [item.scenery_object_id for item in assignments] == [
+        "SCENERY:70254625",
+        "SCENERY:270213121",
+        "SCENERY:270213120",
+    ]
+
+
+def test_scenery_zone_assignments_reject_non_dcs_suffixes_and_missing_properties() -> None:
+    feature_id = "BRIDGE:Caucasus:4d482fb330eb"
+    assignments = scenery_zone_assignments(feature_id, {
+        f"ZONE:{feature_id}-rail": {
+            "dcs_name": f"{feature_id}-rail",
+            "properties": {"OBJECT ID": 1},
+        },
+        f"ZONE:prefix-{feature_id}": {
+            "dcs_name": f"prefix-{feature_id}",
+            "properties": {"OBJECT ID": 2},
+        },
+        f"ZONE:{feature_id}": {
+            "dcs_name": feature_id,
+            "properties": {},
+        },
+    })
+
+    assert assignments == ()
 
 
 def test_registry_round_trip_is_versioned_and_atomic(tmp_path) -> None:

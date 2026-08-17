@@ -651,6 +651,8 @@ class AuftragSTRIKE(AuftragCommand):
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     altitude_ft: float | None = None
     engage_weapon_type: int | None = None
     mission_type = "STRIKE"
@@ -664,6 +666,8 @@ class AuftragSTRIKE(AuftragCommand):
                 "x": self.x,
                 "y": self.y,
                 "z": self.z,
+                "latitude": self.latitude,
+                "longitude": self.longitude,
                 "altitude_ft": self.altitude_ft,
                 "engage_weapon_type": self.engage_weapon_type,
             }

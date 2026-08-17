@@ -36,6 +36,15 @@ workflow for normalized infrastructure, railway, settlement, road-bridge, and
 transport-junction features. The example searches all bundled theater profiles
 for `OBJECT_ID` by default and writes evidence only to the matching theater's
 verification registry. Set `THEATER_PROFILE` only if an object ID is ambiguous.
+For an exact Mission Editor mapping, use **Assign As** on a fixed scenery
+object and name its zone after the normalized feature ID. DCS-numbered variants
+such as `<feature-id>-1` and `<feature-id>-2` are collected as additional
+components. The bridge exports the scalar `ZONE.Properties`, and the example
+reads `OBJECT ID` as the authoritative `SCENERY:<id>` target mapping. The
+assigned objects form the exact observation baseline for point features such
+as bridges and junctions; other surveyed objects remain visual context. For
+polygon features, assigned targets augment the complete in-footprint baseline.
+A bounded proximity survey remains the fallback when no Assign As zone exists.
 
 Artifacts used by the map server must cover the complete theater. Regional
 pilot or validation artifacts may be retained for diagnostics, but must not be

@@ -307,8 +307,10 @@ from its observed scenery baseline. Sites without a fixed DCS representation
 remain excluded.
 
 The common verification script retains every observed SCENERY object inside a
-normalized polygon footprint, or inside the bounded environment of a point
-feature, as an observation baseline. The default survey radius automatically
+normalized polygon footprint as an observation baseline. For point features,
+Mission Editor Assign-As zones define the exact baseline and target subset;
+other surveyed objects remain context. Without Assign As, the bounded point
+environment remains the fallback baseline. The default survey radius automatically
 covers the complete footprint up to the 5 km DCS query limit and can retain up
 to 2,000 objects while keeping console and F10 output small. This full inventory
 is separate from the deliberately small target subset

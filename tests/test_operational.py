@@ -756,6 +756,43 @@ def test_operational_execution_builds_resolved_object_attack_types() -> None:
         assert command.to_params()["target"] == target
 
 
+def test_operational_execution_builds_scenery_strike_from_geographic_position() -> None:
+    requirement = AssetRequirement(
+        "REQ:STRIKE",
+        AssetRole.COMBAT,
+        mission_types=("STRIKE",),
+        performer_categories=("AIR",),
+    )
+    intent = MissionIntent(
+        "strike-bridge",
+        "Strike bridge",
+        ("STRIKE",),
+        (requirement,),
+        target_object_id="SCENERY:70254625",
+        metadata={
+            "auftrag_params": {
+                "latitude": 41.664066994884,
+                "longitude": 41.681539555042,
+            }
+        },
+    )
+    plan = OperationalPlan(
+        "PLAN:Strike Bridge",
+        "Strike Bridge",
+        "GOAL:Destroy Bridge",
+        "blue",
+        (PlanPhase("strike", "Strike", (intent,)),),
+    )
+
+    command = build_plan_auftrag(plan, intent, requirement)
+
+    assert command.mission_type == "STRIKE"
+    assert command.to_params() == {
+        "latitude": 41.664066994884,
+        "longitude": 41.681539555042,
+    }
+
+
 def test_operational_execution_applies_resolved_arty_weapon_type() -> None:
     weapon_type = int(DcsWeaponFlag.CONVENTIONAL_SHELL)
     requirement = AssetRequirement(

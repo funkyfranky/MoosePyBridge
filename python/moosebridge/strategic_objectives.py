@@ -322,8 +322,23 @@ def _admit_geographic_candidate(
     if not verification.admitted:
         exclusions.append(StrategicObjectiveExclusion(source_id, "dcs_site_not_represented"))
         return
+    observed_by_id = {item.object_id: item for item in verification.observed_objects}
     components = tuple(
-        ObjectiveComponent(component.object_id, role=component.role, weight=component.weight)
+        ObjectiveComponent(
+            component.object_id,
+            role=component.role,
+            weight=component.weight,
+            metadata={
+                key: value
+                for key, value in {
+                    "latitude": getattr(observed_by_id.get(component.object_id), "latitude", None),
+                    "longitude": getattr(observed_by_id.get(component.object_id), "longitude", None),
+                    "dcs_type": getattr(observed_by_id.get(component.object_id), "type_name", None),
+                    "display_name": getattr(observed_by_id.get(component.object_id), "display_name", None),
+                }.items()
+                if value not in {None, ""}
+            },
+        )
         for component in verification.target_components
     )
     scope_state = scope.classify_geographic_point(item.latitude, item.longitude)

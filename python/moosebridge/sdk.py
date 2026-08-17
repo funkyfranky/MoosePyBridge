@@ -22,6 +22,7 @@ from .infrastructure_sites import (
     ScenerySurvey,
     TheaterInfrastructureSites,
 )
+from .scenery_verification import SceneryVerificationFeature
 from .strategic_verification import (
     InfrastructureStateAssessment,
     ObservedDcsObject,
@@ -1515,6 +1516,19 @@ class MooseBridgeClient:
         value = getattr(self.state, collection_name).get(object_id) if collection_name else None
         use_global_object_data = prefix not in {"GROUP", "UNIT"} or picture is None or contact is None
         data = dict(value) if use_global_object_data and isinstance(value, Mapping) else {}
+        if prefix in {"SCENERY", "MAPOBJECT"}:
+            component = next(
+                (
+                    component
+                    for objective in self.objectives.all()
+                    for component in objective.components
+                    if component.object_id == object_id
+                ),
+                None,
+            )
+            if component is not None:
+                data.update(component.metadata)
+                data.setdefault("category", "Map Object")
         if contact is not None:
             data.update(
                 {
@@ -3901,18 +3915,41 @@ class MooseBridgeClient:
     ) -> InfrastructureStateAssessment:
         """Compare a verified site's immutable object baseline with current DCS scenery."""
 
-        if site.site_id != verification.source_id:
-            raise ValueError("infrastructure site and verification source ids do not match")
-        if radius_m is None:
-            radius_m = _site_survey_radius_m(site.latitude, site.longitude, site.geometry)
-        survey = await self.survey_scenery(
-            site.latitude,
-            site.longitude,
+        feature = SceneryVerificationFeature.from_geojson_feature(
+            site.to_geojson_feature(),
+            artifact_key="infrastructure_sites",
+        )
+        return await self.assess_scenery_verification(
+            feature,
+            verification,
             radius_m=radius_m,
             max_results=max_results,
             timeout=timeout,
         )
-        footprint = shape(site.geometry)
+
+    async def assess_scenery_verification(
+        self,
+        feature: SceneryVerificationFeature,
+        verification: StrategicSiteVerification,
+        *,
+        radius_m: float | None = None,
+        max_results: int = 2000,
+        timeout: float = 30.0,
+    ) -> InfrastructureStateAssessment:
+        """Compare any normalized theater feature with its fixed SCENERY baseline."""
+
+        if feature.object_id != verification.source_id:
+            raise ValueError("scenery feature and verification source ids do not match")
+        if radius_m is None:
+            radius_m = _verification_survey_radius_m(feature, verification)
+        survey = await self.survey_scenery(
+            feature.latitude,
+            feature.longitude,
+            radius_m=radius_m,
+            max_results=max_results,
+            timeout=timeout,
+        )
+        baseline_ids = {item.object_id for item in verification.observed_objects}
         current = tuple(
             ObservedDcsObject(
                 object_id=item.object_id,
@@ -3924,7 +3961,7 @@ class MooseBridgeClient:
                 exists=item.exists,
             )
             for item in survey.objects
-            if footprint.is_empty or footprint.covers(Point(item.longitude, item.latitude))
+            if item.object_id in baseline_ids
         )
         destroyed_ids = set(self.state.destroyed_object_ids)
         destroyed_ids.update({
@@ -3932,17 +3969,12 @@ class MooseBridgeClient:
             for report in self.state.loss_reports.values()
             if report.get("target_object_id")
         })
-        footprint_covered = _footprint_within_survey(
-            site.latitude,
-            site.longitude,
-            site.geometry,
-            survey.radius_m,
-        )
+        feature_covered = _verification_within_survey(feature, verification, survey.radius_m)
         return assess_infrastructure_state(
             verification,
             current,
             destroyed_object_ids=destroyed_ids,
-            current_observation_complete=not survey.truncated and footprint_covered,
+            current_observation_complete=not survey.truncated and feature_covered,
         )
 
     async def distance(self, object_id_a: str, object_id_b: str, timeout: float = 10.0) -> DistanceResult:
@@ -4310,6 +4342,56 @@ def _site_survey_radius_m(
         )
     ) + 50.0
     return min(max(750.0, required), 5_000.0)
+
+
+def _verification_survey_radius_m(
+    feature: SceneryVerificationFeature,
+    verification: StrategicSiteVerification,
+) -> float:
+    required = _site_survey_radius_m(feature.latitude, feature.longitude, feature.geometry)
+    baseline_distances = [
+        _geographic_distance_m(
+            feature.latitude,
+            feature.longitude,
+            item.latitude,
+            item.longitude,
+        )
+        for item in verification.observed_objects
+        if item.latitude is not None and item.longitude is not None
+    ]
+    if baseline_distances:
+        required = max(required, max(baseline_distances) + 50.0)
+    return min(required, 5_000.0)
+
+
+def _verification_within_survey(
+    feature: SceneryVerificationFeature,
+    verification: StrategicSiteVerification,
+    radius_m: float,
+) -> bool:
+    footprint = shape(feature.geometry)
+    footprint_covered = (
+        True
+        if footprint.is_empty or footprint.geom_type not in {"Polygon", "MultiPolygon"}
+        else _footprint_within_survey(
+            feature.latitude,
+            feature.longitude,
+            feature.geometry,
+            radius_m,
+        )
+    )
+    baseline_covered = all(
+        item.latitude is None
+        or item.longitude is None
+        or _geographic_distance_m(
+            feature.latitude,
+            feature.longitude,
+            item.latitude,
+            item.longitude,
+        ) <= radius_m
+        for item in verification.observed_objects
+    )
+    return footprint_covered and baseline_covered
 
 
 def _geographic_distance_m(

@@ -66,6 +66,8 @@ class AuftragBOMBING(AuftragCommand):
         x: float | None = None,
         y: float | None = None,
         z: float | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
         altitude_ft: float | None = None,
         engage_weapon_type: int | None = None,
         divebomb: bool | None = None,

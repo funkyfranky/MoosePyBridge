@@ -36,6 +36,15 @@ def test_bridge_exposes_bounded_native_dcs_road_routing() -> None:
     assert "total_cpu_ms=total_cpu_ms" in source
 
 
+def test_zone_snapshot_exposes_scalar_moose_properties() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert "function MOOSE_BRIDGE:_ZoneProperties(zone)" in source
+    assert "local source = zone and zone.Properties" in source
+    assert 'value_type == "string" or value_type == "number" or value_type == "boolean"' in source
+    assert "properties=self:_ZoneProperties(zone)" in source
+
+
 def test_ops_snapshots_use_moose_available_asset_counts() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
 

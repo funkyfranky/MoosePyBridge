@@ -163,7 +163,13 @@ def test_generator_applies_importance_threshold_and_preserves_dcs_components() -
             StrategicSiteVerification(
                 source_id="FUEL_STORAGE_SITE:Depot",
                 state=StrategicVerificationState.REPRESENTED,
-                observed_objects=(ObservedDcsObject("SCENERY:123"),),
+                observed_objects=(
+                    ObservedDcsObject(
+                        "SCENERY:123",
+                        latitude=0.051,
+                        longitude=0.071,
+                    ),
+                ),
                 target_components=(VerifiedDcsComponent("SCENERY:123"),),
             ),
         )),
@@ -174,7 +180,9 @@ def test_generator_applies_importance_threshold_and_preserves_dcs_components() -
     depot = by_id["OBJECTIVE:FUEL_STORAGE_SITE:Depot"]
     assert depot.kind is ObjectiveKind.DEPOT
     assert [component.object_id for component in depot.components] == ["SCENERY:123"]
-    assert depot.metadata["targetable"] is False
+    assert depot.components[0].metadata["latitude"] == 0.051
+    assert depot.components[0].metadata["longitude"] == 0.071
+    assert depot.metadata["targetable"] is True
     assert "OBJECTIVE:SETTLEMENT:Local" not in by_id
     assert result.below_threshold_count == 1
 

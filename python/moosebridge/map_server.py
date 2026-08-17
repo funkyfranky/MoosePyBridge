@@ -42,6 +42,7 @@ from .transport_infrastructure import TheaterTransportInfrastructure, TransportI
 from .railway_infrastructure import TheaterRailwayInfrastructure
 from .infrastructure_sites import TheaterInfrastructureSites
 from .settlements import TheaterSettlements
+from .scenery_verification import SceneryVerificationFeature
 from .strategic_goals import generate_strategic_goals
 from .strategic_verification import (
     ObservedDcsObject,
@@ -325,17 +326,52 @@ class GlobalMapRuntime:
             raise KeyError(f"No strategic verification exists for {source_id}")
         if not verification.observed_objects:
             raise ValueError(f"Strategic verification has no DCS observation baseline: {source_id}")
-        if self._infrastructure_sites is None:
-            raise ValueError("Normalized infrastructure sites are not loaded")
-        site = next((item for item in self._infrastructure_sites.sites if item.site_id == source_id), None)
-        if site is None:
+        feature = self._scenery_verification_feature(source_id)
+        if feature is None:
             raise ValueError(f"Current state assessment is not supported for this feature type: {source_id}")
-        assessment = await bridge.assess_infrastructure_site(
-            site,
+        assessment = await bridge.assess_scenery_verification(
+            feature,
             verification,
             timeout=self.timeout,
         )
         return assessment.to_dict()
+
+    def _scenery_verification_feature(self, source_id: str) -> SceneryVerificationFeature | None:
+        candidates: tuple[tuple[str, tuple[Any, ...], str], ...] = (
+            (
+                "infrastructure_sites",
+                self._infrastructure_sites.sites if self._infrastructure_sites is not None else (),
+                "site_id",
+            ),
+            (
+                "railway_infrastructure",
+                self._railway_infrastructure.locations if self._railway_infrastructure is not None else (),
+                "location_id",
+            ),
+            (
+                "settlements",
+                self._settlements.settlements if self._settlements is not None else (),
+                "settlement_id",
+            ),
+            (
+                "transport_infrastructure",
+                self._transport_infrastructure.bridges if self._transport_infrastructure is not None else (),
+                "bridge_id",
+            ),
+            (
+                "transport_infrastructure",
+                self._transport_infrastructure.junctions if self._transport_infrastructure is not None else (),
+                "junction_id",
+            ),
+        )
+        for artifact_key, items, id_attribute in candidates:
+            item = next((value for value in items if getattr(value, id_attribute) == source_id), None)
+            if item is not None:
+                return SceneryVerificationFeature.from_geojson_feature(
+                    item.to_geojson_feature(),
+                    artifact_key=artifact_key,
+                )
+        return None
 
     def load_topography_viewport(self) -> TopographyViewportStore | None:
         """Load the optional indexed topography manifest without reading its shards."""

@@ -23,12 +23,16 @@ from moosebridge import (  # noqa: E402
     ObservedDcsObject,
     ScenerySurvey,
     SceneryVerificationFeature,
+    SceneryZoneAssignment,
     StrategicSiteVerification,
     StrategicVerificationRegistry,
+    StrategicVerificationState,
     TheaterDataPaths,
     TheaterDataProfile,
+    VerifiedDcsComponent,
     assess_infrastructure_state,
     resolve_scenery_verification_feature,
+    scenery_zone_assignments,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT  # noqa: E402
 
@@ -49,7 +53,7 @@ THEATER_PROFILE: str | Path | None = None
 # None automatically covers a bounded polygon footprint. Point features use the
 # default radius. Set an explicit value for a deliberately different survey.
 SURVEY_RADIUS_M: float | None = None
-SAVE_OBSERVED_BASELINE = False
+SAVE_OBSERVED_BASELINE = True
 REPLACE_OBSERVED_BASELINE = False
 DRAW_F10_OVERLAY = True
 
@@ -191,8 +195,18 @@ def classify_survey_objects(
     return included, nearby
 
 
-def observation_complete(feature: SceneryVerificationFeature, survey: ScenerySurvey) -> bool:
-    return not survey.truncated and footprint_fully_covered(feature, survey.radius_m)
+def observation_complete(
+    feature: SceneryVerificationFeature,
+    survey: ScenerySurvey,
+    assignments: tuple[SceneryZoneAssignment, ...] = (),
+) -> bool:
+    assigned_ids = {item.scenery_object_id for item in assignments}
+    surveyed_ids = {item.object_id for item in survey.objects}
+    return (
+        not survey.truncated
+        and footprint_fully_covered(feature, survey.radius_m)
+        and assigned_ids.issubset(surveyed_ids)
+    )
 
 
 def load_verification_registry(
@@ -251,8 +265,9 @@ def format_survey(
     survey: ScenerySurvey,
     included: list,
     nearby: list,
+    assignments: tuple[SceneryZoneAssignment, ...],
 ) -> None:
-    complete = observation_complete(feature, survey)
+    complete = observation_complete(feature, survey, assignments)
     print("\nDCS scenery survey")
     print("=" * 96)
     print(f"Radius          : {survey.radius_m:.0f} m")
@@ -268,8 +283,15 @@ def format_survey(
         )
     if survey.truncated:
         print("Warning         : DCS returned the maximum number of scenery objects")
+    if assignments and not complete:
+        missing_ids = sorted(
+            {item.scenery_object_id for item in assignments}
+            - {item.object_id for item in survey.objects}
+        )
+        if missing_ids:
+            print(f"Warning         : assigned object(s) missing from survey: {', '.join(missing_ids)}")
     if not included:
-        print("No fixed DCS scenery objects were found in the verification area.")
+        print("No fixed DCS scenery objects were selected for the observation baseline.")
         return
     print(f"\n{'Distance':>9}  {'Object ID':<24} {'Type':<27} Display name")
     print(f"{'-' * 9}  {'-' * 24} {'-' * 27} {'-' * 24}")
@@ -279,15 +301,68 @@ def format_survey(
             f"{distance:8.0f}m  {item.object_id[:24]:<24} "
             f"{(item.type_name or '-')[:27]:<27} {item.display_name or '-'}"
         )
-    print("\nThe complete baseline set is retained for later damage assessment.")
-    print("Select only a small target subset in the web-map DCS verification panel.")
+    if assignments and not has_area_footprint(feature):
+        print("\nAssign As objects form the exact baseline for this point feature.")
+        print("Other surveyed objects are retained only as visual context.")
+    else:
+        print("\nThe complete baseline set is retained for later damage assessment.")
+    print("Assign As zones select exact targets; the web-map panel remains available for manual edits.")
     print("Target format: SCENERY:<id> | infrastructure component | 1.0")
+
+
+def format_assignments(
+    assignments: tuple[SceneryZoneAssignment, ...],
+    survey: ScenerySurvey,
+) -> None:
+    surveyed_ids = {item.object_id for item in survey.objects}
+    print("\nMission Editor Assign As")
+    print("=" * 96)
+    if not assignments:
+        print("Assignments     : 0")
+        print("Hint            : name an Assign As zone after the normalized Object ID")
+        return
+    print(f"Assignments     : {len(assignments)}")
+    for assignment in assignments:
+        availability = "found in survey" if assignment.scenery_object_id in surveyed_ids else "not found in survey"
+        print(f"  {assignment.zone_name} -> {assignment.scenery_object_id} ({availability})")
+
+
+def include_assigned_objects(
+    feature: SceneryVerificationFeature,
+    included: list,
+    nearby: list,
+    survey: ScenerySurvey,
+    assignments: tuple[SceneryZoneAssignment, ...],
+) -> tuple[list, list]:
+    assigned_ids = {item.scenery_object_id for item in assignments}
+    if not assigned_ids:
+        return included, nearby
+    ordered = sorted(
+        survey.objects,
+        key=lambda item: distance_m(
+            feature.latitude,
+            feature.longitude,
+            item.latitude,
+            item.longitude,
+        ),
+    )
+    if not has_area_footprint(feature):
+        return (
+            [item for item in ordered if item.object_id in assigned_ids],
+            [item for item in ordered if item.object_id not in assigned_ids],
+        )
+    included_ids = {item.object_id for item in included} | assigned_ids
+    return (
+        [item for item in ordered if item.object_id in included_ids],
+        [item for item in ordered if item.object_id not in included_ids],
+    )
 
 
 def save_observed_baseline(
     feature: SceneryVerificationFeature,
     survey: ScenerySurvey,
     included: list,
+    assignments: tuple[SceneryZoneAssignment, ...],
     theater_id: str,
     verifications_path: Path,
 ) -> StrategicSiteVerification:
@@ -306,16 +381,35 @@ def save_observed_baseline(
         for item in included
     )
     observed_ids = {item.object_id for item in observed}
-    verification = StrategicSiteVerification(
-        source_id=feature.object_id,
-        state=current.state if current is not None else "unverified",
-        observed_objects=observed,
-        observation_complete=observation_complete(feature, survey),
-        target_components=tuple(
+    assigned_ids = {
+        assignment.scenery_object_id
+        for assignment in assignments
+        if assignment.scenery_object_id in observed_ids
+    }
+    if assignments:
+        target_components = tuple(
+            VerifiedDcsComponent(
+                object_id=object_id,
+                role="Mission Editor assigned scenery object",
+            )
+            for object_id in sorted(assigned_ids)
+        )
+    else:
+        target_components = tuple(
             component
             for component in (current.target_components if current is not None else ())
             if component.object_id in observed_ids
+        )
+    verification = StrategicSiteVerification(
+        source_id=feature.object_id,
+        state=(
+            StrategicVerificationState.REPRESENTED
+            if target_components
+            else current.state if current is not None else StrategicVerificationState.UNVERIFIED
         ),
+        observed_objects=observed,
+        observation_complete=observation_complete(feature, survey, assignments),
+        target_components=target_components,
         notes=current.notes if current is not None else "",
     )
     registry.upsert(verification)
@@ -328,6 +422,7 @@ def assess_current_survey(
     feature: SceneryVerificationFeature,
     survey: ScenerySurvey,
     included: list,
+    assignments: tuple[SceneryZoneAssignment, ...],
     theater_id: str,
     verifications_path: Path,
 ) -> None:
@@ -351,7 +446,7 @@ def assess_current_survey(
         verification,
         current,
         destroyed_object_ids=bridge.state.destroyed_object_ids,
-        current_observation_complete=observation_complete(feature, survey),
+        current_observation_complete=observation_complete(feature, survey, assignments),
     )
     health = "unknown" if assessment.health_min is None else f"{assessment.health_min * 100:.1f}%"
     if assessment.health_max != assessment.health_min and assessment.health_max is not None:
@@ -414,6 +509,7 @@ def overlay_markups(
     radius_m: float,
     included: list,
     nearby: list,
+    assigned_object_ids: set[str],
 ) -> list[DebugMarkup]:
     color = feature_color(feature)
     marks = [
@@ -454,7 +550,21 @@ def overlay_markups(
         )
         for item in nearby[:remaining]
     )
+    marks.extend(
+        DebugMarkup(
+            "point",
+            (DebugMarkupPoint(item.latitude, item.longitude),),
+            color=(1.0, 0.8, 0.0, 1.0),
+            fill_color=(1.0, 0.8, 0.0, 0.3),
+            radius_m=45,
+        )
+        for item in survey_objects_for_ids((*included, *nearby), assigned_object_ids)
+    )
     return marks
+
+
+def survey_objects_for_ids(objects, object_ids: set[str]) -> list:
+    return [item for item in objects if item.object_id in object_ids]
 
 
 async def run() -> int:
@@ -463,6 +573,8 @@ async def run() -> int:
     radius_m = survey_radius_m(feature)
     session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
     bridge: MooseBridgeClient = session.bridge
+    await bridge.snapshot_zones()
+    assignments = scenery_zone_assignments(feature.object_id, bridge.state.zones)
 
     format_feature(feature, theater.theater_id)
     format_verification(feature, theater.theater_id, verifications_path)
@@ -474,12 +586,15 @@ async def run() -> int:
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
     included, nearby = classify_survey_objects(feature, survey)
-    format_survey(feature, survey, included, nearby)
+    included, nearby = include_assigned_objects(feature, included, nearby, survey, assignments)
+    format_survey(feature, survey, included, nearby, assignments)
+    format_assignments(assignments, survey)
     assess_current_survey(
         bridge,
         feature,
         survey,
         included,
+        assignments,
         theater.theater_id,
         verifications_path,
     )
@@ -490,14 +605,20 @@ async def run() -> int:
     try:
         await bridge.draw_debug_overlay(
             OVERLAY_ID,
-            overlay_markups(feature, radius_m, included, nearby),
+            overlay_markups(
+                feature,
+                radius_m,
+                included,
+                nearby,
+                {item.scenery_object_id for item in assignments},
+            ),
             replace=True,
             timeout=COMMAND_TIMEOUT_SECONDS,
         )
         drawn = True
         await asyncio.to_thread(
             input,
-            "Inspect the feature outline, green baseline objects, and cyan context in DCS F10, then press Enter ... ",
+            "Inspect the feature outline, green baseline, cyan context, and yellow assigned targets in DCS F10, then press Enter ... ",
         )
         if SAVE_OBSERVED_BASELINE:
             current = load_verification_registry(
@@ -514,6 +635,7 @@ async def run() -> int:
                     feature,
                     survey,
                     included,
+                    assignments,
                     theater.theater_id,
                     verifications_path,
                 )

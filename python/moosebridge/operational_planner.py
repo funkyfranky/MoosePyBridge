@@ -587,6 +587,14 @@ class RuleBasedOperationalPlanner:
                 continue
             prefix = component.object_id.partition(":")[0].upper()
             targetable = component.is_destroy_target and prefix == "STATIC"
+            if prefix in {"SCENERY", "MAPOBJECT"}:
+                targetable = (
+                    component.metadata.get("latitude") is not None
+                    and component.metadata.get("longitude") is not None
+                ) or (
+                    component.metadata.get("x") is not None
+                    and component.metadata.get("z") is not None
+                )
             if prefix in {"GROUP", "UNIT"}:
                 contact = contacts_by_target.get(component.object_id)
                 if contact is not None:
@@ -640,6 +648,11 @@ class RuleBasedOperationalPlanner:
                         "objective_component_role": component.role,
                         "objective_component_weight": component.weight,
                         "objective_component_health": component_health_by_id[component.object_id],
+                        "auftrag_params": {
+                            key: component.metadata[key]
+                            for key in ("x", "y", "z", "latitude", "longitude")
+                            if component.metadata.get(key) is not None
+                        },
                         **resolution.to_metadata(),
                     },
                 )

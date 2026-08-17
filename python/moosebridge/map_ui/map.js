@@ -198,6 +198,8 @@
   let latestInfrastructureSites = EMPTY;
   let latestSettlements = EMPTY;
   const strategicVerifications = new Map();
+  const strategicVerificationAssessments = new Map();
+  let latestMissionTime = null;
   let topographyViewportAvailable = false;
   let fitted = false;
   let reconnectTimer = null;
@@ -1179,6 +1181,13 @@
 
   function setPicture(picture) {
     if (!picture || picture.type !== "FeatureCollection") return;
+    const missionTime = Number(picture.properties?.mission_time);
+    if (Number.isFinite(missionTime)) {
+      if (latestMissionTime !== null && missionTime + 1 < latestMissionTime) {
+        strategicVerificationAssessments.clear();
+      }
+      latestMissionTime = missionTime;
+    }
     latestPicture = decoratedPicture(picture);
     const source = map.getSource("picture");
     const zones = map.getSource("zone-areas");
@@ -1902,6 +1911,15 @@
     refreshControl();
   }
 
+  function strategicAssessmentText(assessment) {
+    const minDamage = assessment.damage_min == null ? "?" : `${Math.round(assessment.damage_min * 100)}%`;
+    const maxDamage = assessment.damage_max == null ? "?" : `${Math.round(assessment.damage_max * 100)}%`;
+    const damage = minDamage === maxDamage ? minDamage : `${minDamage}-${maxDamage}`;
+    return `${assessment.state} · damage ${damage} · `
+      + `${assessment.destroyed_count} destroyed, ${assessment.damaged_count} damaged, `
+      + `${assessment.unknown_count} unknown · ${assessment.complete ? "complete" : "bounded estimate"}`;
+  }
+
   function addStrategicVerificationControls(properties) {
     const sourceId = String(properties.object_id || "");
     const eligibleLayers = new Set([
@@ -2016,6 +2034,7 @@
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || "Verification could not be saved");
         strategicVerifications.set(sourceId, result.verification);
+        strategicVerificationAssessments.delete(sourceId);
         const saved = result.verification;
         status.textContent = `${saved.observed_objects.length} observed (${saved.observation_complete ? "complete baseline" : "partial baseline"}) · `
           + `${saved.target_components.length} target(s) · ${result.admitted ? "admitted" : "not admitted"}`;
@@ -2033,7 +2052,10 @@
 
     const assessmentStatus = document.createElement("div");
     assessmentStatus.className = "goal-control-status";
-    assessmentStatus.textContent = "Current state not assessed";
+    const cachedAssessment = strategicVerificationAssessments.get(sourceId);
+    assessmentStatus.textContent = cachedAssessment
+      ? strategicAssessmentText(cachedAssessment)
+      : "Current state not assessed";
     const assessButton = document.createElement("button");
     assessButton.className = "command-button";
     assessButton.type = "button";
@@ -2050,12 +2072,8 @@
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || "Current state could not be assessed");
         const assessment = result.assessment;
-        const minDamage = assessment.damage_min == null ? "?" : `${Math.round(assessment.damage_min * 100)}%`;
-        const maxDamage = assessment.damage_max == null ? "?" : `${Math.round(assessment.damage_max * 100)}%`;
-        const damage = minDamage === maxDamage ? minDamage : `${minDamage}-${maxDamage}`;
-        assessmentStatus.textContent = `${assessment.state} · damage ${damage} · `
-          + `${assessment.destroyed_count} destroyed, ${assessment.damaged_count} damaged, `
-          + `${assessment.unknown_count} unknown · ${assessment.complete ? "complete" : "bounded estimate"}`;
+        strategicVerificationAssessments.set(sourceId, assessment);
+        assessmentStatus.textContent = strategicAssessmentText(assessment);
       } catch (error) {
         assessmentStatus.textContent = String(error.message || error);
         assessmentStatus.classList.add("is-error");

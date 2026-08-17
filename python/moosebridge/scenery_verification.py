@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+import re
 from typing import Any, Mapping
 
 from shapely.geometry import shape
@@ -91,6 +92,66 @@ class SceneryVerificationFeature:
         )
 
 
+@dataclass(slots=True, frozen=True)
+class SceneryZoneAssignment:
+    """One Mission Editor Assign As zone mapped to a fixed DCS scenery object."""
+
+    feature_id: str
+    zone_name: str
+    zone_object_id: str
+    scenery_object_id: str
+
+
+def scenery_zone_assignments(
+    feature_id: str,
+    zones: Mapping[str, Mapping[str, Any]],
+) -> tuple[SceneryZoneAssignment, ...]:
+    """Read exact and DCS-numbered Assign As zones for one normalized feature."""
+
+    normalized_feature_id = feature_id.strip()
+    if not normalized_feature_id:
+        raise ValueError("scenery assignment requires a normalized feature id")
+    zone_name_pattern = re.compile(rf"^{re.escape(normalized_feature_id)}(?:-(\d+))?$")
+    assignments: list[SceneryZoneAssignment] = []
+    seen_scenery_ids: set[str] = set()
+    for key, zone in zones.items():
+        zone_name = str(zone.get("dcs_name") or zone.get("name") or key).strip()
+        if zone_name.startswith("ZONE:"):
+            zone_name = zone_name.removeprefix("ZONE:")
+        match = zone_name_pattern.fullmatch(zone_name)
+        if match is None:
+            continue
+        properties = zone.get("properties")
+        if not isinstance(properties, Mapping):
+            continue
+        raw_object_id = next(
+            (
+                value
+                for property_name, value in properties.items()
+                if str(property_name).strip().casefold() == "object id"
+            ),
+            None,
+        )
+        scenery_object_id = _normalize_scenery_object_id(raw_object_id)
+        if scenery_object_id is None or scenery_object_id in seen_scenery_ids:
+            continue
+        seen_scenery_ids.add(scenery_object_id)
+        assignments.append(
+            SceneryZoneAssignment(
+                feature_id=normalized_feature_id,
+                zone_name=zone_name,
+                zone_object_id=str(zone.get("object_id") or key),
+                scenery_object_id=scenery_object_id,
+            )
+        )
+    return tuple(
+        sorted(
+            assignments,
+            key=lambda item: _assignment_zone_sort_key(normalized_feature_id, item.zone_name),
+        )
+    )
+
+
 def resolve_scenery_verification_feature(
     theater_id: str,
     object_id: str,
@@ -158,3 +219,27 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_scenery_object_id(value: object) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        normalized = str(int(value))
+    else:
+        normalized = str(value).strip()
+    if not normalized:
+        return None
+    if normalized.upper().startswith("SCENERY:"):
+        _, _, name = normalized.partition(":")
+        return f"SCENERY:{name.strip()}" if name.strip() else None
+    return f"SCENERY:{normalized}"
+
+
+def _assignment_zone_sort_key(feature_id: str, zone_name: str) -> tuple[int, int]:
+    if zone_name == feature_id:
+        return 0, 0
+    try:
+        return 1, int(zone_name.removeprefix(f"{feature_id}-"))
+    except ValueError:
+        return 2, 0

@@ -143,6 +143,16 @@ road bridges, and transport junctions. Only `SCENERY` objects can enter the
 theater baseline or target selection. Mission-defined units and statics are
 deliberately excluded.
 
+The preferred exact mapping uses the Mission Editor's **Assign As** action.
+Name the generated zone after the normalized web-map object ID. If DCS creates
+multiple zones, its automatic numeric suffixes (`-1`, `-2`, and so on) are
+recognized and grouped with the same feature. `ZONE.Properties["OBJECT ID"]`
+selects the fixed scenery target; other surveyed scenery is not promoted to a
+target automatically. For point features, the assigned objects also define the
+exact damage-assessment baseline and the rest of the survey remains visual
+context. Polygon features keep their complete in-footprint baseline and add
+assigned objects to it when necessary.
+
 ### Ports and maritime logistics
 
 Civilian maritime infrastructure is normalized as one site per port or terminal
