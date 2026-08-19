@@ -32,22 +32,22 @@ COMMAND_TIMEOUT_SECONDS = 30.0
 # Copy a normalized Object ID from the web map. None searches all bundled
 # theater profiles; set an explicit profile path only to resolve ambiguity.
 FEATURE_ID = "MARITIME_SITE:faee9372f262ce51"
-THEATER_PROFILE: str | Path | None = None
 
 # Select one object from the saved observation baseline. None chooses the first
 # live-queryable target component, then the first live-queryable baseline object.
 # Batumi examples: SCENERY:85667046, SCENERY:71976691, SCENERY:71977578.
 # SCENERY:71978148 is assigned in the Mission Editor but is not live-queryable.
-TARGET_OBJECT_ID: str | None = None
+TARGET_OBJECT_ID = "SCENERY:85667046"
 
 
 # Destructive live-DCS action. Run once with False and review the exact target.
 ARM_EXPLOSION = True
-EXPLOSION_POWER_KG_TNT = 50000.0
+EXPLOSION_POWER_KG_TNT = 500.0
 EXPLOSION_DELAY_SECONDS = 5.0
 POST_EXPLOSION_SETTLE_SECONDS = 10.0
 ALLOW_REPEATED_DAMAGE = True
 
+THEATER_PROFILE: str | Path | None = None
 
 def format_percent(value: float | None) -> str:
     return "-" if value is None else f"{value * 100:.1f}%"

@@ -2029,16 +2029,50 @@ class MooseBridgeClient:
         baseline = self._strategic_scenery_baselines.get(objective_id, ())
         if objective is None or not baseline:
             return
-        destroyed = tuple(
+        observed_destroyed = tuple(
             object_id for object_id in baseline if object_id in self.state.destroyed_object_ids
         )
-        if not destroyed:
+        if not observed_destroyed:
             return
 
         report_id = f"LOSS:STRATEGIC:{objective_id}"
         previous = self.state.loss_reports.get(report_id, {})
-        destroyed_fraction = len(destroyed) / len(baseline)
-        status = "destroyed" if len(destroyed) == len(baseline) else "damaged"
+        observed_damage = len(observed_destroyed) / len(baseline)
+        strategic_components = tuple(
+            component
+            for component in objective.components
+            if component.contributes_to_health and component.weight > 0
+        )
+        strategic_weight = sum(component.weight for component in strategic_components)
+        strategic_health_min = 0.0
+        strategic_health_max = 0.0
+        strategic_destroyed: list[str] = []
+        if strategic_weight > 0:
+            unknown_weight = 0.0
+            for component in strategic_components:
+                health = effective_component_health(objective, component.object_id, self.state)
+                if health is None:
+                    unknown_weight += component.weight
+                    continue
+                strategic_health_min += health * component.weight
+                strategic_health_max += health * component.weight
+                if health <= 0:
+                    strategic_destroyed.append(component.object_id)
+            strategic_health_min /= strategic_weight
+            strategic_health_max = (strategic_health_max + unknown_weight) / strategic_weight
+            strategic_damage_min = 1.0 - strategic_health_max
+            strategic_damage_max = 1.0 - strategic_health_min
+        else:
+            strategic_damage_min = observed_damage
+            strategic_damage_max = observed_damage
+
+        damage_min = max(observed_damage, strategic_damage_min)
+        damage_max = max(observed_damage, strategic_damage_max)
+        status = (
+            "destroyed"
+            if strategic_weight > 0 and strategic_damage_min >= 1.0 - 1e-9
+            else "damaged"
+        )
         event_object = event.object if event is not None else {}
         latitude = _optional_float(objective.metadata.get("latitude"))
         longitude = _optional_float(objective.metadata.get("longitude"))
@@ -2086,13 +2120,22 @@ class MooseBridgeClient:
             ),
             "category": "strategic_damage",
             "dcs_type": "Strategic infrastructure",
-            "last_component_id": event.object_id if event is not None else destroyed[-1],
-            "destroyed_component_ids": list(destroyed),
-            "destroyed_component_count": len(destroyed),
+            "last_component_id": event.object_id if event is not None else observed_destroyed[-1],
+            "destroyed_component_ids": list(observed_destroyed),
+            "destroyed_component_count": len(observed_destroyed),
             "baseline_component_count": len(baseline),
             "baseline_complete": self._strategic_scenery_baseline_complete.get(objective_id, False),
-            "damage_min": destroyed_fraction,
-            "damage_percent_min": destroyed_fraction * 100.0,
+            "strategic_component_count": len(strategic_components),
+            "destroyed_strategic_component_ids": strategic_destroyed,
+            "destroyed_strategic_component_count": len(strategic_destroyed),
+            "damage_min": damage_min,
+            "damage_max": damage_max,
+            "damage_percent_min": damage_min * 100.0,
+            "damage_percent_max": damage_max * 100.0,
+            "strategic_damage_min": strategic_damage_min,
+            "strategic_damage_max": strategic_damage_max,
+            "observed_damage_min": observed_damage,
+            "observed_damage_percent_min": observed_damage * 100.0,
             "x": x,
             "y": y,
             "z": z,

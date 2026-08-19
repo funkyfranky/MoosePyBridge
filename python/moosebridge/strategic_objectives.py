@@ -16,6 +16,7 @@ from .railway_infrastructure import TheaterRailwayInfrastructure
 from .settlements import TheaterSettlements
 from .state import MooseBridgeState
 from .strategic import (
+    ComponentHealthEstimate,
     ObjectiveComponent,
     ObjectiveKind,
     ObjectiveStatus,
@@ -143,6 +144,18 @@ def generate_strategic_objectives(
         effective_owner = owner
         if ownership_policy is OwnershipPolicy.FIXED:
             effective_owner = _owner_from_scope(scope_state)
+        initial_component_health = (
+            {
+                component.object_id: ComponentHealthEstimate(
+                    1.0,
+                    "verified_scenery_baseline",
+                )
+                for component in components
+                if component.object_id.startswith("SCENERY:")
+            }
+            if (metadata or {}).get("dcs_verification_state") == "represented"
+            else {}
+        )
         objectives.append(
             StrategicObjective(
                 objective_id=f"OBJECTIVE:{source_id}",
@@ -160,6 +173,7 @@ def generate_strategic_objectives(
                     else ObjectiveStatus.OPERATIONAL
                 ),
                 contested=contested or scope_state is StrategicScopeState.CONTESTED,
+                component_health_estimates=initial_component_health,
                 metadata={
                     "generated": True,
                     "source_object_id": source_id,

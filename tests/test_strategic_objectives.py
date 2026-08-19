@@ -18,7 +18,12 @@ from moosebridge.settlements import (
     TheaterSettlements,
 )
 from moosebridge.state import MooseBridgeState
-from moosebridge.strategic import ObjectiveKind, OwnershipPolicy
+from moosebridge.strategic import (
+    ObjectiveKind,
+    ObjectiveStatus,
+    OwnershipPolicy,
+    StrategicObjectiveRegistry,
+)
 from moosebridge.strategic_objectives import (
     StrategicObjectiveGenerationConfig,
     generate_strategic_objectives,
@@ -337,3 +342,54 @@ def test_generator_accepts_represented_mapping_with_target_component() -> None:
     assert objective.components[0].weight == 2
     assert objective.metadata["dcs_verification_state"] == "represented"
     assert "scenario_approved" not in objective.metadata
+    assert objective.component_health_estimates["SCENERY:Town-Hall"].health == 1.0
+    assert (
+        objective.component_health_estimates["SCENERY:Town-Hall"].source
+        == "verified_scenery_baseline"
+    )
+
+
+def test_verified_scenery_objective_retains_intact_components_after_one_loss() -> None:
+    scope, state = _scope_and_state()
+    settlement = Settlement(
+        settlement_id="SETTLEMENT:Two Targets",
+        name="Two Targets",
+        kind=SettlementKind.TOWN,
+        size_class=SettlementSizeClass.SMALL_CITY,
+        geometry={"type": "Point", "coordinates": [0.05, 0.05]},
+        latitude=0.05,
+        longitude=0.05,
+        source="OpenStreetMap",
+        confidence=0.8,
+        importance_score=70,
+        importance_tier=SettlementImportanceTier.HIGH,
+    )
+    verification = StrategicSiteVerification(
+        source_id=settlement.settlement_id,
+        state=StrategicVerificationState.REPRESENTED,
+        observed_objects=(
+            ObservedDcsObject("SCENERY:Target-1"),
+            ObservedDcsObject("SCENERY:Target-2"),
+        ),
+        target_components=(
+            VerifiedDcsComponent("SCENERY:Target-1"),
+            VerifiedDcsComponent("SCENERY:Target-2"),
+        ),
+    )
+    result = generate_strategic_objectives(
+        state,
+        scope,  # type: ignore[arg-type]
+        settlements=TheaterSettlements(theater_id="Test", settlements=(settlement,)),
+        verifications=StrategicVerificationRegistry.from_entries((verification,)),
+    )
+    objective = next(
+        item for item in result.objectives if item.objective_id.endswith(settlement.settlement_id)
+    )
+    registry = StrategicObjectiveRegistry()
+    registry.add(objective)
+
+    state.destroyed_object_ids.add("SCENERY:Target-1")
+    registry.sync(state)
+
+    assert objective.health == 0.5
+    assert objective.status is ObjectiveStatus.DEGRADED

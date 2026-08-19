@@ -140,7 +140,8 @@ button, input { font: inherit; letter-spacing: 0; }
 .detail-badge.is-blue { color: #174f7d; background: #e6f1fa; border-color: #9dc3e1; }
 .detail-badge.is-red { color: #842e2e; background: #faeaea; border-color: #dfa2a2; }
 .detail-badge.is-alive, .detail-badge.is-active { color: #176241; background: #e5f4ec; border-color: #9acbb3; }
-.detail-badge.is-dead, .detail-badge.is-inactive { color: #6d3636; background: #f5eaea; border-color: #d5aaaa; }
+.detail-badge.is-damaged { color: #74500f; background: #fbf1d8; border-color: #d9bc72; }
+.detail-badge.is-dead, .detail-badge.is-destroyed, .detail-badge.is-inactive { color: #6d3636; background: #f5eaea; border-color: #d5aaaa; }
 .detail-sections { border-top: 1px solid var(--border); }
 .detail-section { padding: 12px 0 4px; border-bottom: 1px solid var(--border); }
 .detail-section:last-child { border-bottom: 0; }

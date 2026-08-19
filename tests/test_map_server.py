@@ -976,6 +976,19 @@ def test_map_ui_exposes_strategic_dcs_verification_controls() -> None:
     assert "Scenario approved" not in map_script
 
 
+def test_map_ui_uses_strategic_damage_status_instead_of_dead_badge() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    stylesheet = (root / "map.css").read_text(encoding="utf-8")
+
+    assert 'properties.report_kind === "strategic_damage"' in map_script
+    assert 'reportStatus === "destroyed"' in map_script
+    assert 'reportStatus === "damaged"' in map_script
+    assert "else if (typeof properties.alive === \"boolean\")" in map_script
+    assert ".detail-badge.is-damaged" in stylesheet
+    assert ".detail-badge.is-destroyed" in stylesheet
+
+
 def test_map_ui_exposes_grouped_railway_infrastructure() -> None:
     map_script = (
         Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui" / "map.js"

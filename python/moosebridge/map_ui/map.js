@@ -2195,7 +2195,19 @@
 
     const side = String(properties.coalition || properties.owner || "").toLowerCase();
     if (side) addBadge(side, coalitionColors[side] ? `is-${side}` : "");
-    if (typeof properties.alive === "boolean") addBadge(properties.alive ? "Alive" : "Dead", properties.alive ? "is-alive" : "is-dead");
+    const strategicDamageReport = properties.layer === "loss_reports"
+      && properties.report_kind === "strategic_damage";
+    if (strategicDamageReport && properties.status) {
+      const reportStatus = String(properties.status).toLowerCase();
+      const statusClass = reportStatus === "destroyed"
+        ? "is-destroyed"
+        : reportStatus === "damaged"
+          ? "is-damaged"
+          : "";
+      addBadge(reportStatus, statusClass);
+    } else if (typeof properties.alive === "boolean") {
+      addBadge(properties.alive ? "Alive" : "Dead", properties.alive ? "is-alive" : "is-dead");
+    }
     if (typeof properties.active === "boolean") addBadge(properties.active ? "Active" : "Inactive", properties.active ? "is-active" : "is-inactive");
     if (properties.state) addBadge(String(properties.state));
 

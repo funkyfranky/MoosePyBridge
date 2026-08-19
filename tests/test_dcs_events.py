@@ -477,12 +477,15 @@ def test_strategic_scenery_destruction_updates_one_aggregate_loss_report() -> No
         report_id = f"LOSS:STRATEGIC:OBJECTIVE:{source_id}"
         report = bridge.state.loss_reports[report_id]
         assert report["report_kind"] == "strategic_damage"
-        assert report["status"] == "damaged"
+        assert report["status"] == "destroyed"
         assert report["destroyed_component_ids"] == ["SCENERY:42"]
         assert report["destroyed_component_count"] == 1
         assert report["baseline_component_count"] == 2
+        assert report["strategic_component_count"] == 1
+        assert report["destroyed_strategic_component_ids"] == ["SCENERY:42"]
         assert report["baseline_complete"] is True
-        assert report["damage_min"] == 0.5
+        assert report["damage_min"] == 1.0
+        assert report["observed_damage_min"] == 0.5
         assert report["target_object_id"] == f"OBJECTIVE:{source_id}"
         assert report["victim_coalition"] == "red"
 
@@ -505,6 +508,68 @@ def test_strategic_scenery_destruction_updates_one_aggregate_loss_report() -> No
 
         await server._handle_line(json.dumps(destroyed_scenery_message("SCENERY:99", "event-scenery-99")))
         assert list(bridge.state.loss_reports) == [report_id]
+
+    asyncio.run(scenario())
+
+
+def test_strategic_scenery_loss_uses_target_components_not_observation_baseline() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        source_id = "MARITIME_SITE:Caucasus:test"
+        observed = tuple(
+            ObservedDcsObject(f"SCENERY:{index}", type_name="PORT_OBJECT")
+            for index in range(1, 42)
+        )
+        bridge._strategic_verifications = StrategicVerificationRegistry(
+            theater_id="Caucasus",
+            entries={
+                source_id: StrategicSiteVerification(
+                    source_id=source_id,
+                    state="represented",
+                    observed_objects=observed,
+                    observation_complete=True,
+                    target_components=(
+                        VerifiedDcsComponent("SCENERY:1", role="port component"),
+                        VerifiedDcsComponent("SCENERY:2", role="port component"),
+                    ),
+                )
+            },
+        )
+        objective = bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id=f"OBJECTIVE:{source_id}",
+                name="Test port",
+                kind=ObjectiveKind.PORT,
+                control_object_id=None,
+                ownership_policy=OwnershipPolicy.FIXED,
+                owner="blue",
+                components=(
+                    ObjectiveComponent("SCENERY:1"),
+                    ObjectiveComponent("SCENERY:2"),
+                ),
+                metadata={"source_object_id": source_id},
+            )
+        )
+
+        await server._handle_line(json.dumps(destroyed_scenery_message("SCENERY:1", "port-1")))
+
+        report_id = f"LOSS:STRATEGIC:{objective.objective_id}"
+        report = bridge.state.loss_reports[report_id]
+        assert report["status"] == "damaged"
+        assert report["damage_min"] == 0.5
+        assert report["observed_damage_min"] == 1 / 41
+        assert report["destroyed_strategic_component_count"] == 1
+
+        await server._handle_line(json.dumps(destroyed_scenery_message("SCENERY:2", "port-2")))
+
+        report = bridge.state.loss_reports[report_id]
+        assert report["status"] == "destroyed"
+        assert report["damage_min"] == 1.0
+        assert report["damage_percent_min"] == 100.0
+        assert report["observed_damage_min"] == 2 / 41
+        assert report["destroyed_component_count"] == 2
+        assert report["destroyed_strategic_component_count"] == 2
 
     asyncio.run(scenario())
 
