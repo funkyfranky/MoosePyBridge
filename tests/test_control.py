@@ -253,6 +253,18 @@ def test_state_payload_roundtrip_includes_loss_reports() -> None:
     assert target.loss_reports == source.loss_reports
 
 
+def test_state_payload_roundtrip_includes_destroyed_object_ids() -> None:
+    source = MooseBridgeState(connected=True)
+    source.destroyed_object_ids.update({"SCENERY:42", "UNIT:Armor-1"})
+
+    target = MooseBridgeState()
+    payload = state_payload(source, kinds=())
+    apply_state_payload(target, payload)
+
+    assert payload["destroyed_object_ids"] == ["SCENERY:42", "UNIT:Armor-1"]
+    assert target.destroyed_object_ids == source.destroyed_object_ids
+
+
 def test_state_payload_roundtrip_includes_lost_intel_contact_memory() -> None:
     source = MooseBridgeState(connected=True)
     source.apply_message(

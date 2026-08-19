@@ -884,6 +884,7 @@ class MooseBridgeClient:
         """Synchronize all strategic objectives from the current state mirror."""
 
         events = self.objectives.sync(self.state, source=source)
+        self._rebuild_strategic_scenery_index()
         self.goals.sync(mission_time=self._current_mission_time(), source=source)
         return events
 

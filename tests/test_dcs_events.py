@@ -530,6 +530,50 @@ def test_loss_report_is_visible_in_both_tactical_pictures_and_global_truth() -> 
     assert global_feature["properties"]["perspective"] == "global_truth"
 
 
+def test_strategic_scenery_loss_is_rebuilt_from_destroyed_state() -> None:
+    server = MooseBridgeServer()
+    bridge = MooseBridgeClient(server)
+    source_id = "BRIDGE:Caucasus:test"
+    bridge._strategic_verifications = StrategicVerificationRegistry(
+        theater_id="Caucasus",
+        entries={
+            source_id: StrategicSiteVerification(
+                source_id=source_id,
+                state="represented",
+                observed_objects=(ObservedDcsObject("SCENERY:42", type_name="MOST(ROAD)BIG"),),
+                observation_complete=True,
+                target_components=(VerifiedDcsComponent("SCENERY:42", role="bridge span"),),
+            )
+        },
+    )
+    objective = bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id=f"OBJECTIVE:{source_id}",
+            name="Batumi bridge",
+            kind=ObjectiveKind.INFRASTRUCTURE,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="red",
+            components=(ObjectiveComponent("SCENERY:42"),),
+            metadata={
+                "generated": True,
+                "source_object_id": source_id,
+                "latitude": 41.66473,
+                "longitude": 41.68362,
+            },
+        )
+    )
+    bridge.state.loss_reports.clear()
+    bridge.state.destroyed_object_ids.add("SCENERY:42")
+
+    bridge.sync_strategic_objectives(source="control.snapshot")
+
+    assert objective.status.value == "destroyed"
+    report = bridge.state.loss_reports[f"LOSS:STRATEGIC:{objective.objective_id}"]
+    assert report["status"] == "destroyed"
+    assert report["destroyed_component_ids"] == ["SCENERY:42"]
+
+
 def test_unit_lost_updates_strategic_component_health() -> None:
     async def scenario() -> None:
         server = MooseBridgeServer()

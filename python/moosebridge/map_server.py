@@ -743,6 +743,8 @@ class GlobalMapRuntime:
                 bridge.sync_strategic_objectives(source="map.refresh")
             picture.strategic_objectives.clear()
             picture.strategic_objectives.extend(bridge.strategic_objectives())
+            picture.loss_reports.clear()
+            picture.loss_reports.extend(bridge.state.loss_reports.values())
             self._strategic_objective_error = None
         except ValueError as exc:
             error = str(exc)

@@ -19,6 +19,7 @@ from example_support import (
 from moosebridge import (  # noqa: E402
     InfrastructureStateAssessment,
     SceneryObjectSnapshot,
+    StrategicSiteVerification,
     StrategicVerificationRegistry,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT  # noqa: E402
@@ -30,23 +31,22 @@ COMMAND_TIMEOUT_SECONDS = 30.0
 
 # Copy a normalized Object ID from the web map. None searches all bundled
 # theater profiles; set an explicit profile path only to resolve ambiguity.
-#FEATURE_ID = "BRIDGE:Caucasus:4d482fb330eb"
 FEATURE_ID = "MARITIME_SITE:faee9372f262ce51"
 THEATER_PROFILE: str | Path | None = None
 
 # Select one object from the saved observation baseline. None chooses the first
 # live-queryable target component, then the first live-queryable baseline object.
 # Batumi examples: SCENERY:85667046, SCENERY:71976691, SCENERY:71977578.
-#TARGET_OBJECT_ID: str | None = "SCENERY:70254625"
-TARGET_OBJECT_ID: str | None = "SCENERY:71978148"
+# SCENERY:71978148 is assigned in the Mission Editor but is not live-queryable.
+TARGET_OBJECT_ID: str | None = None
 
 
 # Destructive live-DCS action. Run once with False and review the exact target.
 ARM_EXPLOSION = True
-EXPLOSION_POWER_KG_TNT = 500.0
+EXPLOSION_POWER_KG_TNT = 50000.0
 EXPLOSION_DELAY_SECONDS = 5.0
 POST_EXPLOSION_SETTLE_SECONDS = 10.0
-ALLOW_REPEATED_DAMAGE = False
+ALLOW_REPEATED_DAMAGE = True
 
 
 def format_percent(value: float | None) -> str:
@@ -72,7 +72,7 @@ def print_assessment(title: str, assessment: InfrastructureStateAssessment) -> N
         f"{assessment.intact_count} intact, {assessment.damaged_count} damaged, "
         f"{assessment.destroyed_count} destroyed, {assessment.unknown_count} unknown"
     )
-    changed = tuple(item for item in assessment.objects if item.condition != "intact")
+    changed = tuple(item for item in assessment.objects if item.condition in {"damaged", "destroyed"})
     if changed:
         print("Changed evidence:")
         for item in changed:
@@ -80,6 +80,54 @@ def print_assessment(title: str, assessment: InfrastructureStateAssessment) -> N
                 f"  {item.object_id}: {item.condition} "
                 f"health={format_percent(item.health)} source={item.source}"
             )
+    if assessment.unknown_count:
+        print(f"Unknown evidence : {assessment.unknown_count} object(s) not live-queryable")
+
+
+def print_target_assessment(
+    verification: StrategicSiteVerification,
+    assessment: InfrastructureStateAssessment,
+) -> None:
+    """Show strategic damage separately from the wider observation baseline."""
+
+    assessed_by_id = {item.object_id: item for item in assessment.objects}
+    total_weight = sum(component.weight for component in verification.target_components)
+    if total_weight <= 0:
+        return
+
+    known_health = 0.0
+    unknown_weight = 0.0
+    unknown_count = 0
+    destroyed_count = 0
+    damaged_count = 0
+    for component in verification.target_components:
+        item = assessed_by_id.get(component.object_id)
+        if item is None or item.health is None:
+            unknown_weight += component.weight
+            unknown_count += 1
+            continue
+        known_health += item.health * component.weight
+        destroyed_count += item.condition == "destroyed"
+        damaged_count += item.condition == "damaged"
+
+    health_min = known_health / total_weight
+    health_max = (known_health + unknown_weight) / total_weight
+    damage_min = 1.0 - health_max
+    damage_max = 1.0 - health_min
+    health = format_percent(health_min)
+    damage = format_percent(damage_min)
+    if health_max != health_min:
+        health = f"{health}..{format_percent(health_max)}"
+        damage = f"{damage}..{format_percent(damage_max)}"
+
+    print("Strategic targets")
+    print("=" * 17)
+    print(f"Components      : {len(verification.target_components)}")
+    print(f"Health          : {health}")
+    print(f"Damage          : {damage}")
+    print(f"Destroyed       : {destroyed_count}")
+    print(f"Damaged         : {damaged_count}")
+    print(f"Unknown         : {unknown_count}")
 
 
 def select_target(
@@ -160,6 +208,9 @@ async def run() -> int:
 
     if target is None:
         print("\nNo live-queryable target could be selected; explosion aborted.")
+        if TARGET_OBJECT_ID is not None:
+            print(f"Configured target: {TARGET_OBJECT_ID}")
+            print("Set TARGET_OBJECT_ID to one of the live-queryable objects below, or to None for automatic selection.")
         print_available_targets(resolution.objects)
         return 2
     if not target.queryable:
@@ -180,6 +231,8 @@ async def run() -> int:
         timeout=COMMAND_TIMEOUT_SECONDS,
     )
     print_assessment("Before explosion", before)
+    print()
+    print_target_assessment(verification, before)
     target_before = next((item for item in before.objects if item.object_id == target.object_id), None)
     if target_before is None or target_before.condition == "unknown":
         print("\nTarget has no reliable current state; explosion aborted.")
@@ -188,6 +241,11 @@ async def run() -> int:
         print("\nTarget is already damaged or destroyed; explosion aborted.")
         print("Set ALLOW_REPEATED_DAMAGE=True only when that is intentional.")
         return 2
+    if target_before.condition != "intact":
+        print(
+            f"\nRepeated damage  : enabled; selected target is already "
+            f"{target_before.condition}"
+        )
 
     if not ARM_EXPLOSION:
         print("\nDRY RUN: Set ARM_EXPLOSION=True after reviewing the selected feature and object.")
@@ -216,9 +274,19 @@ async def run() -> int:
         for event in events
         if str((event.get("payload") or {}).get("object_id") or "") == target.object_id
     )
+    baseline_event_ids = tuple(
+        dict.fromkeys(
+            object_id
+            for event in events
+            if (object_id := str((event.get("payload") or {}).get("object_id") or "")) in baseline_by_id
+        )
+    )
     for event in events:
         bridge.state.apply_message(event)
-    print(f"Destruction event: {'received' if matching_events else 'not received'}")
+    print(f"Target event     : {'received' if matching_events else 'not received'}")
+    print(f"Baseline events  : {len(baseline_event_ids)}")
+    for object_id in baseline_event_ids:
+        print(f"  {object_id}")
 
     after = await bridge.assess_scenery_verification(
         feature,
@@ -227,6 +295,8 @@ async def run() -> int:
     )
     print()
     print_assessment("After explosion", after)
+    print()
+    print_target_assessment(verification, after)
     target_after = next((item for item in after.objects if item.object_id == target.object_id), None)
     print()
     print(f"State transition : {before.state.value} -> {after.state.value}")

@@ -1025,6 +1025,8 @@ def _objective_health(
 def component_health(object_id: str, state: MooseBridgeState) -> float | None:
     """Return normalized current health for one objective component."""
 
+    if object_id in state.destroyed_object_ids:
+        return 0.0
     prefix = object_id.partition(":")[0].upper()
     collections = {
         "GROUP": state.groups,
