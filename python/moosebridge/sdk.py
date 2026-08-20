@@ -89,7 +89,6 @@ from .recon import (
 from .operational import (
     OperationalPlan,
     OperationalPlanAssessment,
-    OperationalPlanRegistry,
     OperationalPlanStatus,
 )
 from .operational_execution import (
@@ -119,10 +118,8 @@ from .strategic_feedback import (
     StrategicFeedbackAction,
     StrategicFeedbackDecision,
     StrategicFeedbackEvent,
-    StrategicFeedbackMonitor,
-    StrategicFeedbackPolicy,
 )
-from .strategic_selection import StrategicGoalPortfolio, StrategicGoalPortfolioSelector
+from .strategic_selection import StrategicGoalPortfolio
 from .strategic_scope import (
     StrategicScopeConfig,
     StrategicTerritoryScope,
@@ -131,15 +128,14 @@ from .strategic_scope import (
 from .strategic_objectives import (
     StrategicObjectiveGenerationConfig,
     StrategicObjectiveGenerationResult,
-    generate_strategic_objectives,
 )
+from .strategic_planning_service import StrategicPlanningService
 from .strategic_verification import StrategicVerificationRegistry
 from .theater_context import TheaterContext
 from .theater_service import TheaterDataService
 from .strategic_goals import (
     StrategicGoalGenerationConfig,
     StrategicGoalGenerationResult,
-    generate_strategic_goals,
 )
 from .settlements import TheaterSettlements
 from .railway_infrastructure import TheaterRailwayInfrastructure
@@ -149,9 +145,7 @@ from .strategic import (
     OwnershipPolicy,
     StrategicGoal,
     StrategicGoalEvent,
-    StrategicGoalRegistry,
     StrategicObjective,
-    StrategicObjectiveRegistry,
     component_health,
     effective_component_health,
     normalize_coalition,
@@ -622,16 +616,15 @@ class MooseBridgeClient:
             ground_mobility=ground_mobility,
             ground_mobility_profile=ground_mobility_profile,
         )
-        self.objectives = StrategicObjectiveRegistry()
-        self.goals = StrategicGoalRegistry(self.objectives)
-        self.plans = OperationalPlanRegistry(self.goals)
-        self.strategic_feedback = StrategicFeedbackMonitor(
-            self.goals,
-            self.plans,
+        self._strategic_planning_service = StrategicPlanningService(
             persistent_shortfall_s=strategic_shortfall_timeout_s,
         )
-        self.strategic_feedback_policy = StrategicFeedbackPolicy(self.objectives, self.goals, self.plans)
-        self.strategic_goal_selector = StrategicGoalPortfolioSelector(self.objectives, self.goals, self.plans)
+        self.objectives = self._strategic_planning_service.objectives
+        self.goals = self._strategic_planning_service.goals
+        self.plans = self._strategic_planning_service.plans
+        self.strategic_feedback = self._strategic_planning_service.feedback
+        self.strategic_feedback_policy = self._strategic_planning_service.feedback_policy
+        self.strategic_goal_selector = self._strategic_planning_service.goal_selector
         self.relationship = CoalitionRelationship()
         self.coalition_doctrines = CoalitionDoctrineRegistry()
         self.border_violations = BorderViolationTracker(border_violation_tolerance_s)
@@ -641,7 +634,6 @@ class MooseBridgeClient:
         self._auftrag_ids_by_object: dict[int, str] = {}
         self._strategic_feedback_message_ids: set[str] = set()
         self._strategic_feedback_tasks: set[asyncio.Task[Any]] = set()
-        self._strategic_goal_generation_number = 0
         self._strategic_verifications: StrategicVerificationRegistry | None = None
         self._strategic_scenery_objectives: dict[str, set[str]] = {}
         self._strategic_scenery_baselines: dict[str, tuple[str, ...]] = {}
@@ -728,14 +720,10 @@ class MooseBridgeClient:
         self.coalition_doctrines.clear()
         self.border_violations.clear()
         self.plan_executor.clear()
-        self.strategic_feedback.clear()
-        self.plans.clear()
-        self.goals.clear()
-        self.objectives.clear()
+        self._strategic_planning_service.clear_mission()
         self.information_requirement_registry.clear()
         self._auftrag_ids_by_object.clear()
         self._strategic_feedback_message_ids.clear()
-        self._strategic_goal_generation_number = 0
         self._strategic_verifications = self._theater_service.verifications
         self._strategic_scenery_objectives.clear()
         self._strategic_scenery_baselines.clear()
@@ -869,7 +857,7 @@ class MooseBridgeClient:
     ) -> StrategicObjective:
         """Add a Python-owned strategic objective during the mission."""
 
-        added = self.objectives.add(objective, replace=replace)
+        added = self._strategic_planning_service.add_objective(objective, replace=replace)
         self._rebuild_strategic_scenery_index()
         if sync:
             self.sync_strategic_objectives(source="current_state")
@@ -909,7 +897,7 @@ class MooseBridgeClient:
             verifications=verifications,
         )
 
-        result = generate_strategic_objectives(
+        result = self._strategic_planning_service.generate_objectives(
             self.state,
             self.build_strategic_scope(strict=True),
             settlements=sources.settlements,
@@ -918,50 +906,47 @@ class MooseBridgeClient:
             infrastructure=sources.infrastructure,
             verifications=sources.verifications,
             config=config,
+            register=register,
+            replace=replace,
+            mission_time=self._current_mission_time(),
         )
         if register:
             if sources.context is not None:
                 self.configure_theater(sources.context)
             elif sources.verifications is not None:
                 self._strategic_verifications = sources.verifications
-            generated_ids = {objective.objective_id for objective in result.objectives}
-            if replace:
-                for existing in self.objectives.all():
-                    if existing.metadata.get("generated") and existing.objective_id not in generated_ids:
-                        self.objectives.remove(existing)
-            for objective in result.objectives:
-                existing = self.objectives.get(objective.objective_id)
-                if existing is not None and not replace:
-                    continue
-                self.objectives.add(objective, replace=existing is not None)
             self._rebuild_strategic_scenery_index()
-            self.sync_strategic_objectives(source="strategic_objective_generation")
         return result
 
     def remove_strategic_objective(self, objective: StrategicObjective | str) -> StrategicObjective:
         """Remove a strategic objective during the mission."""
 
-        removed = self.objectives.remove(objective)
+        removed = self._strategic_planning_service.remove_objective(
+            objective,
+            mission_time=self._current_mission_time(),
+        )
         self._rebuild_strategic_scenery_index()
-        self.goals.sync(mission_time=self._current_mission_time(), source="objective.removed")
         return removed
 
     def strategic_objective(self, objective_id: str) -> StrategicObjective | None:
         """Return one strategic objective by id."""
 
-        return self.objectives.get(objective_id)
+        return self._strategic_planning_service.objective(objective_id)
 
     def strategic_objectives(self, **filters: Any) -> tuple[StrategicObjective, ...]:
         """Return strategic objectives, optionally filtered by registry fields."""
 
-        return self.objectives.filter(**filters)
+        return self._strategic_planning_service.objective_list(**filters)
 
     def sync_strategic_objectives(self, *, source: str = "manual") -> tuple[ObjectiveEvent, ...]:
         """Synchronize all strategic objectives from the current state mirror."""
 
-        events = self.objectives.sync(self.state, source=source)
+        events = self._strategic_planning_service.sync_objectives(
+            self.state,
+            mission_time=self._current_mission_time(),
+            source=source,
+        )
         self._rebuild_strategic_scenery_index()
-        self.goals.sync(mission_time=self._current_mission_time(), source=source)
         return events
 
     def add_strategic_goal(
@@ -973,10 +958,12 @@ class MooseBridgeClient:
     ) -> StrategicGoal:
         """Add a coalition-private strategic goal, optionally activating it."""
 
-        added = self.goals.add(goal, replace=replace)
-        if activate:
-            self.activate_strategic_goal(added)
-        return added
+        return self._strategic_planning_service.add_goal(
+            goal,
+            replace=replace,
+            activate=activate,
+            mission_time=self._current_mission_time(),
+        )
 
     def generate_strategic_goals(
         self,
@@ -994,35 +981,32 @@ class MooseBridgeClient:
         :meth:`select_strategic_goal_portfolio`.
         """
 
-        self._strategic_goal_generation_number += 1
-        resolved_generation_id = generation_id or f"AUTO:{self._strategic_goal_generation_number}"
-        result = generate_strategic_goals(
-            self.strategic_objectives(),
+        return self._strategic_planning_service.generate_goals(
             coalition,
             relationship=self.relationship,
-            existing_goals=self.strategic_goals(),
             mission_time=self._current_mission_time(),
-            generation_id=resolved_generation_id,
             config=config,
+            register=register,
+            generation_id=generation_id,
             metadata=metadata,
         )
-        if register:
-            for goal in result.goals:
-                self.goals.add(goal)
-        return result
 
     def activate_strategic_goal(self, goal: StrategicGoal | str) -> StrategicGoal:
         """Activate a planned strategic goal and evaluate its current state."""
 
-        mission_time = self._current_mission_time()
-        activated = self.goals.activate(goal, mission_time=mission_time)
-        self.goals.sync(mission_time=mission_time, source="current_state")
-        return activated
+        return self._strategic_planning_service.activate_goal(
+            goal,
+            mission_time=self._current_mission_time(),
+        )
 
     def cancel_strategic_goal(self, goal: StrategicGoal | str, *, reason: str | None = None) -> StrategicGoal:
         """Cancel a planned or active strategic goal."""
 
-        return self.goals.cancel(goal, mission_time=self._current_mission_time(), reason=reason)
+        return self._strategic_planning_service.cancel_goal(
+            goal,
+            mission_time=self._current_mission_time(),
+            reason=reason,
+        )
 
     def complete_strategic_goal(
         self,
@@ -1033,7 +1017,7 @@ class MooseBridgeClient:
     ) -> StrategicGoal:
         """Explicitly complete an active manual strategic goal."""
 
-        return self.goals.complete_manual(
+        return self._strategic_planning_service.complete_goal(
             goal,
             achieved=achieved,
             mission_time=self._current_mission_time(),
@@ -1043,22 +1027,25 @@ class MooseBridgeClient:
     def remove_strategic_goal(self, goal: StrategicGoal | str) -> StrategicGoal:
         """Remove a strategic goal from the runtime registry."""
 
-        return self.goals.remove(goal)
+        return self._strategic_planning_service.remove_goal(goal)
 
     def strategic_goal(self, goal_id: str) -> StrategicGoal | None:
         """Return one strategic goal by id."""
 
-        return self.goals.get(goal_id)
+        return self._strategic_planning_service.goal(goal_id)
 
     def strategic_goals(self, **filters: Any) -> tuple[StrategicGoal, ...]:
         """Return strategic goals, optionally filtered by registry fields."""
 
-        return self.goals.filter(**filters)
+        return self._strategic_planning_service.goal_list(**filters)
 
     def sync_strategic_goals(self, *, source: str = "manual") -> tuple[StrategicGoalEvent, ...]:
         """Evaluate active goals from current strategic objective state."""
 
-        return self.goals.sync(mission_time=self._current_mission_time(), source=source)
+        return self._strategic_planning_service.sync_goals(
+            mission_time=self._current_mission_time(),
+            source=source,
+        )
 
     async def wait_for_strategic_goal_event(
         self,

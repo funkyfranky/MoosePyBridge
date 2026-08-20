@@ -42,6 +42,11 @@ Initial local defaults:
 
 ## Guiding principles
 
+- MoosePyBridge is in active development. Conceptual correctness and a simpler
+  domain model take precedence over preserving obsolete APIs, generated data,
+  examples, or tests. When a fundamental change is justified, update affected
+  callers and remove the superseded path instead of accumulating compatibility
+  code that is no longer used.
 - DCS is the authoritative source of simulation state.
 - MOOSE is the authoritative semantic model for mission objects.
 - Python consumes stable protocol objects, not raw MOOSE internals.
