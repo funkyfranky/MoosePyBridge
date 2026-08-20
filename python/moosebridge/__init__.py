@@ -494,8 +494,12 @@ from .strategic_verification import (
 from .scenery_verification import (
     SCENERY_VERIFICATION_ARTIFACT_KEYS,
     SceneryVerificationFeature,
+    SceneryVerificationMarker,
     SceneryZoneAssignment,
+    active_scenery_verification_markers,
+    latest_scenery_verification_marker,
     resolve_scenery_verification_feature,
+    scenery_verification_marker_from_event,
     scenery_zone_assignments,
 )
 from .strategic_goals import (
@@ -833,8 +837,12 @@ __all__ = [
     "SCENERY_OBJECT_PREFIX",
     "SCENERY_VERIFICATION_ARTIFACT_KEYS",
     "SceneryVerificationFeature",
+    "SceneryVerificationMarker",
     "SceneryZoneAssignment",
+    "active_scenery_verification_markers",
+    "latest_scenery_verification_marker",
     "resolve_scenery_verification_feature",
+    "scenery_verification_marker_from_event",
     "scenery_zone_assignments",
     "StrategicGoal",
     "StrategicGoalAction",

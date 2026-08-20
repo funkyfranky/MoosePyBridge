@@ -86,6 +86,25 @@ def test_auftrag_extension_applies_weapon_type_before_assignment() -> None:
     assert "auftrag:SetWeaponType(inputs.weapon_type)" in source
 
 
+def test_auftrag_extension_converts_wgs84_coordinates_with_dcs_signature() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
+
+    assert "coord.LLtoLO(latitude, longitude, 0)" in source
+    assert "coord.LLtoLO({lat=latitude, lon=longitude, alt=0})" not in source
+
+
+def test_strike_prefers_live_scenery_object_and_retains_coordinate_fallback() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
+
+    assert "function MOOSE_BRIDGE:_ResolveSceneryAuftragTarget(inputs)" in source
+    assert "SCENERY:FindByID(scenery_id)" in source
+    assert "world.searchObjects(Object.Category.SCENERY" in source
+    assert "SCENERY:Register(name, found)" in source
+    assert 'inputs.target_resolution = "scenery_object"' in source
+    assert 'inputs.target_resolution = "coordinate_fallback"' in source
+    assert "target_resolution=inputs.target_resolution" in source
+
+
 def test_recon_auftrag_builds_zone_set_and_moose_maintains_intel_agents() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
     intel_source = (REPO_ROOT / "lua" / "MooseBridgeIntelExtension.lua").read_text(encoding="utf-8")
@@ -108,15 +127,23 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert "self:HandleEvent(EVENTS.UnitLost)" in source
     assert "self:HandleEvent(EVENTS.Dead)" in source
     assert "self:HandleEvent(EVENTS.Kill)" in source
+    assert "self:HandleEvent(EVENTS.MarkAdded)" in source
+    assert "self:HandleEvent(EVENTS.MarkChange)" in source
+    assert "self:HandleEvent(EVENTS.MarkRemoved)" in source
     assert "self:HandleEvent(EVENTS.MissionEnd)" in source
     assert "function MOOSE_BRIDGE:OnEventBaseCaptured(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventUnitLost(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventDead(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventKill(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventMarkAdded(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventMarkChange(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventMarkRemoved(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventMissionEnd(EventData)" in source
     assert 'self:SendEvent("airbase.coalition_changed"' in source
     assert 'self:SendEvent("object.destroyed"' in source
     assert 'self:SendEvent("combat.kill"' in source
+    assert 'self:SendEvent(event_name' in source
+    assert '"map.marker.changed"' in source
     assert 'self:SendEvent("mission.ended"' in source
     assert "self:_FlushOutQueue()" in source
     assert "function MOOSE_BRIDGE:_BuildObjectDestroyedPayload(EventData)" in source

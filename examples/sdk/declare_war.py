@@ -31,11 +31,11 @@ async def run() -> int:
             DECLARING_COALITION,
             reason=DECLARATION_REASON,
         )
-        await bridge.persist_diplomacy_state()
         print(
             f"{incident.actor_coalition} declared war on "
             f"{incident.target_coalition}: {DECLARATION_REASON}"
         )
+    await bridge.persist_diplomacy_state()
     print()
     print(format_relationship(bridge.relationship))
     return 0

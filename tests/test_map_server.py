@@ -50,6 +50,8 @@ from moosebridge.strategic_verification import (
     ObservedDcsObject,
     StrategicSiteVerification,
     StrategicVerificationRegistry,
+    StrategicVerificationState,
+    VerifiedDcsComponent,
 )
 from moosebridge.settlements import (
     Settlement,
@@ -804,8 +806,108 @@ def test_map_app_exposes_strategic_verification_endpoints() -> None:
     routes = {getattr(route, "path", None): route for route in app.routes}
 
     assert "GET" in routes["/api/strategic-verifications"].methods
+    assert "GET" in routes["/api/verification-readiness"].methods
     assert "PUT" in routes["/api/strategic-verifications/{source_id:path}"].methods
     assert "POST" in routes["/api/strategic-verifications/{source_id:path}/assess"].methods
+
+
+def test_map_runtime_summarizes_simplified_verification_readiness() -> None:
+    def bridge_feature(name: str, longitude: float) -> TransportBridge:
+        return TransportBridge(
+            bridge_id=f"BRIDGE:Test:{name}",
+            geometry={"type": "Point", "coordinates": [longitude, 54.0]},
+            latitude=54.0,
+            longitude=longitude,
+            length_m=100.0,
+            highway_classes=("primary",),
+            edge_count=1,
+            approach_count=2,
+            endpoint_osm_ids=(1, 2),
+            importance_score=60.0,
+            importance_tier=TransportImportanceTier.MEDIUM,
+        )
+
+    usable = bridge_feature("Usable", 12.0)
+    review = bridge_feature("Review", 12.2)
+    excluded = bridge_feature("Excluded", 12.4)
+    outside = bridge_feature("Outside", 14.0)
+    runtime = GlobalMapRuntime(theater_id="Test")
+    runtime._transport_infrastructure = TheaterTransportInfrastructure(
+        "Test", (usable, review, excluded, outside), (),
+    )
+    runtime._strategic_verifications = StrategicVerificationRegistry.from_entries(
+        (
+            StrategicSiteVerification(
+                source_id=usable.bridge_id,
+                state=StrategicVerificationState.REPRESENTED,
+                observed_objects=(ObservedDcsObject("SCENERY:1", life=100.0, exists=True),),
+                observation_complete=True,
+                target_components=(VerifiedDcsComponent("SCENERY:1"),),
+            ),
+            StrategicSiteVerification(
+                source_id=review.bridge_id,
+                state=StrategicVerificationState.REPRESENTED,
+                observed_objects=(ObservedDcsObject("SCENERY:2"),),
+                observation_complete=False,
+                target_components=(VerifiedDcsComponent("SCENERY:2"),),
+            ),
+            StrategicSiteVerification(
+                source_id=excluded.bridge_id,
+                state=StrategicVerificationState.NOT_REPRESENTED,
+            ),
+        ),
+        theater_id="Test",
+    )
+    runtime.picture = {
+        "type": "FeatureCollection",
+        "properties": {},
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [[[11.0, 53.0], [13.0, 53.0], [13.0, 55.0], [11.0, 55.0], [11.0, 53.0]]],
+                },
+                "properties": {"layer": "strategic_scope", "scope_state": "blue"},
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [12.5, 54.0]},
+                "properties": {
+                    "layer": "airbases", "object_id": "AIRBASE:Native", "name": "Native", "category": "Airdrome",
+                },
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [12.0, 54.0]},
+                "properties": {
+                    "layer": "strategic_objectives", "object_id": f"OBJECTIVE:{usable.bridge_id}",
+                    "source_object_id": usable.bridge_id, "scope_state": "blue", "generated": True,
+                },
+            },
+        ],
+    }
+
+    payload = runtime.verification_readiness_payload()
+    items = {item["object_id"]: item for item in payload["items"]}
+
+    assert payload["summary"] == {
+        "total": 5,
+        "in_scope": 4,
+        "out_of_scope": 1,
+        "usable": 2,
+        "review": 1,
+        "excluded": 1,
+        "objectives": 1,
+    }
+    assert items[usable.bridge_id]["readiness"] == "usable"
+    assert items[usable.bridge_id]["objective_generated"] is True
+    assert items[review.bridge_id]["readiness"] == "review"
+    assert items[review.bridge_id]["reasons"] == ["baseline_incomplete", "target_not_queryable"]
+    assert items[excluded.bridge_id]["readiness"] == "excluded"
+    assert outside.bridge_id not in items
+    assert items["AIRBASE:Native"]["readiness"] == "usable"
+    assert items["AIRBASE:Native"]["native"] is True
 
 
 def test_map_runtime_assesses_verified_infrastructure_on_demand(tmp_path) -> None:
@@ -976,6 +1078,26 @@ def test_map_ui_exposes_strategic_dcs_verification_controls() -> None:
     assert "Scenario approved" not in map_script
 
 
+def test_map_ui_exposes_simplified_verification_readiness_view() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    index = (root / "index.html").read_text(encoding="utf-8")
+    stylesheet = (root / "map.css").read_text(encoding="utf-8")
+
+    assert 'id="readiness-tab"' in index
+    assert 'id="readiness-controls"' in index
+    assert 'fetch("/api/verification-readiness")' in map_script
+    assert "function renderReadiness()" in map_script
+    assert 'data-readiness-state="usable"' in map_script
+    assert 'data-readiness-state="review"' in map_script
+    assert 'data-readiness-state="excluded"' in map_script
+    assert 'data-readiness-type' in map_script
+    assert 'item.category !== type' in map_script
+    assert 'new Option(`${displayState(type)} (${count})`, type)' in map_script
+    assert 'data-readiness-summary="out_of_scope"' in map_script
+    assert ".readiness-list" in stylesheet
+
+
 def test_map_ui_uses_strategic_damage_status_instead_of_dead_badge() -> None:
     root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
     map_script = (root / "map.js").read_text(encoding="utf-8")
@@ -999,3 +1121,17 @@ def test_map_ui_exposes_grouped_railway_infrastructure() -> None:
     assert 'source: "railway-infrastructure"' in map_script
     assert 'addDetailSection("Rail network impact", "network"' in map_script
     assert '"Network disconnected"' in map_script
+
+
+def test_map_ui_groups_road_infrastructure_and_keeps_counts_visible() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    stylesheet = (root / "map.css").read_text(encoding="utf-8")
+
+    assert 'key: "road_infrastructure", label: "Road infrastructure"' in map_script
+    assert 'layers: ["transport_bridges", "transport_junctions"]' in map_script
+    assert 'label: "Road bridges"' in map_script
+    assert 'label: "Road junctions"' in map_script
+    assert 'data-layer-group-count' in map_script
+    assert "width: min(300px, calc(100% - 24px));" in stylesheet
+    assert "overflow-x: hidden;" in stylesheet

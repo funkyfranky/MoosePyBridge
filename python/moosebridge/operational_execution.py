@@ -917,6 +917,7 @@ class OperationalPlanExecutor:
             )
             phase.status = PlanPhaseStatus.ACTIVE
             destroy_health_before = None
+            destroy_event_cursor: str | None = None
             if goal.action is StrategicGoalAction.DESTROY:
                 objective = self.client.strategic_objective(goal.objective_id)
                 destroy_health_before = objective.health if objective is not None else None
@@ -925,6 +926,17 @@ class OperationalPlanExecutor:
                 PlanExecutionEvent("phase.started", plan.plan_id, phase_id=phase.phase_id, status=phase.status.value),
                 on_event,
             )
+            if goal.action is StrategicGoalAction.DESTROY:
+                try:
+                    destroy_event_cursor = await self.client.server.event_cursor()
+                except Exception as exc:
+                    return await self._block(
+                        plan,
+                        phase,
+                        execution,
+                        f"could not establish destruction event cursor: {exc}",
+                        on_event,
+                    )
 
             required_missions: list[PlanMissionExecution] = []
             for intent in phase.intents:
@@ -1031,6 +1043,8 @@ class OperationalPlanExecutor:
                         on_event=on_event,
                         stop_on_failure=goal.action is not StrategicGoalAction.DESTROY,
                     )
+                if goal.action is StrategicGoalAction.DESTROY:
+                    await self._replay_destroyed_events(after_id=destroy_event_cursor)
             except Exception as exc:
                 return await self._block(
                     plan,
@@ -1642,6 +1656,33 @@ class OperationalPlanExecutor:
                 )
                 return True
 
+    async def _replay_destroyed_events(self, *, after_id: str | None) -> int:
+        """Apply retained DCS destruction events before strategic assessment."""
+
+        history = await self.client.server.query_events("object.destroyed", after_id=after_id)
+        if after_id is not None and history.get("history_complete") is not True:
+            raise RuntimeError(
+                "DCS destruction event history is incomplete; strategic damage cannot be assessed reliably"
+            )
+        applied = 0
+        events = history.get("events") if isinstance(history.get("events"), list) else []
+        known_event_ids = {
+            str(event.get("id") or "")
+            for event in self.client.state.events
+            if isinstance(event, dict) and event.get("id")
+        }
+        for message in events:
+            if not isinstance(message, dict) or str(message.get("event") or "") != "object.destroyed":
+                continue
+            message_id = str(message.get("id") or "")
+            if not message_id or message_id not in known_event_ids:
+                self.client.state.apply_message(message)
+                if message_id:
+                    known_event_ids.add(message_id)
+            self.client._on_bridge_message(message)
+            applied += 1
+        return applied
+
     async def _refresh_goal_control(self, objective_id: str) -> None:
         objective = self.client.strategic_objective(objective_id)
         if objective is None:
@@ -1805,6 +1846,11 @@ class OperationalPlanExecutor:
             for key in ("target", "zone", "opszone", "coordinate"):
                 value = params.get(key)
                 if isinstance(value, str) and ":" in value:
+                    prefix = value.partition(":")[0].upper()
+                    if command.mission_type == "STRIKE" and key == "target" and prefix in {"SCENERY", "MAPOBJECT"}:
+                        # Lua resolves a live SCENERY wrapper at the verified point
+                        # and retains the coordinate as its deliberate fallback.
+                        continue
                     targets.add(value)
             zone_values = params.get("zones")
             if isinstance(zone_values, (list, tuple)):
@@ -2048,6 +2094,7 @@ def build_plan_auftrag(
         has_geographic_point = params.get("latitude") is not None and params.get("longitude") is not None
         if not has_local_point and not has_geographic_point:
             raise ValueError(f"STRIKE intent {intent.intent_id} requires exact target coordinates")
+        params.setdefault("target", target)
         command = Auftrag_STRIKE(**params)
     elif mission_type in {"SEAD", "ANTISHIP", "INTERCEPT"}:
         if not target or not target.startswith(("GROUP:", "UNIT:")):

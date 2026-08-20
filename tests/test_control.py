@@ -214,6 +214,8 @@ def test_control_audit_records_survive_daemon_restart(tmp_path) -> None:
 def test_control_status_echoes_declared_client_identity() -> None:
     async def scenario() -> None:
         bridge = FakeBridgeServer()
+        bridge.state.audit_session_id = "status-session"
+        bridge.state.mission_generation = 7
         server = MooseBridgeControlServer(bridge, host="127.0.0.1", port=0)
         await server.start()
         client = MooseBridgeControlClient(
@@ -228,6 +230,9 @@ def test_control_status_echoes_declared_client_identity() -> None:
                 "client_id": "sdk-test",
                 "display_name": "SDK Test Client",
             }
+            assert client.state.connected is True
+            assert client.state.audit_session_id == "status-session"
+            assert client.state.mission_generation == 7
         finally:
             await server.stop()
 

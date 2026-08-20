@@ -27,8 +27,8 @@
     { key: "intel_contacts", label: "INTEL contacts", color: "#c44343", icon: "crosshair", size: 0.95, default: true },
     { key: "intel_clusters", label: "INTEL clusters", color: "#d06f27", icon: "radar", size: 1.05, default: true },
     { key: "loss_reports", label: "Loss reports", color: "#8f3434", icon: "shield-x", size: 1.0, default: true },
-    { key: "transport_bridges", label: "Bridges", color: "#a56a27", icon: "construction", default: false },
-    { key: "transport_junctions", label: "Transport junctions", color: "#176f77", icon: "network", default: false },
+    { key: "transport_bridges", label: "Road bridges", color: "#a56a27", icon: "construction", default: false },
+    { key: "transport_junctions", label: "Road junctions", color: "#176f77", icon: "network", default: false },
     {
       key: "railway_infrastructure", label: "Rail infrastructure", color: "#4f5552", icon: "train-front", default: false,
       children: [
@@ -74,6 +74,12 @@
     { key: "strategic_objectives", label: "Strategic objectives", color: "#7d3f68", icon: "flag-triangle-right", size: 1.12, default: true },
     { key: "missions", label: "Missions", color: "#ad3c76", icon: "target", size: 1.05, default: true },
   ];
+  const layerDisplayGroups = [
+    {
+      key: "road_infrastructure", label: "Road infrastructure", icon: "route", color: "#176f77",
+      layers: ["transport_bridges", "transport_junctions"],
+    },
+  ];
   const layerSections = [
     {
       key: "forces", label: "Forces", icon: "boxes", color: "#245f96",
@@ -94,6 +100,7 @@
     {
       key: "infrastructure", label: "Infrastructure", icon: "landmark", color: "#137f87",
       layers: ["airbases", "settlements", "transport_bridges", "transport_junctions", "railway_infrastructure", "maritime_sites", "energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"],
+      display: ["airbases", "settlements", "road_infrastructure", "railway_infrastructure", "maritime_sites", "energy_sites", "fuel_storage_sites", "military_sites", "industrial_sites"],
     },
     {
       key: "topography", label: "Topography", icon: "map", color: "#3c7069",
@@ -109,6 +116,10 @@
     },
   ];
   const layerSpecByKey = new Map(layerSpecs.map((spec) => [spec.key, spec]));
+  const layerDisplayGroupByKey = new Map(layerDisplayGroups.map((group) => [group.key, group]));
+  const layerDisplayGroupByLayer = new Map(
+    layerDisplayGroups.flatMap((group) => group.layers.map((layer) => [layer, group.key])),
+  );
   const layerSectionByLayer = new Map(
     layerSections.flatMap((section) => section.layers.map((layer) => [layer, section.key])),
   );
@@ -199,6 +210,7 @@
   let latestSettlements = EMPTY;
   const strategicVerifications = new Map();
   const strategicVerificationAssessments = new Map();
+  let latestVerificationReadiness = { summary: {}, items: [] };
   let latestMissionTime = null;
   let topographyViewportAvailable = false;
   let fitted = false;
@@ -311,8 +323,10 @@
     layerPanel: document.getElementById("layer-panel"),
     layerControls: document.getElementById("layer-controls"),
     filterControls: document.getElementById("filter-controls"),
+    readinessControls: document.getElementById("readiness-controls"),
     layersTab: document.getElementById("layers-tab"),
     filtersTab: document.getElementById("filters-tab"),
+    readinessTab: document.getElementById("readiness-tab"),
     layersToggle: document.getElementById("layers-toggle"),
     detailPanel: document.getElementById("detail-panel"),
     detailType: document.getElementById("detail-type"),
@@ -1197,6 +1211,7 @@
     updateCounts();
     updateClocks(picture.properties || {});
     updateDiplomacy(picture.properties?.diplomacy);
+    renderReadiness();
     if (selectedObjectId) {
       selectionCandidates = selectionCandidates
         .map((candidate) => allFeatures().find((feature) => feature.properties?.object_id === candidate.properties?.object_id))
@@ -1470,6 +1485,10 @@
       const section = layerSections.find((candidate) => candidate.key === node.dataset.layerSectionCount);
       node.textContent = String(section?.layers.reduce((total, layer) => total + (counts.get(layer) || 0), 0) || 0);
     });
+    document.querySelectorAll("[data-layer-group-count]").forEach((node) => {
+      const group = layerDisplayGroupByKey.get(node.dataset.layerGroupCount);
+      node.textContent = String(group?.layers.reduce((total, layer) => total + (counts.get(layer) || 0), 0) || 0);
+    });
   }
 
   function layerControlMarkup(spec, attributes = "") {
@@ -1520,6 +1539,26 @@
     container.appendChild(label);
   }
 
+  function appendLayerDisplayGroup(groupSpec, container) {
+    const group = document.createElement("div");
+    group.className = "layer-group layer-subgroup";
+    const header = document.createElement("div");
+    header.className = "layer-group-header";
+    const parent = document.createElement("label");
+    parent.className = "layer-control layer-control-parent";
+    parent.innerHTML = `${layerControlMarkup(
+      { ...groupSpec, default: groupSpec.layers.some((layer) => layerSpecByKey.get(layer)?.default) },
+      `data-layer-group="${groupSpec.key}"`,
+    )}<span class="layer-count" data-layer-group-count="${groupSpec.key}">0</span>`;
+    header.append(expandButton(groupSpec.label), parent);
+
+    const children = document.createElement("div");
+    children.className = "layer-children";
+    for (const layerKey of groupSpec.layers) appendLayerControl(layerSpecByKey.get(layerKey), children);
+    group.append(header, children);
+    container.appendChild(group);
+  }
+
   function buildLayerControls() {
     for (const section of layerSections) {
       const group = document.createElement("section");
@@ -1537,11 +1576,16 @@
       const children = document.createElement("div");
       children.className = "layer-children layer-section-children";
       children.hidden = true;
-      for (const layerKey of section.layers) appendLayerControl(layerSpecByKey.get(layerKey), children);
+      for (const itemKey of section.display || section.layers) {
+        const displayGroup = layerDisplayGroupByKey.get(itemKey);
+        if (displayGroup) appendLayerDisplayGroup(displayGroup, children);
+        else appendLayerControl(layerSpecByKey.get(itemKey), children);
+      }
       group.append(header, children);
       elements.layerControls.appendChild(group);
     }
     for (const spec of layerSpecs) updateParentLayerControl(spec.key);
+    for (const group of layerDisplayGroups) updateLayerDisplayGroupControl(group.key);
     for (const section of layerSections) updateLayerSectionControl(section.key);
     elements.layerControls.addEventListener("change", (event) => {
       const target = event.target;
@@ -1553,11 +1597,22 @@
           layer.indeterminate = false;
           document.querySelectorAll(`[data-parent-layer="${layerKey}"]`).forEach((child) => { child.checked = target.checked; });
         }
+        for (const group of layerDisplayGroups) updateLayerDisplayGroupControl(group.key);
+      } else if (target.matches("[data-layer-group]")) {
+        const group = layerDisplayGroupByKey.get(target.dataset.layerGroup);
+        for (const layerKey of group.layers) {
+          const layer = document.querySelector(`[data-layer="${layerKey}"]`);
+          layer.checked = target.checked;
+          layer.indeterminate = false;
+          document.querySelectorAll(`[data-parent-layer="${layerKey}"]`).forEach((child) => { child.checked = target.checked; });
+        }
+        updateLayerSectionControl(layerSectionByLayer.get(group.layers[0]));
       } else if (target.matches("[data-layer]")) {
         const spec = layerSpecByKey.get(target.dataset.layer);
         if (spec?.children) {
           document.querySelectorAll(`[data-parent-layer="${spec.key}"]`).forEach((child) => { child.checked = target.checked; });
         }
+        updateLayerDisplayGroupControl(layerDisplayGroupByLayer.get(target.dataset.layer));
         updateLayerSectionControl(layerSectionByLayer.get(target.dataset.layer));
       } else if (target.matches("[data-parent-layer]")) {
         updateParentLayerControl(target.dataset.parentLayer);
@@ -1635,6 +1690,17 @@
     parent.indeterminate = selected > 0 && selected < children.length;
   }
 
+  function updateLayerDisplayGroupControl(groupKey) {
+    if (!groupKey) return;
+    const group = layerDisplayGroupByKey.get(groupKey);
+    const parent = document.querySelector(`[data-layer-group="${groupKey}"]`);
+    if (!group || !parent) return;
+    const children = group.layers.map((layer) => document.querySelector(`[data-layer="${layer}"]`));
+    const selected = children.filter((child) => child.checked).length;
+    parent.checked = selected > 0;
+    parent.indeterminate = children.some((child) => child.indeterminate) || (selected > 0 && selected < children.length);
+  }
+
   function updateLayerSectionControl(sectionKey) {
     if (!sectionKey) return;
     const section = layerSections.find((candidate) => candidate.key === sectionKey);
@@ -1681,6 +1747,166 @@
       elements.filterControls.querySelectorAll("[data-filter]").forEach((checkbox) => { checkbox.checked = true; });
       applyLayerVisibility();
     });
+  }
+
+  const readinessReasonLabels = {
+    dcs_native: "DCS native",
+    verified_targets: "Verified targets",
+    unverified: "Not verified",
+    baseline_incomplete: "Baseline incomplete",
+    no_target_components: "No target components",
+    target_not_queryable: "Target not queryable",
+    not_represented: "Not represented",
+  };
+
+  function buildReadinessControls() {
+    elements.readinessControls.innerHTML = `
+      <div class="readiness-summary" aria-label="Verification readiness summary">
+        <div class="readiness-metric"><strong data-readiness-summary="in_scope">0</strong><span>In scope</span></div>
+        <div class="readiness-metric is-usable"><strong data-readiness-summary="usable">0</strong><span>Usable</span></div>
+        <div class="readiness-metric is-review"><strong data-readiness-summary="review">0</strong><span>Review</span></div>
+        <div class="readiness-metric is-excluded"><strong data-readiness-summary="excluded">0</strong><span>Excluded</span></div>
+        <div class="readiness-metric"><strong data-readiness-summary="objectives">0</strong><span>Objectives</span></div>
+        <div class="readiness-metric"><strong data-readiness-summary="out_of_scope">0</strong><span>Outside</span></div>
+      </div>
+      <div class="readiness-filters">
+        <div class="readiness-state-filters">
+          <label class="readiness-state-filter"><input type="checkbox" data-readiness-state="usable" checked>Usable</label>
+          <label class="readiness-state-filter"><input type="checkbox" data-readiness-state="review" checked>Review</label>
+          <label class="readiness-state-filter"><input type="checkbox" data-readiness-state="excluded" checked>Excluded</label>
+        </div>
+        <select data-readiness-scope aria-label="Strategic scope">
+          <option value="in_scope">All active scopes</option>
+          <option value="blue">Blue</option>
+          <option value="red">Red</option>
+          <option value="neutral">Neutral</option>
+          <option value="contested">Contested</option>
+        </select>
+        <select data-readiness-type aria-label="Object type">
+          <option value="all">All types</option>
+        </select>
+        <select data-readiness-objective aria-label="Objective generation">
+          <option value="all">All objects</option>
+          <option value="generated">Objective generated</option>
+          <option value="not_generated">No objective</option>
+        </select>
+        <input class="readiness-search" type="search" data-readiness-search placeholder="Find object" aria-label="Find readiness object">
+      </div>
+      <div class="readiness-list-heading"><span data-readiness-result-count>0 objects</span><span>First 250 shown</span></div>
+      <div class="readiness-list" data-readiness-list></div>`;
+    elements.readinessControls.addEventListener("input", renderReadiness);
+    elements.readinessControls.addEventListener("change", renderReadiness);
+    elements.readinessControls.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-readiness-object-id]");
+      if (!button) return;
+      const objectId = button.dataset.readinessObjectId;
+      const item = latestVerificationReadiness.items.find((candidate) => candidate.object_id === objectId);
+      if (!item) return;
+      const feature = allFeatures().find((candidate) => candidate.properties?.object_id === objectId) || {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [item.longitude, item.latitude] },
+        properties: {
+          ...item,
+          object_type: "STRATEGIC_CANDIDATE",
+        },
+      };
+      selectionCandidates = [feature];
+      selectionIndex = 0;
+      showDetails(feature);
+      focusSelectedFeature();
+    });
+  }
+
+  function renderReadiness() {
+    const summary = latestVerificationReadiness.summary || {};
+    elements.readinessControls.querySelectorAll("[data-readiness-summary]").forEach((node) => {
+      node.textContent = String(summary[node.dataset.readinessSummary] || 0);
+    });
+    const typeSelect = elements.readinessControls.querySelector("[data-readiness-type]");
+    const typeCounts = new Map();
+    for (const item of latestVerificationReadiness.items) {
+      const type = String(item.category || "unknown");
+      typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
+    }
+    const types = [...typeCounts].sort(([left], [right]) => displayState(left).localeCompare(displayState(right)));
+    const typeSignature = types.map(([type, count]) => `${type}:${count}`).join("|");
+    if (typeSelect.dataset.signature !== typeSignature) {
+      const selectedType = typeSelect.value || "all";
+      typeSelect.replaceChildren(new Option("All types", "all"));
+      for (const [type, count] of types) {
+        typeSelect.add(new Option(`${displayState(type)} (${count})`, type));
+      }
+      typeSelect.value = typeCounts.has(selectedType) ? selectedType : "all";
+      typeSelect.dataset.signature = typeSignature;
+    }
+    const states = new Set(
+      [...elements.readinessControls.querySelectorAll("[data-readiness-state]:checked")]
+        .map((node) => node.dataset.readinessState),
+    );
+    const scope = elements.readinessControls.querySelector("[data-readiness-scope]")?.value || "in_scope";
+    const type = typeSelect?.value || "all";
+    const objective = elements.readinessControls.querySelector("[data-readiness-objective]")?.value || "all";
+    const query = (elements.readinessControls.querySelector("[data-readiness-search]")?.value || "").trim().toLowerCase();
+    const generatedSources = new Set(
+      latestPicture.features
+        .filter((feature) => feature.properties?.layer === "strategic_objectives" && feature.properties?.generated === true)
+        .map((feature) => feature.properties?.source_object_id)
+        .filter(Boolean),
+    );
+    const matches = latestVerificationReadiness.items.filter((item) => {
+      const generated = generatedSources.size ? generatedSources.has(item.object_id) : item.objective_generated;
+      if (!states.has(item.readiness)) return false;
+      if (scope !== "in_scope" && item.scope_state !== scope) return false;
+      if (type !== "all" && item.category !== type) return false;
+      if (objective === "generated" && !generated) return false;
+      if (objective === "not_generated" && generated) return false;
+      return !query || `${item.name} ${item.object_id} ${item.category}`.toLowerCase().includes(query);
+    });
+    const count = elements.readinessControls.querySelector("[data-readiness-result-count]");
+    count.textContent = `${matches.length} object${matches.length === 1 ? "" : "s"}`;
+    const list = elements.readinessControls.querySelector("[data-readiness-list]");
+    list.replaceChildren();
+    for (const item of matches.slice(0, 250)) {
+      const generated = generatedSources.size ? generatedSources.has(item.object_id) : item.objective_generated;
+      const button = document.createElement("button");
+      button.className = "readiness-item";
+      button.type = "button";
+      button.dataset.readiness = item.readiness;
+      button.dataset.readinessObjectId = item.object_id;
+      const dot = document.createElement("span");
+      dot.className = "readiness-dot";
+      const content = document.createElement("span");
+      const name = document.createElement("span");
+      name.className = "readiness-item-name";
+      name.textContent = item.name || item.object_id;
+      const meta = document.createElement("span");
+      meta.className = "readiness-item-meta";
+      const reason = readinessReasonLabels[item.reason] || displayState(item.reason);
+      meta.textContent = [displayState(item.scope_state), displayState(item.category), reason, generated ? "Objective" : null]
+        .filter(Boolean)
+        .join(" · ");
+      content.append(name, meta);
+      button.append(dot, content);
+      list.appendChild(button);
+    }
+    if (!matches.length) {
+      const empty = document.createElement("div");
+      empty.className = "readiness-empty";
+      empty.textContent = "No matching strategic candidates.";
+      list.appendChild(empty);
+    }
+  }
+
+  async function refreshVerificationReadiness() {
+    try {
+      const response = await fetch("/api/verification-readiness");
+      if (!response.ok) throw new Error(`Readiness request failed (${response.status})`);
+      latestVerificationReadiness = await response.json();
+      renderReadiness();
+    } catch (error) {
+      latestVerificationReadiness = { summary: {}, items: [] };
+      renderReadiness();
+    }
   }
 
   function selectedFilterValues(key) {
@@ -2035,6 +2261,7 @@
         if (!response.ok) throw new Error(result.detail || "Verification could not be saved");
         strategicVerifications.set(sourceId, result.verification);
         strategicVerificationAssessments.delete(sourceId);
+        await refreshVerificationReadiness();
         const saved = result.verification;
         status.textContent = `${saved.observed_objects.length} observed (${saved.observation_complete ? "complete baseline" : "partial baseline"}) · `
           + `${saved.target_components.length} target(s) · ${result.admitted ? "admitted" : "not admitted"}`;
@@ -2396,13 +2623,14 @@
 
   async function loadInitialPicture() {
     try {
-      const [pictureResponse, surfaceRegionsResponse, railwayResponse, infrastructureResponse, settlementsResponse, verificationsResponse, healthResponse] = await Promise.all([
+      const [pictureResponse, surfaceRegionsResponse, railwayResponse, infrastructureResponse, settlementsResponse, verificationsResponse, readinessResponse, healthResponse] = await Promise.all([
         fetch("/api/picture/global.geojson"),
         fetch("/api/surface-regions/global.geojson"),
         fetch("/api/railway-infrastructure/global.geojson"),
         fetch("/api/infrastructure-sites/global.geojson"),
         fetch("/api/settlements/global.geojson"),
         fetch("/api/strategic-verifications"),
+        fetch("/api/verification-readiness"),
         fetch("/api/health"),
       ]);
       if (pictureResponse.ok) setPicture(await pictureResponse.json());
@@ -2414,6 +2642,10 @@
         const payload = await verificationsResponse.json();
         strategicVerifications.clear();
         for (const item of payload.verifications || []) strategicVerifications.set(item.source_id, item);
+      }
+      if (readinessResponse.ok) {
+        latestVerificationReadiness = await readinessResponse.json();
+        renderReadiness();
       }
       if (healthResponse.ok) {
         const status = await healthResponse.json();
@@ -2427,6 +2659,7 @@
 
   buildLayerControls();
   buildFilterControls();
+  buildReadinessControls();
   setBasemapStyle(selectedBasemap);
   setOpacityControl("basemap", basemapOpacity);
   setOpacityControl("territory", territoryOpacity);
@@ -2443,15 +2676,22 @@
   });
   function showSettingsTab(tab) {
     const showLayers = tab === "layers";
+    const showFilters = tab === "filters";
+    const showReadiness = tab === "readiness";
     elements.layerControls.hidden = !showLayers;
-    elements.filterControls.hidden = showLayers;
+    elements.filterControls.hidden = !showFilters;
+    elements.readinessControls.hidden = !showReadiness;
+    elements.layerPanel.classList.toggle("is-readiness", showReadiness);
     elements.layersTab.classList.toggle("is-active", showLayers);
-    elements.filtersTab.classList.toggle("is-active", !showLayers);
+    elements.filtersTab.classList.toggle("is-active", showFilters);
+    elements.readinessTab.classList.toggle("is-active", showReadiness);
     elements.layersTab.setAttribute("aria-selected", String(showLayers));
-    elements.filtersTab.setAttribute("aria-selected", String(!showLayers));
+    elements.filtersTab.setAttribute("aria-selected", String(showFilters));
+    elements.readinessTab.setAttribute("aria-selected", String(showReadiness));
   }
   elements.layersTab.addEventListener("click", () => showSettingsTab("layers"));
   elements.filtersTab.addEventListener("click", () => showSettingsTab("filters"));
+  elements.readinessTab.addEventListener("click", () => showSettingsTab("readiness"));
   elements.layersToggle.addEventListener("click", () => {
     const hidden = !elements.layerPanel.hidden;
     if (!hidden && window.innerWidth <= 720) elements.detailPanel.hidden = true;

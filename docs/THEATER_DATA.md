@@ -50,6 +50,17 @@ features; other surveyed objects remain visual context. Point-feature
 assignments are promoted to targets automatically. Area features retain the
 small, explicitly selected target subset from the verification registry.
 A bounded proximity survey remains the fallback when no Assign As zone exists.
+An active F10 marker whose first line is `verify <feature-id>` or
+`verified <feature-id>` can override that survey's center. This supports live
+correction when the normalized OSM position and the modeled DCS location differ.
+An additional `radius 250m` or `radius 2km` line overrides the automatic survey
+radius unless `SURVEY_RADIUS_M` is explicitly set in the example.
+The marker does not itself confirm representation or select a target; those
+decisions still require surveyed or assigned fixed `SCENERY` objects. Removing
+or changing the marker removes the override from the active marker set.
+`examples/sdk/monitor_scenery_verification_markers.py` provides the corresponding
+persistent workflow: it waits for future marker add/change events, reviews one
+survey at a time, asks before saving, and then continues with the next marker.
 During a mission, destruction events for any object in the complete observed
 baseline update one stable strategic-damage loss report for the corresponding
 registered objective. This is deliberately broader than the target subset so

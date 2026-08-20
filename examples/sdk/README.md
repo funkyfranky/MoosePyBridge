@@ -61,6 +61,7 @@ configuration and is not intended to be run directly.
 | `plan_capture_goal.py` | Mission-changing | Build, approve, and execute a CAPTURE strategic plan. |
 | `plan_defend_goal.py` | Mission-changing | Build, approve, and execute a DEFEND strategic plan. |
 | `plan_destroy_goal.py` | Mission-changing | Execute DESTROY strike rounds until weighted damage is sufficient. |
+| `attack_strategic_objective.py` | Destructive | Plan and optionally execute a verified SCENERY infrastructure attack. |
 | `plan_deny_runway_goal.py` | Mission-changing | Plan and execute runway denial. |
 | `run_blue_conflict_controller.py` | Mission-changing | Run one bounded rule-based strategic decision cycle. |
 | `generate_strategic_objectives.py` | Offline/build and read-only DCS | Generate scoped objectives from territories and normalized infrastructure. |
@@ -90,6 +91,7 @@ configuration and is not intended to be run directly.
 | Example | Class | Purpose |
 |---|---|---|
 | `verify_scenery_representation.py` | Overlay/build | Verify any normalized infrastructure, railway, settlement, bridge, or junction feature against fixed DCS scenery. |
+| `monitor_scenery_verification_markers.py` | Overlay/build | Continuously turn live F10 `verify OBJECT_ID` markers into reviewed scenery surveys. |
 | `test_scenery_damage.py` | Destructive | Explode any confirmed fixed scenery target and assess its generic feature baseline. |
 
 ## Inspection

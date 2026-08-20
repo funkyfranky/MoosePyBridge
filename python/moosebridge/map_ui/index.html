@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MooseBridge Global Picture</title>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/assets/map.css?v=7">
+  <link rel="stylesheet" href="/assets/map.css?v=10">
 </head>
 <body>
   <main class="app-shell">
@@ -41,6 +41,7 @@
       <div class="panel-tabs" role="tablist" aria-label="Map display settings">
         <button id="layers-tab" class="panel-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="layer-controls">Layers</button>
         <button id="filters-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="filter-controls">Filters</button>
+        <button id="readiness-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="readiness-controls">Readiness</button>
       </div>
       <div id="layer-controls" class="layer-controls" role="tabpanel" aria-labelledby="layers-tab">
         <section class="map-appearance" aria-labelledby="map-appearance-heading">
@@ -77,6 +78,7 @@
         </section>
       </div>
       <div id="filter-controls" class="filter-controls" role="tabpanel" aria-labelledby="filters-tab" hidden></div>
+      <div id="readiness-controls" class="readiness-controls" role="tabpanel" aria-labelledby="readiness-tab" hidden></div>
     </aside>
 
     <aside id="detail-panel" class="detail-panel" aria-label="Object details" hidden>
@@ -105,6 +107,6 @@
 
   <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="/assets/map.js?v=65"></script>
+  <script src="/assets/map.js?v=68"></script>
 </body>
 </html>

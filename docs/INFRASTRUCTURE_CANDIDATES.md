@@ -143,6 +143,13 @@ road bridges, and transport junctions. Only `SCENERY` objects can enter the
 theater baseline or target selection. Mission-defined units and statics are
 deliberately excluded.
 
+For a live position correction, place an F10 marker with
+`verify <OBJECT_ID>` as its first line. The unified example can use an existing
+matching marker or wait for a newly changed marker according to
+`F10_MARKER_MODE`. Add `radius 250m` or `radius 2km` on another line when the
+default search size does not fit the feature. Marker position narrows the search to the modeled DCS
+location but remains only a survey hint, never verification evidence by itself.
+
 The preferred exact mapping uses the Mission Editor's **Assign As** action.
 Name the generated zone after the normalized web-map object ID. If DCS creates
 multiple zones, its automatic numeric suffixes (`-1`, `-2`, and so on) are

@@ -23,12 +23,14 @@ from moosebridge import (  # noqa: E402
     ObservedDcsObject,
     ScenerySurvey,
     SceneryVerificationFeature,
+    SceneryVerificationMarker,
     SceneryZoneAssignment,
     StrategicSiteVerification,
     StrategicVerificationRegistry,
     StrategicVerificationState,
     VerifiedDcsComponent,
     assess_infrastructure_state,
+    latest_scenery_verification_marker,
     scenery_zone_assignments,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT  # noqa: E402
@@ -50,6 +52,13 @@ THEATER_PROFILE: str | Path | None = None
 # None automatically covers a bounded polygon footprint. Point features use the
 # default radius. Set an explicit value for a deliberately different survey.
 SURVEY_RADIUS_M: float | None = None
+
+# "optional" uses an active F10 marker when one already exists, "wait" waits
+# for one after startup, and "off" always uses the normalized source position.
+# Marker text: verify OBJECT_ID. Later lines may contain `radius 250m` or
+# `radius 2km`; any other lines are retained as a note.
+F10_MARKER_MODE = "optional"
+F10_MARKER_WAIT_SECONDS = 300.0
 SAVE_OBSERVED_BASELINE = True
 REPLACE_OBSERVED_BASELINE = True
 DRAW_F10_OVERLAY = True
@@ -57,6 +66,7 @@ DRAW_F10_OVERLAY = True
 # Safety and display limits. DCS scenery.search accepts at most 5 km and 2,000
 # results. A survey that reaches either limit remains explicitly partial.
 DEFAULT_POINT_SURVEY_RADIUS_M = 1_000.0
+MARKER_POINT_SURVEY_RADIUS_M = 500.0
 MINIMUM_AREA_SURVEY_RADIUS_M = 500.0
 SURVEY_MARGIN_M = 50.0
 MAXIMUM_SURVEY_RADIUS_M = 5_000.0
@@ -86,13 +96,19 @@ def has_area_footprint(feature: SceneryVerificationFeature) -> bool:
     return not geometry.is_empty and geometry.geom_type in {"Polygon", "MultiPolygon"}
 
 
-def required_footprint_radius_m(feature: SceneryVerificationFeature) -> float | None:
+def required_footprint_radius_m(
+    feature: SceneryVerificationFeature,
+    center_latitude: float | None = None,
+    center_longitude: float | None = None,
+) -> float | None:
     geometry = feature_geometry(feature)
     if geometry.is_empty or geometry.geom_type not in {"Polygon", "MultiPolygon"}:
         return None
     min_lon, min_lat, max_lon, max_lat = geometry.bounds
+    latitude_origin = feature.latitude if center_latitude is None else center_latitude
+    longitude_origin = feature.longitude if center_longitude is None else center_longitude
     return max(
-        distance_m(feature.latitude, feature.longitude, latitude, longitude)
+        distance_m(latitude_origin, longitude_origin, latitude, longitude)
         for latitude, longitude in (
             (min_lat, min_lon),
             (min_lat, max_lon),
@@ -102,19 +118,33 @@ def required_footprint_radius_m(feature: SceneryVerificationFeature) -> float | 
     ) + SURVEY_MARGIN_M
 
 
-def survey_radius_m(feature: SceneryVerificationFeature) -> float:
+def survey_radius_m(
+    feature: SceneryVerificationFeature,
+    marker: SceneryVerificationMarker | None = None,
+) -> float:
     if SURVEY_RADIUS_M is not None:
         if not 0 < SURVEY_RADIUS_M <= MAXIMUM_SURVEY_RADIUS_M:
             raise ValueError("SURVEY_RADIUS_M must be in range 0..5000 or None")
         return SURVEY_RADIUS_M
-    required = required_footprint_radius_m(feature)
+    if marker is not None and marker.radius_m is not None:
+        return marker.radius_m
+    required = required_footprint_radius_m(
+        feature,
+        marker.latitude if marker is not None else None,
+        marker.longitude if marker is not None else None,
+    )
     if required is None:
-        return DEFAULT_POINT_SURVEY_RADIUS_M
+        return MARKER_POINT_SURVEY_RADIUS_M if marker is not None else DEFAULT_POINT_SURVEY_RADIUS_M
     return min(MAXIMUM_SURVEY_RADIUS_M, max(MINIMUM_AREA_SURVEY_RADIUS_M, required))
 
 
-def footprint_fully_covered(feature: SceneryVerificationFeature, radius_m: float) -> bool:
-    required = required_footprint_radius_m(feature)
+def footprint_fully_covered(
+    feature: SceneryVerificationFeature,
+    radius_m: float,
+    center_latitude: float | None = None,
+    center_longitude: float | None = None,
+) -> bool:
+    required = required_footprint_radius_m(feature, center_latitude, center_longitude)
     return required is None or required <= radius_m + 1.0
 
 
@@ -124,7 +154,12 @@ def classify_survey_objects(
 ) -> tuple[list, list]:
     objects = sorted(
         survey.objects,
-        key=lambda item: distance_m(feature.latitude, feature.longitude, item.latitude, item.longitude),
+        key=lambda item: distance_m(
+            survey.center.latitude,
+            survey.center.longitude,
+            item.latitude,
+            item.longitude,
+        ),
     )
     if not has_area_footprint(feature):
         return objects, []
@@ -146,7 +181,12 @@ def observation_complete(
     surveyed_ids = {item.object_id for item in survey.objects}
     if assigned_ids:
         return assigned_ids.issubset(surveyed_ids)
-    return not survey.truncated and footprint_fully_covered(feature, survey.radius_m)
+    return not survey.truncated and footprint_fully_covered(
+        feature,
+        survey.radius_m,
+        survey.center.latitude,
+        survey.center.longitude,
+    )
 
 
 def merge_survey_objects(
@@ -234,8 +274,17 @@ def format_survey(
     if assignments:
         queryable_count = sum(item.queryable for item in included)
         print(f"Live queryable  : {queryable_count}/{len(included)}")
-    if not assignments and not footprint_fully_covered(feature, survey.radius_m):
-        required = required_footprint_radius_m(feature)
+    if not assignments and not footprint_fully_covered(
+        feature,
+        survey.radius_m,
+        survey.center.latitude,
+        survey.center.longitude,
+    ):
+        required = required_footprint_radius_m(
+            feature,
+            survey.center.latitude,
+            survey.center.longitude,
+        )
         if required is not None and required > MAXIMUM_SURVEY_RADIUS_M:
             print(
                 "Warning         : footprint exceeds the 5 km DCS survey limit "
@@ -261,7 +310,12 @@ def format_survey(
     print(f"\n{'Distance':>9}  {'Object ID':<24} {'Type':<27} Display name")
     print(f"{'-' * 9}  {'-' * 24} {'-' * 27} {'-' * 24}")
     for item in included[:MAX_PRINTED_OBJECTS]:
-        distance = distance_m(feature.latitude, feature.longitude, item.latitude, item.longitude)
+        distance = distance_m(
+            survey.center.latitude,
+            survey.center.longitude,
+            item.latitude,
+            item.longitude,
+        )
         print(
             f"{distance:8.0f}m  {item.object_id[:24]:<24} "
             f"{(item.type_name or '-')[:27]:<27} {item.display_name or '-'}"
@@ -304,6 +358,83 @@ def format_assignments(
         print(f"  {assignment.zone_name} -> {assignment.scenery_object_id} ({availability})")
 
 
+def format_marker(
+    feature: SceneryVerificationFeature,
+    marker: SceneryVerificationMarker | None,
+) -> None:
+    print("\nF10 verification marker")
+    print("=" * 96)
+    if marker is None:
+        print("Marker          : none; normalized source position is used")
+        print(f"Command         : verify {feature.object_id}")
+        return
+    offset = distance_m(
+        feature.latitude,
+        feature.longitude,
+        marker.latitude,
+        marker.longitude,
+    )
+    print(f"Marker ID       : {marker.marker_id}")
+    print(f"Survey position : {marker.latitude:.5f}, {marker.longitude:.5f}")
+    print(f"Source offset   : {offset:.0f} m")
+    if marker.radius_m is not None:
+        print(f"Survey radius   : {marker.radius_m:.0f} m")
+    if marker.player_name:
+        print(f"Player          : {marker.player_name}")
+    if marker.note:
+        print(f"Note            : {marker.note}")
+
+
+async def resolve_verification_marker(
+    bridge: MooseBridgeClient,
+    feature: SceneryVerificationFeature,
+) -> SceneryVerificationMarker | None:
+    mode = F10_MARKER_MODE.strip().casefold()
+    if mode not in {"off", "optional", "wait"}:
+        raise ValueError("F10_MARKER_MODE must be 'off', 'optional', or 'wait'")
+    if mode == "off":
+        return None
+
+    history = await bridge.server.query_events("map.marker.*")
+    events = [item for item in history.get("events", []) if isinstance(item, dict)]
+    marker = latest_scenery_verification_marker(events, feature.object_id)
+    if marker is not None and marker.option_errors:
+        raise ValueError(
+            f"F10 marker {marker.marker_id} has invalid options: "
+            + "; ".join(marker.option_errors)
+        )
+    if marker is not None or mode == "optional":
+        return marker
+
+    print("\nWaiting for an F10 verification marker.")
+    print(f"Create or edit a marker with this first line: verify {feature.object_id}")
+    cursor = str(history.get("latest_event_id") or "") or None
+    deadline = asyncio.get_running_loop().time() + F10_MARKER_WAIT_SECONDS
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise TimeoutError(
+                f"No F10 verification marker received within {F10_MARKER_WAIT_SECONDS:g} seconds"
+            )
+        event = await bridge.server.wait_for_event(
+            "map.marker.*",
+            timeout=remaining,
+            after_id=cursor,
+        )
+        if str(event.get("event") or "") == "mission.ended":
+            raise RuntimeError("DCS mission ended while waiting for an F10 verification marker")
+        events.append(event)
+        cursor = str(event.get("id") or "") or cursor
+        marker = latest_scenery_verification_marker(events, feature.object_id)
+        if marker is not None:
+            if marker.option_errors:
+                raise ValueError(
+                    f"F10 marker {marker.marker_id} has invalid options: "
+                    + "; ".join(marker.option_errors)
+                )
+            return marker
+
+
 def include_assigned_objects(
     feature: SceneryVerificationFeature,
     included: list,
@@ -317,8 +448,8 @@ def include_assigned_objects(
     ordered = sorted(
         survey.objects,
         key=lambda item: distance_m(
-            feature.latitude,
-            feature.longitude,
+            survey.center.latitude,
+            survey.center.longitude,
             item.latitude,
             item.longitude,
         ),
@@ -487,6 +618,8 @@ def feature_color(feature: SceneryVerificationFeature) -> tuple[float, float, fl
 def overlay_markups(
     feature: SceneryVerificationFeature,
     radius_m: float,
+    survey_latitude: float,
+    survey_longitude: float,
     included: list,
     nearby: list,
     assigned_object_ids: set[str],
@@ -502,12 +635,31 @@ def overlay_markups(
         ),
         DebugMarkup(
             "point",
-            (DebugMarkupPoint(feature.latitude, feature.longitude),),
+            (DebugMarkupPoint(survey_latitude, survey_longitude),),
             color=color,
             fill_color=(*color[:3], 0.08),
             radius_m=radius_m,
         ),
     ]
+    if distance_m(feature.latitude, feature.longitude, survey_latitude, survey_longitude) > 1:
+        marks.extend((
+            DebugMarkup(
+                "line",
+                (
+                    DebugMarkupPoint(feature.latitude, feature.longitude),
+                    DebugMarkupPoint(survey_latitude, survey_longitude),
+                ),
+                color=(1.0, 0.8, 0.0, 1.0),
+                line_type=2,
+            ),
+            DebugMarkup(
+                "point",
+                (DebugMarkupPoint(survey_latitude, survey_longitude),),
+                color=(1.0, 0.8, 0.0, 1.0),
+                fill_color=(1.0, 0.8, 0.0, 0.35),
+                radius_m=60,
+            ),
+        ))
     marks.extend(footprint_markups(feature, color))
     marks.extend(
         DebugMarkup(
@@ -550,17 +702,21 @@ def survey_objects_for_ids(objects, object_ids: set[str]) -> list:
 async def run() -> int:
     theater, theater_paths, feature = load_example_scenery_feature(OBJECT_ID, THEATER_PROFILE)
     verifications_path = theater_paths.path("strategic_verifications")
-    radius_m = survey_radius_m(feature)
     session = await open_example_session(CONTROL_HOST, CONTROL_PORT, COMMAND_TIMEOUT_SECONDS)
     bridge: MooseBridgeClient = session.bridge
     await bridge.snapshot_zones()
     assignments = scenery_zone_assignments(feature.object_id, bridge.state.zones)
+    marker = await resolve_verification_marker(bridge, feature)
+    radius_m = survey_radius_m(feature, marker)
+    survey_latitude = marker.latitude if marker is not None else feature.latitude
+    survey_longitude = marker.longitude if marker is not None else feature.longitude
 
     format_feature(feature, theater.theater_id)
     format_verification(feature, theater.theater_id, verifications_path)
+    format_marker(feature, marker)
     survey = await bridge.survey_scenery(
-        feature.latitude,
-        feature.longitude,
+        survey_latitude,
+        survey_longitude,
         radius_m=radius_m,
         max_results=MAX_SCENERY_OBJECTS,
         timeout=COMMAND_TIMEOUT_SECONDS,
@@ -594,6 +750,8 @@ async def run() -> int:
             overlay_markups(
                 feature,
                 radius_m,
+                survey_latitude,
+                survey_longitude,
                 included,
                 nearby,
                 {item.scenery_object_id for item in assignments},

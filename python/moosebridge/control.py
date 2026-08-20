@@ -446,7 +446,9 @@ class MooseBridgeControlClient:
         :returns: Status payload.
         """
 
-        return await self.request("control.status", timeout=timeout)
+        result = await self.request("control.status", timeout=timeout)
+        apply_state_payload(self.state, result)
+        return result
 
     async def get_state(self, kinds: Iterable[str] | None = None, timeout: float = 10.0) -> MooseBridgeState:
         """Fetch current daemon state into the local state mirror.

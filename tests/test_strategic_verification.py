@@ -7,7 +7,10 @@ import json
 import pytest
 
 from moosebridge.scenery_verification import (
+    active_scenery_verification_markers,
+    latest_scenery_verification_marker,
     resolve_scenery_verification_feature,
+    scenery_verification_marker_from_event,
     scenery_zone_assignments,
 )
 from moosebridge.strategic_verification import (
@@ -63,6 +66,123 @@ def test_common_scenery_resolver_loads_all_supported_artifacts(tmp_path) -> None
 
     assert set(resolved) == expected_ids
     assert resolved["SETTLEMENT:2"].artifact_key == "settlements"  # type: ignore[union-attr]
+
+
+def test_scenery_verification_marker_parses_f10_command_and_note() -> None:
+    event = {
+        "type": "event",
+        "event": "map.marker.changed",
+        "id": "event-12",
+        "mission_time": 42.5,
+        "payload": {
+            "marker_id": 2516,
+            "text": "verified BRIDGE:Caucasus:04b3c5b8894c\nradius 1.5km\nbridge",
+            "latitude": 41.75,
+            "longitude": 42.125,
+            "x": -123.0,
+            "y": 45.0,
+            "z": 678.0,
+            "player_name": "Pilot",
+            "coalition": "blue",
+        },
+    }
+
+    marker = scenery_verification_marker_from_event(event)
+
+    assert marker is not None
+    assert marker.source_id == "BRIDGE:Caucasus:04b3c5b8894c"
+    assert marker.marker_id == "2516"
+    assert marker.note == "bridge"
+    assert marker.radius_m == 1500.0
+    assert marker.option_errors == ()
+    assert marker.latitude == 41.75
+    assert marker.longitude == 42.125
+    assert marker.player_name == "Pilot"
+    assert marker.event_id == "event-12"
+
+
+def test_active_scenery_verification_markers_follow_change_and_remove_events() -> None:
+    source_id = "BRIDGE:Caucasus:04b3c5b8894c"
+    events = [
+        {
+            "type": "event",
+            "event": "map.marker.added",
+            "payload": {
+                "marker_id": 7,
+                "text": "",
+                "latitude": 41.0,
+                "longitude": 42.0,
+            },
+        },
+        {
+            "type": "event",
+            "event": "map.marker.changed",
+            "payload": {
+                "marker_id": 7,
+                "text": f"verify {source_id}",
+                "latitude": 41.1,
+                "longitude": 42.1,
+            },
+        },
+        {
+            "type": "event",
+            "event": "map.marker.changed",
+            "payload": {
+                "marker_id": 8,
+                "text": f"VERIFY {source_id}",
+                "latitude": 41.2,
+                "longitude": 42.2,
+            },
+        },
+        {
+            "type": "event",
+            "event": "map.marker.removed",
+            "payload": {"marker_id": 7},
+        },
+    ]
+
+    active = active_scenery_verification_markers(events)
+    latest = latest_scenery_verification_marker(events, source_id.lower())
+
+    assert [marker.marker_id for marker in active] == ["8"]
+    assert latest is not None
+    assert latest.marker_id == "8"
+    assert latest.latitude == 41.2
+
+
+def test_scenery_verification_marker_ignores_unrelated_or_positionless_marks() -> None:
+    assert scenery_verification_marker_from_event({
+        "type": "event",
+        "event": "map.marker.changed",
+        "payload": {
+            "marker_id": 1,
+            "text": "ordinary mission note",
+            "latitude": 41.0,
+            "longitude": 42.0,
+        },
+    }) is None
+    assert scenery_verification_marker_from_event({
+        "type": "event",
+        "event": "map.marker.changed",
+        "payload": {"marker_id": 1, "text": "verify BRIDGE:Caucasus:test"},
+    }) is None
+
+
+def test_scenery_verification_marker_reports_invalid_radius_options() -> None:
+    marker = scenery_verification_marker_from_event({
+        "type": "event",
+        "event": "map.marker.changed",
+        "payload": {
+            "marker_id": 9,
+            "text": "verify BRIDGE:Caucasus:test\nradius 8km",
+            "latitude": 41.0,
+            "longitude": 42.0,
+        },
+    })
+
+    assert marker is not None
+    assert marker.radius_m is None
+    assert marker.option_errors == ("radius must be greater than 0 and at most 5000 m",)
 
 
 def test_common_scenery_resolver_rejects_theater_mismatch(tmp_path) -> None:

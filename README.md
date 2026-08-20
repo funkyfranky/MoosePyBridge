@@ -992,6 +992,12 @@ with the last known object state, removes stale ammunition data, and updates
 strategic component health without requesting another snapshot. This remains
 fully event-driven and does not poll destroyed objects.
 
+`EVENTS.MarkAdded`, `EVENTS.MarkChange`, and `EVENTS.MarkRemoved` are forwarded
+as `map.marker.added`, `map.marker.changed`, and `map.marker.removed`. Their
+payload contains the marker ID, text, DCS and WGS84 position, visibility
+coalition, group, and player name when DCS supplies them. Python interprets
+verification commands; Lua deliberately forwards marker text unchanged.
+
 `EVENTS.MissionEnd` is forwarded as `mission.ended` and defines the hard
 boundary of one Python mission session. The daemon clears its mirrored DCS and
 MOOSE state, while every active SDK client clears mission-scoped information
@@ -1786,6 +1792,25 @@ strategic locations. Naval bases remain military sites. The model records
 explicit cargo types plus footprint, approximate quay length, berth count,
 importance, and source membership; it does not infer throughput where OSM has
 no capacity evidence.
+
+An F10 marker can provide a corrected DCS survey position while the mission is
+running. Use `verify <OBJECT_ID>` or `verified <OBJECT_ID>` as its first line.
+An optional `radius 250m` or `radius 2km` line controls the bounded scenery
+search; other lines are retained as a note. `F10_MARKER_MODE="optional"` uses an
+already active matching marker, `"wait"` waits for one, and `"off"` always uses
+the normalized source position. A marker is only a location hint: it never marks
+a feature as represented without corresponding fixed `SCENERY` evidence.
+
+For a sequence of live checks, start the persistent marker monitor once:
+
+```powershell
+python examples/sdk/monitor_scenery_verification_markers.py
+```
+
+It processes each subsequently added or changed `verify` marker, resolves the
+feature and theater from its object ID, draws the bounded survey, and asks in
+the terminal before creating or replacing an observation baseline. It then
+clears the overlay and waits for the next marker until the mission ends.
 
 Named cities and towns use a separate normalized artifact:
 

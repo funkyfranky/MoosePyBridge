@@ -788,6 +788,7 @@ def test_operational_execution_builds_scenery_strike_from_geographic_position() 
 
     assert command.mission_type == "STRIKE"
     assert command.to_params() == {
+        "target": "SCENERY:70254625",
         "latitude": 41.664066994884,
         "longitude": 41.681539555042,
     }
@@ -1126,6 +1127,92 @@ class _DestroyExecutionServer(_ExecutionServer):
             }
         )
         return {"ok": True, "result": {"kind": "statics", "count": 2}}
+
+
+class _SceneryDestroyExecutionServer(_ExecutionServer):
+    """Execution server that retains a SCENERY loss beside AUFTRAG events."""
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
+        self._event_number += 1
+        self.event_history.append(
+            {
+                "type": "event",
+                "id": f"event-{self._event_number}",
+                "event": "object.destroyed",
+                "mission_time": 120.0,
+                "payload": {
+                    "object_id": "SCENERY:Bridge",
+                    "object_type": "SCENERY",
+                    "dcs_event_name": "S_EVENT_DEAD",
+                    "object": {
+                        "object_id": "SCENERY:Bridge",
+                        "object_type": "SCENERY",
+                        "dcs_type": "MOST(ROAD)BIG",
+                        "alive": False,
+                        "active": False,
+                        "x": -349_070.875,
+                        "y": 21.559,
+                        "z": 623_555.0,
+                    },
+                },
+            }
+        )
+        self._event_number += 1
+        event = {
+            "type": "event",
+            "id": f"event-{self._event_number}",
+            "event": "auftrag.evaluated",
+            "payload": {
+                "auftrag_id": auftrag_id,
+                "auftrag_type": "STRIKE",
+                "status": "Done",
+                "summary": {"success": True, "Ntargets0": 1, "Ntargets": 0},
+            },
+        }
+        self.event_history.append(event)
+        return event
+
+
+class _LiveSceneryDestroyExecutionServer(_SceneryDestroyExecutionServer):
+    """Mirror direct-server delivery where the loss is already in state."""
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        event = await super().wait_for_event(event_name, filters, timeout, after_id)
+        destroyed = next(
+            item for item in reversed(self.event_history) if item.get("event") == "object.destroyed"
+        )
+        self.state.apply_message(destroyed)
+        return event
+
+
+class _IncompleteSceneryDestroyExecutionServer(_SceneryDestroyExecutionServer):
+    """Simulate a destruction cursor evicted from bounded event history."""
+
+    async def event_cursor(self) -> str | None:
+        return "event-expired"
+
+    async def query_events(
+        self,
+        event_name: str = "*",
+        filters: dict[str, Any] | None = None,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        result = await super().query_events(event_name, filters, after_id)
+        result["history_complete"] = False
+        return result
 
 
 class _DuplicateStatusExecutionServer(_ExecutionServer):
@@ -1505,6 +1592,115 @@ def _replace_destroy_server(
     state = bridge.state
     server.state = state
     bridge.server = server  # type: ignore[assignment]
+
+
+def _executable_scenery_destroy_plan(
+    server: _SceneryDestroyExecutionServer | None = None,
+) -> tuple[MooseBridgeClient, OperationalPlan]:
+    server = server or _SceneryDestroyExecutionServer()
+    bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+    bridge.add_strategic_objective(
+        StrategicObjective(
+            objective_id="OBJECTIVE:Bridge",
+            name="Bridge",
+            kind=ObjectiveKind.INFRASTRUCTURE,
+            control_object_id=None,
+            ownership_policy=OwnershipPolicy.FIXED,
+            owner="blue",
+            components=(ObjectiveComponent("SCENERY:Bridge", role="bridge", weight=1.0),),
+            metadata={"source_object_id": "BRIDGE:Caucasus:test"},
+        )
+    )
+    bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id="GOAL:Destroy Bridge",
+            name="Destroy Bridge",
+            coalition="red",
+            action=StrategicGoalAction.DESTROY,
+            objective_id="OBJECTIVE:Bridge",
+            required_damage=1.0,
+        )
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "commanders",
+            "payload": {
+                "commanders": [{
+                    "object_id": "COMMANDER:Red Command",
+                    "object_type": "COMMANDER",
+                    "coalition": "red",
+                    "legion_ids": ["LEGION:Red Wing"],
+                }]
+            },
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "legions",
+            "payload": {"legions": [{"object_id": "LEGION:Red Wing", "coalition": "red"}]},
+        }
+    )
+    bridge.state.apply_message(
+        {
+            "type": "snapshot",
+            "kind": "cohorts",
+            "payload": {
+                "cohorts": [{
+                    "object_id": "COHORT:Red Strike",
+                    "legion_id": "LEGION:Red Wing",
+                    "is_air": True,
+                    "stock_asset_count": 2,
+                    "available_asset_count": 2,
+                    "mission_types": ["STRIKE"],
+                    "payloads_by_mission": {
+                        "STRIKE": {"available_count": 1, "total_available": 2}
+                    },
+                }]
+            },
+        }
+    )
+    plan = bridge.add_operational_plan(
+        OperationalPlan(
+            plan_id="PLAN:Destroy Bridge",
+            name="Destroy Bridge",
+            goal_id="GOAL:Destroy Bridge",
+            coalition="red",
+            phases=(
+                PlanPhase(
+                    phase_id="strike",
+                    name="Strike",
+                    intents=(
+                        MissionIntent(
+                            intent_id="destroy-bridge",
+                            name="Destroy bridge",
+                            auftrag_types=("STRIKE",),
+                            target_object_id="SCENERY:Bridge",
+                            asset_requirements=(
+                                AssetRequirement(
+                                    requirement_id="REQ:Strike",
+                                    role=AssetRole.COMBAT,
+                                    mission_types=("STRIKE",),
+                                    performer_categories=("AIR",),
+                                    require_payload=True,
+                                ),
+                            ),
+                            metadata={
+                                "auftrag_params": {
+                                    "x": -349_070.875,
+                                    "z": 623_555.0,
+                                }
+                            },
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    bridge.validate_operational_plan(plan)
+    bridge.approve_operational_plan(plan)
+    return bridge, plan
 
 
 def _executable_disable_plan(*, success: bool = True) -> tuple[MooseBridgeClient, OperationalPlan]:
@@ -1973,6 +2169,57 @@ def test_execute_destroy_plan_refreshes_weighted_components_and_confirms_goal() 
 
         restored = execution_from_dict(execution_to_dict(execution))
         assert restored.damage_assessments == execution.damage_assessments
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_replays_retained_scenery_destruction_before_assessment() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_scenery_destroy_plan()
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert execution.missions[0].status is PlanMissionStatus.SUCCEEDED
+        assert "SCENERY:Bridge" in bridge.state.destroyed_object_ids
+        objective = bridge.strategic_objective("OBJECTIVE:Bridge")
+        goal = bridge.strategic_goal("GOAL:Destroy Bridge")
+        assert objective is not None and objective.health == 0.0
+        assert goal is not None and goal.status is StrategicGoalStatus.ACHIEVED
+        assert execution.damage_assessments[0].achieved_damage == 1.0
+        assert execution.damage_assessments[0].satisfied is True
+        report = bridge.state.loss_reports["LOSS:STRATEGIC:OBJECTIVE:Bridge"]
+        assert report["status"] == "destroyed"
+        assert report["destroyed_component_ids"] == ["SCENERY:Bridge"]
+        assert sum(event.get("event") == "object.destroyed" for event in bridge.state.events) == 1
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_does_not_duplicate_live_scenery_destruction_event() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_scenery_destroy_plan(_LiveSceneryDestroyExecutionServer())
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert sum(event.get("event") == "object.destroyed" for event in bridge.state.events) == 1
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_blocks_when_destruction_history_is_incomplete() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_scenery_destroy_plan(_IncompleteSceneryDestroyExecutionServer())
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert execution.blocked_reason == (
+            "strategic goal monitoring failed: DCS destruction event history is incomplete; "
+            "strategic damage cannot be assessed reliably"
+        )
+        assert "SCENERY:Bridge" not in bridge.state.destroyed_object_ids
 
     asyncio.run(scenario())
 

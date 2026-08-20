@@ -15,6 +15,7 @@ from typing import Any, AsyncIterator
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from shapely.geometry import Point, shape
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -134,6 +135,64 @@ def compact_dcs_marker_text(properties: dict[str, Any], *, max_length: int = 180
     if len(text) > max_length:
         text = text[: max(1, max_length - 3)].rstrip() + "..."
     return text
+
+
+def _scenery_readiness(
+    verification: StrategicSiteVerification | None,
+) -> tuple[str, list[str], dict[str, Any]]:
+    """Classify one saved scenery mapping for automatic strategic use."""
+
+    if verification is None:
+        return "review", ["unverified"], {
+            "verification_state": "unverified",
+            "baseline_complete": False,
+            "baseline_count": 0,
+            "target_count": 0,
+            "queryable_target_count": 0,
+        }
+    diagnostics = {
+        "verification_state": verification.state.value,
+        "baseline_complete": verification.observation_complete,
+        "baseline_count": len(verification.observed_objects),
+        "target_count": len(verification.target_components),
+        "queryable_target_count": 0,
+    }
+    if verification.state is StrategicVerificationState.NOT_REPRESENTED:
+        return "excluded", ["not_represented"], diagnostics
+
+    observed_by_id = {item.object_id: item for item in verification.observed_objects}
+    queryable_target_count = sum(
+        (observed := observed_by_id.get(component.object_id)) is not None
+        and (observed.exists is True or observed.life is not None)
+        for component in verification.target_components
+    )
+    diagnostics["queryable_target_count"] = queryable_target_count
+    reasons: list[str] = []
+    if verification.state is not StrategicVerificationState.REPRESENTED:
+        reasons.append("unverified")
+    if not verification.observation_complete:
+        reasons.append("baseline_incomplete")
+    if not verification.target_components:
+        reasons.append("no_target_components")
+    elif queryable_target_count != len(verification.target_components):
+        reasons.append("target_not_queryable")
+    if reasons:
+        return "review", reasons, diagnostics
+    return "usable", ["verified_targets"], diagnostics
+
+
+def _scope_at_geographic_point(
+    latitude: float,
+    longitude: float,
+    geometries: dict[str, list[Any]],
+) -> str:
+    """Resolve a WGS84 point against browser-facing strategic-scope polygons."""
+
+    point = Point(float(longitude), float(latitude))
+    for state in ("contested", "blue", "red", "neutral"):
+        if any(area.covers(point) for area in geometries.get(state, ())):
+            return state
+    return "out_of_scope"
 
 
 def _distance_m(first: TrackPoint, second: TrackPoint) -> float:
@@ -285,6 +344,197 @@ class GlobalMapRuntime:
         if self.strategic_verifications_path is not None:
             self._strategic_verifications = self._read_strategic_verifications()
         return self._strategic_verifications.to_dict()
+
+    def verification_readiness_payload(self) -> dict[str, Any]:
+        """Return a compact readiness view for strategic infrastructure candidates."""
+
+        if self.strategic_verifications_path is not None:
+            self._strategic_verifications = self._read_strategic_verifications()
+
+        objectives_by_source = {
+            str(properties.get("source_object_id") or ""): properties
+            for feature in self.picture.get("features") or ()
+            if isinstance(feature, dict)
+            and isinstance((properties := feature.get("properties")), dict)
+            and properties.get("layer") == "strategic_objectives"
+            and properties.get("generated") is True
+            and properties.get("source_object_id")
+        }
+        scope_geometries: dict[str, list[Any]] = {
+            "blue": [],
+            "red": [],
+            "neutral": [],
+            "contested": [],
+        }
+        for feature in self.picture.get("features") or ():
+            if not isinstance(feature, dict):
+                continue
+            properties = feature.get("properties")
+            if not isinstance(properties, dict) or properties.get("layer") != "strategic_scope":
+                continue
+            scope_state = str(properties.get("scope_state") or "")
+            if scope_state not in scope_geometries:
+                continue
+            try:
+                scope_geometries[scope_state].append(shape(feature.get("geometry") or {}))
+            except (TypeError, ValueError):
+                continue
+
+        items: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for feature in self._strategic_scenery_candidates():
+            if feature.object_id in seen_ids:
+                continue
+            seen_ids.add(feature.object_id)
+            verification = self._strategic_verifications.get(feature.object_id)
+            readiness, reasons, diagnostics = _scenery_readiness(verification)
+            objective = objectives_by_source.get(feature.object_id)
+            scope_state = str((objective or {}).get("scope_state") or "") or _scope_at_geographic_point(
+                feature.latitude,
+                feature.longitude,
+                scope_geometries,
+            )
+            items.append(
+                {
+                    "object_id": feature.object_id,
+                    "name": feature.name,
+                    "layer": feature.layer,
+                    "category": feature.category,
+                    "source_kind": feature.artifact_key,
+                    "source": feature.source,
+                    "latitude": feature.latitude,
+                    "longitude": feature.longitude,
+                    "readiness": readiness,
+                    "reason": reasons[0],
+                    "reasons": reasons,
+                    "scope_state": scope_state,
+                    "objective_generated": objective is not None,
+                    "native": False,
+                    **diagnostics,
+                }
+            )
+
+        for feature in self.picture.get("features") or ():
+            if not isinstance(feature, dict):
+                continue
+            properties = feature.get("properties")
+            geometry = feature.get("geometry")
+            if (
+                not isinstance(properties, dict)
+                or properties.get("layer") != "airbases"
+                or not isinstance(geometry, dict)
+                or geometry.get("type") != "Point"
+            ):
+                continue
+            object_id = str(properties.get("object_id") or "")
+            coordinates = geometry.get("coordinates") or ()
+            if not object_id or object_id in seen_ids or len(coordinates) < 2:
+                continue
+            seen_ids.add(object_id)
+            longitude, latitude = float(coordinates[0]), float(coordinates[1])
+            objective = objectives_by_source.get(object_id)
+            scope_state = str((objective or {}).get("scope_state") or "") or _scope_at_geographic_point(
+                latitude,
+                longitude,
+                scope_geometries,
+            )
+            items.append(
+                {
+                    "object_id": object_id,
+                    "name": str(properties.get("name") or properties.get("dcs_name") or object_id),
+                    "layer": "airbases",
+                    "category": str(properties.get("category") or "airbase"),
+                    "source_kind": "dcs_native",
+                    "source": "DCS",
+                    "latitude": latitude,
+                    "longitude": longitude,
+                    "readiness": "usable",
+                    "reason": "dcs_native",
+                    "reasons": ["dcs_native"],
+                    "scope_state": scope_state,
+                    "objective_generated": objective is not None,
+                    "native": True,
+                    "verification_state": "native",
+                    "baseline_complete": True,
+                    "baseline_count": 1,
+                    "target_count": 1,
+                    "queryable_target_count": 1,
+                }
+            )
+
+        scope_order = {"blue": 0, "red": 1, "neutral": 2, "contested": 3, "out_of_scope": 4}
+        readiness_order = {"usable": 0, "review": 1, "excluded": 2}
+        items.sort(
+            key=lambda item: (
+                scope_order.get(str(item["scope_state"]), 5),
+                readiness_order.get(str(item["readiness"]), 3),
+                str(item["name"]).casefold(),
+                str(item["object_id"]),
+            )
+        )
+        in_scope = [item for item in items if item["scope_state"] != "out_of_scope"]
+        return {
+            "theater_id": self.theater_id,
+            "summary": {
+                "total": len(items),
+                "in_scope": len(in_scope),
+                "out_of_scope": len(items) - len(in_scope),
+                "usable": sum(item["readiness"] == "usable" for item in in_scope),
+                "review": sum(item["readiness"] == "review" for item in in_scope),
+                "excluded": sum(item["readiness"] == "excluded" for item in in_scope),
+                "objectives": sum(item["objective_generated"] for item in in_scope),
+            },
+            # Outside candidates only contribute to the summary. Sending every
+            # feature outside the mission scope makes theater-wide datasets
+            # unnecessarily large without helping the active conflict view.
+            "items": in_scope,
+        }
+
+    def _strategic_scenery_candidates(self) -> tuple[SceneryVerificationFeature, ...]:
+        """Return normalized theater features that pass strategic importance policy."""
+
+        candidates: list[SceneryVerificationFeature] = []
+        sources: tuple[tuple[str, tuple[Any, ...]], ...] = (
+            (
+                "settlements",
+                self._settlements.settlements if self._settlements is not None else (),
+            ),
+            (
+                "transport_infrastructure",
+                (
+                    (*self._transport_infrastructure.bridges, *self._transport_infrastructure.junctions)
+                    if self._transport_infrastructure is not None
+                    else ()
+                ),
+            ),
+            (
+                "railway_infrastructure",
+                self._railway_infrastructure.locations if self._railway_infrastructure is not None else (),
+            ),
+            (
+                "infrastructure_sites",
+                self._infrastructure_sites.sites if self._infrastructure_sites is not None else (),
+            ),
+        )
+        for artifact_key, values in sources:
+            for value in values:
+                raw_feature = value.to_geojson_feature()
+                properties = raw_feature.get("properties") or {}
+                score = _number(properties.get("importance_score")) or 0.0
+                is_unscored_fuel_storage = (
+                    artifact_key == "infrastructure_sites"
+                    and properties.get("site_kind") == "fuel_storage"
+                    and score == 0
+                )
+                if score < 50 and not is_unscored_fuel_storage:
+                    continue
+                candidates.append(
+                    SceneryVerificationFeature.from_geojson_feature(
+                        raw_feature,
+                        artifact_key=artifact_key,
+                    )
+                )
+        return tuple(candidates)
 
     def save_strategic_verification(self, payload: dict[str, Any]) -> StrategicSiteVerification:
         """Validate and persist one source-site mapping."""
@@ -1606,6 +1856,10 @@ def create_app(
     @app.get("/api/strategic-verifications")
     async def strategic_verifications() -> dict[str, Any]:
         return runtime.strategic_verifications_payload()
+
+    @app.get("/api/verification-readiness")
+    async def verification_readiness() -> dict[str, Any]:
+        return runtime.verification_readiness_payload()
 
     @app.put("/api/strategic-verifications/{source_id:path}")
     async def save_strategic_verification(source_id: str, payload: dict[str, Any]) -> dict[str, Any]:

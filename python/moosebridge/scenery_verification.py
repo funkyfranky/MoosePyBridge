@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import re
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from shapely.geometry import shape
 
@@ -100,6 +100,145 @@ class SceneryZoneAssignment:
     zone_name: str
     zone_object_id: str
     scenery_object_id: str
+
+
+@dataclass(slots=True, frozen=True)
+class SceneryVerificationMarker:
+    """One active F10 marker that positions a scenery verification survey."""
+
+    source_id: str
+    marker_id: str
+    text: str
+    note: str
+    latitude: float
+    longitude: float
+    radius_m: float | None = None
+    option_errors: tuple[str, ...] = ()
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    player_name: str | None = None
+    coalition: str | None = None
+    event_id: str | None = None
+    mission_time: float | None = None
+
+
+_VERIFICATION_MARKER_COMMAND = re.compile(
+    r"^\s*(?:verify|verified)\s+([^\s]+)\s*$",
+    re.IGNORECASE,
+)
+_VERIFICATION_MARKER_RADIUS = re.compile(
+    r"^\s*radius\s*(?:=|:)?\s*(\d+(?:[.,]\d+)?)\s*(m|km)?\s*$",
+    re.IGNORECASE,
+)
+_MAXIMUM_MARKER_RADIUS_M = 5_000.0
+
+
+def scenery_verification_marker_from_event(
+    event: Mapping[str, Any],
+) -> SceneryVerificationMarker | None:
+    """Parse a ``verify OBJECT_ID`` command from one normalized marker event."""
+
+    payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+    event_name = str(event.get("event") or payload.get("event") or "")
+    if event_name not in {"map.marker.added", "map.marker.changed"}:
+        return None
+    text = str(payload.get("text") or event.get("text") or "").strip()
+    lines = text.splitlines()
+    if not lines:
+        return None
+    match = _VERIFICATION_MARKER_COMMAND.fullmatch(lines[0])
+    if match is None:
+        return None
+    latitude = _optional_float(payload.get("latitude", event.get("latitude")))
+    longitude = _optional_float(payload.get("longitude", event.get("longitude")))
+    marker_id = payload.get("marker_id", event.get("marker_id"))
+    if latitude is None or longitude is None or marker_id is None:
+        return None
+    radius_m: float | None = None
+    option_errors: list[str] = []
+    note_lines: list[str] = []
+    for line in lines[1:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not stripped.casefold().startswith("radius"):
+            note_lines.append(stripped)
+            continue
+        radius_match = _VERIFICATION_MARKER_RADIUS.fullmatch(stripped)
+        if radius_match is None:
+            option_errors.append(f"invalid radius option: {stripped}")
+            continue
+        value = float(radius_match.group(1).replace(",", "."))
+        if (radius_match.group(2) or "m").casefold() == "km":
+            value *= 1_000
+        if not 0 < value <= _MAXIMUM_MARKER_RADIUS_M:
+            option_errors.append(
+                f"radius must be greater than 0 and at most {_MAXIMUM_MARKER_RADIUS_M:g} m"
+            )
+            continue
+        if radius_m is not None:
+            option_errors.append("radius may only be specified once")
+            continue
+        radius_m = value
+    return SceneryVerificationMarker(
+        source_id=match.group(1),
+        marker_id=str(marker_id),
+        text=text,
+        note="\n".join(note_lines),
+        latitude=latitude,
+        longitude=longitude,
+        radius_m=radius_m,
+        option_errors=tuple(option_errors),
+        x=_optional_float(payload.get("x", event.get("x"))),
+        y=_optional_float(payload.get("y", event.get("y"))),
+        z=_optional_float(payload.get("z", event.get("z"))),
+        player_name=_optional_string(payload.get("player_name", event.get("player_name"))),
+        coalition=_optional_string(payload.get("coalition", event.get("coalition"))),
+        event_id=_optional_string(event.get("id")),
+        mission_time=_optional_float(event.get("mission_time", payload.get("mission_time"))),
+    )
+
+
+def active_scenery_verification_markers(
+    events: Iterable[Mapping[str, Any]],
+) -> tuple[SceneryVerificationMarker, ...]:
+    """Reconstruct active verification markers from retained marker events."""
+
+    active: dict[str, SceneryVerificationMarker] = {}
+    for event in events:
+        payload = event.get("payload") if isinstance(event.get("payload"), Mapping) else {}
+        event_name = str(event.get("event") or payload.get("event") or "")
+        raw_marker_id = payload.get("marker_id", event.get("marker_id"))
+        if raw_marker_id is None:
+            continue
+        marker_id = str(raw_marker_id)
+        if event_name == "map.marker.removed":
+            active.pop(marker_id, None)
+            continue
+        if event_name not in {"map.marker.added", "map.marker.changed"}:
+            continue
+        marker = scenery_verification_marker_from_event(event)
+        if marker is None:
+            active.pop(marker_id, None)
+        else:
+            active[marker_id] = marker
+    return tuple(active.values())
+
+
+def latest_scenery_verification_marker(
+    events: Iterable[Mapping[str, Any]],
+    source_id: str,
+) -> SceneryVerificationMarker | None:
+    """Return the newest active marker for one normalized theater feature."""
+
+    normalized_source_id = source_id.strip().casefold()
+    matching = [
+        marker
+        for marker in active_scenery_verification_markers(events)
+        if marker.source_id.casefold() == normalized_source_id
+    ]
+    return matching[-1] if matching else None
 
 
 def scenery_zone_assignments(
@@ -219,6 +358,13 @@ def _optional_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
 def _normalize_scenery_object_id(value: object) -> str | None:
