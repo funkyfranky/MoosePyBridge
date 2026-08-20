@@ -334,6 +334,11 @@ Current operational-planning baseline:
   plans, automatic phase progression, parallel required AUFTRAG monitoring, optional support
   missions, one-shot target existence preflight, and blocked-state handoff
   without automatic retries.
+- `OperationalPlanExecutor` owns phase order, dependencies, revalidation, and
+  strategic effects. `MissionExecutionService` owns one concrete MOOSE
+  AUFTRAG from submission through ACK correlation, status/evaluation events,
+  RECON position sampling, and cancellation. Plan-level persistence and
+  callbacks consume the service's transport-neutral lifecycle events.
 - Blocked plans can be returned explicitly to draft state. Completed phases
   are preserved, remaining targets and allowed LEGION/COHORT constraints can
   be revised, and a fresh validation plus approval is required before resume.

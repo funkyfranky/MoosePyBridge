@@ -29,7 +29,14 @@ from .auftraege import (
     Auftrag_SEAD,
     Auftrag_STRIKE,
     AuftragCommand,
-    AuftragEvent,
+)
+from .mission_execution_service import (
+    CommandAckReference,
+    MissionExecutionService,
+    MissionLifecycleCallback,
+    MissionLifecycleEvent,
+    PlanMissionExecution,
+    PlanMissionStatus,
 )
 from .operational import (
     AssetRequirement,
@@ -44,7 +51,6 @@ from .outcomes import AuftragOutcome
 from .recon import (
     ReconOutcome,
     ReconRequirement,
-    ReconTrackSample,
     ReconTrackingSession,
     build_recon_outcome,
 )
@@ -63,19 +69,6 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 PLAN_EXECUTION_AUDIT_TYPE = "operational_plan.execution"
-RECON_POSITION_SAMPLE_INTERVAL_S = 10.0
-
-
-class PlanMissionStatus(str, Enum):
-    """Execution state of one concrete AUFTRAG created from a requirement."""
-
-    PENDING = "pending"
-    SKIPPED = "skipped"
-    SUBMITTED = "submitted"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 class PlanReconciliationStatus(str, Enum):
@@ -179,43 +172,6 @@ class PlanExecutionEvent:
 
 
 @dataclass(slots=True, frozen=True)
-class CommandAckReference:
-    """Compact reference from a submitted plan mission to its bridge ACK."""
-
-    ack_id: str | None = None
-    correlation_id: str | None = None
-    sequence: int | None = None
-    result: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(slots=True)
-class PlanMissionExecution:
-    """Runtime record connecting one requirement to one MOOSE AUFTRAG."""
-
-    phase_id: str
-    intent_id: str
-    requirement_id: str
-    mission_type: str
-    required: bool
-    command: AuftragCommand | None = field(default=None, repr=False)
-    persistent: bool = False
-    established_on: str | None = None
-    command_snapshot: dict[str, Any] = field(default_factory=dict)
-    weapon_range_ack: CommandAckReference | None = None
-    command_ack: CommandAckReference | None = None
-    status: PlanMissionStatus = PlanMissionStatus.PENDING
-    auftrag_id: str | None = None
-    outcome: AuftragOutcome | None = None
-    recon_outcome: ReconOutcome | None = None
-    event_cursor: str | None = field(default=None, repr=False)
-    recon_intel_id: str | None = field(default=None, repr=False)
-    baseline_intel_contact_ids: tuple[str, ...] = field(default=(), repr=False)
-    recon_assigned_group_ids: tuple[str, ...] = field(default=(), repr=False)
-    recon_tracks: dict[str, list[ReconTrackSample]] = field(default_factory=dict, repr=False)
-    error: str | None = None
-
-
-@dataclass(slots=True, frozen=True)
 class StrategicDamageAssessment:
     """Snapshot-derived strategic damage, independent of MOOSE AUFTRAG success."""
 
@@ -262,6 +218,7 @@ class OperationalPlanExecutor:
 
     def __init__(self, client: MooseBridgeClient) -> None:
         self.client = client
+        self.mission_executor = MissionExecutionService(client)
         self._executions: dict[str, list[OperationalPlanExecution]] = {}
         self._loaded_plan_ids: set[str] = set()
 
@@ -456,11 +413,10 @@ class OperationalPlanExecutor:
             and mission.phase_id == current.phase_id
             and mission.status in {PlanMissionStatus.SUBMITTED, PlanMissionStatus.RUNNING}
         ]
-        failed = await self._wait_for_required_missions(
-            execution,
+        failed = await self.mission_executor.wait_for_required(
             missions,
-            mission_timeout_s=mission_timeout_s,
-            on_event=on_event,
+            timeout_s=mission_timeout_s,
+            on_event=self._mission_lifecycle_callback(execution, on_event),
         )
         if failed is not None:
             await self._block(plan, current, execution, failed.error or f"{failed.auftrag_id} did not succeed", on_event)
@@ -973,54 +929,23 @@ class OperationalPlanExecutor:
                     execution.missions.append(mission)
                     try:
                         recon_requirement_data = self._recon_requirement_data(phase, intent)
-                        if command.mission_type == "RECON" and recon_requirement_data is not None:
-                            mission.recon_intel_id = str(phase.metadata.get("intel_id") or "") or None
-                            if mission.recon_intel_id is None:
-                                raise ValueError("structured RECON phase requires metadata.intel_id")
-                            mission.event_cursor = await self.client.server.event_cursor()
-                            await self.client.refresh_intel_state()
-                            mission.baseline_intel_contact_ids = tuple(
-                                contact.object_id
-                                for contact in self.client.contacts_of_intel(mission.recon_intel_id)
-                            )
-                        range_ack = await self._synchronize_arty_weapon_range(intent, requirement, command)
-                        if range_ack is not None:
-                            mission.weapon_range_ack = _command_ack_reference(range_ack)
-                            result = range_ack.get("result") if isinstance(range_ack.get("result"), dict) else {}
-                            await self._emit(
-                                execution,
-                                PlanExecutionEvent(
-                                    "mission.weapon_range_synchronized",
-                                    plan.plan_id,
-                                    phase_id=phase.phase_id,
-                                    intent_id=intent.intent_id,
-                                    requirement_id=requirement.requirement_id,
-                                    status="synchronized",
-                                    message=(
-                                        f"{result.get('cohort_id') or '-'} "
-                                        f"weapon_type={result.get('weapon_type')} "
-                                        f"range={float(result.get('minimum_m') or 0.0) / 1_000:.3f}-"
-                                        f"{float(result.get('maximum_m') or 0.0) / 1_000:.3f}km"
-                                    ),
-                                ),
-                                on_event,
-                            )
-                        ack = await self.client.add_auftrag(
-                            command,
-                            commander=commander.object_id,
-                            allowed_legions=requirement.allowed_legion_ids,
-                            allowed_cohorts=requirement.allowed_cohort_ids,
+                        fire_support = intent.metadata.get("fire_support")
+                        await self.mission_executor.submit(
+                            mission,
+                            commander_id=commander.object_id,
+                            allowed_legion_ids=requirement.allowed_legion_ids,
+                            allowed_cohort_ids=requirement.allowed_cohort_ids,
+                            fire_support=fire_support if isinstance(fire_support, dict) else None,
+                            structured_recon=(
+                                command.mission_type == "RECON" and recon_requirement_data is not None
+                            ),
+                            recon_intel_id=str(phase.metadata.get("intel_id") or "") or None,
+                            on_event=self._mission_lifecycle_callback(execution, on_event),
                         )
-                        mission.command_ack = _command_ack_reference(ack)
-                        mission.auftrag_id = self.client.mission_id(command)
-                        mission.status = PlanMissionStatus.SUBMITTED
-                        await self._mission_event(execution, mission, "mission.submitted", on_event)
                     except Exception as exc:
-                        mission.status = PlanMissionStatus.FAILED
-                        mission.error = str(exc)
-                        await self._mission_event(execution, mission, "mission.failed", on_event)
                         if required:
-                            return await self._block(plan, phase, execution, mission.error, on_event)
+                            reason = mission.error or str(exc) or f"could not submit {mission.mission_type}"
+                            return await self._block(plan, phase, execution, reason, on_event)
                         continue
                     if required:
                         required_missions.append(mission)
@@ -1036,11 +961,10 @@ class OperationalPlanExecutor:
                         on_event=on_event,
                     )
                 else:
-                    failed = await self._wait_for_required_missions(
-                        execution,
+                    failed = await self.mission_executor.wait_for_required(
                         required_missions,
-                        mission_timeout_s=mission_timeout_s,
-                        on_event=on_event,
+                        timeout_s=mission_timeout_s,
+                        on_event=self._mission_lifecycle_callback(execution, on_event),
                         stop_on_failure=goal.action is not StrategicGoalAction.DESTROY,
                     )
                 if goal.action is StrategicGoalAction.DESTROY:
@@ -1103,7 +1027,11 @@ class OperationalPlanExecutor:
                     if defend_status is StrategicGoalStatus.ACHIEVED
                     else f"strategic DEFEND goal {defend_status.value}"
                 )
-                await self._cancel_plan_missions(execution, cleanup_reason, on_event)
+                await self.mission_executor.cancel_active(
+                    execution.missions,
+                    reason=cleanup_reason,
+                    on_event=self._mission_lifecycle_callback(execution, on_event),
+                )
                 if defend_status is not StrategicGoalStatus.ACHIEVED:
                     return await self._block(plan, phase, execution, cleanup_reason, on_event)
 
@@ -1203,42 +1131,6 @@ class OperationalPlanExecutor:
         await self._emit(execution, PlanExecutionEvent("plan.completed", plan.plan_id, status=plan.status.value), on_event)
         return execution
 
-    async def _synchronize_arty_weapon_range(
-        self,
-        intent: MissionIntent,
-        requirement: AssetRequirement,
-        command: AuftragCommand,
-    ) -> dict[str, Any] | None:
-        """Apply the resolver's exact weapon envelope before MOOSE recruits assets."""
-
-        if command.mission_type != "ARTY":
-            return None
-        support = intent.metadata.get("fire_support")
-        if not isinstance(support, dict) or not support.get("range_sync_required"):
-            return None
-
-        cohort_id = str(support.get("cohort_id") or "").strip()
-        if not cohort_id:
-            raise ValueError("ARTY weapon range synchronization requires fire_support.cohort_id")
-        if requirement.allowed_cohort_ids and cohort_id not in requirement.allowed_cohort_ids:
-            raise ValueError(f"ARTY weapon range COHORT is not allowed by the requirement: {cohort_id}")
-
-        weapon_type = int(support.get("weapon_flag_value"))
-        minimum_m = float(support.get("minimum_m"))
-        maximum_m = float(support.get("maximum_m"))
-        cohort = self.client.cohort(cohort_id)
-        configured = cohort.weapon_range_for_weapon_type(weapon_type) if cohort is not None else None
-        if configured is not None:
-            configured_minimum, configured_maximum = configured
-            if abs(configured_minimum - minimum_m) <= 1.0 and abs(configured_maximum - maximum_m) <= 1.0:
-                return None
-        return await self.client.set_cohort_weapon_range(
-            cohort_id,
-            weapon_type,
-            minimum_m,
-            maximum_m,
-        )
-
     @staticmethod
     def _recon_requirement_data(phase: PlanPhase, intent: MissionIntent) -> dict[str, Any] | None:
         value = intent.metadata.get("reconnaissance_requirement")
@@ -1329,54 +1221,6 @@ class OperationalPlanExecutor:
         if any(outcome.requirement_satisfied is None for outcome in outcomes):
             return "reconnaissance completed but target coverage is indeterminate; refresh INTEL and replan"
         return "reconnaissance requirement satisfied; refresh INTEL and replan before continuing"
-
-    async def _sample_recon_positions(self, mission: PlanMissionExecution) -> None:
-        """Sample assigned RECON groups when no movement event exists in DCS."""
-
-        session = ReconTrackingSession(
-            mission.auftrag_id or "",
-            assigned_group_ids=mission.recon_assigned_group_ids,
-            tracks=mission.recon_tracks,
-        )
-        await self.client.sample_recon_tracking(session)
-        mission.recon_assigned_group_ids = session.assigned_group_ids
-
-    async def _wait_for_required_missions(
-        self,
-        execution: OperationalPlanExecution,
-        missions: list[PlanMissionExecution],
-        *,
-        mission_timeout_s: float,
-        on_event: PlanExecutionCallback | None,
-        stop_on_failure: bool = True,
-    ) -> PlanMissionExecution | None:
-        failed: PlanMissionExecution | None = None
-        tasks = {
-            asyncio.create_task(self._wait_for_mission(execution, mission, mission_timeout_s, on_event)): mission
-            for mission in missions
-        }
-        try:
-            while tasks:
-                done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    mission = tasks.pop(task)
-                    try:
-                        succeeded = task.result()
-                    except Exception as exc:
-                        mission.status = PlanMissionStatus.FAILED
-                        mission.error = str(exc) or f"event wait failed for {mission.auftrag_id}"
-                        await self._mission_event(execution, mission, "mission.failed", on_event)
-                        succeeded = False
-                    if not succeeded:
-                        if stop_on_failure:
-                            return mission
-                        failed = mission
-            return failed
-        finally:
-            for task in tasks:
-                task.cancel()
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
 
     def _destroy_shortfall_reason(self, goal: StrategicGoal) -> str:
         objective = self.client.strategic_objective(goal.objective_id)
@@ -1495,11 +1339,10 @@ class OperationalPlanExecutor:
 
         goal_task = asyncio.create_task(self._wait_for_defend_goal(goal, mission_timeout_s))
         mission_task = asyncio.create_task(
-            self._wait_for_required_missions(
-                execution,
+            self.mission_executor.wait_for_required(
                 missions,
-                mission_timeout_s=mission_timeout_s,
-                on_event=on_event,
+                timeout_s=mission_timeout_s,
+                on_event=self._mission_lifecycle_callback(execution, on_event),
             )
         )
         try:
@@ -1548,113 +1391,6 @@ class OperationalPlanExecutor:
             if str(message.get("event") or "") == "mission.ended":
                 raise DcsMissionEndedError("DCS mission ended while monitoring DEFEND goal")
         return goal.status
-
-    async def _cancel_plan_missions(
-        self,
-        execution: OperationalPlanExecution,
-        reason: str,
-        on_event: PlanExecutionCallback | None,
-    ) -> None:
-        """Best-effort cleanup for missions still active when a DEFEND goal ends."""
-
-        for mission in execution.missions:
-            if not mission.auftrag_id or mission.status not in {
-                PlanMissionStatus.SUBMITTED,
-                PlanMissionStatus.RUNNING,
-            }:
-                continue
-            try:
-                await self.client.cancel_mission(mission.auftrag_id)
-            except Exception as exc:
-                message = str(exc) or f"could not cancel {mission.auftrag_id}"
-                mission.error = message
-                await self._mission_event(execution, mission, "mission.cancel_failed", on_event, message=message)
-                continue
-            mission.status = PlanMissionStatus.CANCELLED
-            mission.error = reason
-            await self._mission_event(execution, mission, "mission.cancelled", on_event, message=reason)
-
-    async def _wait_for_mission(
-        self,
-        execution: OperationalPlanExecution,
-        mission: PlanMissionExecution,
-        timeout_s: float,
-        on_event: PlanExecutionCallback | None,
-    ) -> bool:
-        assert mission.auftrag_id is not None
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_s
-        after_id: str | None = mission.event_cursor
-        seen_status_keys: set[tuple[str | None, str | None, str | None, str | None]] = set()
-        while True:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                mission.status = PlanMissionStatus.FAILED
-                mission.error = f"timed out waiting for {mission.auftrag_id}"
-                await self._mission_event(execution, mission, "mission.failed", on_event)
-                return False
-            wait_timeout = min(remaining, RECON_POSITION_SAMPLE_INTERVAL_S) if mission.recon_intel_id else remaining
-            try:
-                message = await self.client.server.wait_for_event(
-                    "auftrag.*",
-                    filters={"auftrag_id": mission.auftrag_id},
-                    timeout=wait_timeout,
-                    after_id=after_id,
-                )
-            except TimeoutError:
-                if mission.recon_intel_id:
-                    await self._sample_recon_positions(mission)
-                    continue
-                raise
-            after_id = str(message.get("id") or "") or after_id
-            self.client.state.apply_message(message)
-            self.client._on_bridge_message(message)
-            if str(message.get("event") or "") == "mission.ended":
-                raise DcsMissionEndedError("DCS mission ended while executing operational plan")
-            if mission.recon_intel_id:
-                await self._sample_recon_positions(mission)
-            event = AuftragEvent.from_message(message)
-            if event.event == "auftrag.evaluated":
-                payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
-                snapshot = {
-                    "object_id": mission.auftrag_id,
-                    "type": payload.get("auftrag_type") or mission.mission_type,
-                    "status": payload.get("status"),
-                    "summary": payload.get("summary"),
-                }
-                mission.outcome = AuftragOutcome.from_snapshot(snapshot)
-                mission.status = (
-                    PlanMissionStatus.SUCCEEDED if mission.outcome.success is True else PlanMissionStatus.FAILED
-                )
-                if mission.status is PlanMissionStatus.FAILED:
-                    mission.error = "AUFTRAG evaluated without success"
-                await self._mission_event(
-                    execution,
-                    mission,
-                    f"mission.{mission.status.value}",
-                    on_event,
-                    message=f"MOOSE AUFTRAG outcome success={mission.outcome.success}",
-                )
-                return mission.status is PlanMissionStatus.SUCCEEDED
-            status_key = (event.fsm_event, event.status, event.from_state, event.to_state)
-            if status_key in seen_status_keys:
-                continue
-            seen_status_keys.add(status_key)
-            mission.status = PlanMissionStatus.RUNNING
-            await self._mission_event(execution, mission, "mission.status", on_event, message=str(event))
-            if (
-                mission.persistent
-                and mission.established_on
-                and (event.fsm_event or "").lower() == mission.established_on.lower()
-            ):
-                await self._mission_event(
-                    execution,
-                    mission,
-                    "mission.established",
-                    on_event,
-                    message=f"persistent AUFTRAG reached {event.fsm_event} and remains active",
-                )
-                return True
 
     async def _replay_destroyed_events(self, *, after_id: str | None) -> int:
         """Apply retained DCS destruction events before strategic assessment."""
@@ -1945,6 +1681,26 @@ class OperationalPlanExecutor:
             callback,
         )
 
+    def _mission_lifecycle_callback(
+        self,
+        execution: OperationalPlanExecution,
+        callback: PlanExecutionCallback | None,
+    ) -> MissionLifecycleCallback:
+        async def relay(
+            mission: PlanMissionExecution,
+            event: MissionLifecycleEvent,
+        ) -> None:
+            await self._mission_event(
+                execution,
+                mission,
+                event.event,
+                callback,
+                message=event.message,
+                status=event.status,
+            )
+
+        return relay
+
     async def _emit(
         self,
         execution: OperationalPlanExecution,
@@ -2007,40 +1763,6 @@ def _mission_type(intent: MissionIntent, requirement: AssetRequirement) -> str:
         if mission_type in allowed:
             return mission_type
     raise ValueError(f"{intent.intent_id}/{requirement.requirement_id} has no common AUFTRAG type")
-
-
-def _command_ack_reference(ack: Mapping[str, Any]) -> CommandAckReference:
-    result = ack.get("result") if isinstance(ack.get("result"), dict) else {}
-    relevant_keys = {
-        "action",
-        "added",
-        "auftrag_id",
-        "auftragsnummer",
-        "auftrag_type",
-        "cohort_id",
-        "commander_id",
-        "legion_id",
-        "target_resolution",
-        "target_resolution_error",
-    }
-    compact_result = {
-        str(key): value
-        for key, value in result.items()
-        if key in relevant_keys and isinstance(value, (str, int, float, bool))
-    }
-    sequence = ack.get("sequence")
-    try:
-        sequence_value = int(sequence) if sequence is not None else None
-    except (TypeError, ValueError):
-        sequence_value = None
-    return CommandAckReference(
-        ack_id=str(ack.get("id")) if ack.get("id") not in (None, "") else None,
-        correlation_id=(
-            str(ack.get("correlation_id")) if ack.get("correlation_id") not in (None, "") else None
-        ),
-        sequence=sequence_value,
-        result=compact_result,
-    )
 
 
 def _object_ids(values: Iterable[str]) -> tuple[str, ...]:

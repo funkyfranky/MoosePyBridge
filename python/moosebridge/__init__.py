@@ -369,8 +369,15 @@ from .operational import (
     PlanValidationIssue,
     RequirementAssessment,
 )
-from .operational_execution import (
+from .mission_execution_service import (
     CommandAckReference,
+    MissionExecutionService,
+    MissionLifecycleCallback,
+    MissionLifecycleEvent,
+    PlanMissionExecution,
+    PlanMissionStatus,
+)
+from .operational_execution import (
     OperationalPlanAbortResult,
     OperationalPlanExecution,
     OperationalPlanExecutor,
@@ -380,8 +387,6 @@ from .operational_execution import (
     PlanExecutionEvent,
     PlanMissionAbort,
     PlanMissionReconciliation,
-    PlanMissionExecution,
-    PlanMissionStatus,
     StrategicDamageAssessment,
     PlanReconciliationStatus,
     build_plan_auftrag,
@@ -723,6 +728,9 @@ __all__ = [
     "EscalationIncident",
     "EscalationIncidentType",
     "LimitedConflictAuthorization",
+    "MissionExecutionService",
+    "MissionLifecycleCallback",
+    "MissionLifecycleEvent",
     "ZoneSet",
     "GroupCapabilities",
     "GroupInfluence",

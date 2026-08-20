@@ -1996,10 +1996,6 @@ def test_persistent_mission_is_established_at_executing_and_remains_running() ->
     async def scenario() -> None:
         server = _PersistentMissionExecutionServer()
         bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
-        execution = OperationalPlanExecution(
-            plan_id="PLAN:Secure Town",
-            commander_id="COMMANDER:Blue",
-        )
         mission = PlanMissionExecution(
             phase_id="consolidate",
             intent_id="secure-zone",
@@ -2013,11 +2009,10 @@ def test_persistent_mission_is_established_at_executing_and_remains_running() ->
         )
         observed: list[str] = []
 
-        established = await bridge.plan_executor._wait_for_mission(  # noqa: SLF001
-            execution,
+        established = await bridge.plan_executor.mission_executor.wait_for_mission(
             mission,
             timeout_s=1,
-            on_event=lambda event: observed.append(event.event),
+            on_event=lambda _mission, event: observed.append(event.event),
         )
 
         assert established is True
@@ -2125,10 +2120,10 @@ def test_arty_execution_synchronizes_resolver_range_before_submission() -> None:
             },
         )
 
-        ack = await bridge.plan_executor._synchronize_arty_weapon_range(
-            intent,
-            intent.asset_requirements[0],
+        ack = await bridge.plan_executor.mission_executor.synchronize_arty_weapon_range(
             Auftrag_ARTY(target="GROUP:Target"),
+            fire_support=intent.metadata["fire_support"],
+            allowed_cohort_ids=intent.asset_requirements[0].allowed_cohort_ids,
         )
 
         assert ack is not None
@@ -2136,10 +2131,10 @@ def test_arty_execution_synchronizes_resolver_range_before_submission() -> None:
         assert server.commands[0].params["weapon_type"] == int(DcsWeaponFlag.CONVENTIONAL_SHELL)
         assert server.commands[0].params["maximum_m"] == 22_000.0
 
-        second = await bridge.plan_executor._synchronize_arty_weapon_range(
-            intent,
-            intent.asset_requirements[0],
+        second = await bridge.plan_executor.mission_executor.synchronize_arty_weapon_range(
             Auftrag_ARTY(target="GROUP:Target"),
+            fire_support=intent.metadata["fire_support"],
+            allowed_cohort_ids=intent.asset_requirements[0].allowed_cohort_ids,
         )
         assert second is None
         assert len(server.commands) == 1
