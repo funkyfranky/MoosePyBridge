@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from moosebridge.infrastructure_sites import (
     FuelStorageRole,
     FuelStorageSite,
@@ -10,6 +12,7 @@ from moosebridge.infrastructure_sites import (
     TheaterInfrastructureSites,
 )
 from moosebridge.models import Territory
+from moosebridge.railway_infrastructure import TheaterRailwayInfrastructure
 from moosebridge.settlements import (
     Settlement,
     SettlementImportanceTier,
@@ -100,6 +103,30 @@ def test_generator_admits_live_objects_only_inside_scope() -> None:
     assert "OBJECTIVE:AIRBASE:Outside" not in by_id
     assert result.out_of_scope_count == 1
     assert result.counts_by_scope[StrategicScopeState.BLUE.value] == 1
+
+
+def test_generator_rejects_static_artifacts_from_different_theaters() -> None:
+    scope, state = _scope_and_state()
+
+    with pytest.raises(ValueError, match="theater data mismatch"):
+        generate_strategic_objectives(
+            state,
+            scope,  # type: ignore[arg-type]
+            settlements=TheaterSettlements("GermanyCW"),
+            railway=TheaterRailwayInfrastructure("Caucasus"),
+        )
+
+
+def test_generator_accepts_legacy_unbound_verification_registry_by_itself() -> None:
+    scope, state = _scope_and_state()
+
+    result = generate_strategic_objectives(
+        state,
+        scope,  # type: ignore[arg-type]
+        verifications=StrategicVerificationRegistry(),
+    )
+
+    assert result.objectives
 
 
 def test_generator_applies_importance_threshold_and_preserves_dcs_components() -> None:

@@ -1,4 +1,4 @@
-"""Small local SDK wrapper for embedding MOOSE Bridge commands in Python tools."""
+"""High-level SDK facade for MOOSE Bridge commands and operational workflows."""
 
 from __future__ import annotations
 
@@ -104,7 +104,8 @@ from .operational_planner import RuleBasedOperationalPlanner
 from .operational_audit import RestoredOperationalPlan
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
-from .server import DcsMissionEndedError, MooseBridgeServer
+from .sdk_backend import SdkBackend
+from .server import DcsMissionEndedError
 from .sensor_ranges import (
     DEFAULT_SENSOR_RANGE_REGISTRY,
     SensorDetectionType,
@@ -132,6 +133,7 @@ from .strategic_objectives import (
     generate_strategic_objectives,
 )
 from .strategic_verification import StrategicVerificationRegistry
+from .theater_context import TheaterContext
 from .strategic_goals import (
     StrategicGoalGenerationConfig,
     StrategicGoalGenerationResult,
@@ -302,6 +304,15 @@ def _ownership_bridge_event(objective: StrategicObjective) -> str:
     if objective.ownership_policy is OwnershipPolicy.TERRITORY_INHERITED:
         return "territory.coalition_changed"
     raise ValueError(f"Fixed objective has no external ownership event: {objective.objective_id}")
+
+
+def _raise_if_mission_ended(message: Mapping[str, Any], operation: str) -> None:
+    """Raise the common terminal error when an event wait crosses a mission boundary."""
+
+    payload = message.get("payload") if isinstance(message.get("payload"), Mapping) else {}
+    event = str(message.get("event") or payload.get("event") or "")
+    if event == "mission.ended":
+        raise DcsMissionEndedError(f"DCS mission ended while {operation}")
 
 
 def _optional_float(value: Any) -> float | None:
@@ -594,7 +605,7 @@ def is_evaluated_auftrag_snapshot(snapshot: dict[str, Any]) -> bool:
 
 
 class MooseBridgeClient:
-    """High-level SDK facade backed by a local ``MooseBridgeServer`` instance.
+    """High-level SDK facade backed by an in-process or control API backend.
 
     :param server: Running bridge server instance.
     :param strategic_shortfall_timeout_s: DCS-time duration before an asset
@@ -607,7 +618,7 @@ class MooseBridgeClient:
 
     def __init__(
         self,
-        server: MooseBridgeServer,
+        server: SdkBackend,
         *,
         weapon_ranges: WeaponRangeRegistry | None = None,
         sensor_ranges: SensorRangeRegistry | None = None,
@@ -648,10 +659,52 @@ class MooseBridgeClient:
         self._strategic_scenery_objectives: dict[str, set[str]] = {}
         self._strategic_scenery_baselines: dict[str, tuple[str, ...]] = {}
         self._strategic_scenery_baseline_complete: dict[str, bool] = {}
+        self.theater_context: TheaterContext | None = None
+        self._closed = False
         self.strategic_feedback.add_listener(self._on_strategic_feedback_policy_event)
         add_listener = getattr(server, "add_message_listener", None)
         if callable(add_listener):
             add_listener(self._on_bridge_message)
+
+    @property
+    def closed(self) -> bool:
+        """Return whether this client released its backend listeners."""
+
+        return self._closed
+
+    def close(self) -> None:
+        """Release listeners and background tasks owned by this SDK client."""
+
+        if self._closed:
+            return
+        self._closed = True
+        for task in tuple(self._strategic_feedback_tasks):
+            task.cancel()
+        self._strategic_feedback_tasks.clear()
+        self.strategic_feedback.remove_listener(self._on_strategic_feedback_policy_event)
+        remove_listener = getattr(self.server, "remove_message_listener", None)
+        if callable(remove_listener):
+            remove_listener(self._on_bridge_message)
+
+    async def aclose(self) -> None:
+        """Release this client and await cancellation of its background tasks."""
+
+        tasks = tuple(self._strategic_feedback_tasks)
+        self.close()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def __enter__(self) -> "MooseBridgeClient":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self.close()
+
+    async def __aenter__(self) -> "MooseBridgeClient":
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        await self.aclose()
 
     @property
     def state(self) -> MooseBridgeState:
@@ -680,7 +733,9 @@ class MooseBridgeClient:
         self._auftrag_ids_by_object.clear()
         self._strategic_feedback_message_ids.clear()
         self._strategic_goal_generation_number = 0
-        self._strategic_verifications = None
+        self._strategic_verifications = (
+            self.theater_context.verifications if self.theater_context is not None else None
+        )
         self._strategic_scenery_objectives.clear()
         self._strategic_scenery_baselines.clear()
         self._strategic_scenery_baseline_complete.clear()
@@ -764,6 +819,7 @@ class MooseBridgeClient:
                 message = await self.server.wait_for_event("intel.*", timeout=3600.0, after_id=cursor)
             except TimeoutError:
                 continue
+            _raise_if_mission_ended(message, "monitoring information requirements")
             cursor = str(message.get("id") or "") or cursor
             self.sync_information_requirements(source=str(message.get("event") or "intel.event"))
             events = self.information_requirement_registry.events
@@ -794,6 +850,7 @@ class MooseBridgeClient:
             if remaining <= 0:
                 raise TimeoutError(f"Timed out waiting for {event}: {requirement_id}")
             message = await self.server.wait_for_event("intel.*", timeout=remaining, after_id=cursor)
+            _raise_if_mission_ended(message, f"waiting for {event}: {requirement_id}")
             cursor = str(message.get("id") or "") or cursor
             self.sync_information_requirements(source=str(message.get("event") or "intel.event"))
             events = self.information_requirement_registry.events
@@ -817,9 +874,18 @@ class MooseBridgeClient:
             self.sync_strategic_objectives(source="current_state")
         return added
 
+    def configure_theater(self, context: TheaterContext) -> TheaterContext:
+        """Attach validated static theater data for current and future missions."""
+
+        context.validate()
+        self.theater_context = context
+        self._strategic_verifications = context.verifications
+        return context
+
     def generate_strategic_objectives(
         self,
         *,
+        theater: TheaterContext | None = None,
         settlements: TheaterSettlements | None = None,
         transport: TheaterTransportInfrastructure | None = None,
         railway: TheaterRailwayInfrastructure | None = None,
@@ -835,6 +901,35 @@ class MooseBridgeClient:
         ``replace`` is explicitly enabled.
         """
 
+        separate_sources = any(
+            item is not None
+            for item in (settlements, transport, railway, infrastructure, verifications)
+        )
+        if theater is not None and separate_sources:
+            raise ValueError("pass either theater context or individual theater artifacts, not both")
+        resolved_theater = theater
+        scoped_sources = any(
+            item is not None
+            for item in (settlements, transport, railway, infrastructure)
+        ) or bool(verifications is not None and verifications.theater_id.strip())
+        if resolved_theater is None and separate_sources and scoped_sources:
+            resolved_theater = TheaterContext.from_sources(
+                settlements=settlements,
+                transport=transport,
+                railway=railway,
+                infrastructure=infrastructure,
+                verifications=verifications,
+            )
+        elif resolved_theater is None and not separate_sources:
+            resolved_theater = self.theater_context
+        if resolved_theater is not None:
+            resolved_theater.validate()
+            settlements = resolved_theater.settlements
+            transport = resolved_theater.transport
+            railway = resolved_theater.railway
+            infrastructure = resolved_theater.infrastructure
+            verifications = resolved_theater.verifications
+
         result = generate_strategic_objectives(
             self.state,
             self.build_strategic_scope(strict=True),
@@ -846,7 +941,9 @@ class MooseBridgeClient:
             config=config,
         )
         if register:
-            if verifications is not None:
+            if resolved_theater is not None:
+                self.configure_theater(resolved_theater)
+            elif verifications is not None:
                 self._strategic_verifications = verifications
             generated_ids = {objective.objective_id for objective in result.objectives}
             if replace:
@@ -1037,6 +1134,7 @@ class MooseBridgeClient:
                 message = bridge_waiter.result()
                 last_bridge_event_id = str(message.get("id") or "") or last_bridge_event_id
                 self._on_bridge_message(message)
+                _raise_if_mission_ended(message, f"waiting for {event} for {goal_id}")
                 bridge_waiter = None
         finally:
             self.goals.remove_listener(on_goal_event)
@@ -1933,6 +2031,7 @@ class MooseBridgeClient:
                 timeout=remaining,
                 after_id=last_bridge_event_id,
             )
+            _raise_if_mission_ended(message, f"waiting for {event} for {objective_id}")
             last_bridge_event_id = str(message.get("id") or "") or last_bridge_event_id
             source = str(message.get("event") or "bridge.event")
             self.sync_strategic_objectives(source=source)
@@ -1962,6 +2061,7 @@ class MooseBridgeClient:
             timeout=timeout,
             after_id=after_id,
         )
+        _raise_if_mission_ended(message, f"waiting for destruction of {object_id}")
         return DestroyedObjectEvent.from_message(message)
 
     def _rebuild_strategic_scenery_index(self) -> None:
@@ -3735,8 +3835,7 @@ class MooseBridgeClient:
             last_event_id = str(event.get("id") or "") or last_event_id
             self.state.apply_message(event)
             self._on_bridge_message(event)
-            if str(event.get("event") or "") == "mission.ended":
-                raise DcsMissionEndedError("DCS mission ended while waiting for AUFTRAG outcome")
+            _raise_if_mission_ended(event, "waiting for AUFTRAG outcome")
             auftrag_event = AuftragEvent.from_message(event)
             if auftrag_event.event != "auftrag.evaluated":
                 status_key = (
@@ -3767,7 +3866,14 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(await self.server.message_to_coalition(coalition, text, duration))
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="message.to_coalition",
+                    params={"coalition": coalition, "text": text, "duration": duration},
+                )
+            )
+        )
 
     async def message_to_coalition(self, coalition: str, text: str, duration: int = 10) -> dict[str, Any]:
         """Backward-compatible alias for :meth:`message_coalition`.
@@ -3789,7 +3895,11 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(await self.server.message_to_all(text, duration))
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="message.to_all", params={"text": text, "duration": duration})
+            )
+        )
 
     async def message_to_all(self, text: str, duration: int = 10) -> dict[str, Any]:
         """Backward-compatible alias for :meth:`message_all`.
@@ -3812,7 +3922,14 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(await self.server.smoke_at_point(x, z, validate_smoke_color(color), y))
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="smoke.at_point",
+                    params={"x": x, "y": y, "z": z, "color": validate_smoke_color(color)},
+                )
+            )
+        )
 
     async def smoke_at_point(self, x: float, z: float, color: str = "white", y: float = 0.0) -> dict[str, Any]:
         """Backward-compatible alias for :meth:`smoke_point`.
@@ -3835,7 +3952,14 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(await self.server.smoke_object(object_id, validate_smoke_color(color)))
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(
+                    action="smoke.object",
+                    params={"object_id": object_id, "color": validate_smoke_color(color)},
+                )
+            )
+        )
 
     async def explode_point(
         self,
@@ -3916,7 +4040,11 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(await self.server.mark_at_point(x, z, text, y))
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="mark.at_point", params={"x": x, "y": y, "z": z, "text": text})
+            )
+        )
 
     async def mark_at_point(self, x: float, z: float, text: str, y: float = 0.0) -> dict[str, Any]:
         """Backward-compatible alias for :meth:`mark_point`.
@@ -3939,7 +4067,11 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(await self.server.mark_object(object_id, text))
+        return require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="mark.object", params={"object_id": object_id, "text": text})
+            )
+        )
 
     async def mark_map_position(
         self,

@@ -67,6 +67,32 @@ registered objective. This is deliberately broader than the target subset so
 collateral damage remains visible, while unrelated scenery destruction does
 not clutter the Loss reports layer.
 
+## Runtime Theater Context
+
+Load related static products into one `TheaterContext` before generating
+strategic objectives. The context requires one theater ID across settlements,
+transport, railway, infrastructure, and the fixed-SCENERY verification
+registry. An unbound verification registry is bound to that ID; an artifact
+from another theater raises `ValueError` before objective generation.
+
+```python
+from moosebridge import TheaterContext
+
+theater = TheaterContext.from_sources(
+    settlements=settlements,
+    transport=transport,
+    railway=railway,
+    infrastructure=infrastructure,
+    verifications=verifications,
+)
+bridge.configure_theater(theater)
+result = bridge.generate_strategic_objectives(theater=theater)
+```
+
+The context and verification evidence are theater-scoped and survive a DCS
+mission-end reset. Objectives, goals, plans, event waits, and execution state
+remain mission-scoped and are cleared.
+
 Artifacts used by the map server must cover the complete theater. Regional
 pilot or validation artifacts may be retained for diagnostics, but must not be
 configured as the runtime transport, settlement, or infrastructure dataset.

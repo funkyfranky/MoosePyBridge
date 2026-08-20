@@ -230,4 +230,4 @@ def sdk_from_control_client(
     }
     if ground_mobility_profile is not None:
         kwargs["ground_mobility_profile"] = ground_mobility_profile
-    return MooseBridgeClient(ControlSdkAdapter(client, timeout=timeout), **kwargs)  # type: ignore[arg-type]
+    return MooseBridgeClient(ControlSdkAdapter(client, timeout=timeout), **kwargs)

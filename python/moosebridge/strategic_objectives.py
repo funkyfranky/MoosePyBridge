@@ -25,6 +25,7 @@ from .strategic import (
 )
 from .strategic_scope import StrategicScopeState, StrategicTerritoryScope
 from .strategic_verification import StrategicVerificationRegistry
+from .theater_context import TheaterContext
 from .transport_infrastructure import (
     TheaterTransportInfrastructure,
     TransportBridge,
@@ -116,6 +117,17 @@ def generate_strategic_objectives(
     """Generate mission objectives admitted by the TERRITORY-derived scope."""
 
     scope.require_valid()
+    scoped_sources = any(
+        item is not None for item in (settlements, transport, railway, infrastructure)
+    ) or bool(verifications is not None and verifications.theater_id.strip())
+    if scoped_sources:
+        TheaterContext.from_sources(
+            settlements=settlements,
+            transport=transport,
+            railway=railway,
+            infrastructure=infrastructure,
+            verifications=verifications,
+        )
     resolved = config or StrategicObjectiveGenerationConfig()
     objectives: list[StrategicObjective] = []
     exclusions: list[StrategicObjectiveExclusion] = []

@@ -187,7 +187,8 @@ async def run_interactive_console(server: server_module.MooseBridgeServer) -> No
                     continue
                 auftrag_id = parts[0]
                 raw = "--raw" in parts[1:]
-                result = await MooseBridgeClient(server).trace_auftrag(auftrag_id)
+                with MooseBridgeClient(server) as bridge:
+                    result = await bridge.trace_auftrag(auftrag_id)
                 if raw:
                     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
                 else:

@@ -1006,6 +1006,11 @@ AUFTRAG mappings. Persistent audit records are deliberately retained. The Lua
 handler flushes this final event immediately because normal bridge scheduling
 ends with the DCS mission.
 
+Static theater artifacts and their fixed-SCENERY verification registry are not
+mission state. Attach them once as a validated `TheaterContext`; the SDK keeps
+that context across mission resets while rejecting settlements, transport,
+railway, infrastructure, or verification artifacts from another theater.
+
 Set `UNIT_ID` directly in the parameterless test example and destroy that unit
 in DCS:
 
@@ -1106,13 +1111,12 @@ from moosebridge import MooseBridgeClient, MooseBridgeServer
 
 server = MooseBridgeServer(host="127.0.0.1", port=42000)
 await server.start()
-bridge = MooseBridgeClient(server)
-
-coords = await bridge.coords("ZONE:Town Fight", format="mgrs")
-distance = await bridge.distance("GROUP:Aerial-1", "ZONE:Town Fight")
-await bridge.draw_zone("ZONE:Town Fight", coalition="blue", color="red", line_type="dashed")
-nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True, limit=5)
-trace = await bridge.trace_auftrag("AUFTRAG:1")
+async with MooseBridgeClient(server) as bridge:
+    coords = await bridge.coords("ZONE:Town Fight", format="mgrs")
+    distance = await bridge.distance("GROUP:Aerial-1", "ZONE:Town Fight")
+    await bridge.draw_zone("ZONE:Town Fight", coalition="blue", color="red", line_type="dashed")
+    nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True, limit=5)
+    trace = await bridge.trace_auftrag("AUFTRAG:1")
 ```
 
 Control-client backed SDK:
@@ -1127,11 +1131,16 @@ control = MooseBridgeControlClient(
     client_id="planning-tool-1",
     display_name="Planning Tool",
 )
-bridge = sdk_from_control_client(control, timeout=10.0)
-
-await bridge.snapshot_kind("units")
-nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True)
+async with sdk_from_control_client(control, timeout=10.0) as bridge:
+    await bridge.snapshot_kind("units")
+    nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True)
 ```
+
+Both transports implement the same explicit `SdkBackend` contract. Closing the
+SDK client, directly or through a sync/async context manager, unregisters its
+message listeners and cancels client-owned background tasks. A
+`mission.ended` event terminates every active SDK event wait with
+`DcsMissionEndedError`; callers must start a new wait for the next mission.
 
 Typed OPS state convenience helpers:
 

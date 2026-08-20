@@ -34,6 +34,7 @@ from examples.control_server_client.interactive_control_client import (
 from moosebridge.recommendations import AuftragRecommendation
 from moosebridge.control_sdk import sdk_from_control_client
 from moosebridge.protocol import BridgeCommand
+from moosebridge.sdk_backend import SdkBackend
 from moosebridge.sdk import NearestResult
 from moosebridge.state import MooseBridgeState
 from moosebridge.server import DcsBridgeCommandTimeoutError, DcsBridgeConnectionError, MooseBridgeServer
@@ -91,6 +92,42 @@ async def _with_control_server() -> tuple[FakeBridgeServer, MooseBridgeControlSe
     await server.start()
     client = MooseBridgeControlClient("127.0.0.1", _control_port(server))
     return bridge, server, client
+
+
+def test_production_sdk_backends_satisfy_the_transport_contract() -> None:
+    direct = MooseBridgeServer()
+    control = MooseBridgeControlClient("127.0.0.1", 65535)
+    adapter = sdk_from_control_client(control).server
+
+    assert isinstance(direct, SdkBackend)
+    assert isinstance(adapter, SdkBackend)
+
+
+def test_control_backed_sdk_routes_player_feedback_commands_through_control_api() -> None:
+    async def scenario() -> None:
+        daemon, server, control = await _with_control_server()
+        bridge = sdk_from_control_client(control)
+        try:
+            await bridge.message_all("Ready", duration=8)
+            await bridge.smoke_point(10.0, 20.0, color="green", y=3.0)
+            await bridge.mark_object("BRIDGE:Caucasus:Test", "Verified bridge")
+
+            assert [command.action for command, _ in daemon.commands] == [
+                "message.to_all",
+                "smoke.at_point",
+                "mark.object",
+            ]
+            assert daemon.commands[1][0].params == {
+                "x": 10.0,
+                "y": 3.0,
+                "z": 20.0,
+                "color": "green",
+            }
+        finally:
+            bridge.close()
+            await server.stop()
+
+    asyncio.run(scenario())
 
 
 def test_state_payload_roundtrip_applies_requested_kinds() -> None:

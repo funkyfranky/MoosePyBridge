@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from moosebridge import (
     AssetRequirement,
     AssetRole,
@@ -30,6 +32,7 @@ from moosebridge import (
     VerifiedDcsComponent,
 )
 from moosebridge.state import MooseBridgeState
+from moosebridge.server import DcsMissionEndedError
 
 
 def destroyed_message() -> dict[str, object]:
@@ -718,6 +721,108 @@ def test_sdk_waits_for_one_scenery_destroyed_event() -> None:
         assert event.object_id == "SCENERY:42"
         assert event.object_type == "SCENERY"
         assert "SCENERY:42" in bridge.state.destroyed_object_ids
+
+    asyncio.run(scenario())
+
+
+def test_sdk_object_wait_treats_mission_end_as_terminal() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        waiter = asyncio.create_task(
+            bridge.wait_for_object_destroyed("SCENERY:42", timeout=1.0)
+        )
+        await asyncio.sleep(0)
+
+        await server._handle_line(json.dumps(mission_ended_message()))
+
+        with pytest.raises(DcsMissionEndedError, match="destruction of SCENERY:42"):
+            await waiter
+
+    asyncio.run(scenario())
+
+
+def test_sdk_information_requirement_wait_treats_mission_end_as_terminal() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        bridge.add_information_requirement(
+            InformationRequirement("INFO:Bridge", "INTEL:Blue", ("GROUP:Target",))
+        )
+        waiter = asyncio.create_task(
+            bridge.wait_for_information_requirement_event("INFO:Bridge", timeout=1.0)
+        )
+        await asyncio.sleep(0)
+
+        await server._handle_line(json.dumps(mission_ended_message()))
+
+        with pytest.raises(DcsMissionEndedError, match="information_requirement.satisfied"):
+            await waiter
+
+    asyncio.run(scenario())
+
+
+def test_sdk_goal_wait_treats_mission_end_as_terminal() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        objective = bridge.add_strategic_objective(
+            StrategicObjective(
+                "OBJECTIVE:Bridge",
+                "Bridge",
+                ObjectiveKind.INFRASTRUCTURE,
+                None,
+                OwnershipPolicy.FIXED,
+            )
+        )
+        bridge.add_strategic_goal(
+            StrategicGoal(
+                "GOAL:Bridge",
+                "Destroy bridge",
+                "blue",
+                StrategicGoalAction.DESTROY,
+                objective.objective_id,
+            )
+        )
+        waiter = asyncio.create_task(
+            bridge.wait_for_strategic_goal_event("GOAL:Bridge", timeout=1.0)
+        )
+        await asyncio.sleep(0)
+
+        await server._handle_line(json.dumps(mission_ended_message()))
+
+        with pytest.raises(DcsMissionEndedError, match="GOAL:Bridge"):
+            await waiter
+
+    asyncio.run(scenario())
+
+
+def test_sdk_client_close_releases_server_listener_and_is_idempotent() -> None:
+    server = MooseBridgeServer()
+    bridge = MooseBridgeClient(server)
+
+    assert len(server._message_listeners) == 1
+    bridge.close()
+    bridge.close()
+
+    assert bridge.closed is True
+    assert server._message_listeners == []
+
+    with MooseBridgeClient(server) as scoped:
+        assert scoped.closed is False
+        assert len(server._message_listeners) == 1
+    assert scoped.closed is True
+    assert server._message_listeners == []
+
+
+def test_sdk_async_context_releases_server_listener() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        async with MooseBridgeClient(server) as bridge:
+            assert bridge.closed is False
+            assert len(server._message_listeners) == 1
+        assert bridge.closed is True
+        assert server._message_listeners == []
 
     asyncio.run(scenario())
 

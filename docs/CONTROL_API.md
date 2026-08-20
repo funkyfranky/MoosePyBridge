@@ -232,17 +232,23 @@ control = MooseBridgeControlClient(
     client_id="planning-tool-1",
     display_name="Planning Tool",
 )
-bridge = sdk_from_control_client(control, timeout=10.0)
-
 status = await control.status()
-await bridge.snapshot_kind("units")
+async with sdk_from_control_client(control, timeout=10.0) as bridge:
+    await bridge.snapshot_kind("units")
 
-coords = await bridge.coords("ZONE:Town Fight", format="mgrs")
-points = await bridge.convert_points([(1000, 2000), (3000, 4000)])
-distance = await bridge.distance("GROUP:Aerial-1", "ZONE:Town Fight")
-nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True, limit=5)
-trace = await bridge.trace_auftrag("AUFTRAG:1")
+    coords = await bridge.coords("ZONE:Town Fight", format="mgrs")
+    points = await bridge.convert_points([(1000, 2000), (3000, 4000)])
+    distance = await bridge.distance("GROUP:Aerial-1", "ZONE:Town Fight")
+    nearest = await bridge.nearest("units", "ZONE:Town Fight", coalition="red", alive=True, limit=5)
+    trace = await bridge.trace_auftrag("AUFTRAG:1")
 ```
+
+`MooseBridgeServer` and the control adapter implement the same public
+`SdkBackend` contract. High-level helpers therefore dispatch only generic
+`BridgeCommand` values and work identically through either transport. Close the
+returned SDK client, or use it as a sync/async context manager, so its local
+listeners and background tasks are released. Mission-end events wake all event
+patterns and are converted by SDK waits into `DcsMissionEndedError`.
 
 Passive MOOSE territories are mirrored as typed SDK objects. Their geometry is
 authored in the DCS Mission Editor and is not periodically scanned:

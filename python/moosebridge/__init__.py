@@ -402,7 +402,8 @@ from .mission_resolver import (
 from .pictures import GlobalPicture, PictureValidationIssue, TacticalPicture
 from .protocol import BridgeCommand, BridgeMessage
 from .recommendations import AuftragRecommendation, executable_candidates, recommend_auftrag, rejected_candidates
-from .server import MooseBridgeServer
+from .server import DcsMissionEndedError, MooseBridgeServer
+from .sdk_backend import SdkBackend
 from .sdk import (
     CoordinateResult,
     DistanceResult,
@@ -414,6 +415,7 @@ from .sdk import (
     NearestResult,
 )
 from .control_sdk import ControlSdkAdapter, sdk_from_control_client
+from .theater_context import TheaterContext
 from .diagnostics import (
     format_capability_readiness,
     format_cohort_assets,
@@ -695,6 +697,7 @@ __all__ = [
     "CoordinateResult",
     "DistanceResult",
     "DestroyedObjectEvent",
+    "DcsMissionEndedError",
     "KillEvent",
     "DEFAULT_INCIDENT_WEIGHTS",
     "DEFAULT_DATAMINE_SENSOR_DATA",
@@ -827,6 +830,7 @@ __all__ = [
     "StrategicObjectiveRegistry",
     "StrategicSiteVerification",
     "StrategicVerificationRegistry",
+    "SdkBackend",
     "StrategicVerificationState",
     "InfrastructureObjectAssessment",
     "InfrastructureOperationalState",
@@ -1074,6 +1078,7 @@ __all__ = [
     "SettlementKind",
     "SettlementSizeClass",
     "TheaterSettlements",
+    "TheaterContext",
     "apply_administrative_boundaries",
     "build_settlements",
     "settlement_importance_score",
