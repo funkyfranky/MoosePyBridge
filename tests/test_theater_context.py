@@ -49,3 +49,16 @@ def test_sdk_preserves_theater_verifications_across_mission_reset() -> None:
     assert bridge.theater_context is context
     assert bridge._strategic_verifications is registry
     assert registry.theater_id == "Caucasus"
+
+
+def test_sdk_keeps_direct_theater_context_assignment_compatible() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    context = TheaterContext("Caucasus", verifications=StrategicVerificationRegistry())
+
+    bridge.theater_context = context
+    assert bridge.theater_context is context
+    assert bridge._strategic_verifications is context.verifications
+
+    bridge.theater_context = None
+    assert bridge.theater_context is None
+    assert bridge._strategic_verifications is None

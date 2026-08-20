@@ -105,6 +105,7 @@ from .operational_audit import RestoredOperationalPlan
 from .pictures import GlobalPicture, TacticalPicture
 from .protocol import BridgeCommand
 from .sdk_backend import SdkBackend
+from .sdk_presentation import DcsPresentationService, SMOKE_COLORS, validate_smoke_color
 from .server import DcsMissionEndedError
 from .sensor_ranges import (
     DEFAULT_SENSOR_RANGE_REGISTRY,
@@ -134,6 +135,7 @@ from .strategic_objectives import (
 )
 from .strategic_verification import StrategicVerificationRegistry
 from .theater_context import TheaterContext
+from .theater_service import TheaterDataService
 from .strategic_goals import (
     StrategicGoalGenerationConfig,
     StrategicGoalGenerationResult,
@@ -156,7 +158,6 @@ from .strategic import (
 )
 from .weapon_ranges import DEFAULT_WEAPON_RANGE_REGISTRY, RangeSource, WeaponRangeProfile, WeaponRangeRegistry
 
-SMOKE_COLORS = {"red", "green", "blue", "orange", "white"}
 COORDINATE_FORMATS = {"xyz", "ll", "latlon", "latlong", "mgrs", "all"}
 DRAW_ZONE_COLORS = {"red", "green", "blue", "yellow", "orange", "white", "black", "grey", "gray"}
 DRAW_ZONE_COALITIONS = {"all", "neutral", "red", "blue", "-1", "0", "1", "2"}
@@ -398,20 +399,6 @@ def require_ok(ack: dict[str, Any]) -> dict[str, Any]:
     if not ack.get("ok", False):
         raise MooseBridgeCommandError(ack)
     return ack
-
-
-def validate_smoke_color(color: str) -> str:
-    """Validate and normalize a smoke color.
-
-    :param color: Requested smoke color.
-    :returns: Lower-case smoke color.
-    :raises ValueError: If the color is unsupported.
-    """
-
-    normalized = color.lower().strip()
-    if normalized not in SMOKE_COLORS:
-        raise ValueError(f"Unsupported smoke color: {color!r}. Expected one of {sorted(SMOKE_COLORS)}")
-    return normalized
 
 
 def validate_coordinate_format(format: str) -> str:
@@ -659,7 +646,8 @@ class MooseBridgeClient:
         self._strategic_scenery_objectives: dict[str, set[str]] = {}
         self._strategic_scenery_baselines: dict[str, tuple[str, ...]] = {}
         self._strategic_scenery_baseline_complete: dict[str, bool] = {}
-        self.theater_context: TheaterContext | None = None
+        self._theater_service = TheaterDataService()
+        self._presentation_service = DcsPresentationService(server)
         self._closed = False
         self.strategic_feedback.add_listener(self._on_strategic_feedback_policy_event)
         add_listener = getattr(server, "add_message_listener", None)
@@ -715,6 +703,21 @@ class MooseBridgeClient:
 
         return self.server.state
 
+    @property
+    def theater_context(self) -> TheaterContext | None:
+        """Return the configured mission-independent static theater context."""
+
+        return self._theater_service.context
+
+    @theater_context.setter
+    def theater_context(self, context: TheaterContext | None) -> None:
+        if context is None:
+            self._theater_service.clear()
+            self._strategic_verifications = None
+            return
+        self._theater_service.configure(context)
+        self._strategic_verifications = context.verifications
+
     def reset_mission(self, *, reset_state: bool = True) -> None:
         """Discard all Python runtime state owned by the completed DCS mission."""
 
@@ -733,9 +736,7 @@ class MooseBridgeClient:
         self._auftrag_ids_by_object.clear()
         self._strategic_feedback_message_ids.clear()
         self._strategic_goal_generation_number = 0
-        self._strategic_verifications = (
-            self.theater_context.verifications if self.theater_context is not None else None
-        )
+        self._strategic_verifications = self._theater_service.verifications
         self._strategic_scenery_objectives.clear()
         self._strategic_scenery_baselines.clear()
         self._strategic_scenery_baseline_complete.clear()
@@ -877,9 +878,7 @@ class MooseBridgeClient:
     def configure_theater(self, context: TheaterContext) -> TheaterContext:
         """Attach validated static theater data for current and future missions."""
 
-        context.validate()
         self.theater_context = context
-        self._strategic_verifications = context.verifications
         return context
 
     def generate_strategic_objectives(
@@ -901,50 +900,30 @@ class MooseBridgeClient:
         ``replace`` is explicitly enabled.
         """
 
-        separate_sources = any(
-            item is not None
-            for item in (settlements, transport, railway, infrastructure, verifications)
-        )
-        if theater is not None and separate_sources:
-            raise ValueError("pass either theater context or individual theater artifacts, not both")
-        resolved_theater = theater
-        scoped_sources = any(
-            item is not None
-            for item in (settlements, transport, railway, infrastructure)
-        ) or bool(verifications is not None and verifications.theater_id.strip())
-        if resolved_theater is None and separate_sources and scoped_sources:
-            resolved_theater = TheaterContext.from_sources(
-                settlements=settlements,
-                transport=transport,
-                railway=railway,
-                infrastructure=infrastructure,
-                verifications=verifications,
-            )
-        elif resolved_theater is None and not separate_sources:
-            resolved_theater = self.theater_context
-        if resolved_theater is not None:
-            resolved_theater.validate()
-            settlements = resolved_theater.settlements
-            transport = resolved_theater.transport
-            railway = resolved_theater.railway
-            infrastructure = resolved_theater.infrastructure
-            verifications = resolved_theater.verifications
-
-        result = generate_strategic_objectives(
-            self.state,
-            self.build_strategic_scope(strict=True),
+        sources = self._theater_service.resolve_sources(
+            theater=theater,
             settlements=settlements,
             transport=transport,
             railway=railway,
             infrastructure=infrastructure,
             verifications=verifications,
+        )
+
+        result = generate_strategic_objectives(
+            self.state,
+            self.build_strategic_scope(strict=True),
+            settlements=sources.settlements,
+            transport=sources.transport,
+            railway=sources.railway,
+            infrastructure=sources.infrastructure,
+            verifications=sources.verifications,
             config=config,
         )
         if register:
-            if resolved_theater is not None:
-                self.configure_theater(resolved_theater)
-            elif verifications is not None:
-                self._strategic_verifications = verifications
+            if sources.context is not None:
+                self.configure_theater(sources.context)
+            elif sources.verifications is not None:
+                self._strategic_verifications = sources.verifications
             generated_ids = {objective.objective_id for objective in result.objectives}
             if replace:
                 for existing in self.objectives.all():
@@ -3866,14 +3845,7 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(
-            await self.server.send_command(
-                BridgeCommand(
-                    action="message.to_coalition",
-                    params={"coalition": coalition, "text": text, "duration": duration},
-                )
-            )
-        )
+        return require_ok(await self._presentation_service.message_coalition(coalition, text, duration))
 
     async def message_to_coalition(self, coalition: str, text: str, duration: int = 10) -> dict[str, Any]:
         """Backward-compatible alias for :meth:`message_coalition`.
@@ -3895,11 +3867,7 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(
-            await self.server.send_command(
-                BridgeCommand(action="message.to_all", params={"text": text, "duration": duration})
-            )
-        )
+        return require_ok(await self._presentation_service.message_all(text, duration))
 
     async def message_to_all(self, text: str, duration: int = 10) -> dict[str, Any]:
         """Backward-compatible alias for :meth:`message_all`.
@@ -3922,14 +3890,7 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(
-            await self.server.send_command(
-                BridgeCommand(
-                    action="smoke.at_point",
-                    params={"x": x, "y": y, "z": z, "color": validate_smoke_color(color)},
-                )
-            )
-        )
+        return require_ok(await self._presentation_service.smoke_point(x, z, color, y))
 
     async def smoke_at_point(self, x: float, z: float, color: str = "white", y: float = 0.0) -> dict[str, Any]:
         """Backward-compatible alias for :meth:`smoke_point`.
@@ -3952,14 +3913,7 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(
-            await self.server.send_command(
-                BridgeCommand(
-                    action="smoke.object",
-                    params={"object_id": object_id, "color": validate_smoke_color(color)},
-                )
-            )
-        )
+        return require_ok(await self._presentation_service.smoke_object(object_id, color))
 
     async def explode_point(
         self,
@@ -3983,16 +3937,13 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        if power <= 0:
-            raise ValueError("Explosion power must be greater than zero")
-        if delay < 0:
-            raise ValueError("Explosion delay must be zero or greater")
-        params: dict[str, Any] = {"x": x, "z": z, "power": power, "delay": delay}
-        if y is not None:
-            params["y"] = y
         return require_ok(
-            await self.server.send_command(
-                BridgeCommand(action="explosion.at_point", params=params),
+            await self._presentation_service.explode_point(
+                x,
+                z,
+                power,
+                y=y,
+                delay=delay,
                 timeout=timeout,
             )
         )
@@ -4015,16 +3966,11 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        if power <= 0:
-            raise ValueError("Explosion power must be greater than zero")
-        if delay < 0:
-            raise ValueError("Explosion delay must be zero or greater")
         return require_ok(
-            await self.server.send_command(
-                BridgeCommand(
-                    action="explosion.object",
-                    params={"object_id": object_id, "power": power, "delay": delay},
-                ),
+            await self._presentation_service.explode_object(
+                object_id,
+                power,
+                delay=delay,
                 timeout=timeout,
             )
         )
@@ -4040,11 +3986,7 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(
-            await self.server.send_command(
-                BridgeCommand(action="mark.at_point", params={"x": x, "y": y, "z": z, "text": text})
-            )
-        )
+        return require_ok(await self._presentation_service.mark_point(x, z, text, y))
 
     async def mark_at_point(self, x: float, z: float, text: str, y: float = 0.0) -> dict[str, Any]:
         """Backward-compatible alias for :meth:`mark_point`.
@@ -4067,11 +4009,7 @@ class MooseBridgeClient:
         :raises MooseBridgeCommandError: If DCS rejects the command.
         """
 
-        return require_ok(
-            await self.server.send_command(
-                BridgeCommand(action="mark.object", params={"object_id": object_id, "text": text})
-            )
-        )
+        return require_ok(await self._presentation_service.mark_object(object_id, text))
 
     async def mark_map_position(
         self,
@@ -4093,42 +4031,17 @@ class MooseBridgeClient:
         WGS84 coordinates are converted inside DCS with ``coord.LLtoLO``.
         """
 
-        marker_text = str(text).strip()
-        if not marker_text:
-            raise ValueError("marker text must not be empty")
-        if len(marker_text) > 180:
-            raise ValueError("marker text accepts at most 180 characters")
-        local_position = x is not None or z is not None
-        geographic_position = latitude is not None or longitude is not None
-        if local_position == geographic_position:
-            raise ValueError("supply either x/z or latitude/longitude")
-        if local_position:
-            values = (x, y, z)
-            if x is None or z is None or not all(math.isfinite(float(value)) for value in values):
-                raise ValueError("x, y and z must be finite numbers")
-            point = {"x": float(x), "y": float(y), "z": float(z)}
-        else:
-            values = (latitude, longitude, altitude)
-            if latitude is None or longitude is None or not all(math.isfinite(float(value)) for value in values):
-                raise ValueError("latitude, longitude and altitude must be finite numbers")
-            if not -90 <= float(latitude) <= 90 or not -180 <= float(longitude) <= 180:
-                raise ValueError("latitude/longitude is outside WGS84 bounds")
-            point = {
-                "latitude": float(latitude),
-                "longitude": float(longitude),
-                "altitude": float(altitude),
-            }
         return require_ok(
-            await self.server.send_command(
-                BridgeCommand(
-                    action="map.marker.create",
-                    params={
-                        "point": point,
-                        "text": marker_text,
-                        "coalition": validate_draw_zone_coalition(coalition),
-                        "read_only": bool(read_only),
-                    },
-                ),
+            await self._presentation_service.mark_map_position(
+                text,
+                x=x,
+                z=z,
+                y=y,
+                latitude=latitude,
+                longitude=longitude,
+                altitude=altitude,
+                coalition=validate_draw_zone_coalition(coalition),
+                read_only=read_only,
                 timeout=timeout,
             )
         )
