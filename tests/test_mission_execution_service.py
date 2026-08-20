@@ -33,11 +33,14 @@ class _MissionClient:
         events: list[dict[str, Any]] | None = None,
         *,
         auftrag_snapshots: list[dict[str, Any]] | None = None,
+        cancel_failures: tuple[str, ...] = (),
     ) -> None:
         self.server = _MissionServer(events)
         self.state = MooseBridgeState(connected=True)
         self.submissions: list[dict[str, Any]] = []
         self.cancelled: list[str] = []
+        self.cancel_timeouts: list[float] = []
+        self.cancel_failures = set(cancel_failures)
         self.auftrag_snapshots = list(auftrag_snapshots or ())
         self.snapshot_calls = 0
 
@@ -76,8 +79,11 @@ class _MissionClient:
     def _on_bridge_message(self, message: dict[str, Any]) -> None:
         del message
 
-    async def cancel_mission(self, mission_id: str) -> dict[str, Any]:
+    async def cancel_mission(self, mission_id: str, timeout: float = 10.0) -> dict[str, Any]:
+        if mission_id in self.cancel_failures:
+            raise RuntimeError(f"cancel failed for {mission_id}")
         self.cancelled.append(mission_id)
+        self.cancel_timeouts.append(timeout)
         return {"ok": True}
 
     async def snapshot_auftraege(self) -> dict[str, Any]:
@@ -195,6 +201,72 @@ def test_service_cancels_only_active_missions() -> None:
         assert active.error == "strategic goal achieved"
         assert completed.status is PlanMissionStatus.SUCCEEDED
         assert observed == ["mission.cancelled"]
+
+    asyncio.run(scenario())
+
+
+def test_service_discovers_and_cancels_only_live_snapshot_auftraege() -> None:
+    async def scenario() -> None:
+        client = _MissionClient(
+            auftrag_snapshots=[
+                {"object_id": "AUFTRAG:7", "status": "Started"},
+                {"object_id": "AUFTRAG:8", "status": "Done"},
+            ]
+        )
+        service = MissionExecutionService(client)  # type: ignore[arg-type]
+        live = _mission()
+        live.auftrag_id = "AUFTRAG:7"
+        live.status = PlanMissionStatus.RUNNING
+        finished = _mission()
+        finished.auftrag_id = "AUFTRAG:8"
+        finished.status = PlanMissionStatus.RUNNING
+        observed: list[str] = []
+
+        results = await service.cancel_live(
+            (live, finished),
+            reason="operator abort",
+            timeout=3.5,
+            on_event=lambda _mission, event: observed.append(event.event),
+        )
+
+        assert client.snapshot_calls == 1
+        assert client.cancelled == ["AUFTRAG:7"]
+        assert client.cancel_timeouts == [3.5]
+        assert live.status is PlanMissionStatus.CANCELLED
+        assert finished.status is PlanMissionStatus.RUNNING
+        assert len(results) == 1
+        assert results[0].auftrag_id == "AUFTRAG:7"
+        assert results[0].cancelled is True
+        assert results[0].message == "operator abort"
+        assert observed == ["mission.cancelled"]
+
+    asyncio.run(scenario())
+
+
+def test_service_returns_failed_live_auftrag_cancellation() -> None:
+    async def scenario() -> None:
+        client = _MissionClient(
+            auftrag_snapshots=[{"object_id": "AUFTRAG:7", "status": "Executing"}],
+            cancel_failures=("AUFTRAG:7",),
+        )
+        service = MissionExecutionService(client)  # type: ignore[arg-type]
+        mission = _mission()
+        mission.auftrag_id = "AUFTRAG:7"
+        mission.status = PlanMissionStatus.RUNNING
+        observed: list[str] = []
+
+        results = await service.cancel_live(
+            (mission,),
+            reason="operator abort",
+            on_event=lambda _mission, event: observed.append(event.event),
+        )
+
+        assert mission.status is PlanMissionStatus.RUNNING
+        assert mission.error == "cancel failed for AUFTRAG:7"
+        assert len(results) == 1
+        assert results[0].cancelled is False
+        assert results[0].message == "cancel failed for AUFTRAG:7"
+        assert observed == ["mission.cancel_failed"]
 
     asyncio.run(scenario())
 

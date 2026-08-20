@@ -84,6 +84,17 @@ class PlanMissionReconciliation:
 
 
 @dataclass(slots=True, frozen=True)
+class PlanMissionAbort:
+    """Result of cancelling one live MOOSE AUFTRAG."""
+
+    auftrag_id: str
+    phase_id: str
+    requirement_id: str
+    cancelled: bool
+    message: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class MissionLifecycleEvent:
     """Transport-neutral lifecycle event emitted for one plan mission."""
 
@@ -442,17 +453,65 @@ class MissionExecutionService:
         *,
         reason: str,
         on_event: MissionLifecycleCallback | None = None,
-    ) -> None:
+    ) -> tuple[PlanMissionAbort, ...]:
         """Best-effort cancellation of submitted or running AUFTRAGs."""
 
-        for mission in missions:
-            if not mission.auftrag_id or mission.status not in {
+        active = (
+            mission
+            for mission in missions
+            if mission.auftrag_id
+            and mission.status in {
                 PlanMissionStatus.SUBMITTED,
                 PlanMissionStatus.RUNNING,
-            }:
-                continue
+            }
+        )
+        return await self._cancel_selected(active, reason=reason, timeout=10.0, on_event=on_event)
+
+    async def cancel_live(
+        self,
+        missions: Iterable[PlanMissionExecution],
+        *,
+        reason: str,
+        timeout: float = 10.0,
+        on_event: MissionLifecycleCallback | None = None,
+    ) -> tuple[PlanMissionAbort, ...]:
+        """Discover and cancel AUFTRAGs that are live in the current MOOSE snapshot."""
+
+        if timeout <= 0:
+            raise ValueError("mission cancellation timeout must be greater than zero")
+        await self.client.snapshot_auftraege()
+        live_statuses = {
+            "planned",
+            "queued",
+            "requested",
+            "scheduled",
+            "started",
+            "executing",
+            "paused",
+        }
+        active = (
+            mission
+            for mission in missions
+            if mission.auftrag_id
+            and str(
+                self.client.state.auftraege.get(mission.auftrag_id, {}).get("status") or ""
+            ).strip().lower() in live_statuses
+        )
+        return await self._cancel_selected(active, reason=reason, timeout=timeout, on_event=on_event)
+
+    async def _cancel_selected(
+        self,
+        missions: Iterable[PlanMissionExecution],
+        *,
+        reason: str,
+        timeout: float,
+        on_event: MissionLifecycleCallback | None,
+    ) -> tuple[PlanMissionAbort, ...]:
+        results: list[PlanMissionAbort] = []
+        for mission in missions:
+            assert mission.auftrag_id is not None
             try:
-                await self.client.cancel_mission(mission.auftrag_id)
+                await self.client.cancel_mission(mission.auftrag_id, timeout=timeout)
             except Exception as exc:
                 message = str(exc) or f"could not cancel {mission.auftrag_id}"
                 mission.error = message
@@ -461,14 +520,34 @@ class MissionExecutionService:
                     MissionLifecycleEvent("mission.cancel_failed", message=message),
                     on_event,
                 )
+                results.append(
+                    PlanMissionAbort(
+                        mission.auftrag_id,
+                        mission.phase_id,
+                        mission.requirement_id,
+                        False,
+                        message,
+                    )
+                )
                 continue
-            mission.status = PlanMissionStatus.CANCELLED
-            mission.error = reason
-            await self._emit(
-                mission,
-                MissionLifecycleEvent("mission.cancelled", message=reason),
-                on_event,
+            if mission.status is not PlanMissionStatus.CANCELLED:
+                mission.status = PlanMissionStatus.CANCELLED
+                mission.error = reason
+                await self._emit(
+                    mission,
+                    MissionLifecycleEvent("mission.cancelled", message=reason),
+                    on_event,
+                )
+            results.append(
+                PlanMissionAbort(
+                    mission.auftrag_id,
+                    mission.phase_id,
+                    mission.requirement_id,
+                    True,
+                    reason,
+                )
             )
+        return tuple(results)
 
     async def _sample_recon_positions(self, mission: PlanMissionExecution) -> None:
         session = ReconTrackingSession(
@@ -536,6 +615,7 @@ __all__ = [
     "MissionLifecycleCallback",
     "MissionLifecycleEvent",
     "PlanMissionExecution",
+    "PlanMissionAbort",
     "PlanMissionReconciliation",
     "PlanMissionStatus",
     "command_ack_reference",

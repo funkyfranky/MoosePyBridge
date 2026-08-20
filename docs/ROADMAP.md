@@ -337,7 +337,8 @@ Current operational-planning baseline:
 - `OperationalPlanExecutor` owns phase order, dependencies, revalidation, and
   strategic effects. `MissionExecutionService` owns one concrete MOOSE
   AUFTRAG from submission through ACK correlation, status/evaluation events,
-  RECON position sampling, cancellation, and interrupted-state reconciliation.
+  RECON position sampling, live-state discovery, cancellation results, and
+  interrupted-state reconciliation.
   Plan-level persistence and callbacks consume the service's transport-neutral
   lifecycle events and reconciliation observations.
 - Blocked plans can be returned explicitly to draft state. Completed phases

@@ -35,6 +35,7 @@ from .mission_execution_service import (
     MissionExecutionService,
     MissionLifecycleCallback,
     MissionLifecycleEvent,
+    PlanMissionAbort,
     PlanMissionExecution,
     PlanMissionReconciliation,
     PlanMissionStatus,
@@ -85,17 +86,6 @@ class PlanAbortScope(str, Enum):
 
     ATTEMPT = "attempt"
     CURRENT_PHASE = "current_phase"
-
-
-@dataclass(slots=True, frozen=True)
-class PlanMissionAbort:
-    """Result of cancelling one live MOOSE AUFTRAG."""
-
-    auftrag_id: str
-    phase_id: str
-    requirement_id: str
-    cancelled: bool
-    message: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -423,52 +413,20 @@ class OperationalPlanExecutor:
         if execution.status not in {OperationalPlanStatus.EXECUTING, OperationalPlanStatus.BLOCKED}:
             raise ValueError("latest operational plan attempt cannot be aborted")
 
-        await self.client.snapshot_auftraege()
         current_phase: PlanPhase | None = None
         if scope is PlanAbortScope.CURRENT_PHASE:
             current_phase = self._current_execution_phase(plan, execution)
-        live_statuses = {"planned", "queued", "requested", "scheduled", "started", "executing", "paused"}
-        active = [
+        candidates = [
             mission
             for mission in execution.missions
-            if mission.auftrag_id
-            and str(
-                self.client.state.auftraege.get(mission.auftrag_id, {}).get("status") or ""
-            ).strip().lower() in live_statuses
-            and (current_phase is None or mission.phase_id == current_phase.phase_id)
+            if current_phase is None or mission.phase_id == current_phase.phase_id
         ]
-        results: list[PlanMissionAbort] = []
-        for mission in active:
-            assert mission.auftrag_id is not None
-            try:
-                await self.client.cancel_mission(mission.auftrag_id, timeout=timeout)
-            except Exception as exc:
-                message = str(exc) or f"could not cancel {mission.auftrag_id}"
-                mission.error = message
-                await self._mission_event(execution, mission, "mission.cancel_failed", on_event, message=message)
-                results.append(
-                    PlanMissionAbort(
-                        mission.auftrag_id,
-                        mission.phase_id,
-                        mission.requirement_id,
-                        False,
-                        message,
-                    )
-                )
-            else:
-                if mission.status is not PlanMissionStatus.CANCELLED:
-                    mission.status = PlanMissionStatus.CANCELLED
-                    mission.error = reason
-                    await self._mission_event(execution, mission, "mission.cancelled", on_event, message=reason)
-                results.append(
-                    PlanMissionAbort(
-                        mission.auftrag_id,
-                        mission.phase_id,
-                        mission.requirement_id,
-                        True,
-                        reason,
-                    )
-                )
+        results = await self.mission_executor.cancel_live(
+            candidates,
+            reason=reason,
+            timeout=timeout,
+            on_event=self._mission_lifecycle_callback(execution, on_event),
+        )
 
         failures = [result for result in results if not result.cancelled]
         if failures:
@@ -485,7 +443,7 @@ class OperationalPlanExecutor:
                 execution.attempt_id,
                 scope,
                 execution.status,
-                tuple(results),
+                results,
                 message,
             )
 
@@ -512,7 +470,7 @@ class OperationalPlanExecutor:
             execution.attempt_id,
             scope,
             execution.status,
-            tuple(results),
+            results,
             reason,
         )
 
@@ -1839,7 +1797,6 @@ __all__ = [
     "PlanExecutionEvent",
     "PlanMissionExecution",
     "PlanMissionReconciliation",
-    "PlanMissionAbort",
     "PlanMissionStatus",
     "PlanReconciliationStatus",
     "build_plan_auftrag",
