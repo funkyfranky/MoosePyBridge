@@ -219,6 +219,9 @@
   let transportRequestSequence = 0;
   let selectedFeature = null;
   let selectedObjectId = null;
+  const detailSectionExpansion = new Map();
+  let verificationEditorSourceId = null;
+  let goalEditorObjectiveId = null;
   let selectionCandidates = [];
   let selectionIndex = 0;
   let countUpdateTimer = null;
@@ -321,6 +324,7 @@
     topographyOpacity: document.getElementById("topography-opacity"),
     topographyOpacityValue: document.getElementById("topography-opacity-value"),
     layerPanel: document.getElementById("layer-panel"),
+    panelBody: document.getElementById("map-panel-body"),
     layerControls: document.getElementById("layer-controls"),
     filterControls: document.getElementById("filter-controls"),
     readinessControls: document.getElementById("readiness-controls"),
@@ -1199,6 +1203,7 @@
     if (Number.isFinite(missionTime)) {
       if (latestMissionTime !== null && missionTime + 1 < latestMissionTime) {
         strategicVerificationAssessments.clear();
+        detailSectionExpansion.clear();
       }
       latestMissionTime = missionTime;
     }
@@ -1219,7 +1224,12 @@
       selectionIndex = Math.max(0, selectionCandidates.findIndex((feature) => feature.properties?.object_id === selectedObjectId));
       const refreshed = selectionCandidates[selectionIndex]
         || allFeatures().find((feature) => feature.properties?.object_id === selectedObjectId);
-      if (refreshed) showDetails(refreshed);
+      if (refreshed) {
+        selectedFeature = refreshed;
+        if (verificationEditorSourceId !== selectedObjectId && goalEditorObjectiveId !== selectedObjectId) {
+          showDetails(refreshed);
+        }
+      }
       else closeDetails();
     }
     if (!fitted) fitOperationalArea(latestPicture);
@@ -1519,10 +1529,11 @@
       const parent = document.createElement("label");
       parent.className = "layer-control layer-control-parent";
       parent.innerHTML = `${layerControlMarkup(spec, `data-layer="${spec.key}"`)}<span class="layer-count" data-layer-count="${spec.key}">0</span>`;
-      header.append(expandButton(spec.label), parent);
+      header.append(expandButton(spec.label, false), parent);
 
       const children = document.createElement("div");
       children.className = "layer-children";
+      children.hidden = true;
       for (const child of spec.children) {
         const label = document.createElement("label");
         label.className = "layer-control layer-control-child";
@@ -1550,10 +1561,11 @@
       { ...groupSpec, default: groupSpec.layers.some((layer) => layerSpecByKey.get(layer)?.default) },
       `data-layer-group="${groupSpec.key}"`,
     )}<span class="layer-count" data-layer-group-count="${groupSpec.key}">0</span>`;
-    header.append(expandButton(groupSpec.label), parent);
+    header.append(expandButton(groupSpec.label, false), parent);
 
     const children = document.createElement("div");
     children.className = "layer-children";
+    children.hidden = true;
     for (const layerKey of groupSpec.layers) appendLayerControl(layerSpecByKey.get(layerKey), children);
     group.append(header, children);
     container.appendChild(group);
@@ -1620,14 +1632,30 @@
       }
       applyLayerVisibility();
     });
+    function setLayerGroupExpanded(group, expanded) {
+      const children = group.querySelector(":scope > .layer-children");
+      const button = group.querySelector(":scope > .layer-group-header > .layer-expand");
+      if (!children || !button) return;
+      children.hidden = !expanded;
+      button.setAttribute("aria-expanded", String(expanded));
+      button.title = `${expanded ? "Collapse" : "Expand"} ${button.dataset.expandLabel}`;
+      button.setAttribute("aria-label", button.title);
+    }
+
     elements.layerControls.addEventListener("click", (event) => {
       const button = event.target.closest(".layer-expand");
       if (!button) return;
-      const children = button.closest(".layer-group").querySelector(":scope > .layer-children");
-      children.hidden = !children.hidden;
-      button.setAttribute("aria-expanded", String(!children.hidden));
-      button.title = `${children.hidden ? "Expand" : "Collapse"} ${button.dataset.expandLabel}`;
-      button.setAttribute("aria-label", button.title);
+      const group = button.closest(".layer-group");
+      const children = group.querySelector(":scope > .layer-children");
+      const expanded = children.hidden;
+      if (expanded && group.classList.contains("layer-subgroup")) {
+        for (const sibling of group.parentElement.children) {
+          if (sibling !== group && sibling.classList.contains("layer-subgroup")) {
+            setLayerGroupExpanded(sibling, false);
+          }
+        }
+      }
+      setLayerGroupExpanded(group, expanded);
     });
   }
 
@@ -1674,7 +1702,7 @@
       }
     } else if (kind === "territory") {
       territoryOpacity = opacity;
-      applyLayerOpacity(["territories"], opacity);
+      applyLayerOpacity(["strategic_scope", "territories"], opacity);
     } else if (kind === "topography") {
       topographyOpacity = opacity;
       applyLayerOpacity(layerSections.find((section) => section.key === "topography").layers, opacity);
@@ -1790,7 +1818,7 @@
           <option value="generated">Objective generated</option>
           <option value="not_generated">No objective</option>
         </select>
-        <input class="readiness-search" type="search" data-readiness-search placeholder="Find object" aria-label="Find readiness object">
+        <input class="readiness-search" type="search" data-readiness-search placeholder="Filter readiness list" aria-label="Filter readiness list">
       </div>
       <div class="readiness-list-heading"><span data-readiness-result-count>0 objects</span><span>First 250 shown</span></div>
       <div class="readiness-list" data-readiness-list></div>`;
@@ -2045,15 +2073,41 @@
     elements.detailBadges.appendChild(badge);
   }
 
-  function addDetailSection(title, icon, rows) {
+  let detailSectionSequence = 0;
+
+  function detailSectionExpansionKey(title) {
+    return selectedObjectId ? `${selectedObjectId}\u001f${title}` : null;
+  }
+
+  function addDetailSection(title, icon, rows, { expanded = true } = {}) {
     if (!rows.length) return;
+    const expansionKey = detailSectionExpansionKey(title);
+    const rememberedExpansion = expansionKey === null
+      ? undefined
+      : detailSectionExpansion.get(expansionKey);
+    const initialExpanded = typeof rememberedExpansion === "boolean"
+      ? rememberedExpansion
+      : expanded;
     const section = document.createElement("section");
-    section.className = "detail-section";
+    section.className = "detail-section is-collapsible";
     const heading = document.createElement("h3");
     heading.className = "detail-section-title";
-    heading.innerHTML = `<i data-lucide="${icon}"></i><span>${title}</span>`;
+    const toggle = document.createElement("button");
+    toggle.className = "detail-section-toggle";
+    toggle.type = "button";
+    toggle.innerHTML = `<i data-lucide="${icon}"></i><span>${title}</span><i data-lucide="chevron-down" class="detail-section-chevron"></i>`;
     const list = document.createElement("dl");
     list.className = "property-list";
+    list.id = `detail-section-content-${++detailSectionSequence}`;
+    toggle.setAttribute("aria-controls", list.id);
+    toggle.setAttribute("aria-expanded", String(initialExpanded));
+    list.hidden = !initialExpanded;
+    toggle.addEventListener("click", () => {
+      const nextExpanded = toggle.getAttribute("aria-expanded") !== "true";
+      toggle.setAttribute("aria-expanded", String(nextExpanded));
+      list.hidden = !nextExpanded;
+      if (expansionKey !== null) detailSectionExpansion.set(expansionKey, nextExpanded);
+    });
     for (const [label, value] of rows) {
       const term = document.createElement("dt");
       const description = document.createElement("dd");
@@ -2061,22 +2115,56 @@
       description.textContent = value;
       list.append(term, description);
     }
+    heading.appendChild(toggle);
     section.append(heading, list);
     elements.detailSections.appendChild(section);
   }
 
   function addStrategicGoalControls(properties) {
+    const objectiveId = String(properties.object_id || "");
+    const coalitions = ["blue", "red"];
+    const hasGoal = (coalition) => Boolean(properties[`${coalition}_goal_id`]);
+    const goalDescription = (coalition) => {
+      if (!hasGoal(coalition)) return "No active goal";
+      return `${properties[`${coalition}_goal_action`] || "Goal"} · ${properties[`${coalition}_goal_status`] || "planned"}`;
+    };
     const section = document.createElement("section");
     section.className = "detail-section strategic-goal-controls";
     const heading = document.createElement("h3");
-    heading.className = "detail-section-title";
-    heading.innerHTML = '<i data-lucide="list-plus"></i><span>Goal selection</span>';
-    const controls = document.createElement("div");
-    controls.className = "goal-control-row";
+    heading.className = "detail-section-title detail-section-action-heading";
+    const headingLabel = document.createElement("span");
+    headingLabel.className = "detail-section-heading-label";
+    headingLabel.innerHTML = '<i data-lucide="list-checks"></i><span>Strategic goals</span>';
+    const createModeButton = document.createElement("button");
+    createModeButton.className = "detail-mode-button";
+    createModeButton.type = "button";
+    createModeButton.title = "Create strategic goal";
+    createModeButton.disabled = coalitions.every(hasGoal);
+    createModeButton.innerHTML = '<i data-lucide="plus"></i><span>Create</span>';
+    heading.append(headingLabel, createModeButton);
+
+    const summary = document.createElement("div");
+    summary.className = "goal-summary";
+    for (const coalition of coalitions) {
+      const row = document.createElement("div");
+      row.className = "goal-summary-row";
+      const badge = document.createElement("span");
+      badge.className = `detail-badge is-${coalition}`;
+      badge.textContent = coalition.charAt(0).toUpperCase() + coalition.slice(1);
+      const description = document.createElement("span");
+      description.className = `goal-summary-description${hasGoal(coalition) ? " has-goal" : ""}`;
+      description.textContent = goalDescription(coalition);
+      row.append(badge, description);
+      summary.appendChild(row);
+    }
+
+    const editor = document.createElement("div");
+    editor.className = "goal-editor";
+    editor.hidden = true;
     const coalitionControl = document.createElement("div");
     coalitionControl.className = "segmented-control";
     coalitionControl.setAttribute("aria-label", "Goal coalition");
-    let selectedCoalition = "blue";
+    let selectedCoalition = coalitions.find((coalition) => !hasGoal(coalition)) || "blue";
     const status = document.createElement("div");
     status.className = "goal-control-status";
     const createButton = document.createElement("button");
@@ -2090,15 +2178,15 @@
         const selected = button.dataset.coalition === selectedCoalition;
         button.classList.toggle("is-selected", selected);
         button.setAttribute("aria-pressed", String(selected));
+        button.disabled = hasGoal(button.dataset.coalition);
       });
-      const goalId = properties[`${selectedCoalition}_goal_id`];
-      createButton.disabled = Boolean(goalId);
-      status.textContent = goalId
-        ? `${properties[`${selectedCoalition}_goal_action`]} goal · ${properties[`${selectedCoalition}_goal_status`]}`
-        : "No goal selected";
+      createButton.disabled = hasGoal(selectedCoalition);
+      status.textContent = hasGoal(selectedCoalition)
+        ? goalDescription(selectedCoalition)
+        : `${selectedCoalition.charAt(0).toUpperCase() + selectedCoalition.slice(1)} goal ready to create`;
     }
 
-    for (const coalition of ["blue", "red"]) {
+    for (const coalition of coalitions) {
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.coalition = coalition;
@@ -2121,18 +2209,46 @@
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || "Goal creation failed");
         const goal = result.goal;
-        properties[`${selectedCoalition}_goal_id`] = goal.goal_id;
-        properties[`${selectedCoalition}_goal_action`] = goal.action;
-        properties[`${selectedCoalition}_goal_status`] = goal.status;
-        status.textContent = `${goal.action} goal · ${goal.status}`;
+        const goalProperties = {
+          [`${selectedCoalition}_goal_id`]: goal.goal_id,
+          [`${selectedCoalition}_goal_action`]: goal.action,
+          [`${selectedCoalition}_goal_status`]: goal.status,
+        };
+        Object.assign(properties, goalProperties);
+        goalEditorObjectiveId = null;
+        if (selectedFeature?.properties?.object_id === objectiveId) {
+          Object.assign(selectedFeature.properties, goalProperties);
+          showDetails(selectedFeature);
+        }
       } catch (error) {
         createButton.disabled = false;
         status.textContent = String(error.message || error);
         status.classList.add("is-error");
       }
     });
-    controls.append(coalitionControl, createButton);
-    section.append(heading, controls, status);
+
+    const cancelButton = document.createElement("button");
+    cancelButton.className = "command-button is-secondary";
+    cancelButton.type = "button";
+    cancelButton.innerHTML = '<i data-lucide="x"></i><span>Cancel</span>';
+    const actions = document.createElement("div");
+    actions.className = "goal-editor-actions";
+    actions.append(cancelButton, createButton);
+    editor.append(coalitionControl, actions, status);
+
+    createModeButton.addEventListener("click", () => {
+      goalEditorObjectiveId = objectiveId;
+      summary.hidden = true;
+      editor.hidden = false;
+      createModeButton.hidden = true;
+      coalitionControl.querySelector(`button[data-coalition="${selectedCoalition}"]`)?.focus();
+    });
+    cancelButton.addEventListener("click", () => {
+      goalEditorObjectiveId = null;
+      if (selectedFeature?.properties?.object_id === objectiveId) showDetails(selectedFeature);
+    });
+
+    section.append(heading, summary, editor);
     elements.detailSections.appendChild(section);
     refreshControl();
   }
@@ -2164,16 +2280,25 @@
     const section = document.createElement("section");
     section.className = "detail-section verification-controls";
     const heading = document.createElement("h3");
-    heading.className = "detail-section-title";
-    heading.innerHTML = '<i data-lucide="badge-check"></i><span>DCS verification</span>';
+    heading.className = "detail-section-title detail-section-action-heading";
+    const headingLabel = document.createElement("span");
+    headingLabel.className = "detail-section-heading-label";
+    headingLabel.innerHTML = '<i data-lucide="badge-check"></i><span>DCS verification</span>';
+    const editButton = document.createElement("button");
+    editButton.className = "detail-mode-button";
+    editButton.type = "button";
+    editButton.title = "Edit DCS verification";
+    editButton.innerHTML = '<i data-lucide="pencil"></i><span>Edit</span>';
+    heading.append(headingLabel, editButton);
 
     const stateLabel = document.createElement("label");
     stateLabel.textContent = "Status";
     const stateSelect = document.createElement("select");
-    for (const [value, label] of [
+    const stateOptions = [
       ["unverified", "Unverified"], ["represented", "Represented"],
       ["not_represented", "Not represented"],
-    ]) {
+    ];
+    for (const [value, label] of stateOptions) {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = label;
@@ -2266,6 +2391,7 @@
         status.textContent = `${saved.observed_objects.length} observed (${saved.observation_complete ? "complete baseline" : "partial baseline"}) · `
           + `${saved.target_components.length} target(s) · ${result.admitted ? "admitted" : "not admitted"}`;
         if (selectedFeature?.properties?.object_id === sourceId) {
+          verificationEditorSourceId = null;
           Object.assign(selectedFeature.properties, strategicVerificationDetailProperties(saved));
           showDetails(selectedFeature);
         }
@@ -2310,16 +2436,68 @@
     });
 
     const grid = document.createElement("div");
-    grid.className = "verification-grid";
+    grid.className = "verification-grid verification-editor";
+    grid.hidden = true;
     stateLabel.appendChild(stateSelect);
     componentLabel.appendChild(componentInput);
     notesLabel.appendChild(notesInput);
     observedLabel.appendChild(observedInput);
+    const cancelButton = document.createElement("button");
+    cancelButton.className = "command-button is-secondary";
+    cancelButton.type = "button";
+    cancelButton.innerHTML = '<i data-lucide="x"></i><span>Cancel</span>';
+    const editorActions = document.createElement("div");
+    editorActions.className = "verification-editor-actions";
+    editorActions.append(cancelButton, saveButton);
     grid.append(
       stateLabel, observedLabel, componentLabel, notesLabel,
-      saveButton, status, assessButton, assessmentStatus,
+      editorActions, status,
     );
-    section.append(heading, grid);
+
+    const summary = document.createElement("div");
+    summary.className = "verification-summary";
+    const overview = document.createElement("div");
+    overview.className = "verification-overview";
+    const stateBadge = document.createElement("span");
+    stateBadge.className = `detail-badge verification-state is-${current.state.replaceAll("_", "-")}`;
+    stateBadge.textContent = stateOptions.find(([value]) => value === current.state)?.[1] || current.state;
+    const metrics = document.createElement("div");
+    metrics.className = "verification-metrics";
+    const baselineMetric = document.createElement("span");
+    baselineMetric.textContent = `${current.observed_objects?.length || 0} observed · ${current.observation_complete ? "complete baseline" : "partial baseline"}`;
+    const targetMetric = document.createElement("span");
+    targetMetric.textContent = `${current.target_components?.length || 0} target(s) · ${isAdmitted(current) ? "admitted" : "not admitted"}`;
+    metrics.append(baselineMetric, targetMetric);
+    overview.append(stateBadge, metrics);
+    summary.append(overview, assessButton, assessmentStatus);
+
+    const resetEditor = () => {
+      stateSelect.value = current.state;
+      componentInput.value = (current.target_components || []).map((item) => {
+        const role = item.role || "infrastructure component";
+        return `${item.object_id} | ${role} | ${Number(item.weight || 1)}`;
+      }).join("\n");
+      notesInput.value = current.notes || "";
+      status.classList.remove("is-error");
+      status.textContent = `${current.observed_objects?.length || 0} observed (${observationStatus}) · `
+        + `${current.target_components?.length || 0} target(s) · ${isAdmitted(current) ? "admitted" : "not admitted"}`;
+    };
+    editButton.addEventListener("click", () => {
+      verificationEditorSourceId = sourceId;
+      summary.hidden = true;
+      grid.hidden = false;
+      editButton.hidden = true;
+      stateSelect.focus();
+    });
+    cancelButton.addEventListener("click", () => {
+      verificationEditorSourceId = null;
+      resetEditor();
+      grid.hidden = true;
+      summary.hidden = false;
+      editButton.hidden = false;
+    });
+
+    section.append(heading, summary, grid);
     elements.detailSections.appendChild(section);
   }
 
@@ -2387,6 +2565,12 @@
   }
 
   function showDetails(feature) {
+    if (verificationEditorSourceId && verificationEditorSourceId !== feature.properties?.object_id) {
+      verificationEditorSourceId = null;
+    }
+    if (goalEditorObjectiveId && goalEditorObjectiveId !== feature.properties?.object_id) {
+      goalEditorObjectiveId = null;
+    }
     selectedFeature = feature;
     const properties = withCurrentStrategicVerification(feature.properties || {});
     selectedObjectId = properties.object_id || null;
@@ -2470,9 +2654,9 @@
         [fieldLabels.name, readableValue(properties.name)],
         [fieldLabels.category, readableValue(properties.category)],
         [fieldLabels.type, readableValue(properties.type)],
-      ]);
+      ], { expanded: false });
     } else {
-      addDetailSection("Identity and relationships", "fingerprint", detailRows(properties, ["object_id", "tracked_object_id", "source_layer", "display_name", "dcs_type", "dcs_category_name", "group_name", "legion_id", "opsgroup_id", "intel_id", "recce_name", "source"], consumed));
+      addDetailSection("Identity and relationships", "fingerprint", detailRows(properties, ["object_id", "tracked_object_id", "source_layer", "display_name", "dcs_type", "dcs_category_name", "group_name", "legion_id", "opsgroup_id", "intel_id", "recce_name", "source"], consumed), { expanded: false });
     }
 
     const position = [];
@@ -2484,13 +2668,13 @@
       const local = ["x", "y", "z"].map((key) => properties[key] === undefined ? "-" : Number(properties[key]).toFixed(3));
       position.push(["DCS x / y / z", local.join(" / ")]);
     }
-    addDetailSection("Position", "map-pin", position);
+    addDetailSection("Position", "map-pin", position, { expanded: false });
 
     const additional = Object.keys(properties)
       .filter((key) => !consumed.has(key) && properties[key] !== null && properties[key] !== "")
       .sort((a, b) => a.localeCompare(b))
       .map((key) => [humanizeKey(key), formattedField(key, properties[key])]);
-    addDetailSection("Additional data", "list", additional);
+    addDetailSection("Additional data", "list", additional, { expanded: false });
     if (window.lucide) window.lucide.createIcons({ attrs: { "aria-hidden": "true" } });
     if (window.innerWidth <= 720) {
       elements.layerPanel.hidden = true;
@@ -2502,6 +2686,8 @@
   function closeDetails() {
     selectedFeature = null;
     selectedObjectId = null;
+    verificationEditorSourceId = null;
+    goalEditorObjectiveId = null;
     selectionCandidates = [];
     selectionIndex = 0;
     elements.detailPanel.hidden = true;
@@ -2681,13 +2867,13 @@
     elements.layerControls.hidden = !showLayers;
     elements.filterControls.hidden = !showFilters;
     elements.readinessControls.hidden = !showReadiness;
-    elements.layerPanel.classList.toggle("is-readiness", showReadiness);
     elements.layersTab.classList.toggle("is-active", showLayers);
     elements.filtersTab.classList.toggle("is-active", showFilters);
     elements.readinessTab.classList.toggle("is-active", showReadiness);
     elements.layersTab.setAttribute("aria-selected", String(showLayers));
     elements.filtersTab.setAttribute("aria-selected", String(showFilters));
     elements.readinessTab.setAttribute("aria-selected", String(showReadiness));
+    elements.panelBody.scrollTop = 0;
   }
   elements.layersTab.addEventListener("click", () => showSettingsTab("layers"));
   elements.filtersTab.addEventListener("click", () => showSettingsTab("filters"));
@@ -2698,6 +2884,12 @@
     elements.layerPanel.hidden = hidden;
     elements.layersToggle.setAttribute("aria-expanded", String(!hidden));
   });
+  function synchronizeResponsivePanels() {
+    if (window.innerWidth > 720 || elements.detailPanel.hidden || elements.layerPanel.hidden) return;
+    elements.layerPanel.hidden = true;
+    elements.layersToggle.setAttribute("aria-expanded", "false");
+  }
+  window.addEventListener("resize", synchronizeResponsivePanels);
   elements.detailClose.addEventListener("click", closeDetails);
   elements.detailPrevious.addEventListener("click", () => showSelectionAt(selectionIndex - 1));
   elements.detailNext.addEventListener("click", () => showSelectionAt(selectionIndex + 1));

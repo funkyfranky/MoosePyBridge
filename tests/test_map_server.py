@@ -1032,6 +1032,87 @@ def test_map_ui_does_not_apply_tactical_filters_to_topography() -> None:
     assert "[mapLayerBaseFilters.get(id), ...tacticalFilters]" in map_script
 
 
+def test_map_ui_territorial_opacity_controls_both_area_sources() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    index = (root / "index.html").read_text(encoding="utf-8")
+
+    assert '<label for="territory-opacity">Territorial areas</label>' in index
+    assert 'applyLayerOpacity(["strategic_scope", "territories"], opacity);' in map_script
+
+
+def test_map_ui_keeps_panel_navigation_visible_and_compacts_layer_groups() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    index = (root / "index.html").read_text(encoding="utf-8")
+    stylesheet = (root / "map.css").read_text(encoding="utf-8")
+
+    assert 'class="panel-chrome"' in index
+    assert 'id="map-panel-body" class="panel-body"' in index
+    assert 'class="detail-panel-body"' in index
+    assert ".panel-body," in stylesheet
+    assert "width: min(360px, calc(100% - 24px));" in stylesheet
+    assert "header.append(expandButton(spec.label, false), parent);" in map_script
+    assert "header.append(expandButton(groupSpec.label, false), parent);" in map_script
+    assert "setLayerGroupExpanded(sibling, false);" in map_script
+    assert "elements.panelBody.scrollTop = 0;" in map_script
+    assert 'window.addEventListener("resize", synchronizeResponsivePanels);' in map_script
+
+
+def test_map_ui_collapses_technical_details_and_uses_mobile_action_row() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    stylesheet = (root / "map.css").read_text(encoding="utf-8")
+
+    assert 'className = "detail-section-toggle"' in map_script
+    assert 'toggle.setAttribute("aria-expanded", String(initialExpanded));' in map_script
+    assert 'addDetailSection("Position", "map-pin", position, { expanded: false });' in map_script
+    assert 'addDetailSection("Additional data", "list", additional, { expanded: false });' in map_script
+    assert "const detailSectionExpansion = new Map();" in map_script
+    assert "detailSectionExpansion.get(expansionKey)" in map_script
+    assert "detailSectionExpansion.set(expansionKey, nextExpanded)" in map_script
+    assert "detailSectionExpansion.clear();" in map_script
+    assert ".detail-section-toggle" in stylesheet
+    assert '.detail-section-toggle[aria-expanded="false"] .detail-section-chevron' in stylesheet
+    assert '.detail-section .property-list[hidden] { display: none; }' in stylesheet
+    assert ".detail-panel > .panel-heading { display: grid;" in stylesheet
+    assert ".detail-actions { width: 100%; justify-content: flex-end;" in stylesheet
+
+
+def test_map_ui_uses_compact_verification_summary_and_explicit_edit_mode() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    stylesheet = (root / "map.css").read_text(encoding="utf-8")
+
+    assert 'className = "verification-summary"' in map_script
+    assert 'className = "verification-grid verification-editor"' in map_script
+    assert 'editButton.innerHTML = \'<i data-lucide="pencil"></i><span>Edit</span>\';' in map_script
+    assert 'cancelButton.innerHTML = \'<i data-lucide="x"></i><span>Cancel</span>\';' in map_script
+    assert "verificationEditorSourceId = sourceId;" in map_script
+    assert "verificationEditorSourceId !== selectedObjectId && goalEditorObjectiveId !== selectedObjectId" in map_script
+    assert "summary.hidden = true;" in map_script
+    assert "grid.hidden = true;" in map_script
+    assert ".detail-mode-button[hidden] { display: none; }" in stylesheet
+    assert ".verification-summary[hidden], .verification-editor[hidden] { display: none; }" in stylesheet
+    assert ".verification-editor-actions" in stylesheet
+
+
+def test_map_ui_uses_compact_goal_summary_and_explicit_create_mode() -> None:
+    root = Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui"
+    map_script = (root / "map.js").read_text(encoding="utf-8")
+    stylesheet = (root / "map.css").read_text(encoding="utf-8")
+
+    assert 'headingLabel.innerHTML = \'<i data-lucide="list-checks"></i><span>Strategic goals</span>\';' in map_script
+    assert 'className = "goal-summary"' in map_script
+    assert 'className = "goal-editor"' in map_script
+    assert 'createModeButton.innerHTML = \'<i data-lucide="plus"></i><span>Create</span>\';' in map_script
+    assert "goalEditorObjectiveId = objectiveId;" in map_script
+    assert "goalEditorObjectiveId !== selectedObjectId" in map_script
+    assert "Object.assign(selectedFeature.properties, goalProperties);" in map_script
+    assert ".goal-summary[hidden], .goal-editor[hidden] { display: none; }" in stylesheet
+    assert ".goal-editor-actions" in stylesheet
+
+
 def test_map_ui_exposes_objective_filters_and_goal_selection() -> None:
     map_script = (
         Path(__file__).parents[1] / "python" / "moosebridge" / "map_ui" / "map.js"
@@ -1092,6 +1173,7 @@ def test_map_ui_exposes_simplified_verification_readiness_view() -> None:
     assert 'data-readiness-state="review"' in map_script
     assert 'data-readiness-state="excluded"' in map_script
     assert 'data-readiness-type' in map_script
+    assert 'placeholder="Filter readiness list" aria-label="Filter readiness list"' in map_script
     assert 'item.category !== type' in map_script
     assert 'new Option(`${displayState(type)} (${count})`, type)' in map_script
     assert 'data-readiness-summary="out_of_scope"' in map_script
@@ -1133,5 +1215,5 @@ def test_map_ui_groups_road_infrastructure_and_keeps_counts_visible() -> None:
     assert 'label: "Road bridges"' in map_script
     assert 'label: "Road junctions"' in map_script
     assert 'data-layer-group-count' in map_script
-    assert "width: min(300px, calc(100% - 24px));" in stylesheet
+    assert "width: min(360px, calc(100% - 24px));" in stylesheet
     assert "overflow-x: hidden;" in stylesheet

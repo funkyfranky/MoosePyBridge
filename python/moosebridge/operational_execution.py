@@ -2020,6 +2020,8 @@ def _command_ack_reference(ack: Mapping[str, Any]) -> CommandAckReference:
         "cohort_id",
         "commander_id",
         "legion_id",
+        "target_resolution",
+        "target_resolution_error",
     }
     compact_result = {
         str(key): value

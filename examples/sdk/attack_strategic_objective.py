@@ -40,6 +40,8 @@ INTEL_ID = "INTEL:Red Intel"
 REQUIRED_DAMAGE = 1.0
 MAX_STRIKE_ROUNDS = 2
 REQUIRE_WAR = True
+DECLARE_WAR_IF_NEEDED = True
+WAR_DECLARATION_REASON = "Attack a verified strategic infrastructure objective"
 
 APPROVE_IF_FEASIBLE = True
 # Keep the first run plan-only. Set True after inspecting the printed assignment.
@@ -101,10 +103,19 @@ async def run() -> int:
         )
     if objective.owner == ATTACKING_COALITION:
         raise ValueError("Attacking coalition owns the selected objective")
+    declared_war = False
     if REQUIRE_WAR and bridge.relationship.state.value != "war":
-        raise ValueError(
-            f"Coalition relationship is {bridge.relationship.state.value}; declare war before attacking"
+        if not DECLARE_WAR_IF_NEEDED:
+            raise ValueError(
+                f"Coalition relationship is {bridge.relationship.state.value}; "
+                "declare war before attacking or set DECLARE_WAR_IF_NEEDED=True"
+            )
+        bridge.declare_war(
+            ATTACKING_COALITION,
+            reason=WAR_DECLARATION_REASON,
         )
+        await bridge.persist_diplomacy_state()
+        declared_war = True
 
     mission_time = bridge.state.clock.mission_time if bridge.state.clock else None
     if mission_time is None:
@@ -132,6 +143,8 @@ async def run() -> int:
     print(f"Owner          : {objective.owner}")
     print(f"Attacker       : {ATTACKING_COALITION}")
     print(f"Relationship   : {bridge.relationship.state.value}")
+    if declared_war:
+        print(f"War declaration: {ATTACKING_COALITION} ({WAR_DECLARATION_REASON})")
     print(f"Required damage: {REQUIRED_DAMAGE:.0%}")
     print(f"Components     : {len(objective.components)}")
     for component in objective.components:

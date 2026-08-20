@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MooseBridge Global Picture</title>
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/assets/map.css?v=10">
+  <link rel="stylesheet" href="/assets/map.css?v=17">
 </head>
 <body>
   <main class="app-shell">
@@ -34,51 +34,55 @@
     </header>
 
     <aside id="layer-panel" class="layer-panel" aria-label="Map layers">
-      <div class="panel-heading">
-        <span>Map display</span>
-        <span id="feature-count" class="muted">0 objects</span>
+      <div class="panel-chrome">
+        <div class="panel-heading">
+          <span>Map display</span>
+          <span id="feature-count" class="muted">0 objects</span>
+        </div>
+        <div class="panel-tabs" role="tablist" aria-label="Map display settings">
+          <button id="layers-tab" class="panel-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="layer-controls">Layers</button>
+          <button id="filters-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="filter-controls">Filters</button>
+          <button id="readiness-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="readiness-controls">Readiness</button>
+        </div>
       </div>
-      <div class="panel-tabs" role="tablist" aria-label="Map display settings">
-        <button id="layers-tab" class="panel-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="layer-controls">Layers</button>
-        <button id="filters-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="filter-controls">Filters</button>
-        <button id="readiness-tab" class="panel-tab" type="button" role="tab" aria-selected="false" aria-controls="readiness-controls">Readiness</button>
+      <div id="map-panel-body" class="panel-body">
+        <div id="layer-controls" class="layer-controls" role="tabpanel" aria-labelledby="layers-tab">
+          <section class="map-appearance" aria-labelledby="map-appearance-heading">
+            <div id="map-appearance-heading" class="map-appearance-heading"><i data-lucide="palette"></i>Map appearance</div>
+            <label class="map-appearance-select">
+              <span>Basemap</span>
+              <select id="basemap-style">
+                <option value="osm">OpenStreetMap</option>
+                <option value="carto-light">CARTO Light</option>
+                <option value="carto-dark">CARTO Dark</option>
+              </select>
+            </label>
+            <div class="map-opacity-control">
+              <div class="map-opacity-heading">
+                <label for="basemap-opacity">Basemap opacity</label>
+                <output id="basemap-opacity-value" for="basemap-opacity">100%</output>
+              </div>
+              <input id="basemap-opacity" type="range" min="0" max="100" step="5" value="100">
+            </div>
+            <div class="map-opacity-control">
+              <div class="map-opacity-heading">
+                <label for="territory-opacity">Territorial areas</label>
+                <output id="territory-opacity-value" for="territory-opacity">100%</output>
+              </div>
+              <input id="territory-opacity" type="range" min="0" max="100" step="5" value="100">
+            </div>
+            <div class="map-opacity-control">
+              <div class="map-opacity-heading">
+                <label for="topography-opacity">Topographic overlays</label>
+                <output id="topography-opacity-value" for="topography-opacity">100%</output>
+              </div>
+              <input id="topography-opacity" type="range" min="0" max="100" step="5" value="100">
+            </div>
+          </section>
+        </div>
+        <div id="filter-controls" class="filter-controls" role="tabpanel" aria-labelledby="filters-tab" hidden></div>
+        <div id="readiness-controls" class="readiness-controls" role="tabpanel" aria-labelledby="readiness-tab" hidden></div>
       </div>
-      <div id="layer-controls" class="layer-controls" role="tabpanel" aria-labelledby="layers-tab">
-        <section class="map-appearance" aria-labelledby="map-appearance-heading">
-          <div id="map-appearance-heading" class="map-appearance-heading"><i data-lucide="palette"></i>Map appearance</div>
-          <label class="map-appearance-select">
-            <span>Basemap</span>
-            <select id="basemap-style">
-              <option value="osm">OpenStreetMap</option>
-              <option value="carto-light">CARTO Light</option>
-              <option value="carto-dark">CARTO Dark</option>
-            </select>
-          </label>
-          <div class="map-opacity-control">
-            <div class="map-opacity-heading">
-              <label for="basemap-opacity">Basemap opacity</label>
-              <output id="basemap-opacity-value" for="basemap-opacity">100%</output>
-            </div>
-            <input id="basemap-opacity" type="range" min="0" max="100" step="5" value="100">
-          </div>
-          <div class="map-opacity-control">
-            <div class="map-opacity-heading">
-              <label for="territory-opacity">Territories</label>
-              <output id="territory-opacity-value" for="territory-opacity">100%</output>
-            </div>
-            <input id="territory-opacity" type="range" min="0" max="100" step="5" value="100">
-          </div>
-          <div class="map-opacity-control">
-            <div class="map-opacity-heading">
-              <label for="topography-opacity">Topography</label>
-              <output id="topography-opacity-value" for="topography-opacity">100%</output>
-            </div>
-            <input id="topography-opacity" type="range" min="0" max="100" step="5" value="100">
-          </div>
-        </section>
-      </div>
-      <div id="filter-controls" class="filter-controls" role="tabpanel" aria-labelledby="filters-tab" hidden></div>
-      <div id="readiness-controls" class="readiness-controls" role="tabpanel" aria-labelledby="readiness-tab" hidden></div>
     </aside>
 
     <aside id="detail-panel" class="detail-panel" aria-label="Object details" hidden>
@@ -98,8 +102,10 @@
           <button id="detail-close" class="icon-button" type="button" title="Close details"><i data-lucide="x"></i></button>
         </div>
       </div>
-      <div id="detail-badges" class="detail-badges"></div>
-      <div id="detail-sections" class="detail-sections"></div>
+      <div class="detail-panel-body">
+        <div id="detail-badges" class="detail-badges"></div>
+        <div id="detail-sections" class="detail-sections"></div>
+      </div>
     </aside>
 
     <div id="error-banner" class="error-banner" role="status" hidden></div>
@@ -107,6 +113,6 @@
 
   <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-  <script src="/assets/map.js?v=68"></script>
+    <script src="/assets/map.js?v=77"></script>
 </body>
 </html>

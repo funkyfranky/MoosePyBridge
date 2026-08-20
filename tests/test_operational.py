@@ -892,6 +892,11 @@ class _ExecutionServer:
                     "auftrag_type": self._mission_types[self._mission_number],
                     "commander_id": command.params.get("commander_id"),
                     "target": command.params.get("opszone"),
+                    "target_resolution": (
+                        "scenery_object"
+                        if command.action == "auftrag.create_strike"
+                        else None
+                    ),
                 },
             }
         return {"ok": True, "result": {"action": command.action}}
@@ -2181,6 +2186,8 @@ def test_execute_destroy_plan_replays_retained_scenery_destruction_before_assess
 
         assert execution.status is OperationalPlanStatus.COMPLETED
         assert execution.missions[0].status is PlanMissionStatus.SUCCEEDED
+        assert execution.missions[0].command_ack is not None
+        assert execution.missions[0].command_ack.result["target_resolution"] == "scenery_object"
         assert "SCENERY:Bridge" in bridge.state.destroyed_object_ids
         objective = bridge.strategic_objective("OBJECTIVE:Bridge")
         goal = bridge.strategic_goal("GOAL:Destroy Bridge")
@@ -2192,6 +2199,9 @@ def test_execute_destroy_plan_replays_retained_scenery_destruction_before_assess
         assert report["status"] == "destroyed"
         assert report["destroyed_component_ids"] == ["SCENERY:Bridge"]
         assert sum(event.get("event") == "object.destroyed" for event in bridge.state.events) == 1
+        rendered = format_operational_plan_execution(execution)
+        assert "target_resolution=scenery_object" in rendered
+        assert "category=-" in rendered
 
     asyncio.run(scenario())
 

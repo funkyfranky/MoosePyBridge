@@ -711,12 +711,20 @@ def format_operational_plan_execution(execution: OperationalPlanExecution) -> st
                 f"correlation={_text(mission.command_ack.correlation_id)} "
                 f"sequence={_text(mission.command_ack.sequence)}"
             )
+            target_resolution = mission.command_ack.result.get("target_resolution")
+            if target_resolution:
+                resolution_line = f"    target_resolution={target_resolution}"
+                resolution_error = mission.command_ack.result.get("target_resolution_error")
+                if resolution_error:
+                    resolution_line += f" error={resolution_error}"
+                lines.append(resolution_line)
         if mission.outcome:
             outcome = mission.outcome
             lines.append(
                 f"    moose_auftrag_outcome evaluated={outcome.evaluated} success={outcome.success} "
                 f"status={_text(outcome.status)} damage={_text(outcome.damage)} "
-                f"targets={_text(outcome.n_targets_initial)}->{_text(outcome.n_targets_final)}"
+                f"targets={_text(outcome.n_targets_initial)}->{_text(outcome.n_targets_final)} "
+                f"category={_text(outcome.category)}"
             )
         if mission.recon_outcome:
             recon = mission.recon_outcome
