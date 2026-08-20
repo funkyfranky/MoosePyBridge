@@ -71,6 +71,19 @@ class PlanMissionExecution:
 
 
 @dataclass(slots=True, frozen=True)
+class PlanMissionReconciliation:
+    """Observed MOOSE state for one previously submitted AUFTRAG."""
+
+    auftrag_id: str | None
+    phase_id: str
+    requirement_id: str
+    status: PlanMissionStatus
+    snapshot_found: bool
+    message: str | None = None
+    state_recognized: bool = True
+
+
+@dataclass(slots=True, frozen=True)
 class MissionLifecycleEvent:
     """Transport-neutral lifecycle event emitted for one plan mission."""
 
@@ -195,6 +208,101 @@ class MissionExecutionService:
             weapon_type,
             minimum_m,
             maximum_m,
+        )
+
+    async def reconcile(
+        self,
+        missions: Iterable[PlanMissionExecution],
+        *,
+        on_event: MissionLifecycleCallback | None = None,
+    ) -> tuple[PlanMissionReconciliation, ...]:
+        """Refresh MOOSE AUFTRAG state and reconcile previously submitted missions."""
+
+        await self.client.snapshot_auftraege()
+        observations: list[PlanMissionReconciliation] = []
+        for mission in missions:
+            snapshot = self.client.state.auftraege.get(mission.auftrag_id or "")
+            observations.append(
+                await self.reconcile_snapshot(
+                    mission,
+                    snapshot,
+                    on_event=on_event,
+                )
+            )
+        return tuple(observations)
+
+    async def reconcile_snapshot(
+        self,
+        mission: PlanMissionExecution,
+        snapshot: dict[str, Any] | None,
+        *,
+        on_event: MissionLifecycleCallback | None = None,
+    ) -> PlanMissionReconciliation:
+        """Interpret one current MOOSE snapshot without making plan-level decisions."""
+
+        previous = mission.status
+        message: str | None = None
+        state_recognized = True
+        if mission.status in {
+            PlanMissionStatus.SUCCEEDED,
+            PlanMissionStatus.FAILED,
+            PlanMissionStatus.CANCELLED,
+        }:
+            pass
+        elif not mission.auftrag_id:
+            message = "required mission has no AUFTRAG id"
+            state_recognized = False
+        elif snapshot is None:
+            message = "AUFTRAG is absent from the current MOOSE snapshot"
+            state_recognized = False
+        elif isinstance(snapshot.get("summary"), dict):
+            mission.outcome = AuftragOutcome.from_snapshot(snapshot)
+            mission.status = (
+                PlanMissionStatus.SUCCEEDED
+                if mission.outcome.success is True
+                else PlanMissionStatus.FAILED
+            )
+            mission.error = (
+                None
+                if mission.status is PlanMissionStatus.SUCCEEDED
+                else "AUFTRAG evaluated without success"
+            )
+        else:
+            status = str(snapshot.get("status") or "").strip().lower()
+            if status in {"cancel", "cancelled", "canceled"}:
+                mission.status = PlanMissionStatus.CANCELLED
+                mission.error = "AUFTRAG was cancelled"
+            elif status in {"failed", "failure"}:
+                mission.status = PlanMissionStatus.FAILED
+                mission.error = "AUFTRAG snapshot reports failure"
+            elif status in {
+                "planned",
+                "queued",
+                "requested",
+                "scheduled",
+                "started",
+                "executing",
+                "done",
+            }:
+                mission.status = PlanMissionStatus.RUNNING
+            else:
+                message = "AUFTRAG snapshot has no recognized lifecycle status"
+                state_recognized = False
+
+        if mission.status is not previous:
+            await self._emit(
+                mission,
+                MissionLifecycleEvent("mission.reconciled", message=message),
+                on_event,
+            )
+        return PlanMissionReconciliation(
+            mission.auftrag_id,
+            mission.phase_id,
+            mission.requirement_id,
+            mission.status,
+            snapshot is not None,
+            message or mission.error,
+            state_recognized,
         )
 
     async def wait_for_required(
@@ -428,6 +536,7 @@ __all__ = [
     "MissionLifecycleCallback",
     "MissionLifecycleEvent",
     "PlanMissionExecution",
+    "PlanMissionReconciliation",
     "PlanMissionStatus",
     "command_ack_reference",
 ]

@@ -28,11 +28,18 @@ class _MissionServer:
 
 
 class _MissionClient:
-    def __init__(self, events: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        events: list[dict[str, Any]] | None = None,
+        *,
+        auftrag_snapshots: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.server = _MissionServer(events)
         self.state = MooseBridgeState(connected=True)
         self.submissions: list[dict[str, Any]] = []
         self.cancelled: list[str] = []
+        self.auftrag_snapshots = list(auftrag_snapshots or ())
+        self.snapshot_calls = 0
 
     async def add_auftrag(
         self,
@@ -72,6 +79,20 @@ class _MissionClient:
     async def cancel_mission(self, mission_id: str) -> dict[str, Any]:
         self.cancelled.append(mission_id)
         return {"ok": True}
+
+    async def snapshot_auftraege(self) -> dict[str, Any]:
+        self.snapshot_calls += 1
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "auftraege",
+                "payload": {"auftraege": self.auftrag_snapshots},
+            }
+        )
+        return {
+            "ok": True,
+            "result": {"kind": "auftraege", "count": len(self.auftrag_snapshots)},
+        }
 
 
 def _mission() -> PlanMissionExecution:
@@ -200,5 +221,108 @@ def test_service_reports_missing_command_as_submission_failure() -> None:
         assert mission.status is PlanMissionStatus.FAILED
         assert mission.error == "plan mission submission requires an AUFTRAG command"
         assert observed == ["mission.failed"]
+
+    asyncio.run(scenario())
+
+
+def test_service_reconciles_running_auftrag_from_current_snapshot() -> None:
+    async def scenario() -> None:
+        client = _MissionClient(
+            auftrag_snapshots=[
+                {
+                    "object_id": "AUFTRAG:7",
+                    "type": "PATROLZONE",
+                    "status": "Executing",
+                }
+            ]
+        )
+        service = MissionExecutionService(client)  # type: ignore[arg-type]
+        mission = _mission()
+        mission.auftrag_id = "AUFTRAG:7"
+        mission.status = PlanMissionStatus.SUBMITTED
+        observed: list[str] = []
+
+        reconciled = await service.reconcile(
+            (mission,),
+            on_event=lambda _mission, event: observed.append(event.event),
+        )
+
+        assert client.snapshot_calls == 1
+        assert mission.status is PlanMissionStatus.RUNNING
+        assert len(reconciled) == 1
+        assert reconciled[0].snapshot_found is True
+        assert reconciled[0].state_recognized is True
+        assert reconciled[0].message is None
+        assert observed == ["mission.reconciled"]
+
+    asyncio.run(scenario())
+
+
+def test_service_reconciles_evaluated_auftrag_failure() -> None:
+    async def scenario() -> None:
+        client = _MissionClient(
+            auftrag_snapshots=[
+                {
+                    "object_id": "AUFTRAG:7",
+                    "type": "PATROLZONE",
+                    "status": "Done",
+                    "summary": {
+                        "evaluated": True,
+                        "success": False,
+                        "n_targets_initial": 1,
+                        "n_targets_final": 1,
+                    },
+                }
+            ]
+        )
+        service = MissionExecutionService(client)  # type: ignore[arg-type]
+        mission = _mission()
+        mission.auftrag_id = "AUFTRAG:7"
+        mission.status = PlanMissionStatus.RUNNING
+        observed: list[str] = []
+
+        reconciled = await service.reconcile(
+            (mission,),
+            on_event=lambda _mission, event: observed.append(event.event),
+        )
+
+        assert mission.status is PlanMissionStatus.FAILED
+        assert mission.error == "AUFTRAG evaluated without success"
+        assert mission.outcome is not None
+        assert mission.outcome.success is False
+        assert reconciled[0].state_recognized is True
+        assert reconciled[0].message == "AUFTRAG evaluated without success"
+        assert observed == ["mission.reconciled"]
+
+    asyncio.run(scenario())
+
+
+def test_service_keeps_unknown_auftrag_state_explicitly_unrecognized() -> None:
+    async def scenario() -> None:
+        client = _MissionClient(
+            auftrag_snapshots=[
+                {
+                    "object_id": "AUFTRAG:7",
+                    "type": "PATROLZONE",
+                    "status": "Unexpected",
+                }
+            ]
+        )
+        service = MissionExecutionService(client)  # type: ignore[arg-type]
+        mission = _mission()
+        mission.auftrag_id = "AUFTRAG:7"
+        mission.status = PlanMissionStatus.RUNNING
+        observed: list[str] = []
+
+        reconciled = await service.reconcile(
+            (mission,),
+            on_event=lambda _mission, event: observed.append(event.event),
+        )
+
+        assert mission.status is PlanMissionStatus.RUNNING
+        assert reconciled[0].snapshot_found is True
+        assert reconciled[0].state_recognized is False
+        assert reconciled[0].message == "AUFTRAG snapshot has no recognized lifecycle status"
+        assert observed == []
 
     asyncio.run(scenario())

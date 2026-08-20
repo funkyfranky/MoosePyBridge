@@ -36,6 +36,7 @@ from .mission_execution_service import (
     MissionLifecycleCallback,
     MissionLifecycleEvent,
     PlanMissionExecution,
+    PlanMissionReconciliation,
     PlanMissionStatus,
 )
 from .operational import (
@@ -47,7 +48,6 @@ from .operational import (
     PlanPhaseStatus,
     RequirementAssessment,
 )
-from .outcomes import AuftragOutcome
 from .recon import (
     ReconOutcome,
     ReconRequirement,
@@ -107,18 +107,6 @@ class OperationalPlanAbortResult:
     scope: PlanAbortScope
     status: OperationalPlanStatus
     missions: tuple[PlanMissionAbort, ...]
-    message: str | None = None
-
-
-@dataclass(slots=True, frozen=True)
-class PlanMissionReconciliation:
-    """Observed MOOSE state for one previously submitted AUFTRAG."""
-
-    auftrag_id: str | None
-    phase_id: str
-    requirement_id: str
-    status: PlanMissionStatus
-    snapshot_found: bool
     message: str | None = None
 
 
@@ -288,61 +276,18 @@ class OperationalPlanExecutor:
         if execution.status is not OperationalPlanStatus.EXECUTING:
             raise ValueError("latest operational plan attempt is not executing")
 
-        await self.client.snapshot_auftraege()
-        observations: list[PlanMissionReconciliation] = []
         required = [mission for mission in execution.missions if mission.required]
-        for mission in required:
-            previous = mission.status
-            snapshot = self.client.state.auftraege.get(mission.auftrag_id or "")
-            message: str | None = None
-            if mission.status in {
-                PlanMissionStatus.SUCCEEDED,
-                PlanMissionStatus.FAILED,
-                PlanMissionStatus.CANCELLED,
-            }:
-                pass
-            elif not mission.auftrag_id:
-                message = "required mission has no AUFTRAG id"
-            elif snapshot is None:
-                message = "AUFTRAG is absent from the current MOOSE snapshot"
-            elif isinstance(snapshot.get("summary"), dict):
-                mission.outcome = AuftragOutcome.from_snapshot(snapshot)
-                mission.status = (
-                    PlanMissionStatus.SUCCEEDED if mission.outcome.success is True else PlanMissionStatus.FAILED
-                )
-                mission.error = None if mission.status is PlanMissionStatus.SUCCEEDED else "AUFTRAG evaluated without success"
-            else:
-                status = str(snapshot.get("status") or "").strip().lower()
-                if status in {"cancel", "cancelled", "canceled"}:
-                    mission.status = PlanMissionStatus.CANCELLED
-                    mission.error = "AUFTRAG was cancelled"
-                elif status in {"failed", "failure"}:
-                    mission.status = PlanMissionStatus.FAILED
-                    mission.error = "AUFTRAG snapshot reports failure"
-                elif status in {"planned", "queued", "requested", "scheduled", "started", "executing", "done"}:
-                    mission.status = PlanMissionStatus.RUNNING
-                else:
-                    message = "AUFTRAG snapshot has no recognized lifecycle status"
-
-            if mission.status is not previous:
-                await self._mission_event(execution, mission, "mission.reconciled", on_event, message=message)
-            observations.append(
-                PlanMissionReconciliation(
-                    mission.auftrag_id,
-                    mission.phase_id,
-                    mission.requirement_id,
-                    mission.status,
-                    snapshot is not None,
-                    message or mission.error,
-                )
-            )
+        observations = await self.mission_executor.reconcile(
+            required,
+            on_event=self._mission_lifecycle_callback(execution, on_event),
+        )
 
         if not required:
             return OperationalPlanReconciliation(
                 plan.plan_id,
                 execution.attempt_id,
                 PlanReconciliationStatus.INDETERMINATE,
-                tuple(observations),
+                observations,
                 "interrupted attempt has no required submitted missions",
             )
         failed = next(
@@ -356,27 +301,16 @@ class OperationalPlanExecutor:
                 plan.plan_id,
                 execution.attempt_id,
                 PlanReconciliationStatus.BLOCKED,
-                tuple(observations),
+                observations,
                 execution.blocked_reason,
             )
-        if any(
-            (not observation.snapshot_found or observation.auftrag_id is None)
-            and observation.status not in {
-                PlanMissionStatus.SUCCEEDED,
-                PlanMissionStatus.FAILED,
-                PlanMissionStatus.CANCELLED,
-            }
-            for observation in observations
-        ) or any(
-            observation.message == "AUFTRAG snapshot has no recognized lifecycle status"
-            for observation in observations
-        ):
+        if any(not observation.state_recognized for observation in observations):
             await self._persist(execution)
             return OperationalPlanReconciliation(
                 plan.plan_id,
                 execution.attempt_id,
                 PlanReconciliationStatus.INDETERMINATE,
-                tuple(observations),
+                observations,
                 "one or more required AUFTRAGs could not be identified",
             )
         if any(mission.status is not PlanMissionStatus.SUCCEEDED for mission in required):
@@ -385,11 +319,11 @@ class OperationalPlanExecutor:
                 plan.plan_id,
                 execution.attempt_id,
                 PlanReconciliationStatus.RUNNING,
-                tuple(observations),
+                observations,
                 "one or more required AUFTRAGs are still running",
             )
         status, message = await self._finish_reconciled_phase(plan, execution, on_event)
-        return OperationalPlanReconciliation(plan.plan_id, execution.attempt_id, status, tuple(observations), message)
+        return OperationalPlanReconciliation(plan.plan_id, execution.attempt_id, status, observations, message)
 
     async def monitor_interrupted(
         self,
