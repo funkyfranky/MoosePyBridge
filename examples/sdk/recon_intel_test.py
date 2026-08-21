@@ -25,12 +25,12 @@ MISSION_TIMEOUT_SECONDS = 600.0
 
 INTEL_ID = "INTEL:Blue Intel"
 COMMANDER_ID = "COMMANDER:Blue Commander"
-RECON_ZONES = ZoneSet("ZONE:Town Fight")
+RECON_ZONES = ZoneSet("ZONE:Red Camp Achigvara")
 
 SPEED_KTS = 250
 ALTITUDE_FT = 12_000
 
-RECON_REQUIREMENT = ReconRequirement("ZONE:Town Fight")
+RECON_REQUIREMENT = ReconRequirement("ZONE:Red Camp Achigvara")
 
 
 async def run() -> int:

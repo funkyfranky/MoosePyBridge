@@ -2339,6 +2339,22 @@ def test_successful_recon_requires_fresh_intel_replanning_before_capture() -> No
                 },
             }
         )
+        bridge.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "intels",
+                "payload": {
+                    "intels": [
+                        {
+                            "object_id": "INTEL:Blue",
+                            "alias": "Blue",
+                            "coalition": "blue",
+                            "is_running": True,
+                        }
+                    ]
+                },
+            }
+        )
         recon_requirement = AssetRequirement(
             requirement_id="REQ:Reconnaissance",
             role=AssetRole.RECONNAISSANCE,

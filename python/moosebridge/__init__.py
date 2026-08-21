@@ -370,6 +370,8 @@ from .operational import (
     RequirementAssessment,
 )
 from .mission_execution_service import (
+    AuftragAssignment,
+    AuftragAssignmentTarget,
     CommandAckReference,
     MissionExecutionService,
     MissionLifecycleCallback,
@@ -729,6 +731,8 @@ __all__ = [
     "EscalationIncidentType",
     "LimitedConflictAuthorization",
     "MissionExecutionService",
+    "AuftragAssignment",
+    "AuftragAssignmentTarget",
     "MissionLifecycleCallback",
     "MissionLifecycleEvent",
     "ZoneSet",

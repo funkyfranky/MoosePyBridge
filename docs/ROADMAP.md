@@ -336,9 +336,10 @@ Current operational-planning baseline:
   without automatic retries.
 - `OperationalPlanExecutor` owns phase order, dependencies, revalidation, and
   strategic effects. `MissionExecutionService` owns one concrete MOOSE
-  AUFTRAG from submission through ACK correlation, status/evaluation events,
-  RECON position sampling, live-state discovery, cancellation results, and
-  interrupted-state reconciliation.
+  AUFTRAG from a typed COMMANDER/LEGION/OPSGROUP assignment through submission,
+  ACK correlation, status/evaluation events, RECON position sampling and
+  tactical outcome assessment, live-state
+  discovery, cancellation results, and interrupted-state reconciliation.
   Plan-level persistence and callbacks consume the service's transport-neutral
   lifecycle events and reconciliation observations.
 - Blocked plans can be returned explicitly to draft state. Completed phases
@@ -514,8 +515,10 @@ Current operational-planning baseline:
 - INTEL acquisition is mission-independent: all coalition agents contribute
   contacts regardless of AUFTRAG or lifecycle state. Information requirements
   accept every coalition source, while assigned RECON contribution remains a
-  diagnostic dimension. Direct and operational RECON now share route sampling
-  and spatial assessment code.
+  diagnostic dimension. Direct and operational RECON now share the same
+  `MissionExecutionService` contact, assignment, route, spatial-coverage, and
+  outcome-assessment pipeline; the direct SDK facade retains only its flexible
+  submission parameters and direct audit record.
 - `InformationRequirementRegistry` continuously tracks coalition-private target
   knowledge as open, partial, satisfied, or lost from INTEL events. It is a
   passive observer: satisfying or losing a requirement never cancels or

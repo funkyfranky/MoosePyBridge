@@ -83,8 +83,13 @@ from .recon import (
     ReconTrackSample,
     ReconTrackingSession,
     assess_recon_spatial_coverage,
-    build_recon_outcome,
     derive_recon_requirement,
+)
+from .mission_execution_service import (
+    AuftragAssignment,
+    MissionExecutionService,
+    MissionLifecycleEvent,
+    PlanMissionExecution,
 )
 from .operational import (
     OperationalPlan,
@@ -3278,6 +3283,41 @@ class MooseBridgeClient:
             }
         )
 
+    def _auftrag_execution_assignment(
+        self,
+        *,
+        commander: str | None,
+        legion: str | None,
+        opsgroup: str | None,
+        cohort: str | None,
+        coalition: str | None,
+        allowed_legions: Iterable[str] | None,
+        allowed_cohorts: Iterable[str] | None,
+        selected_payload_uid: int | str | None,
+    ) -> AuftragAssignment:
+        """Translate the flexible SDK facade into one typed execution assignment."""
+
+        params = self._auftrag_assignment_params(
+            commander=commander,
+            legion=legion,
+            opsgroup=opsgroup,
+            cohort=cohort,
+            coalition=coalition,
+            allowed_legions=allowed_legions,
+            allowed_cohorts=allowed_cohorts,
+        )
+        kwargs = {
+            "cohort_id": params.get("cohort_id"),
+            "allowed_legion_ids": tuple(params.get("allowed_legion_ids") or ()),
+            "allowed_cohort_ids": tuple(params.get("allowed_cohort_ids") or ()),
+            "selected_payload_uid": selected_payload_uid,
+        }
+        if params.get("commander_id"):
+            return AuftragAssignment.commander(str(params["commander_id"]), **kwargs)
+        if params.get("legion_id"):
+            return AuftragAssignment.legion(str(params["legion_id"]), **kwargs)
+        return AuftragAssignment.opsgroup(str(params["opsgroup_id"]), **kwargs)
+
     async def add_auftrag(
         self,
         auftrag: AuftragCommand,
@@ -3371,22 +3411,6 @@ class MooseBridgeClient:
                 sample.z,
             ):
                 samples.append(sample)
-
-    async def monitor_recon_tracking(
-        self,
-        session: ReconTrackingSession,
-        stop: asyncio.Event,
-        *,
-        interval_s: float = 10.0,
-    ) -> None:
-        """Periodically sample a spatial RECON route until explicitly stopped."""
-
-        while not stop.is_set():
-            await self.sample_recon_tracking(session)
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=interval_s)
-            except TimeoutError:
-                pass
 
     async def assess_recon_tracking(
         self,
@@ -3515,13 +3539,7 @@ class MooseBridgeClient:
                 manual_target_ids=relevant_target_ids,
             )
             relevant_target_ids = ()
-        cursor = await self.server.event_cursor()
-        await self.refresh_intel_state()
-        if self.intel(intel) is None:
-            raise ValueError(f"INTEL is not registered: {intel}")
-        baseline_contact_ids = tuple(contact.object_id for contact in self.contacts_of_intel(intel))
-        ack = await self.add_auftrag(
-            auftrag,
+        assignment = self._auftrag_execution_assignment(
             commander=commander,
             legion=legion,
             opsgroup=opsgroup,
@@ -3530,60 +3548,43 @@ class MooseBridgeClient:
             allowed_legions=allowed_legions,
             allowed_cohorts=allowed_cohorts,
             selected_payload_uid=selected_payload_uid,
-            timeout=command_timeout,
         )
-        tracking = ReconTrackingSession(self.mission_id(auftrag))
-        tracking_stop = asyncio.Event()
-        tracking_task = (
-            asyncio.create_task(self.monitor_recon_tracking(tracking, tracking_stop), name=f"recon-track-{tracking.auftrag_id}")
-            if self._recon_requires_spatial_tracking(requirement)
-            else None
+        direct_mission = PlanMissionExecution(
+            phase_id="direct_recon",
+            intent_id="direct_recon",
+            requirement_id=requirement.area_object_id if requirement else "direct_recon",
+            mission_type="RECON",
+            required=True,
+            command=auftrag,
         )
-        try:
-            outcome = await self.get_auftrag_summary(
-                auftrag,
-                timeout_s=timeout_s,
-                on_status=on_status,
-                after_event_id=cursor,
-            )
-        finally:
-            if tracking_task is not None:
-                tracking_stop.set()
-                await tracking_task
-        if tracking_task is not None:
-            await self.sample_recon_tracking(tracking)
-        await self.snapshot_auftraege()
-        await self.snapshot_opsgroups()
-        mission = self.auftrag(outcome.auftrag_id)
-        assigned_opsgroup_ids = tracking.assigned_opsgroup_ids or (tuple(mission.assigned_group_ids) if mission else ())
-        assigned_group_ids: list[str] = []
-        if tracking.assigned_group_ids:
-            assigned_group_ids.extend(tracking.assigned_group_ids)
-        else:
-            for opsgroup_id in assigned_opsgroup_ids:
-                assigned = self.opsgroup(opsgroup_id)
-                group_name = assigned.group_name if assigned and assigned.group_name else opsgroup_id.removeprefix("OPSGROUP:")
-                assigned_group_ids.append(f"GROUP:{group_name}")
-        spatial_coverage = (
-            await self.assess_recon_tracking(requirement, tracking)
-            if requirement is not None and tracking_task is not None
-            else None
+
+        async def forward_status(
+            _mission: PlanMissionExecution,
+            event: MissionLifecycleEvent,
+        ) -> None:
+            if event.auftrag_event is not None:
+                await maybe_call_auftrag_status_callback(on_status, event.auftrag_event)
+
+        service = MissionExecutionService(self)
+        await service.submit(
+            direct_mission,
+            assignment=assignment,
+            command_timeout=command_timeout,
+            recon_intel_id=intel,
+            on_event=forward_status,
         )
-        history = await self.server.query_events("*", after_id=cursor)
-        events = history.get("events") if isinstance(history.get("events"), list) else []
-        result = build_recon_outcome(
-            auftrag_id=outcome.auftrag_id,
-            intel_id=intel,
-            mission_outcome=outcome,
-            events=(event for event in events if isinstance(event, dict)),
-            baseline_contact_ids=baseline_contact_ids,
-            assigned_opsgroup_ids=assigned_opsgroup_ids,
-            assigned_group_ids=assigned_group_ids,
+        await service.wait_for_mission(
+            direct_mission,
+            timeout_s=timeout_s,
+            on_event=forward_status,
+        )
+        if direct_mission.outcome is None:
+            raise TimeoutError(direct_mission.error or f"RECON did not evaluate: {direct_mission.auftrag_id}")
+        result = await service.assess_recon(
+            direct_mission,
+            requirement,
             relevant_target_ids=relevant_target_ids,
-            requirement=requirement,
-            spatial_coverage=spatial_coverage,
-            command_ack=ack,
-            event_history_complete=bool(history.get("history_complete")),
+            assess_spatial_coverage=self._recon_requires_spatial_tracking(requirement),
         )
         completed_time = result.completed_time if result.completed_time is not None else self._current_mission_time()
         area_id = requirement.area_object_id if requirement is not None else result.auftrag_id
@@ -3596,7 +3597,9 @@ class MooseBridgeClient:
                 "audit_session_id": self.state.audit_session_id,
                 "mission_generation": self.state.mission_generation,
                 "plan_id": plan_id,
-                "commander_id": commander or "",
+                "commander_id": (
+                    assignment.target_id if assignment.target.value == "commander" else ""
+                ),
                 "attempt_id": attempt_id,
                 "attempt_number": 1,
                 "status": "completed",
@@ -3609,15 +3612,18 @@ class MooseBridgeClient:
                     "requirement_id": requirement.area_object_id if requirement else "direct_recon",
                     "mission_type": "RECON",
                     "required": True,
-                    "status": "succeeded" if result.mission_outcome.success is True else "failed",
+                    "status": direct_mission.status.value,
                     "auftrag_id": result.auftrag_id,
                     "outcome": result.mission_outcome.to_dict(),
                     "recon_outcome": result.to_dict(),
                     "recon_intel_id": intel,
-                    "recon_assigned_group_ids": list(tracking.assigned_group_ids),
+                    "recon_assigned_opsgroup_ids": list(
+                        direct_mission.recon_assigned_opsgroup_ids
+                    ),
+                    "recon_assigned_group_ids": list(direct_mission.recon_assigned_group_ids),
                     "recon_tracks": {
                         group_id: [sample.to_dict() for sample in samples]
-                        for group_id, samples in tracking.tracks.items()
+                        for group_id, samples in direct_mission.recon_tracks.items()
                     },
                 }],
                 "events": [],

@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Any
 
 from .auftraege import AuftragCommand, AuftragEvent
 from .outcomes import AuftragOutcome
-from .recon import ReconOutcome, ReconTrackSample, ReconTrackingSession
+from .recon import (
+    ReconOutcome,
+    ReconRequirement,
+    ReconTrackSample,
+    ReconTrackingSession,
+    build_recon_outcome,
+)
 from .server import DcsMissionEndedError
 
 if TYPE_CHECKING:
@@ -31,6 +37,106 @@ class PlanMissionStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+class AuftragAssignmentTarget(str, Enum):
+    """MOOSE object kind that receives one concrete AUFTRAG."""
+
+    COMMANDER = "commander"
+    LEGION = "legion"
+    OPSGROUP = "opsgroup"
+    COALITION = "coalition"
+
+
+@dataclass(slots=True, frozen=True)
+class AuftragAssignment:
+    """Typed tasking target and recruitment constraints for one AUFTRAG."""
+
+    target: AuftragAssignmentTarget
+    target_id: str
+    cohort_id: str | None = None
+    allowed_legion_ids: tuple[str, ...] = ()
+    allowed_cohort_ids: tuple[str, ...] = ()
+    selected_payload_uid: int | str | None = None
+
+    def __post_init__(self) -> None:
+        target_id = str(self.target_id or "").strip()
+        if not target_id:
+            raise ValueError("AUFTRAG assignment target id is required")
+        expected_prefix = {
+            AuftragAssignmentTarget.COMMANDER: "COMMANDER:",
+            AuftragAssignmentTarget.LEGION: "LEGION:",
+            AuftragAssignmentTarget.OPSGROUP: "OPSGROUP:",
+        }.get(self.target)
+        if expected_prefix and not target_id.startswith(expected_prefix):
+            raise ValueError(
+                f"{self.target.value} assignment requires an {expected_prefix} object id"
+            )
+
+        cohort_id = str(self.cohort_id or "").strip() or None
+        legion_ids = tuple(dict.fromkeys(str(item) for item in self.allowed_legion_ids if str(item)))
+        cohort_ids = tuple(
+            item
+            for item in dict.fromkeys(str(item) for item in self.allowed_cohort_ids if str(item))
+            if item != cohort_id
+        )
+        if legion_ids and self.target not in {
+            AuftragAssignmentTarget.COMMANDER,
+            AuftragAssignmentTarget.COALITION,
+        }:
+            raise ValueError("allowed LEGIONs require COMMANDER or coalition tasking")
+        if self.target is AuftragAssignmentTarget.OPSGROUP and (cohort_id or cohort_ids):
+            raise ValueError("COHORT constraints cannot be used with OPSGROUP tasking")
+
+        object.__setattr__(self, "target_id", target_id)
+        object.__setattr__(self, "cohort_id", cohort_id)
+        object.__setattr__(self, "allowed_legion_ids", legion_ids)
+        object.__setattr__(self, "allowed_cohort_ids", cohort_ids)
+
+    @classmethod
+    def commander(cls, object_id: str, **kwargs: Any) -> AuftragAssignment:
+        return cls(AuftragAssignmentTarget.COMMANDER, object_id, **kwargs)
+
+    @classmethod
+    def legion(cls, object_id: str, **kwargs: Any) -> AuftragAssignment:
+        return cls(AuftragAssignmentTarget.LEGION, object_id, **kwargs)
+
+    @classmethod
+    def opsgroup(cls, object_id: str, **kwargs: Any) -> AuftragAssignment:
+        return cls(AuftragAssignmentTarget.OPSGROUP, object_id, **kwargs)
+
+    @classmethod
+    def coalition(cls, coalition: str, **kwargs: Any) -> AuftragAssignment:
+        return cls(AuftragAssignmentTarget.COALITION, coalition, **kwargs)
+
+    @property
+    def cohort_scope_ids(self) -> tuple[str, ...]:
+        """Return all explicitly permitted COHORTs in stable order."""
+
+        return tuple(
+            dict.fromkeys(
+                item
+                for item in (self.cohort_id, *self.allowed_cohort_ids)
+                if item is not None
+            )
+        )
+
+    def add_auftrag_kwargs(self) -> dict[str, Any]:
+        """Return the public SDK assignment arguments represented by this value."""
+
+        target_key = {
+            AuftragAssignmentTarget.COMMANDER: "commander",
+            AuftragAssignmentTarget.LEGION: "legion",
+            AuftragAssignmentTarget.OPSGROUP: "opsgroup",
+            AuftragAssignmentTarget.COALITION: "coalition",
+        }[self.target]
+        return {
+            target_key: self.target_id,
+            "cohort": self.cohort_id,
+            "allowed_legions": self.allowed_legion_ids,
+            "allowed_cohorts": self.allowed_cohort_ids,
+            "selected_payload_uid": self.selected_payload_uid,
+        }
 
 
 @dataclass(slots=True, frozen=True)
@@ -58,6 +164,7 @@ class PlanMissionExecution:
     command_snapshot: dict[str, Any] = field(default_factory=dict)
     weapon_range_ack: CommandAckReference | None = None
     command_ack: CommandAckReference | None = None
+    raw_command_ack: dict[str, Any] = field(default_factory=dict, repr=False)
     status: PlanMissionStatus = PlanMissionStatus.PENDING
     auftrag_id: str | None = None
     outcome: AuftragOutcome | None = None
@@ -65,6 +172,7 @@ class PlanMissionExecution:
     event_cursor: str | None = field(default=None, repr=False)
     recon_intel_id: str | None = field(default=None, repr=False)
     baseline_intel_contact_ids: tuple[str, ...] = field(default=(), repr=False)
+    recon_assigned_opsgroup_ids: tuple[str, ...] = field(default=(), repr=False)
     recon_assigned_group_ids: tuple[str, ...] = field(default=(), repr=False)
     recon_tracks: dict[str, list[ReconTrackSample]] = field(default_factory=dict, repr=False)
     error: str | None = None
@@ -101,6 +209,7 @@ class MissionLifecycleEvent:
     event: str
     status: str | None = None
     message: str | None = None
+    auftrag_event: AuftragEvent | None = field(default=None, repr=False, compare=False)
 
 
 MissionLifecycleCallback = Callable[
@@ -119,28 +228,26 @@ class MissionExecutionService:
         self,
         mission: PlanMissionExecution,
         *,
-        commander_id: str,
-        allowed_legion_ids: Iterable[str] = (),
-        allowed_cohort_ids: Iterable[str] = (),
+        assignment: AuftragAssignment,
+        command_timeout: float = 10.0,
         fire_support: Mapping[str, Any] | None = None,
-        structured_recon: bool = False,
         recon_intel_id: str | None = None,
         on_event: MissionLifecycleCallback | None = None,
     ) -> PlanMissionExecution:
         """Prepare and submit one concrete AUFTRAG to MOOSE."""
 
-        legion_ids = tuple(allowed_legion_ids)
-        cohort_ids = tuple(allowed_cohort_ids)
+        if command_timeout <= 0:
+            raise ValueError("AUFTRAG command timeout must be greater than zero")
         try:
             command = mission.command
             if command is None:
                 raise ValueError("plan mission submission requires an AUFTRAG command")
-            if command.mission_type == "RECON" and structured_recon:
+            mission.event_cursor = await self.client.server.event_cursor()
+            if command.mission_type == "RECON" and recon_intel_id:
                 mission.recon_intel_id = str(recon_intel_id or "").strip() or None
-                if mission.recon_intel_id is None:
-                    raise ValueError("structured RECON phase requires metadata.intel_id")
-                mission.event_cursor = await self.client.server.event_cursor()
                 await self.client.refresh_intel_state()
+                if self.client.intel(mission.recon_intel_id) is None:
+                    raise ValueError(f"INTEL is not registered: {mission.recon_intel_id}")
                 mission.baseline_intel_contact_ids = tuple(
                     contact.object_id
                     for contact in self.client.contacts_of_intel(mission.recon_intel_id)
@@ -149,7 +256,7 @@ class MissionExecutionService:
             range_ack = await self.synchronize_arty_weapon_range(
                 command,
                 fire_support=fire_support,
-                allowed_cohort_ids=cohort_ids,
+                allowed_cohort_ids=assignment.cohort_scope_ids,
             )
             if range_ack is not None:
                 mission.weapon_range_ack = command_ack_reference(range_ack)
@@ -171,10 +278,10 @@ class MissionExecutionService:
 
             ack = await self.client.add_auftrag(
                 command,
-                commander=commander_id,
-                allowed_legions=legion_ids,
-                allowed_cohorts=cohort_ids,
+                **assignment.add_auftrag_kwargs(),
+                timeout=command_timeout,
             )
+            mission.raw_command_ack = dict(ack)
             mission.command_ack = command_ack_reference(ack)
             mission.auftrag_id = self.client.mission_id(command)
             mission.status = PlanMissionStatus.SUBMITTED
@@ -347,12 +454,103 @@ class MissionExecutionService:
                         if stop_on_failure:
                             return mission
                         failed = mission
-            return failed
         finally:
             for task in tasks:
                 task.cancel()
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
+        return failed
+
+    async def assess_recon(
+        self,
+        mission: PlanMissionExecution,
+        requirement: ReconRequirement | None,
+        *,
+        tracking: ReconTrackingSession | None = None,
+        relevant_target_ids: Iterable[str] = (),
+        command_ack: Mapping[str, Any] | None = None,
+        assess_spatial_coverage: bool = True,
+        on_event: MissionLifecycleCallback | None = None,
+    ) -> ReconOutcome:
+        """Build the tactical assessment for one completed RECON AUFTRAG."""
+
+        if mission.mission_type != "RECON":
+            raise ValueError("RECON assessment requires a RECON plan mission")
+        if not mission.auftrag_id:
+            raise ValueError("RECON assessment requires an AUFTRAG id")
+        if mission.outcome is None:
+            raise ValueError("RECON assessment requires a MOOSE AUFTRAG outcome")
+        if not mission.recon_intel_id:
+            raise ValueError("RECON assessment requires an INTEL id")
+
+        history = await self.client.server.query_events("*", after_id=mission.event_cursor)
+        events = history.get("events") if isinstance(history.get("events"), list) else []
+        await self.client.snapshot_auftraege()
+        await self.client.snapshot_opsgroups()
+        snapshot = self.client.auftrag(mission.auftrag_id)
+        snapshot_opsgroup_ids = tuple(snapshot.assigned_group_ids) if snapshot else ()
+        if tracking is None:
+            tracking = ReconTrackingSession(
+                mission.auftrag_id,
+                mission.recon_assigned_opsgroup_ids or snapshot_opsgroup_ids,
+                mission.recon_assigned_group_ids,
+                mission.recon_tracks,
+            )
+        elif tracking.auftrag_id != mission.auftrag_id:
+            raise ValueError("RECON tracking session does not belong to the plan mission")
+        if not tracking.assigned_opsgroup_ids:
+            tracking.assigned_opsgroup_ids = snapshot_opsgroup_ids
+        if not tracking.assigned_group_ids:
+            assigned_group_ids: list[str] = []
+            for opsgroup_id in tracking.assigned_opsgroup_ids:
+                opsgroup = self.client.opsgroup(opsgroup_id)
+                group_name = (
+                    opsgroup.group_name
+                    if opsgroup and opsgroup.group_name
+                    else opsgroup_id.removeprefix("OPSGROUP:")
+                )
+                assigned_group_ids.append(f"GROUP:{group_name}")
+            tracking.assigned_group_ids = tuple(assigned_group_ids)
+        mission.recon_assigned_opsgroup_ids = tuple(tracking.assigned_opsgroup_ids)
+        mission.recon_assigned_group_ids = tuple(tracking.assigned_group_ids)
+        mission.recon_tracks = tracking.tracks
+        spatial_coverage = (
+            await self.client.assess_recon_tracking(requirement, tracking)
+            if requirement is not None and assess_spatial_coverage
+            else None
+        )
+        mission.recon_outcome = build_recon_outcome(
+            auftrag_id=mission.auftrag_id,
+            intel_id=mission.recon_intel_id,
+            mission_outcome=mission.outcome,
+            events=(event for event in events if isinstance(event, dict)),
+            baseline_contact_ids=mission.baseline_intel_contact_ids,
+            assigned_opsgroup_ids=tracking.assigned_opsgroup_ids,
+            assigned_group_ids=mission.recon_assigned_group_ids,
+            relevant_target_ids=relevant_target_ids,
+            requirement=requirement,
+            spatial_coverage=spatial_coverage,
+            command_ack=dict(command_ack if command_ack is not None else mission.raw_command_ack),
+            event_history_complete=bool(history.get("history_complete")),
+        )
+        status = (
+            "satisfied"
+            if mission.recon_outcome.requirement_satisfied is True
+            else "incomplete"
+            if mission.recon_outcome.requirement_satisfied is False
+            else "indeterminate"
+        )
+        message = (
+            f"contacts={len(mission.recon_outcome.observations)} "
+            f"unknown={len(mission.recon_outcome.unknown_relevant_target_ids)} "
+            f"lost={len(mission.recon_outcome.lost_relevant_target_ids)}"
+        )
+        await self._emit(
+            mission,
+            MissionLifecycleEvent("recon.assessed", status=status, message=message),
+            on_event,
+        )
+        return mission.recon_outcome
 
     async def wait_for_mission(
         self,
@@ -429,7 +627,11 @@ class MissionExecutionService:
             mission.status = PlanMissionStatus.RUNNING
             await self._emit(
                 mission,
-                MissionLifecycleEvent("mission.status", message=str(event)),
+                MissionLifecycleEvent(
+                    "mission.status",
+                    message=str(event),
+                    auftrag_event=event,
+                ),
                 on_event,
             )
             if (
@@ -552,11 +754,14 @@ class MissionExecutionService:
     async def _sample_recon_positions(self, mission: PlanMissionExecution) -> None:
         session = ReconTrackingSession(
             mission.auftrag_id or "",
+            assigned_opsgroup_ids=mission.recon_assigned_opsgroup_ids,
             assigned_group_ids=mission.recon_assigned_group_ids,
             tracks=mission.recon_tracks,
         )
         await self.client.sample_recon_tracking(session)
+        mission.recon_assigned_opsgroup_ids = session.assigned_opsgroup_ids
         mission.recon_assigned_group_ids = session.assigned_group_ids
+        mission.recon_tracks = session.tracks
 
     @staticmethod
     async def _emit(
@@ -610,6 +815,8 @@ def command_ack_reference(ack: Mapping[str, Any]) -> CommandAckReference:
 
 
 __all__ = [
+    "AuftragAssignment",
+    "AuftragAssignmentTarget",
     "CommandAckReference",
     "MissionExecutionService",
     "MissionLifecycleCallback",

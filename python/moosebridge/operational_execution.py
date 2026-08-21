@@ -31,6 +31,7 @@ from .auftraege import (
     AuftragCommand,
 )
 from .mission_execution_service import (
+    AuftragAssignment,
     CommandAckReference,
     MissionExecutionService,
     MissionLifecycleCallback,
@@ -52,8 +53,6 @@ from .operational import (
 from .recon import (
     ReconOutcome,
     ReconRequirement,
-    ReconTrackingSession,
-    build_recon_outcome,
 )
 from .server import DcsMissionEndedError
 from .strategic import (
@@ -824,14 +823,17 @@ class OperationalPlanExecutor:
                         fire_support = intent.metadata.get("fire_support")
                         await self.mission_executor.submit(
                             mission,
-                            commander_id=commander.object_id,
-                            allowed_legion_ids=requirement.allowed_legion_ids,
-                            allowed_cohort_ids=requirement.allowed_cohort_ids,
-                            fire_support=fire_support if isinstance(fire_support, dict) else None,
-                            structured_recon=(
-                                command.mission_type == "RECON" and recon_requirement_data is not None
+                            assignment=AuftragAssignment.commander(
+                                commander.object_id,
+                                allowed_legion_ids=tuple(requirement.allowed_legion_ids),
+                                allowed_cohort_ids=tuple(requirement.allowed_cohort_ids),
                             ),
-                            recon_intel_id=str(phase.metadata.get("intel_id") or "") or None,
+                            fire_support=fire_support if isinstance(fire_support, dict) else None,
+                            recon_intel_id=(
+                                str(phase.metadata.get("intel_id") or "") or None
+                                if command.mission_type == "RECON" and recon_requirement_data is not None
+                                else None
+                            ),
                             on_event=self._mission_lifecycle_callback(execution, on_event),
                         )
                     except Exception as exc:
@@ -971,7 +973,7 @@ class OperationalPlanExecutor:
                 on_event,
             )
             try:
-                recon_outcomes = await self._assess_recon_phase(plan, phase, execution, on_event)
+                recon_outcomes = await self._assess_recon_phase(phase, execution, on_event)
             except Exception as exc:
                 reason = f"RECON assessment failed: {exc}"
                 await self._emit(
@@ -1032,7 +1034,6 @@ class OperationalPlanExecutor:
 
     async def _assess_recon_phase(
         self,
-        plan: OperationalPlan,
         phase: PlanPhase,
         execution: OperationalPlanExecution,
         on_event: PlanExecutionCallback | None,
@@ -1053,55 +1054,13 @@ class OperationalPlanExecutor:
             if requirement_data is None or mission.recon_intel_id is None:
                 continue
             requirement = ReconRequirement.from_dict(requirement_data)
-            history = await self.client.server.query_events("*", after_id=mission.event_cursor)
-            events = history.get("events") if isinstance(history.get("events"), list) else []
-            await self.client.snapshot_auftraege()
-            await self.client.snapshot_opsgroups()
-            await self.client.snapshot_zones()
-            await self.client.snapshot_opszones()
-            await self.client.snapshot_statics()
-            await self.client.snapshot_airbases()
-            snapshot = self.client.auftrag(mission.auftrag_id or "")
-            assigned_opsgroup_ids = tuple(snapshot.assigned_group_ids) if snapshot else ()
-            assigned_group_ids: list[str] = []
-            for opsgroup_id in assigned_opsgroup_ids:
-                opsgroup = self.client.opsgroup(opsgroup_id)
-                group_name = opsgroup.group_name if opsgroup and opsgroup.group_name else opsgroup_id.removeprefix("OPSGROUP:")
-                assigned_group_ids.append(f"GROUP:{group_name}")
-            assert mission.outcome is not None
-            tracking = ReconTrackingSession(
-                mission.auftrag_id or "",
-                assigned_opsgroup_ids,
-                tuple(assigned_group_ids),
-                mission.recon_tracks,
+            results.append(
+                await self.mission_executor.assess_recon(
+                    mission,
+                    requirement,
+                    on_event=self._mission_lifecycle_callback(execution, on_event),
+                )
             )
-            spatial_coverage = await self.client.assess_recon_tracking(requirement, tracking)
-            mission.recon_outcome = build_recon_outcome(
-                auftrag_id=mission.auftrag_id or "",
-                intel_id=mission.recon_intel_id,
-                mission_outcome=mission.outcome,
-                events=(event for event in events if isinstance(event, dict)),
-                baseline_contact_ids=mission.baseline_intel_contact_ids,
-                assigned_opsgroup_ids=assigned_opsgroup_ids,
-                assigned_group_ids=assigned_group_ids,
-                requirement=requirement,
-                spatial_coverage=spatial_coverage,
-                event_history_complete=bool(history.get("history_complete")),
-            )
-            results.append(mission.recon_outcome)
-            status = (
-                "satisfied"
-                if mission.recon_outcome.requirement_satisfied is True
-                else "incomplete"
-                if mission.recon_outcome.requirement_satisfied is False
-                else "indeterminate"
-            )
-            message = (
-                f"contacts={len(mission.recon_outcome.observations)} "
-                f"unknown={len(mission.recon_outcome.unknown_relevant_target_ids)} "
-                f"lost={len(mission.recon_outcome.lost_relevant_target_ids)}"
-            )
-            await self._mission_event(execution, mission, "recon.assessed", on_event, message=message, status=status)
         return tuple(results)
 
     @staticmethod

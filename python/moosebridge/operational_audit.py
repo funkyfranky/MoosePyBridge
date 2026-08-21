@@ -483,6 +483,7 @@ def _mission_to_dict(mission: PlanMissionExecution) -> dict[str, Any]:
         "event_cursor": mission.event_cursor,
         "recon_intel_id": mission.recon_intel_id,
         "baseline_intel_contact_ids": list(mission.baseline_intel_contact_ids),
+        "recon_assigned_opsgroup_ids": list(mission.recon_assigned_opsgroup_ids),
         "recon_assigned_group_ids": list(mission.recon_assigned_group_ids),
         "recon_tracks": {
             group_id: [sample.to_dict() for sample in samples]
@@ -526,6 +527,9 @@ def _mission_from_dict(data: Mapping[str, Any]) -> PlanMissionExecution:
         event_cursor=_text(data.get("event_cursor")),
         recon_intel_id=_text(data.get("recon_intel_id")),
         baseline_intel_contact_ids=tuple(str(item) for item in data.get("baseline_intel_contact_ids", ())),
+        recon_assigned_opsgroup_ids=tuple(
+            str(item) for item in data.get("recon_assigned_opsgroup_ids", ())
+        ),
         recon_assigned_group_ids=tuple(str(item) for item in data.get("recon_assigned_group_ids", ())),
         recon_tracks={
             str(group_id): [ReconTrackSample.from_dict(item) for item in samples if isinstance(item, dict)]

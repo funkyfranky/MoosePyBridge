@@ -2704,6 +2704,7 @@ def test_sdk_execute_recon_returns_event_based_tactical_outcome() -> None:
         client.sample_recon_tracking = sample_recon_tracking  # type: ignore[method-assign]
         client.assess_recon_tracking = assess_recon_tracking  # type: ignore[method-assign]
         manual = ReconRequirement.manual("ZONE:Recon", "GROUP:Ground-1")
+        statuses: list[AuftragEvent] = []
         result = await client.execute_recon(
             Auftrag_RECON(zones=ZoneSet("ZONE:Recon")),
             intel="INTEL:Blue Intel",
@@ -2715,6 +2716,7 @@ def test_sdk_execute_recon_returns_event_based_tactical_outcome() -> None:
                 minimum_area_coverage=0.8,
                 minimum_component_coverage=0,
             ),
+            on_status=statuses.append,
         )
 
         assert result.mission_outcome.success is True
@@ -2723,8 +2725,10 @@ def test_sdk_execute_recon_returns_event_based_tactical_outcome() -> None:
         assert result.observed_relevant_target_ids == ("GROUP:Ground-1",)
         assert result.requirement_satisfied is True
         assert result.first_intelligence_delay == 10
+        assert result.command_ack["result"]["auftrag_id"] == "AUFTRAG:1"
         assert result.spatial_coverage is not None
         assert result.spatial_coverage.area_coverage_ratio == 1
+        assert [event.fsm_event for event in statuses] == ["Started"]
         assert server.audit_records[-1][0] == "recon.execution"
         audit_payload = server.audit_records[-1][1]
         assert audit_payload["missions"][0]["recon_tracks"]["GROUP:MQ-9"][0]["x"] == 0

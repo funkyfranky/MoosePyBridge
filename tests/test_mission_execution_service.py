@@ -1,20 +1,30 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from moosebridge import Auftrag_PATROLZONE
 from moosebridge.mission_execution_service import (
+    AuftragAssignment,
     MissionExecutionService,
     PlanMissionExecution,
     PlanMissionStatus,
 )
+from moosebridge.outcomes import AuftragOutcome
+from moosebridge.recon import ReconRequirement, ReconSpatialCoverage, ReconTrackingSession
 from moosebridge.state import MooseBridgeState
 
 
 class _MissionServer:
     def __init__(self, events: list[dict[str, Any]] | None = None) -> None:
         self.events = list(events or ())
+        self.history_events: list[dict[str, Any]] = []
+
+    async def event_cursor(self) -> str:
+        return "event-before"
 
     async def wait_for_event(
         self,
@@ -25,6 +35,15 @@ class _MissionServer:
     ) -> dict[str, Any]:
         del event_name, filters, timeout, after_id
         return self.events.pop(0)
+
+    async def query_events(
+        self,
+        event_name: str = "*",
+        filters: dict[str, Any] | None = None,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        del event_name, filters, after_id
+        return {"events": list(self.history_events), "history_complete": True}
 
 
 class _MissionClient:
@@ -43,21 +62,19 @@ class _MissionClient:
         self.cancel_failures = set(cancel_failures)
         self.auftrag_snapshots = list(auftrag_snapshots or ())
         self.snapshot_calls = 0
+        self.opsgroup_snapshot_calls = 0
+        self.opsgroup_names: dict[str, str] = {}
+        self.assessed_recon: tuple[ReconRequirement, Any] | None = None
 
     async def add_auftrag(
         self,
         command: Any,
-        *,
-        commander: str,
-        allowed_legions: tuple[str, ...],
-        allowed_cohorts: tuple[str, ...],
+        **kwargs: Any,
     ) -> dict[str, Any]:
         self.submissions.append(
             {
                 "command": command,
-                "commander": commander,
-                "allowed_legions": allowed_legions,
-                "allowed_cohorts": allowed_cohorts,
+                **kwargs,
             }
         )
         return {
@@ -68,7 +85,7 @@ class _MissionClient:
                 "action": "auftrag.create_patrolzone",
                 "auftrag_id": "AUFTRAG:7",
                 "auftrag_type": "Patrol Zone",
-                "commander_id": commander,
+                "commander_id": kwargs.get("commander"),
             },
         }
 
@@ -100,6 +117,44 @@ class _MissionClient:
             "result": {"kind": "auftraege", "count": len(self.auftrag_snapshots)},
         }
 
+    async def snapshot_opsgroups(self) -> dict[str, Any]:
+        self.opsgroup_snapshot_calls += 1
+        return {"ok": True, "result": {"kind": "opsgroups", "count": len(self.opsgroup_names)}}
+
+    def auftrag(self, object_id: str) -> Any | None:
+        snapshot = next(
+            (item for item in self.auftrag_snapshots if item.get("object_id") == object_id),
+            None,
+        )
+        if snapshot is None:
+            return None
+        return SimpleNamespace(assigned_group_ids=tuple(snapshot.get("assigned_group_ids") or ()))
+
+    def opsgroup(self, object_id: str) -> Any | None:
+        name = self.opsgroup_names.get(object_id)
+        return SimpleNamespace(group_name=name) if name is not None else None
+
+    async def assess_recon_tracking(
+        self,
+        requirement: ReconRequirement,
+        session: Any,
+    ) -> ReconSpatialCoverage:
+        self.assessed_recon = (requirement, session)
+        return ReconSpatialCoverage(
+            available=False,
+            area_object_id=requirement.area_object_id,
+            area_m2=None,
+            searched_area_m2=None,
+            area_coverage_ratio=None,
+            component_coverage_ratio=None,
+            covered_component_ids=(),
+            uncovered_component_ids=(),
+            tracked_group_ids=tuple(session.assigned_group_ids),
+            unknown_sensor_group_ids=(),
+            sample_count=0,
+            sufficient=None,
+        )
+
 
 def _mission() -> PlanMissionExecution:
     return PlanMissionExecution(
@@ -110,6 +165,56 @@ def _mission() -> PlanMissionExecution:
         required=True,
         command=Auftrag_PATROLZONE(zone="ZONE:Town"),
     )
+
+
+def test_auftrag_assignment_normalizes_recruitment_constraints() -> None:
+    assignment = AuftragAssignment.commander(
+        "COMMANDER:Blue",
+        cohort_id="COHORT:MQ-9",
+        allowed_legion_ids=("LEGION:Wing", "LEGION:Wing"),
+        allowed_cohort_ids=("COHORT:MQ-9", "COHORT:F-16", "COHORT:F-16"),
+        selected_payload_uid=17,
+    )
+
+    assert assignment.allowed_legion_ids == ("LEGION:Wing",)
+    assert assignment.allowed_cohort_ids == ("COHORT:F-16",)
+    assert assignment.cohort_scope_ids == ("COHORT:MQ-9", "COHORT:F-16")
+    assert assignment.add_auftrag_kwargs() == {
+        "commander": "COMMANDER:Blue",
+        "cohort": "COHORT:MQ-9",
+        "allowed_legions": ("LEGION:Wing",),
+        "allowed_cohorts": ("COHORT:F-16",),
+        "selected_payload_uid": 17,
+    }
+
+
+@pytest.mark.parametrize(
+    ("assignment", "target_key", "target_id"),
+    (
+        (AuftragAssignment.commander("COMMANDER:Blue"), "commander", "COMMANDER:Blue"),
+        (AuftragAssignment.legion("LEGION:Wing"), "legion", "LEGION:Wing"),
+        (AuftragAssignment.opsgroup("OPSGROUP:Flight"), "opsgroup", "OPSGROUP:Flight"),
+        (AuftragAssignment.coalition("blue"), "coalition", "blue"),
+    ),
+)
+def test_auftrag_assignment_supports_every_moose_tasking_target(
+    assignment: AuftragAssignment,
+    target_key: str,
+    target_id: str,
+) -> None:
+    assert assignment.add_auftrag_kwargs()[target_key] == target_id
+
+
+def test_auftrag_assignment_rejects_incompatible_constraints() -> None:
+    with pytest.raises(ValueError, match="COHORT constraints"):
+        AuftragAssignment.opsgroup("OPSGROUP:Flight", cohort_id="COHORT:MQ-9")
+    with pytest.raises(ValueError, match="allowed LEGIONs"):
+        AuftragAssignment.legion(
+            "LEGION:Wing",
+            allowed_legion_ids=("LEGION:Other",),
+        )
+    with pytest.raises(ValueError, match="COMMANDER:"):
+        AuftragAssignment.commander("Blue Commander")
 
 
 def test_service_submits_and_evaluates_one_auftrag() -> None:
@@ -153,9 +258,11 @@ def test_service_submits_and_evaluates_one_auftrag() -> None:
 
         await service.submit(
             mission,
-            commander_id="COMMANDER:Blue",
-            allowed_legion_ids=("LEGION:Brigade",),
-            allowed_cohort_ids=("COHORT:Infantry",),
+            assignment=AuftragAssignment.commander(
+                "COMMANDER:Blue",
+                allowed_legion_ids=("LEGION:Brigade",),
+                allowed_cohort_ids=("COHORT:Infantry",),
+            ),
             on_event=lambda _mission, event: observed.append(event.event),
         )
         succeeded = await service.wait_for_mission(
@@ -169,10 +276,13 @@ def test_service_submits_and_evaluates_one_auftrag() -> None:
         assert mission.auftrag_id == "AUFTRAG:7"
         assert mission.command_ack is not None
         assert mission.command_ack.ack_id == "ack-7"
+        assert mission.raw_command_ack["id"] == "ack-7"
+        assert mission.event_cursor == "event-before"
         assert mission.outcome is not None
         assert mission.outcome.success is True
         assert client.submissions[0]["commander"] == "COMMANDER:Blue"
         assert client.submissions[0]["allowed_cohorts"] == ("COHORT:Infantry",)
+        assert client.submissions[0]["timeout"] == 10.0
         assert observed == ["mission.submitted", "mission.status", "mission.succeeded"]
 
     asyncio.run(scenario())
@@ -282,7 +392,7 @@ def test_service_reports_missing_command_as_submission_failure() -> None:
         try:
             await service.submit(
                 mission,
-                commander_id="COMMANDER:Blue",
+                assignment=AuftragAssignment.commander("COMMANDER:Blue"),
                 on_event=lambda _mission, event: observed.append(event.event),
             )
         except ValueError as exc:
@@ -396,5 +506,117 @@ def test_service_keeps_unknown_auftrag_state_explicitly_unrecognized() -> None:
         assert reconciled[0].state_recognized is False
         assert reconciled[0].message == "AUFTRAG snapshot has no recognized lifecycle status"
         assert observed == []
+
+    asyncio.run(scenario())
+
+
+def test_service_builds_recon_assessment_for_one_completed_auftrag() -> None:
+    async def scenario() -> None:
+        client = _MissionClient(
+            auftrag_snapshots=[
+                {
+                    "object_id": "AUFTRAG:7",
+                    "status": "Done",
+                    "assigned_group_ids": ["OPSGROUP:MQ-9 Flight"],
+                }
+            ]
+        )
+        client.opsgroup_names["OPSGROUP:MQ-9 Flight"] = "MQ-9 Flight-1"
+        service = MissionExecutionService(client)  # type: ignore[arg-type]
+        mission = _mission()
+        mission.mission_type = "RECON"
+        mission.auftrag_id = "AUFTRAG:7"
+        mission.status = PlanMissionStatus.SUCCEEDED
+        mission.recon_intel_id = "INTEL:Blue"
+        mission.outcome = AuftragOutcome.from_snapshot(
+            {
+                "object_id": "AUFTRAG:7",
+                "type": "RECON",
+                "status": "Done",
+                "summary": {
+                    "evaluated": True,
+                    "success": True,
+                    "n_targets_initial": 1,
+                    "n_targets_final": 0,
+                },
+            }
+        )
+        requirement = ReconRequirement.manual("ZONE:Recon", "GROUP:Missing target")
+        observed: list[tuple[str, str | None, str | None]] = []
+
+        outcome = await service.assess_recon(
+            mission,
+            requirement,
+            on_event=lambda _mission, event: observed.append(
+                (event.event, event.status, event.message)
+            ),
+        )
+
+        assert client.snapshot_calls == 1
+        assert client.opsgroup_snapshot_calls == 1
+        assert client.assessed_recon is not None
+        assert mission.recon_assigned_group_ids == ("GROUP:MQ-9 Flight-1",)
+        assert outcome is mission.recon_outcome
+        assert outcome.assigned_opsgroup_ids == ("OPSGROUP:MQ-9 Flight",)
+        assert outcome.assigned_group_ids == ("GROUP:MQ-9 Flight-1",)
+        assert outcome.requirement_satisfied is False
+        assert observed == [
+            (
+                "recon.assessed",
+                "incomplete",
+                "contacts=0 unknown=1 lost=0",
+            )
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_service_reuses_direct_recon_tracking_and_ack() -> None:
+    async def scenario() -> None:
+        client = _MissionClient(
+            auftrag_snapshots=[
+                {
+                    "object_id": "AUFTRAG:7",
+                    "status": "Done",
+                    "assigned_group_ids": ["OPSGROUP:Snapshot Flight"],
+                }
+            ]
+        )
+        service = MissionExecutionService(client)  # type: ignore[arg-type]
+        mission = _mission()
+        mission.mission_type = "RECON"
+        mission.auftrag_id = "AUFTRAG:7"
+        mission.status = PlanMissionStatus.SUCCEEDED
+        mission.recon_intel_id = "INTEL:Blue"
+        mission.outcome = AuftragOutcome.from_snapshot(
+            {
+                "object_id": "AUFTRAG:7",
+                "type": "RECON",
+                "status": "Done",
+                "summary": {"evaluated": True, "success": True},
+            }
+        )
+        tracking = ReconTrackingSession(
+            "AUFTRAG:7",
+            ("OPSGROUP:Direct Flight",),
+            ("GROUP:Direct Flight-1",),
+            {},
+        )
+
+        outcome = await service.assess_recon(
+            mission,
+            None,
+            tracking=tracking,
+            relevant_target_ids=("GROUP:Ground-1",),
+            command_ack={"id": "ack-7", "result": {"auftrag_id": "AUFTRAG:7"}},
+            assess_spatial_coverage=False,
+        )
+
+        assert client.assessed_recon is None
+        assert mission.recon_assigned_group_ids == ("GROUP:Direct Flight-1",)
+        assert outcome.assigned_opsgroup_ids == ("OPSGROUP:Direct Flight",)
+        assert outcome.relevant_target_ids == ("GROUP:Ground-1",)
+        assert outcome.command_ack["id"] == "ack-7"
+        assert outcome.spatial_coverage is None
 
     asyncio.run(scenario())
