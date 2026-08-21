@@ -1,6 +1,8 @@
 # MoosePyBridge Roadmap
 
-Concrete pending work is maintained in [BACKLOG.md](BACKLOG.md).
+The end-to-end delivery sequence is maintained in
+[MILESTONES.md](MILESTONES.md). Concrete deferred work is maintained in
+[BACKLOG.md](BACKLOG.md).
 
 ## Vision
 
@@ -586,27 +588,16 @@ Later behavior:
 
 ## Immediate next milestone
 
-The next milestone is controlled plan execution:
+Controlled plan execution is now an established foundation. The next delivery
+target is **Milestone 1: Conflict-ready scenario contract**, followed by the
+bilateral rule-based decision and autonomous execution milestones in
+[MILESTONES.md](MILESTONES.md).
 
-1. Convert approved `MissionIntent` objects into concrete typed AUFTRAG
-   commands without duplicating constructor logic.
-2. Treat Python allocations as planning commitments, let MOOSE recruit and
-   reserve concrete warehouse assets, and reconcile the result through
-   AUFTRAG/LEGION state and events.
-3. Drive phase transitions from AUFTRAG FSM events and strategic objective
-   events rather than status polling.
-4. Automatic immediate-phase revalidation and explicit abort are implemented.
-   Explicit replan, operator reapproval, target changes, recruitment changes,
-   and resume from the first incomplete phase are implemented.
-5. Explicit operator approvals, compact command ACK references, declared
-   control-client identities, and recommendation provenance are now in the
-   operational audit. Authenticated client identities remain future work.
-6. Explicit cancellation of still-running MOOSE AUFTRAGs is implemented for
-   complete attempts and, optionally, only the current phase.
-
-The frontline, ammunition, capability, strategic objective, and strategic goal
-layers are established inputs to this planner. They remain Python-owned
-reasoning state; MOOSE remains the semantic execution interface to DCS.
+The frontline, ammunition, capability, strategic objective, strategic goal,
+diplomacy, and doctrine layers are established planner inputs. They remain
+Python-owned reasoning state; MOOSE remains the semantic execution interface to
+DCS. Rule-based and later LLM decision sources must use this same validated and
+audited path.
 
 ## Frontline architecture baseline
 

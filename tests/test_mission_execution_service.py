@@ -155,7 +155,6 @@ class _MissionClient:
             sufficient=None,
         )
 
-
 def _mission() -> PlanMissionExecution:
     return PlanMissionExecution(
         phase_id="consolidate",

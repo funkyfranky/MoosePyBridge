@@ -4,6 +4,10 @@ This file tracks concrete work that is not yet complete. `ROADMAP.md` describes
 the architectural direction and completed foundations; this backlog is the
 shorter working list for upcoming implementation.
 
+The ordered end-to-end path to the two-sided conflict simulation is defined in
+[MILESTONES.md](MILESTONES.md). Items here may support a milestone, but deferred
+work must not expand the milestone scope without a concrete acceptance need.
+
 Priorities:
 
 - **P1**: Important for the next usable conflict-simulation increment.
