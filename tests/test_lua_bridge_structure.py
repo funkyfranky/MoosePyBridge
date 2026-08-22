@@ -45,6 +45,13 @@ def test_zone_snapshot_exposes_scalar_moose_properties() -> None:
     assert "properties=self:_ZoneProperties(zone)" in source
 
 
+def test_bridge_exposes_active_dcs_theater_identity() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert 'self:RegisterCommand("mission.info"' in source
+    assert "theater_id=mission and mission.theatre or nil" in source
+
+
 def test_ops_snapshots_use_moose_available_asset_counts() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
 

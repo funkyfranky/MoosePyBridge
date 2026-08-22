@@ -75,6 +75,35 @@ Implemented baseline:
   adaptation
 - SDK picture models for tactical INTEL-based and global truth-based GeoJSON
   exports
+- active DCS theater identity and a bilateral conflict-readiness preflight for
+  strategic scope, objectives, COMMANDER/LEGION/COHORT force structure, INTEL,
+  and CAPTURE/DEFEND/DESTROY capability
+- side-effect-free bilateral strategic recommendations that derive, plan,
+  score, reserve, and explain feasible blue and red goal candidates without
+  creating executable mission state
+
+Before starting either coalition's strategic controller, run the editable live
+preflight:
+
+```powershell
+python examples/sdk/check_conflict_readiness.py
+```
+
+The report is either `READY` or `BLOCKED`. Blocking findings prevent strategic
+goal or AUFTRAG creation; warnings describe usable but incomplete scenario
+coverage.
+
+Once the scenario is ready and the relationship is `war`, inspect one bounded
+recommendation for both coalitions:
+
+```powershell
+python examples/sdk/recommend_bilateral_strategy.py
+```
+
+Recommendation mode builds temporary goal and operational-plan drafts to test
+mission suitability and resources. It retains an audit record, but it does not
+register a Goal or Plan and does not create an AUFTRAG. Executing selected work
+is a separate controller responsibility.
 
 ## Architecture
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 import math
 from typing import Any
@@ -109,6 +109,26 @@ class DcsTime:
             }.items()
             if value is not None
         }
+
+
+@dataclass(slots=True, frozen=True)
+class DcsMissionInfo:
+    """Stable identity and clock metadata for the active DCS mission."""
+
+    theater_id: str | None = None
+    mission_name: str | None = None
+    clock: DcsTime = field(default_factory=DcsTime)
+
+    @classmethod
+    def from_message(cls, message: dict[str, Any]) -> "DcsMissionInfo":
+        """Create mission information from a DCS ACK."""
+
+        result = message.get("result") if isinstance(message.get("result"), dict) else {}
+        return cls(
+            theater_id=_optional_str(result.get("theater_id")),
+            mission_name=_optional_str(result.get("mission_name")),
+            clock=DcsTime.from_message(message),
+        )
 
 
 def _optional_float(value: Any) -> float | None:

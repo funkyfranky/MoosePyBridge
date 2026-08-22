@@ -29,6 +29,12 @@ milestones:
 **Outcome:** A running mission can be declared ready or rejected before either
 coalition makes a strategic decision.
 
+**Status:** Completed and accepted against the live Caucasus mission. The
+preflight reported the correct theater, three scoped territories, both
+coalition force structures, 24 admitted objectives, and no blocking errors.
+Blue's lack of a verified opposing SCENERY target remains a non-blocking data
+coverage warning.
+
 Required work:
 
 1. Expose the active DCS theater ID and reject a mismatched theater profile.
@@ -48,10 +54,27 @@ Acceptance test:
 - A deliberately missing COMMANDER, invalid territory overlap, or wrong theater
   profile blocks the conflict controller before any AUFTRAG is created.
 
+Implementation entry points:
+
+- `MooseBridgeClient.assess_conflict_readiness()` is the controller-independent
+  preflight used by rule-based and future LLM decision sources.
+- `ConflictReadinessReport.require_ready()` is the hard startup gate.
+- `examples/sdk/check_conflict_readiness.py` is the editable live acceptance
+  script.
+
 ## Milestone 2: Bilateral rule-based decisions
 
 **Outcome:** Blue and red independently produce sensible, explainable goal
 portfolios without executing them.
+
+**Status:** Completed and accepted against the live Caucasus mission. Blue and
+red independently selected feasible recommendations in two consecutive runs;
+the second run created no duplicate goal, plan, or AUFTRAG. The SDK derives
+policy-permitted actions, asks the operational planners to prove mission and
+asset feasibility, ranks feasible candidates using independent urgency and
+resolver-provided response estimates, reserves capacity within each proposed
+portfolio, and records stable selection or rejection reasons. Recommendation
+mode does not mutate the production Objective, Goal, or Plan registries.
 
 Required work:
 
@@ -74,6 +97,25 @@ Acceptance test:
   suitable assets exist; friendly, neutral-protected, out-of-scope, unknown,
   and infeasible targets are rejected with explicit reasons.
 - Repeating the cycle does not create duplicate goals.
+
+Implementation entry points:
+
+- `MooseBridgeClient.recommend_strategic_portfolio()` evaluates one coalition
+  against its own tactical picture.
+- `MooseBridgeClient.recommend_bilateral_strategy()` refreshes coalition-private
+  INTEL and returns both bounded portfolios from one mission generation.
+- `StrategicDecisionConfig` owns concurrency, damage, defense-duration, and
+  scoring policy.
+- `examples/sdk/recommend_bilateral_strategy.py` is the editable live acceptance
+  script.
+
+Current deliberate policy limits:
+
+- AIRBASE objectives may produce runway-denial recommendations, but AIRBASE and
+  FARP capture require an associated OPSZONE control mechanism.
+- Neutral infrastructure is protected.
+- Friendly non-OPSZONE objectives do not yet produce defensive plans.
+- Recommendation and execution remain separate until Milestone 3.
 
 ## Milestone 3: Autonomous two-sided conflict MVP
 

@@ -14,6 +14,7 @@ from .capabilities import (
     UnitCapabilities,
     UnitInfluence,
 )
+from .conflict_readiness import ConflictCapability, ConflictReadinessReport
 from .diplomacy import CoalitionDoctrine, CoalitionRelationship
 from .legions import Cohort, Commander, Legion
 from .intelligence import InformationRequirement
@@ -31,6 +32,11 @@ from .sensor_ranges import SensorRangeProfile
 from .strategic import GoalCondition, StrategicGoal
 from .strategic_feedback import StrategicFeedbackDecision, StrategicFeedbackEvent
 from .strategic_selection import StrategicGoalPortfolio
+from .strategic_decision import (
+    BilateralStrategicRecommendation,
+    StrategicDecisionDisposition,
+    StrategicDecisionPortfolio,
+)
 from .strategic_scope import StrategicTerritoryScope
 from .strategic_objectives import StrategicObjectiveGenerationResult
 from .strategic_goals import StrategicGoalGenerationResult
@@ -62,6 +68,50 @@ def format_strategic_scope(scope: StrategicTerritoryScope) -> str:
         ),
     ]
     lines.extend(f"  {issue.severity.upper()} {issue.code}: {issue.message}" for issue in scope.issues)
+    return "\n".join(lines)
+
+
+def format_conflict_readiness(report: ConflictReadinessReport) -> str:
+    """Return the bilateral scenario-contract result in a compact form."""
+
+    state = "READY" if report.ready else "BLOCKED"
+    lines = [
+        (
+            f"Conflict readiness {state} active_theater={_text(report.active_theater_id)} "
+            f"configured_theater={_text(report.configured_theater_id)} "
+            f"objectives={report.objective_count} errors={len(report.errors)} "
+            f"warnings={len(report.warnings)}"
+        ),
+        (
+            f"  scope territories={len(report.scope.territory_ids)} "
+            f"blue={report.scope.blue.area / 1_000_000:.1f}km2 "
+            f"red={report.scope.red.area / 1_000_000:.1f}km2 "
+            f"neutral={report.scope.neutral.area / 1_000_000:.1f}km2"
+        ),
+    ]
+    for coalition in report.coalitions:
+        capabilities = ", ".join(
+            f"{capability.value}={'yes' if coalition.supports(capability) else 'no'}"
+            for capability in ConflictCapability
+        )
+        lines.extend(
+            (
+                (
+                    f"  {coalition.coalition}: commanders={len(coalition.commander_ids)} "
+                    f"intels={len(coalition.intel_ids)} legions={len(coalition.legion_ids)} "
+                    f"cohorts={len(coalition.cohort_ids)} available_assets={coalition.available_asset_count}"
+                ),
+                (
+                    f"    capabilities {capabilities}; objectives own={coalition.owned_objective_count} "
+                    f"opposing={coalition.opposing_objective_count} neutral={coalition.neutral_objective_count} "
+                    f"capturable={coalition.capturable_objective_count} "
+                    f"destroyable={coalition.destroyable_objective_count}"
+                ),
+            )
+        )
+    for issue in report.issues:
+        coalition = f" coalition={issue.coalition}" if issue.coalition else ""
+        lines.append(f"  {issue.severity.value.upper()} {issue.code}{coalition}: {issue.message}")
     return "\n".join(lines)
 
 
@@ -203,6 +253,84 @@ def format_strategic_goal_portfolio(portfolio: StrategicGoalPortfolio) -> str:
                 "    reserves="
                 + ", ".join(f"{cohort_id} x{count}" for cohort_id, count in item.reserved_assets)
             )
+    return "\n".join(lines)
+
+
+def format_strategic_decision_portfolio(
+    portfolio: StrategicDecisionPortfolio,
+    *,
+    rejection_limit: int = 12,
+) -> str:
+    """Return one explainable, non-executing coalition recommendation."""
+
+    lines = [
+        (
+            f"Strategic recommendation coalition={portfolio.coalition} "
+            f"selected={len(portfolio.selected)} deferred={len(portfolio.deferred)} "
+            f"rejected={len(portfolio.rejected)} mission_time={_text(portfolio.mission_time)} "
+            f"capacity={portfolio.existing_open_goal_count + len(portfolio.selected)}/"
+            f"{portfolio.max_concurrent_goals}"
+        )
+    ]
+    shown_rejections = 0
+    for decision in portfolio.decisions:
+        if decision.disposition is StrategicDecisionDisposition.REJECTED:
+            if shown_rejections >= max(0, rejection_limit):
+                continue
+            shown_rejections += 1
+        action = decision.action.value if decision.action is not None else "none"
+        effect = f"/{decision.effect.value}" if decision.effect is not None else ""
+        score = f" score={decision.score.total:.1f}" if decision.score is not None else ""
+        feasible = (
+            f" feasible={decision.assessment.feasible}"
+            if decision.assessment is not None
+            else ""
+        )
+        lines.append(
+            f"  {decision.disposition.value.upper()} {decision.objective_id} "
+            f"action={action}{effect}{score}{feasible} reason={decision.reason_code.value}"
+        )
+        lines.append(f"    {decision.reason}")
+        if decision.score is not None:
+            lines.append(
+                "    score components "
+                f"value={decision.score.strategic_value:.1f} "
+                f"urgency={decision.score.urgency:.1f} doctrine={decision.score.doctrine:.1f} "
+                f"operational={decision.score.operational:.1f} "
+                f"confidence={decision.score.confidence:.1f}"
+            )
+        if decision.reserved_assets:
+            lines.append(
+                "    reserves="
+                + ", ".join(
+                    f"{cohort_id} x{count}" for cohort_id, count in decision.reserved_assets
+                )
+            )
+    hidden = len(portfolio.rejected) - shown_rejections
+    if hidden > 0:
+        lines.append(f"  ... {hidden} more rejected candidate(s)")
+    return "\n".join(lines)
+
+
+def format_bilateral_strategic_recommendation(
+    recommendation: BilateralStrategicRecommendation,
+    *,
+    rejection_limit: int = 12,
+) -> str:
+    """Return blue and red recommendation portfolios from one decision cycle."""
+
+    lines = [
+        (
+            f"Bilateral strategic recommendation relationship={recommendation.relationship_state} "
+            f"generation={recommendation.mission_generation} "
+            f"mission_time={_text(recommendation.mission_time)}"
+        )
+    ]
+    for portfolio in recommendation.portfolios:
+        lines.extend(("", format_strategic_decision_portfolio(
+            portfolio,
+            rejection_limit=rejection_limit,
+        )))
     return "\n".join(lines)
 
 

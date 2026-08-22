@@ -1982,6 +1982,19 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     return {action="time.get", mission_time=mission_time(), dcs_time=dcs_time(), mission_date=self.MissionDate, wall_time=wall_time()}
   end)
 
+  self:RegisterCommand("mission.info", function(cmd)
+    local mission = env and env.mission or nil
+    return {
+      action="mission.info",
+      theater_id=mission and mission.theatre or nil,
+      mission_name=mission and mission.name or nil,
+      mission_time=mission_time(),
+      dcs_time=dcs_time(),
+      mission_date=self.MissionDate,
+      wall_time=wall_time(),
+    }
+  end)
+
   self:RegisterCommand("message.to_all", function(cmd)
     local p = cmd.params or {}
     MESSAGE:New(p.text or "", p.duration or 10):ToAll()

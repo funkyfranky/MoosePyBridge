@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 import math
 from typing import Any
@@ -12,7 +13,8 @@ from shapely.geometry import Point, shape
 
 from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, WeaponRole, select_task_weapon
 from .auftraege import AuftragCommand, AuftragEvent
-from .clock import DcsTime
+from .clock import DcsMissionInfo, DcsTime
+from .conflict_readiness import ConflictReadinessReport, evaluate_conflict_readiness
 from .dcs_events import DestroyedObjectEvent, KillEvent
 from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
 from .infrastructure_sites import (
@@ -94,6 +96,7 @@ from .mission_execution_service import (
 from .operational import (
     OperationalPlan,
     OperationalPlanAssessment,
+    OperationalPlanRegistry,
     OperationalPlanStatus,
 )
 from .operational_execution import (
@@ -125,6 +128,23 @@ from .strategic_feedback import (
     StrategicFeedbackEvent,
 )
 from .strategic_selection import StrategicGoalPortfolio
+from .strategic_decision import (
+    STRATEGIC_DECISION_AUDIT_TYPE,
+    BilateralStrategicRecommendation,
+    StrategicActionSpec,
+    StrategicDecision,
+    StrategicDecisionConfig,
+    StrategicDecisionDisposition,
+    StrategicDecisionPortfolio,
+    StrategicDecisionReasonCode,
+    StrategicDecisionScore,
+    concurrent_plan_reservations,
+    create_candidate_goal,
+    derive_strategic_action_specs,
+    rejected_decision,
+    score_strategic_candidate,
+    strategic_recommendation_to_dict,
+)
 from .strategic_scope import (
     StrategicScopeConfig,
     StrategicTerritoryScope,
@@ -149,8 +169,12 @@ from .strategic import (
     ObjectiveEvent,
     OwnershipPolicy,
     StrategicGoal,
+    StrategicGoalAction,
     StrategicGoalEvent,
+    StrategicGoalRegistry,
+    StrategicGoalStatus,
     StrategicObjective,
+    StrategicObjectiveRegistry,
     component_health,
     effective_component_health,
     normalize_coalition,
@@ -1336,6 +1360,281 @@ class MooseBridgeClient:
             doctrine=self.coalition_doctrines.get(coalition),
         )
 
+    def recommend_strategic_portfolio(
+        self,
+        coalition: str,
+        picture: TacticalPicture,
+        *,
+        objectives: Iterable[StrategicObjective],
+        config: StrategicDecisionConfig | None = None,
+    ) -> StrategicDecisionPortfolio:
+        """Recommend a feasible portfolio without registering goals or plans."""
+
+        coalition = normalize_coalition(coalition) or ""
+        if coalition not in {"blue", "red"}:
+            raise ValueError("strategic recommendations require coalition blue or red")
+        if normalize_coalition(picture.coalition) != coalition:
+            raise ValueError("tactical picture coalition does not match the recommendation coalition")
+        resolved = config or StrategicDecisionConfig()
+        objective_items = tuple(deepcopy(objective) for objective in objectives)
+        mission_time = picture.clock.mission_time if picture.clock else self._current_mission_time()
+        doctrine = self.coalition_doctrines.get(coalition)
+        legions = tuple(self.state.legion_objects.values())
+        cohorts = tuple(self.state.cohort_objects.values())
+        cohorts_by_id = {item.object_id: item for item in cohorts}
+
+        temporary_objectives = StrategicObjectiveRegistry()
+        for objective in objective_items:
+            temporary_objectives.add(objective)
+        temporary_objectives.sync(self.state, source="strategic_recommendation")
+        objective_items = temporary_objectives.all()
+
+        specs = derive_strategic_action_specs(
+            objective_items,
+            coalition,
+            relationship=self.relationship,
+            config=resolved,
+            open_goals=self.strategic_goals(),
+        )
+        decisions: list[StrategicDecision] = [
+            rejected_decision(spec) for spec in specs if spec.rejection_code is not None
+        ]
+
+        temporary_goals = StrategicGoalRegistry(temporary_objectives)
+        temporary_plans = OperationalPlanRegistry(temporary_goals)
+        planned: list[
+            tuple[
+                StrategicActionSpec,
+                StrategicGoal,
+                OperationalPlan,
+                OperationalPlanAssessment,
+                StrategicDecisionScore,
+            ]
+        ] = []
+        for spec in (item for item in specs if item.rejection_code is None):
+            goal = create_candidate_goal(spec, mission_time=mission_time, config=resolved)
+            try:
+                plan = self._propose_recommended_plan(spec.action, goal, spec.objective, picture)
+                self._prepare_operational_assignment_metadata(
+                    plan,
+                    legions=legions,
+                    cohorts=cohorts,
+                    objective=spec.objective,
+                )
+                temporary_goals.add(goal)
+                temporary_plans.add(plan)
+                assessment = temporary_plans.validate(
+                    plan,
+                    legions=legions,
+                    cohorts=cohorts,
+                    mission_time=mission_time,
+                    update_plan=False,
+                )
+            except Exception as exc:
+                decisions.append(
+                    StrategicDecision(
+                        candidate_id=spec.candidate_id,
+                        coalition=coalition,
+                        objective_id=spec.objective.objective_id,
+                        objective_name=spec.objective.name,
+                        action=spec.action,
+                        effect=spec.effect,
+                        disposition=StrategicDecisionDisposition.REJECTED,
+                        reason_code=StrategicDecisionReasonCode.PLANNING_FAILED,
+                        reason=str(exc),
+                        goal=goal,
+                    )
+                )
+                continue
+            score = score_strategic_candidate(
+                spec,
+                plan=plan,
+                picture=picture,
+                doctrine=doctrine,
+                assessment=assessment,
+                cohorts=cohorts_by_id,
+                config=resolved,
+            )
+            if not assessment.feasible:
+                decisions.append(
+                    StrategicDecision(
+                        candidate_id=spec.candidate_id,
+                        coalition=coalition,
+                        objective_id=spec.objective.objective_id,
+                        objective_name=spec.objective.name,
+                        action=spec.action,
+                        effect=spec.effect,
+                        disposition=StrategicDecisionDisposition.REJECTED,
+                        reason_code=StrategicDecisionReasonCode.PLAN_INFEASIBLE,
+                        reason="operational plan is infeasible with current coalition assets",
+                        score=score,
+                        goal=goal,
+                        plan=plan,
+                        assessment=assessment,
+                    )
+                )
+                continue
+            planned.append((spec, goal, plan, assessment, score))
+
+        planned.sort(key=lambda item: (-item[4].total, item[0].candidate_id))
+        reservations: dict[str, int] = {}
+        selected_objectives: set[str] = set()
+        open_goal_count = sum(
+            1
+            for goal in self.strategic_goals(coalition=coalition)
+            if goal.status in {StrategicGoalStatus.PLANNED, StrategicGoalStatus.ACTIVE}
+        )
+        selected_count = open_goal_count
+        for spec, goal, plan, _initial_assessment, score in planned:
+            disposition = StrategicDecisionDisposition.SELECTED
+            reason_code = StrategicDecisionReasonCode.SELECTED_FEASIBLE
+            reason = "highest-ranked feasible candidate within portfolio capacity"
+            reserved: dict[str, int] = {}
+            assessment = _initial_assessment
+            if spec.objective.objective_id in selected_objectives:
+                disposition = StrategicDecisionDisposition.DEFERRED
+                reason_code = StrategicDecisionReasonCode.ALTERNATIVE_ACTION_SELECTED
+                reason = "another action for this objective ranked higher"
+            elif selected_count >= resolved.max_concurrent_goals:
+                disposition = StrategicDecisionDisposition.DEFERRED
+                reason_code = StrategicDecisionReasonCode.CONCURRENCY_LIMIT
+                reason = "portfolio concurrency limit reached"
+            else:
+                assessment = temporary_plans.validate(
+                    plan,
+                    legions=legions,
+                    cohorts=cohorts,
+                    mission_time=mission_time,
+                    update_plan=False,
+                    reserved_assets=reservations,
+                )
+                if not assessment.feasible:
+                    disposition = StrategicDecisionDisposition.DEFERRED
+                    reason_code = StrategicDecisionReasonCode.RESOURCE_CONFLICT
+                    reason = "higher-ranked recommendations reserve the required COHORT assets"
+                else:
+                    reserved = concurrent_plan_reservations(assessment)
+                    for cohort_id, count in reserved.items():
+                        reservations[cohort_id] = reservations.get(cohort_id, 0) + count
+                    selected_objectives.add(spec.objective.objective_id)
+                    selected_count += 1
+            decisions.append(
+                StrategicDecision(
+                    candidate_id=spec.candidate_id,
+                    coalition=coalition,
+                    objective_id=spec.objective.objective_id,
+                    objective_name=spec.objective.name,
+                    action=spec.action,
+                    effect=spec.effect,
+                    disposition=disposition,
+                    reason_code=reason_code,
+                    reason=reason,
+                    score=score,
+                    goal=goal,
+                    plan=plan,
+                    assessment=assessment,
+                    reserved_assets=tuple(sorted(reserved.items())),
+                )
+            )
+
+        rank = {
+            StrategicDecisionDisposition.SELECTED: 0,
+            StrategicDecisionDisposition.DEFERRED: 1,
+            StrategicDecisionDisposition.REJECTED: 2,
+        }
+        decisions.sort(
+            key=lambda item: (
+                rank[item.disposition],
+                -(item.score.total if item.score is not None else -1.0),
+                item.candidate_id,
+            )
+        )
+        return StrategicDecisionPortfolio(
+            coalition=coalition,
+            mission_time=mission_time,
+            decisions=tuple(decisions),
+            reserved_assets=tuple(sorted(reservations.items())),
+            max_concurrent_goals=resolved.max_concurrent_goals,
+            existing_open_goal_count=open_goal_count,
+        )
+
+    async def recommend_bilateral_strategy(
+        self,
+        readiness: ConflictReadinessReport,
+        *,
+        config: StrategicDecisionConfig | None = None,
+        refresh: bool = True,
+        retain_audit: bool = True,
+    ) -> BilateralStrategicRecommendation:
+        """Build blue and red recommendations without creating executable state."""
+
+        readiness.require_ready()
+        if readiness.mission_generation != self.state.mission_generation:
+            raise ValueError("conflict readiness belongs to a different DCS mission generation")
+        if readiness.objective_generation is None:
+            raise ValueError("conflict readiness has no strategic objectives")
+        if refresh:
+            await self.refresh_diplomacy_state()
+            await self.snapshot_intels()
+            await self.snapshot_intel_contacts()
+            await self.snapshot_intel_clusters()
+            await self.snapshot_opszones()
+            await self.snapshot_opsgroups()
+            await self.snapshot_auftraege()
+            await self.snapshot_legions()
+            await self.snapshot_cohorts()
+            await self.snapshot_statics()
+            await self.snapshot_airbases()
+        if readiness.mission_generation != self.state.mission_generation:
+            raise ValueError("DCS mission changed after the conflict-readiness check")
+        portfolios: list[StrategicDecisionPortfolio] = []
+        for coalition in ("blue", "red"):
+            intel_ids = readiness.coalition(coalition).intel_ids
+            if len(intel_ids) != 1:
+                raise ValueError(f"{coalition} recommendation requires exactly one INTEL id")
+            picture = self.build_tactical_picture(coalition, intel_ids[0])
+            portfolios.append(
+                self.recommend_strategic_portfolio(
+                    coalition,
+                    picture,
+                    objectives=readiness.objective_generation.objectives,
+                    config=config,
+                )
+            )
+        recommendation = BilateralStrategicRecommendation(
+            mission_generation=self.state.mission_generation,
+            mission_time=self._current_mission_time(),
+            relationship_state=self.relationship.state.value,
+            portfolios=tuple(portfolios),
+        )
+        append_audit = getattr(self.server, "append_audit_record", None)
+        if retain_audit and callable(append_audit):
+            await append_audit(
+                STRATEGIC_DECISION_AUDIT_TYPE,
+                strategic_recommendation_to_dict(recommendation),
+            )
+        return recommendation
+
+    def _propose_recommended_plan(
+        self,
+        action: StrategicGoalAction | None,
+        goal: StrategicGoal,
+        objective: StrategicObjective,
+        picture: TacticalPicture,
+    ) -> OperationalPlan:
+        """Build one unregistered operational plan for a recommendation."""
+
+        plan_id = f"PLAN:RECOMMEND:{goal.metadata['candidate_id']}"
+        if action is StrategicGoalAction.CAPTURE:
+            return self.propose_capture_plan(goal, picture, objective=objective, plan_id=plan_id)
+        if action is StrategicGoalAction.DEFEND:
+            return self.propose_defend_plan(goal, picture, objective=objective, plan_id=plan_id)
+        if action is StrategicGoalAction.DESTROY:
+            return self.propose_destroy_plan(goal, picture, objective=objective, plan_id=plan_id)
+        if action is StrategicGoalAction.DISABLE:
+            return self.propose_disable_plan(goal, picture, objective=objective, plan_id=plan_id)
+        raise ValueError(f"no operational planner is available for action {action}")
+
     async def apply_strategic_feedback_policy(
         self,
         event: StrategicFeedbackEvent,
@@ -1400,6 +1699,7 @@ class MooseBridgeClient:
         goal: StrategicGoal | str,
         picture: TacticalPicture,
         *,
+        objective: StrategicObjective | None = None,
         plan_id: str | None = None,
         name: str | None = None,
         planner: RuleBasedOperationalPlanner | None = None,
@@ -1410,9 +1710,11 @@ class MooseBridgeClient:
         item = goal if isinstance(goal, StrategicGoal) else self.strategic_goal(goal)
         if item is None:
             raise KeyError(f"Unknown strategic goal: {goal}")
-        objective = self.strategic_objective(item.objective_id)
-        if objective is None:
+        objective_item = objective or self.strategic_objective(item.objective_id)
+        if objective_item is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        if objective_item.objective_id != item.objective_id:
+            raise ValueError("goal and explicit strategic objective do not match")
         resolver = mission_resolver or self.mission_resolver
         legions = self._strategic_legions(item.coalition)
         cohorts = self._strategic_cohorts(item.coalition)
@@ -1431,7 +1733,7 @@ class MooseBridgeClient:
         }
         return (planner or RuleBasedOperationalPlanner()).propose_capture(
             item,
-            objective,
+            objective_item,
             picture,
             target_resolutions=target_resolutions,
             plan_id=plan_id,
@@ -1443,6 +1745,7 @@ class MooseBridgeClient:
         goal: StrategicGoal | str,
         picture: TacticalPicture,
         *,
+        objective: StrategicObjective | None = None,
         plan_id: str | None = None,
         name: str | None = None,
         planner: RuleBasedOperationalPlanner | None = None,
@@ -1453,9 +1756,11 @@ class MooseBridgeClient:
         item = goal if isinstance(goal, StrategicGoal) else self.strategic_goal(goal)
         if item is None:
             raise KeyError(f"Unknown strategic goal: {goal}")
-        objective = self.strategic_objective(item.objective_id)
-        if objective is None:
+        objective_item = objective or self.strategic_objective(item.objective_id)
+        if objective_item is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        if objective_item.objective_id != item.objective_id:
+            raise ValueError("goal and explicit strategic objective do not match")
         resolver = mission_resolver or self.mission_resolver
         legions = self._strategic_legions(item.coalition)
         cohorts = self._strategic_cohorts(item.coalition)
@@ -1474,7 +1779,7 @@ class MooseBridgeClient:
         }
         return (planner or RuleBasedOperationalPlanner()).propose_defend(
             item,
-            objective,
+            objective_item,
             picture,
             target_resolutions=target_resolutions,
             plan_id=plan_id,
@@ -1486,6 +1791,7 @@ class MooseBridgeClient:
         goal: StrategicGoal | str,
         picture: TacticalPicture,
         *,
+        objective: StrategicObjective | None = None,
         plan_id: str | None = None,
         name: str | None = None,
         planner: RuleBasedOperationalPlanner | None = None,
@@ -1496,12 +1802,14 @@ class MooseBridgeClient:
         item = goal if isinstance(goal, StrategicGoal) else self.strategic_goal(goal)
         if item is None:
             raise KeyError(f"Unknown strategic goal: {goal}")
-        objective = self.strategic_objective(item.objective_id)
-        if objective is None:
+        objective_item = objective or self.strategic_objective(item.objective_id)
+        if objective_item is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
+        if objective_item.objective_id != item.objective_id:
+            raise ValueError("goal and explicit strategic objective do not match")
         health_by_id = {
-            component.object_id: effective_component_health(objective, component.object_id, self.state)
-            for component in objective.components
+            component.object_id: effective_component_health(objective_item, component.object_id, self.state)
+            for component in objective_item.components
         }
         resolver = mission_resolver or self.mission_resolver
         legions = self._strategic_legions(item.coalition)
@@ -1511,18 +1819,22 @@ class MooseBridgeClient:
             component.object_id: resolver.resolve(
                 component.object_id,
                 effect=item.effect,
-                target_data=self._strategic_target_data(component.object_id, picture=picture),
+                target_data=self._strategic_target_data(
+                    component.object_id,
+                    picture=picture,
+                    objective=objective_item,
+                ),
                 cohorts=cohorts,
                 legions=legions,
                 ammunition=ammunition,
                 weapon_ranges=self.weapon_range_registry,
             )
-            for component in objective.components
+            for component in objective_item.components
             if component.contributes_to_health and health_by_id.get(component.object_id) not in {None, 0.0}
         }
         return (planner or RuleBasedOperationalPlanner()).propose_destroy(
             item,
-            objective,
+            objective_item,
             picture,
             health_by_id,
             mission_resolutions=resolutions,
@@ -1535,6 +1847,7 @@ class MooseBridgeClient:
         goal: StrategicGoal | str,
         picture: TacticalPicture,
         *,
+        objective: StrategicObjective | None = None,
         plan_id: str | None = None,
         name: str | None = None,
         planner: RuleBasedOperationalPlanner | None = None,
@@ -1545,14 +1858,16 @@ class MooseBridgeClient:
         item = goal if isinstance(goal, StrategicGoal) else self.strategic_goal(goal)
         if item is None:
             raise KeyError(f"Unknown strategic goal: {goal}")
-        objective = self.strategic_objective(item.objective_id)
-        if objective is None:
+        objective_item = objective or self.strategic_objective(item.objective_id)
+        if objective_item is None:
             raise KeyError(f"Unknown strategic objective: {item.objective_id}")
-        control_id = objective.control_object_id
+        if objective_item.objective_id != item.objective_id:
+            raise ValueError("goal and explicit strategic objective do not match")
+        control_id = objective_item.control_object_id
         airbase = self.state.airbases.get(control_id or "")
         if airbase is None:
             raise ValueError(
-                f"AIRBASE snapshot is unavailable for {control_id or objective.objective_id}; "
+                f"AIRBASE snapshot is unavailable for {control_id or objective_item.objective_id}; "
                 "call snapshot_airbases() before proposing runway denial"
             )
         resolution = (mission_resolver or self.mission_resolver).resolve(
@@ -1566,7 +1881,7 @@ class MooseBridgeClient:
         )
         return (planner or RuleBasedOperationalPlanner()).propose_disable(
             item,
-            objective,
+            objective_item,
             picture,
             mission_resolution=resolution,
             plan_id=plan_id,
@@ -1578,6 +1893,7 @@ class MooseBridgeClient:
         object_id: str,
         *,
         picture: TacticalPicture | None = None,
+        objective: StrategicObjective | None = None,
     ) -> Mapping[str, Any] | None:
         """Return raw mirrored data used for strategic target classification."""
 
@@ -1604,8 +1920,10 @@ class MooseBridgeClient:
             component = next(
                 (
                     component
-                    for objective in self.objectives.all()
-                    for component in objective.components
+                    for candidate_objective in (
+                        (objective,) if objective is not None else self.objectives.all()
+                    )
+                    for component in candidate_objective.components
                     if component.object_id == object_id
                 ),
                 None,
@@ -1692,6 +2010,7 @@ class MooseBridgeClient:
         *,
         legions: tuple[Legion, ...],
         cohorts: tuple[Cohort, ...],
+        objective: StrategicObjective | None = None,
     ) -> None:
         """Attach route-aware COHORT rankings to target-bound requirements."""
 
@@ -1709,7 +2028,10 @@ class MooseBridgeClient:
             for intent in phase.intents:
                 if not intent.target_object_id:
                     continue
-                target_data = self._strategic_target_data(intent.target_object_id)
+                target_data = self._strategic_target_data(
+                    intent.target_object_id,
+                    objective=objective,
+                )
                 if not target_data or target_data.get("latitude") is None or target_data.get("longitude") is None:
                     continue
                 for requirement in intent.asset_requirements:
@@ -3160,6 +3482,65 @@ class MooseBridgeClient:
 
         ack = require_ok(await self.server.send_command(BridgeCommand(action="time.get", params={}), timeout=timeout))
         return DcsTime.from_message(ack)
+
+    async def get_mission_info(self, timeout: float = 10.0) -> DcsMissionInfo:
+        """Return the active DCS theater identity and synchronized clock."""
+
+        ack = require_ok(
+            await self.server.send_command(
+                BridgeCommand(action="mission.info", params={}),
+                timeout=timeout,
+            )
+        )
+        return DcsMissionInfo.from_message(ack)
+
+    async def assess_conflict_readiness(
+        self,
+        *,
+        theater: TheaterContext | None = None,
+        intel_ids: Mapping[str, str] | None = None,
+        objective_config: StrategicObjectiveGenerationConfig | None = None,
+        register_objectives: bool = True,
+        replace_objectives: bool = False,
+        refresh: bool = True,
+        timeout: float = 30.0,
+    ) -> ConflictReadinessReport:
+        """Prepare and validate the live mission for bilateral conflict control.
+
+        The check is deliberately controller-agnostic. Rule-based and future
+        LLM controllers must both pass the same scenario contract before they
+        may create or execute strategic goals.
+        """
+
+        mission = await self.get_mission_info(timeout=timeout)
+        if refresh:
+            await self.refresh_global_picture()
+            await self.refresh_intel_state()
+
+        context = theater or self.theater_context
+        scope = self.build_strategic_scope(strict=False)
+        generation: StrategicObjectiveGenerationResult | None = None
+        theater_matches = bool(
+            context is not None
+            and mission.theater_id
+            and context.theater_id.casefold() == mission.theater_id.casefold()
+        )
+        if context is not None and scope.valid and not scope.included.is_empty and theater_matches:
+            generation = self.generate_strategic_objectives(
+                theater=context,
+                config=objective_config,
+                register=register_objectives,
+                replace=replace_objectives,
+            )
+
+        return evaluate_conflict_readiness(
+            self.state,
+            scope,
+            generation,
+            configured_theater_id=context.theater_id if context is not None else None,
+            active_theater_id=mission.theater_id,
+            intel_ids=intel_ids,
+        )
 
     async def snapshot_intel_contacts(self) -> dict[str, Any]:
         """Request an INTEL contact snapshot through the SDK."""
