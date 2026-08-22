@@ -72,9 +72,13 @@ red independently selected feasible recommendations in two consecutive runs;
 the second run created no duplicate goal, plan, or AUFTRAG. The SDK derives
 policy-permitted actions, asks the operational planners to prove mission and
 asset feasibility, ranks feasible candidates using independent urgency and
-resolver-provided response estimates, reserves capacity within each proposed
-portfolio, and records stable selection or rejection reasons. Recommendation
-mode does not mutate the production Objective, Goal, or Plan registries.
+resolver-provided response estimates, and adds strategically known force
+presence: an AIRWING raises the value of its exact home airbase, a BRIGADE of a
+nearby verified military site, and a FLEET of a nearby verified maritime site.
+This signal deliberately excludes current asset counts, readiness, and mission
+assignments. The SDK reserves capacity within each proposed portfolio and
+records stable selection or rejection reasons. Recommendation mode does not
+mutate the production Objective, Goal, or Plan registries.
 
 Required work:
 
@@ -82,8 +86,8 @@ Required work:
 2. Derive CAPTURE, DEFEND, and DESTROY candidates from strategic state and each
    coalition's permitted information picture.
 3. Rank candidates using relationship policy, doctrine, strategic value,
-   current control, visible threat, feasibility, expected response, and
-   uncertainty.
+   current control, visible threat, feasibility, expected response, force
+   presence, and uncertainty.
 4. Suppress duplicate open goals and respect per-coalition concurrency and
    resource reservations.
 5. Explain selected and deferred goals with stable reason codes and retain the

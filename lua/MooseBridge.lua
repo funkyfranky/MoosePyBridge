@@ -1700,6 +1700,7 @@ function MOOSE_BRIDGE:_BuildLegionSnapshotItem(legion_name, legion, source)
   if not name then return nil end
   local point = self:_PointFromMooseObject(legion)
   local airbase = self:_SafeCall(legion, "GetAirbase")
+  local home_base_name = self:_SafeCall(legion, "GetAirbaseName") or self:_ObjectName(airbase)
   local item = {
     object_id="LEGION:"..safe_tostring(name),
     dcs_name=safe_tostring(name),
@@ -1712,7 +1713,9 @@ function MOOSE_BRIDGE:_BuildLegionSnapshotItem(legion_name, legion, source)
     state=string_or_nil(self:_SafeCall(legion, "GetState")),
     coalition=self:_CoalitionToName(self:_SafeCall(legion, "GetCoalition")),
     coalition_name=string_or_nil(self:_SafeCall(legion, "GetCoalitionName")),
-    airbase_name=string_or_nil(self:_SafeCall(legion, "GetAirbaseName") or self:_ObjectName(airbase)),
+    airbase_name=string_or_nil(home_base_name),
+    home_base_id=home_base_name and "AIRBASE:"..safe_tostring(home_base_name) or nil,
+    home_base_name=string_or_nil(home_base_name),
     cohort_ids=self:_CollectCohortIds(legion and legion.cohorts),
     cohorts=self:_BuildCohortSummaries(legion and legion.cohorts),
     n_cohorts=self:_CountTable((legion and legion.cohorts) or {}),

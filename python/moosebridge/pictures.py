@@ -374,7 +374,9 @@ class TacticalPicture:
                     {
                         "coalition": legion.coalition or legion.coalition_name,
                         "state": legion.state,
-                        "airbase_name": legion.airbase_name,
+                        "legion_kind": legion.legion_kind,
+                        "home_base_id": legion.home_base_id,
+                        "home_base_name": legion.home_base_name,
                         "cohort_ids": legion.cohort_ids,
                         "auftrag_queue_ids": legion.auftrag_queue_ids,
                     },

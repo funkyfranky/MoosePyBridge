@@ -64,6 +64,13 @@ def test_ops_snapshots_use_moose_available_asset_counts() -> None:
     assert "skill=cohort and cohort.skill or nil" in source
 
 
+def test_legion_snapshot_exposes_general_home_base_identity() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert 'home_base_id=home_base_name and "AIRBASE:"..safe_tostring(home_base_name) or nil' in source
+    assert "home_base_name=string_or_nil(home_base_name)" in source
+
+
 def test_cohort_snapshot_derives_homogeneous_grouping_from_asset_templates() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
 

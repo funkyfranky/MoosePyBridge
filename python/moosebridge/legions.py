@@ -425,6 +425,8 @@ class Legion:
     coalition: str | None = None
     coalition_name: str | None = None
     airbase_name: str | None = None
+    home_base_id: str | None = None
+    home_base_name: str | None = None
     cohort_ids: list[str] = field(default_factory=list)
     cohorts: list[CohortSummary] = field(default_factory=list)
     n_cohorts: int | None = None
@@ -437,6 +439,12 @@ class Legion:
     longitude: float | None = None
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
+    @property
+    def legion_kind(self) -> str | None:
+        """Return the normalized MOOSE LEGION specialization."""
+
+        return self.category.strip().upper() if self.category else None
+
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "Legion":
         """Create a LEGION model from a raw payload.
@@ -447,6 +455,17 @@ class Legion:
 
         raw_cohorts = payload.get("cohorts")
         cohorts = [CohortSummary.from_payload(item) for item in raw_cohorts] if isinstance(raw_cohorts, list) else []
+        airbase_name = _optional_str(payload.get("airbase_name"))
+        if airbase_name and airbase_name.casefold() in {"none", "nil", "-"}:
+            airbase_name = None
+        home_base_name = _optional_str(payload.get("home_base_name")) or airbase_name
+        if home_base_name and home_base_name.casefold() in {"none", "nil", "-"}:
+            home_base_name = None
+        home_base_id = _optional_str(payload.get("home_base_id"))
+        if home_base_id and home_base_id.casefold() in {"none", "nil", "-", "airbase:none"}:
+            home_base_id = None
+        if home_base_id is None and home_base_name:
+            home_base_id = f"AIRBASE:{home_base_name}"
         return cls(
             object_id=str(payload.get("object_id", "")),
             dcs_name=str(payload.get("dcs_name", "")),
@@ -459,7 +478,9 @@ class Legion:
             state=_optional_str(payload.get("state")),
             coalition=_optional_str(payload.get("coalition")),
             coalition_name=_optional_str(payload.get("coalition_name")),
-            airbase_name=_optional_str(payload.get("airbase_name")),
+            airbase_name=airbase_name,
+            home_base_id=home_base_id,
+            home_base_name=home_base_name,
             cohort_ids=_string_list(payload.get("cohort_ids")),
             cohorts=cohorts,
             n_cohorts=_optional_int(payload.get("n_cohorts")),

@@ -297,8 +297,21 @@ def format_strategic_decision_portfolio(
                 f"value={decision.score.strategic_value:.1f} "
                 f"urgency={decision.score.urgency:.1f} doctrine={decision.score.doctrine:.1f} "
                 f"operational={decision.score.operational:.1f} "
-                f"confidence={decision.score.confidence:.1f}"
+                f"confidence={decision.score.confidence:.1f} "
+                f"force_presence={decision.score.force_presence:.1f}"
             )
+        if decision.force_presence is not None:
+            for match in decision.force_presence.matches:
+                distance = (
+                    f" distance={match.distance_m / 1000.0:.1f}km"
+                    if match.distance_m is not None and match.distance_m > 0
+                    else ""
+                )
+                home = f" home={match.home_base_id}" if match.home_base_id else ""
+                lines.append(
+                    f"    force {match.legion_id} kind={match.legion_kind} "
+                    f"association={match.association} score={match.score:.1f}{distance}{home}"
+                )
         if decision.reserved_assets:
             lines.append(
                 "    reserves="
@@ -1034,7 +1047,7 @@ def format_legion_summary(legion: Legion, cohorts: list[Cohort], missions: list[
         f"{legion.object_id} "
         f"state={_text(legion.state)} "
         f"coalition={_text(legion.coalition or legion.coalition_name)} "
-        f"airbase={_text(legion.airbase_name)}"
+        f"home={_text(legion.home_base_id or legion.home_base_name)}"
     )
     details = (
         f"  cohorts={len(cohorts)} "

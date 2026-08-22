@@ -1008,12 +1008,12 @@ def _print_legion_snapshot(legions: dict[str, dict[str, Any]], limit: int = 60) 
         category = item.get("category", "")
         coalition = item.get("coalition", "")
         state = item.get("state", "")
-        airbase = item.get("airbase_name", "")
+        home_base = item.get("home_base_id") or item.get("home_base_name") or item.get("airbase_name", "")
         cohorts = item.get("cohort_ids", [])
         queue = item.get("auftrag_queue_ids", [])
         print(
             f"  {object_id} category={category} coalition={coalition} state={state} "
-            f"airbase={airbase} cohorts={len(cohorts)} queue={len(queue)}"
+            f"home={home_base} cohorts={len(cohorts)} queue={len(queue)}"
         )
 
     if len(items) > limit:

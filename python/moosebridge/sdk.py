@@ -138,6 +138,8 @@ from .strategic_decision import (
     StrategicDecisionPortfolio,
     StrategicDecisionReasonCode,
     StrategicDecisionScore,
+    StrategicForcePresenceAssessment,
+    assess_strategic_force_presence,
     concurrent_plan_reservations,
     create_candidate_goal,
     derive_strategic_action_specs,
@@ -1409,10 +1411,16 @@ class MooseBridgeClient:
                 OperationalPlan,
                 OperationalPlanAssessment,
                 StrategicDecisionScore,
+                StrategicForcePresenceAssessment,
             ]
         ] = []
         for spec in (item for item in specs if item.rejection_code is None):
             goal = create_candidate_goal(spec, mission_time=mission_time, config=resolved)
+            force_presence = assess_strategic_force_presence(
+                spec.objective,
+                legions,
+                config=resolved,
+            )
             try:
                 plan = self._propose_recommended_plan(spec.action, goal, spec.objective, picture)
                 self._prepare_operational_assignment_metadata(
@@ -1454,6 +1462,7 @@ class MooseBridgeClient:
                 assessment=assessment,
                 cohorts=cohorts_by_id,
                 config=resolved,
+                force_presence=force_presence,
             )
             if not assessment.feasible:
                 decisions.append(
@@ -1471,10 +1480,11 @@ class MooseBridgeClient:
                         goal=goal,
                         plan=plan,
                         assessment=assessment,
+                        force_presence=force_presence,
                     )
                 )
                 continue
-            planned.append((spec, goal, plan, assessment, score))
+            planned.append((spec, goal, plan, assessment, score, force_presence))
 
         planned.sort(key=lambda item: (-item[4].total, item[0].candidate_id))
         reservations: dict[str, int] = {}
@@ -1485,7 +1495,7 @@ class MooseBridgeClient:
             if goal.status in {StrategicGoalStatus.PLANNED, StrategicGoalStatus.ACTIVE}
         )
         selected_count = open_goal_count
-        for spec, goal, plan, _initial_assessment, score in planned:
+        for spec, goal, plan, _initial_assessment, score, force_presence in planned:
             disposition = StrategicDecisionDisposition.SELECTED
             reason_code = StrategicDecisionReasonCode.SELECTED_FEASIBLE
             reason = "highest-ranked feasible candidate within portfolio capacity"
@@ -1533,6 +1543,7 @@ class MooseBridgeClient:
                     goal=goal,
                     plan=plan,
                     assessment=assessment,
+                    force_presence=force_presence,
                     reserved_assets=tuple(sorted(reserved.items())),
                 )
             )

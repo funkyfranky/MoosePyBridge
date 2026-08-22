@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from moosebridge import (
     AssetRequirement,
     AssetRole,
@@ -8,6 +10,7 @@ from moosebridge import (
     CohortAllocation,
     CoalitionDoctrine,
     CoalitionRelationship,
+    Legion,
     MissionIntent,
     ObjectiveComponent,
     ObjectiveKind,
@@ -19,12 +22,14 @@ from moosebridge import (
     StrategicActionSpec,
     StrategicDecisionConfig,
     StrategicDecisionDisposition,
+    StrategicForcePresenceAssessment,
     StrategicDecisionPortfolio,
     StrategicDecisionReasonCode,
     StrategicGoal,
     StrategicGoalAction,
     StrategicGoalStatus,
     StrategicObjective,
+    assess_strategic_force_presence,
     derive_strategic_action_specs,
     format_bilateral_strategic_recommendation,
     score_strategic_candidate,
@@ -270,6 +275,143 @@ def test_operational_score_uses_resolver_eta_from_mission_intent() -> None:
 
     assert round(score.operational, 3) == 90.273
 
+    presence_score = score_strategic_candidate(
+        StrategicActionSpec(
+            "blue:destroy:Enemy bridge",
+            "blue",
+            objective,
+            StrategicGoalAction.DESTROY,
+        ),
+        plan=plan,
+        picture=TacticalPicture(coalition="blue", intel_id="INTEL:Blue"),
+        doctrine=CoalitionDoctrine.from_preset("balanced"),
+        assessment=assessment,
+        cohorts={cohort.object_id: cohort},
+        config=StrategicDecisionConfig(),
+        force_presence=StrategicForcePresenceAssessment(score=100.0),
+    )
+
+    assert presence_score.force_presence == 100.0
+    assert presence_score.total == pytest.approx(score.total + 15.0)
+
+
+def test_airwing_presence_matches_only_its_exact_home_airbase() -> None:
+    config = StrategicDecisionConfig()
+    sochi = StrategicObjective(
+        objective_id="OBJECTIVE:AIRBASE:Sochi-Adler",
+        name="Sochi-Adler",
+        kind=ObjectiveKind.AIRBASE,
+        control_object_id="AIRBASE:Sochi-Adler",
+        ownership_policy=OwnershipPolicy.DCS_MANAGED,
+        owner="red",
+    )
+    nalchik = StrategicObjective(
+        objective_id="OBJECTIVE:AIRBASE:Nalchik",
+        name="Nalchik",
+        kind=ObjectiveKind.AIRBASE,
+        control_object_id="AIRBASE:Nalchik",
+        ownership_policy=OwnershipPolicy.DCS_MANAGED,
+        owner="red",
+    )
+    airwing = Legion.from_payload(
+        {
+            "object_id": "LEGION:Wing Sochi",
+            "category": "AIRWING",
+            "coalition": "red",
+            "home_base_id": "AIRBASE:Sochi-Adler",
+            "home_base_name": "Sochi-Adler",
+        }
+    )
+
+    sochi_presence = assess_strategic_force_presence(sochi, (airwing,), config=config)
+    nalchik_presence = assess_strategic_force_presence(nalchik, (airwing,), config=config)
+
+    assert sochi_presence.score == 100.0
+    assert sochi_presence.matches[0].association == "direct_home_base"
+    assert nalchik_presence.score == 0.0
+
+
+def test_brigade_and_fleet_presence_use_only_compatible_nearby_sites() -> None:
+    config = StrategicDecisionConfig(
+        brigade_presence_radius_m=10_000.0,
+        fleet_presence_radius_m=20_000.0,
+    )
+    military = StrategicObjective(
+        objective_id="OBJECTIVE:MILITARY_SITE:Alpha",
+        name="Alpha barracks",
+        kind=ObjectiveKind.INFRASTRUCTURE,
+        control_object_id=None,
+        ownership_policy=OwnershipPolicy.FIXED,
+        owner="red",
+        metadata={"infrastructure_kind": "military", "latitude": 54.0, "longitude": 12.0},
+    )
+    maritime = StrategicObjective(
+        objective_id="OBJECTIVE:MARITIME_SITE:Bravo",
+        name="Bravo port",
+        kind=ObjectiveKind.PORT,
+        control_object_id=None,
+        ownership_policy=OwnershipPolicy.FIXED,
+        owner="red",
+        metadata={"infrastructure_kind": "maritime", "latitude": 54.0, "longitude": 12.0},
+    )
+    brigade = Legion.from_payload(
+        {
+            "object_id": "LEGION:Red Brigade",
+            "category": "BRIGADE",
+            "coalition": "red",
+            "latitude": 54.02,
+            "longitude": 12.0,
+        }
+    )
+    fleet = Legion.from_payload(
+        {
+            "object_id": "LEGION:Red Fleet",
+            "category": "FLEET",
+            "coalition": "red",
+            "latitude": 54.05,
+            "longitude": 12.0,
+        }
+    )
+
+    military_presence = assess_strategic_force_presence(military, (brigade, fleet), config=config)
+    maritime_presence = assess_strategic_force_presence(maritime, (brigade, fleet), config=config)
+
+    assert [match.legion_id for match in military_presence.matches] == ["LEGION:Red Brigade"]
+    assert military_presence.matches[0].association == "nearby_military_site"
+    assert [match.legion_id for match in maritime_presence.matches] == ["LEGION:Red Fleet"]
+    assert maritime_presence.matches[0].association == "nearby_maritime_site"
+    assert 50.0 <= military_presence.score < 100.0
+    assert 50.0 <= maritime_presence.score < 100.0
+
+
+def test_force_presence_ignores_enemy_headquarters_and_current_asset_counts() -> None:
+    objective = StrategicObjective(
+        objective_id="OBJECTIVE:AIRBASE:Sochi-Adler",
+        name="Sochi-Adler",
+        kind=ObjectiveKind.AIRBASE,
+        control_object_id="AIRBASE:Sochi-Adler",
+        ownership_policy=OwnershipPolicy.DCS_MANAGED,
+        owner="red",
+    )
+    blue_airwing = Legion.from_payload(
+        {
+            "object_id": "LEGION:Blue Wing",
+            "category": "AIRWING",
+            "coalition": "blue",
+            "home_base_id": "AIRBASE:Sochi-Adler",
+            "available_asset_count": 99,
+        }
+    )
+
+    presence = assess_strategic_force_presence(
+        objective,
+        (blue_airwing,),
+        config=StrategicDecisionConfig(),
+    )
+
+    assert presence.score == 0.0
+    assert not presence.matches
+
 
 def test_recommendation_ranks_and_reserves_without_mutating_registries() -> None:
     bridge = MooseBridgeClient(MooseBridgeServer())
@@ -398,6 +540,6 @@ def test_recommendation_audit_and_formatter_keep_reason_codes() -> None:
     payload = strategic_recommendation_to_dict(recommendation)
     output = format_bilateral_strategic_recommendation(recommendation)
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["relationship_state"] == "war"
     assert "relationship=war" in output

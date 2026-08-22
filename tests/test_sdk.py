@@ -47,6 +47,7 @@ from moosebridge.auftraege import (
 )
 from moosebridge.protocol import BridgeCommand
 from moosebridge.debug_overlay import DcsRoadRoute, DebugMarkup, DebugMarkupPoint
+from moosebridge.legions import Legion
 from moosebridge.recon import ReconRequirement, ReconSpatialCoverage, ReconTrackSample
 from moosebridge.diagnostics import (
     format_cohort_assets,
@@ -975,6 +976,7 @@ def test_sdk_legion_convenience_methods_return_typed_state() -> None:
                         "category": "AIRWING",
                         "state": "Running",
                         "coalition": "blue",
+                        "airbase_name": "Parchim",
                         "auftrag_queue_ids": ["AUFTRAG:1"],
                     }
                 ]
@@ -1025,6 +1027,9 @@ def test_sdk_legion_convenience_methods_return_typed_state() -> None:
 
     assert legion is not None
     assert legion.state == "Running"
+    assert legion.legion_kind == "AIRWING"
+    assert legion.home_base_id == "AIRBASE:Parchim"
+    assert legion.home_base_name == "Parchim"
     assert client.cohort("COHORT:F-4E Parchim Alpha") is cohorts[0]
     assert [cohort.stock_asset_count for cohort in cohorts] == [2]
     assert [cohort.available_asset_count for cohort in cohorts] == [2]
@@ -1033,6 +1038,16 @@ def test_sdk_legion_convenience_methods_return_typed_state() -> None:
     assert [cohort.object_id for cohort in client.ready_cohorts_of_legion("LEGION:Wing Parchim", "BAI")] == [
         "COHORT:F-4E Parchim Alpha"
     ]
+
+    unbased = Legion.from_payload(
+        {
+            "object_id": "LEGION:Brigade Merkula",
+            "category": "BRIGADE",
+            "airbase_name": "none",
+        }
+    )
+    assert unbased.home_base_id is None
+    assert unbased.home_base_name is None
     assert client.available_missions_of_cohort("COHORT:F-4E Parchim Alpha") == ["BAI", "CAP"]
     assert client.available_missions_of_cohort("COHORT:F-4E Parchim Alpha", require_payload=True) == ["BAI"]
 

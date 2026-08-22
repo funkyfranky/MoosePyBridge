@@ -8,7 +8,7 @@ import math
 from typing import Iterable, Mapping
 
 from .diplomacy import CoalitionDoctrine, CoalitionRelationship
-from .legions import Cohort
+from .legions import Cohort, Legion
 from .operational import OperationalPlan, OperationalPlanAssessment
 from .pictures import TacticalPicture
 from .strategic import (
@@ -56,11 +56,12 @@ class StrategicDecisionReasonCode(StrEnum):
 class StrategicDecisionWeights:
     """Transparent weights for ranking otherwise eligible candidates."""
 
-    strategic_value: float = 0.30
-    urgency: float = 0.25
-    doctrine: float = 0.20
+    strategic_value: float = 0.25
+    urgency: float = 0.20
+    doctrine: float = 0.15
     operational: float = 0.15
     confidence: float = 0.10
+    force_presence: float = 0.15
 
     def __post_init__(self) -> None:
         values = (
@@ -69,6 +70,7 @@ class StrategicDecisionWeights:
             self.doctrine,
             self.operational,
             self.confidence,
+            self.force_presence,
         )
         if any(not math.isfinite(value) or value < 0 for value in values):
             raise ValueError("strategic decision weights must be finite and non-negative")
@@ -85,6 +87,8 @@ class StrategicDecisionConfig:
     destroy_required_damage: float = 0.70
     include_runway_denial: bool = True
     protect_neutral_infrastructure: bool = True
+    brigade_presence_radius_m: float = 10_000.0
+    fleet_presence_radius_m: float = 20_000.0
     weights: StrategicDecisionWeights = field(default_factory=StrategicDecisionWeights)
 
     def __post_init__(self) -> None:
@@ -94,6 +98,10 @@ class StrategicDecisionConfig:
             raise ValueError("defense_duration_s must be finite and positive")
         if not math.isfinite(self.destroy_required_damage) or not 0 <= self.destroy_required_damage <= 1:
             raise ValueError("destroy_required_damage must be between zero and one")
+        if not math.isfinite(self.brigade_presence_radius_m) or self.brigade_presence_radius_m <= 0:
+            raise ValueError("brigade_presence_radius_m must be finite and positive")
+        if not math.isfinite(self.fleet_presence_radius_m) or self.fleet_presence_radius_m <= 0:
+            raise ValueError("fleet_presence_radius_m must be finite and positive")
 
 
 @dataclass(slots=True, frozen=True)
@@ -118,7 +126,29 @@ class StrategicDecisionScore:
     doctrine: float
     operational: float
     confidence: float
+    force_presence: float
     total: float
+
+
+@dataclass(slots=True, frozen=True)
+class StrategicForcePresenceMatch:
+    """One strategically known LEGION-to-objective association."""
+
+    legion_id: str
+    legion_kind: str
+    association: str
+    home_base_id: str | None
+    home_base_name: str | None
+    distance_m: float | None
+    score: float
+
+
+@dataclass(slots=True, frozen=True)
+class StrategicForcePresenceAssessment:
+    """Type-safe force presence at one strategic objective."""
+
+    score: float
+    matches: tuple[StrategicForcePresenceMatch, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -138,6 +168,7 @@ class StrategicDecision:
     goal: StrategicGoal | None = None
     plan: OperationalPlan | None = None
     assessment: OperationalPlanAssessment | None = None
+    force_presence: StrategicForcePresenceAssessment | None = None
     reserved_assets: tuple[tuple[str, int], ...] = ()
 
 
@@ -342,6 +373,7 @@ def score_strategic_candidate(
     assessment: OperationalPlanAssessment,
     cohorts: Mapping[str, Cohort],
     config: StrategicDecisionConfig,
+    force_presence: StrategicForcePresenceAssessment | None = None,
 ) -> StrategicDecisionScore:
     """Score an operationally assessed candidate without changing any registry."""
 
@@ -350,6 +382,7 @@ def score_strategic_candidate(
     doctrine_score = _doctrine_score(spec.action, doctrine)
     operational = _operational_score(plan, assessment, cohorts)
     confidence = _confidence_score(spec.objective)
+    presence = _bounded(force_presence.score if force_presence is not None else 0.0)
     weights = config.weights
     total = (
         value * weights.strategic_value
@@ -357,8 +390,91 @@ def score_strategic_candidate(
         + doctrine_score * weights.doctrine
         + operational * weights.operational
         + confidence * weights.confidence
+        + presence * weights.force_presence
     )
-    return StrategicDecisionScore(value, urgency, doctrine_score, operational, confidence, round(total, 3))
+    return StrategicDecisionScore(
+        value,
+        urgency,
+        doctrine_score,
+        operational,
+        confidence,
+        presence,
+        round(total, 3),
+    )
+
+
+def assess_strategic_force_presence(
+    objective: StrategicObjective,
+    legions: Iterable[Legion],
+    *,
+    config: StrategicDecisionConfig,
+) -> StrategicForcePresenceAssessment:
+    """Associate strategically known force headquarters with a compatible objective.
+
+    AIRWINGs match their exact MOOSE home airbase. BRIGADEs may match a verified
+    military site and FLEETs a verified maritime site within configurable radii.
+    Asset counts, readiness and active missions deliberately do not influence this
+    global strategic signal.
+    """
+
+    owner = normalize_coalition(objective.owner)
+    if owner not in {"blue", "red"}:
+        return StrategicForcePresenceAssessment(0.0)
+
+    infrastructure_kind = str(objective.metadata.get("infrastructure_kind") or "").casefold()
+    objective_position = _objective_lat_lon(objective)
+    matches: list[StrategicForcePresenceMatch] = []
+    for legion in legions:
+        if normalize_coalition(legion.coalition) != owner:
+            continue
+        kind = legion.legion_kind
+        if kind == "AIRWING" and objective.kind in {ObjectiveKind.AIRBASE, ObjectiveKind.FARP}:
+            if legion.home_base_id and legion.home_base_id == objective.control_object_id:
+                matches.append(
+                    StrategicForcePresenceMatch(
+                        legion.object_id,
+                        kind,
+                        "direct_home_base",
+                        legion.home_base_id,
+                        legion.home_base_name,
+                        0.0,
+                        100.0,
+                    )
+                )
+            continue
+
+        if kind == "BRIGADE" and infrastructure_kind == "military":
+            radius = config.brigade_presence_radius_m
+            association = "nearby_military_site"
+        elif kind == "FLEET" and infrastructure_kind == "maritime":
+            radius = config.fleet_presence_radius_m
+            association = "nearby_maritime_site"
+        else:
+            continue
+        legion_position = _legion_lat_lon(legion)
+        if objective_position is None or legion_position is None:
+            continue
+        distance = _haversine_m(*objective_position, *legion_position)
+        if distance > radius:
+            continue
+        score = 100.0 - 50.0 * distance / radius
+        matches.append(
+            StrategicForcePresenceMatch(
+                legion.object_id,
+                kind,
+                association,
+                legion.home_base_id,
+                legion.home_base_name,
+                round(distance, 1),
+                round(score, 3),
+            )
+        )
+
+    matches.sort(key=lambda item: (-item.score, item.legion_id))
+    return StrategicForcePresenceAssessment(
+        score=matches[0].score if matches else 0.0,
+        matches=tuple(matches),
+    )
 
 
 def concurrent_plan_reservations(assessment: OperationalPlanAssessment) -> dict[str, int]:
@@ -400,7 +516,7 @@ def strategic_recommendation_to_dict(
     """Return the stable audit payload for one bilateral recommendation."""
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "mission_generation": recommendation.mission_generation,
         "mission_time": recommendation.mission_time,
         "relationship_state": recommendation.relationship_state,
@@ -432,8 +548,28 @@ def strategic_recommendation_to_dict(
                                 "doctrine": decision.score.doctrine,
                                 "operational": decision.score.operational,
                                 "confidence": decision.score.confidence,
+                                "force_presence": decision.score.force_presence,
                             }
                             if decision.score is not None
+                            else None
+                        ),
+                        "force_presence": (
+                            {
+                                "score": decision.force_presence.score,
+                                "matches": [
+                                    {
+                                        "legion_id": match.legion_id,
+                                        "legion_kind": match.legion_kind,
+                                        "association": match.association,
+                                        "home_base_id": match.home_base_id,
+                                        "home_base_name": match.home_base_name,
+                                        "distance_m": match.distance_m,
+                                        "score": match.score,
+                                    }
+                                    for match in decision.force_presence.matches
+                                ],
+                            }
+                            if decision.force_presence is not None
                             else None
                         ),
                         "goal_id": decision.goal.goal_id if decision.goal is not None else None,
@@ -616,6 +752,40 @@ def _confidence_score(objective: StrategicObjective) -> float:
     return 55.0
 
 
+def _objective_lat_lon(objective: StrategicObjective) -> tuple[float, float] | None:
+    latitude = objective.metadata.get("latitude")
+    longitude = objective.metadata.get("longitude")
+    if isinstance(latitude, (int, float)) and isinstance(longitude, (int, float)):
+        return float(latitude), float(longitude)
+    return None
+
+
+def _legion_lat_lon(legion: Legion) -> tuple[float, float] | None:
+    if legion.latitude is None or legion.longitude is None:
+        return None
+    return float(legion.latitude), float(legion.longitude)
+
+
+def _haversine_m(
+    latitude_a: float,
+    longitude_a: float,
+    latitude_b: float,
+    longitude_b: float,
+) -> float:
+    radius_m = 6_371_008.8
+    latitude_a_rad = math.radians(latitude_a)
+    latitude_b_rad = math.radians(latitude_b)
+    delta_latitude = latitude_b_rad - latitude_a_rad
+    delta_longitude = math.radians(longitude_b - longitude_a)
+    haversine = (
+        math.sin(delta_latitude / 2.0) ** 2
+        + math.cos(latitude_a_rad)
+        * math.cos(latitude_b_rad)
+        * math.sin(delta_longitude / 2.0) ** 2
+    )
+    return 2.0 * radius_m * math.asin(min(1.0, math.sqrt(haversine)))
+
+
 def _bounded(value: float) -> float:
     return max(0.0, min(100.0, float(value)))
 
@@ -631,6 +801,9 @@ __all__ = [
     "StrategicDecisionReasonCode",
     "StrategicDecisionScore",
     "StrategicDecisionWeights",
+    "StrategicForcePresenceAssessment",
+    "StrategicForcePresenceMatch",
+    "assess_strategic_force_presence",
     "concurrent_plan_reservations",
     "create_candidate_goal",
     "derive_strategic_action_specs",
