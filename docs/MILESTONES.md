@@ -139,6 +139,46 @@ Required work:
 5. Apply cooldowns after completion, failure, or blocking so an impossible goal
    cannot be resubmitted every cycle.
 
+Implemented foundation:
+
+- `MooseBridgeClient.activate_strategic_decision()` is the sole controlled
+  transition from a selected recommendation to mission-scoped Objective, Goal,
+  and Plan state. It refreshes current policy and force availability, rejects
+  stale recommendations, reserves assets already held by active plans, and is
+  idempotent within one recommendation cycle.
+- A successful activation leaves the Goal active and the Plan validated. It
+  deliberately creates no AUFTRAG.
+- `examples/sdk/activate_bilateral_strategy.py` exercises this boundary for
+  both coalitions and verifies that no AUFTRAG is submitted.
+- `MooseBridgeClient.execute_strategic_activation()` is the sole controlled
+  transition from an activation to plan approval and execution. Immediately
+  before submission it checks mission generation, relationship state,
+  registered Objective/Goal/Plan identity, objective state, duplicate
+  execution history, and current phase feasibility. It then delegates to the
+  existing `execute_plan()` and `MissionExecutionService` COMMANDER path.
+- A failure before an execution attempt is created restores the Plan to
+  validated state. Once an attempt exists, its persisted execution record is
+  authoritative and the activation cannot be executed again.
+- `examples/sdk/execute_bilateral_strategy.py` activates one selected decision
+  for each coalition and executes both concurrently as one bounded live test.
+
+Still required for the autonomous coordinator:
+
+- independent recurring decision cadence and per-coalition concurrency limits
+- collision and duplicate-work policy across later cycles
+- completion, failure, and blocked-result cooldowns
+- live acceptance over at least three bilateral cycles
+
+Live acceptance status:
+
+- One bounded bilateral cycle has been verified on Caucasus. Blue and red were
+  activated concurrently and each completed a full AUFTRAG lifecycle through
+  its coalition COMMANDER. The red STRIKE destroyed its verified bridge and
+  completed its plan; the blue BOMBRUNWAY failed to damage its runway and
+  correctly left its plan blocked. This validates both successful and failed
+  terminal execution paths without treating tactical failure as a coordinator
+  error.
+
 Acceptance test:
 
 - Run both controllers autonomously for at least three decision cycles.

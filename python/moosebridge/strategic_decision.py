@@ -23,6 +23,7 @@ from .strategic import (
 )
 
 STRATEGIC_DECISION_AUDIT_TYPE = "strategic_decision"
+STRATEGIC_ACTIVATION_AUDIT_TYPE = "strategic_decision_activation"
 
 
 class StrategicDecisionDisposition(StrEnum):
@@ -164,6 +165,7 @@ class StrategicDecision:
     disposition: StrategicDecisionDisposition
     reason_code: StrategicDecisionReasonCode
     reason: str
+    objective: StrategicObjective | None = None
     score: StrategicDecisionScore | None = None
     goal: StrategicGoal | None = None
     plan: OperationalPlan | None = None
@@ -182,6 +184,7 @@ class StrategicDecisionPortfolio:
     reserved_assets: tuple[tuple[str, int], ...] = ()
     max_concurrent_goals: int = 1
     existing_open_goal_count: int = 0
+    config: StrategicDecisionConfig = field(default_factory=StrategicDecisionConfig)
 
     @property
     def selected(self) -> tuple[StrategicDecision, ...]:
@@ -211,6 +214,24 @@ class BilateralStrategicRecommendation:
             if portfolio.coalition == normalized:
                 return portfolio
         raise ValueError(f"No strategic recommendation exists for coalition {coalition!r}")
+
+
+@dataclass(slots=True, frozen=True)
+class StrategicDecisionActivation:
+    """One selected recommendation committed to the mission-scoped registries."""
+
+    activation_id: str
+    mission_generation: int
+    recommendation_mission_time: float | None
+    activated_mission_time: float | None
+    candidate_id: str
+    coalition: str
+    relationship_state: str
+    objective: StrategicObjective
+    goal: StrategicGoal
+    plan: OperationalPlan
+    assessment: OperationalPlanAssessment
+    reused: bool = False
 
 
 def derive_strategic_action_specs(
@@ -507,6 +528,7 @@ def rejected_decision(spec: StrategicActionSpec) -> StrategicDecision:
         disposition=StrategicDecisionDisposition.REJECTED,
         reason_code=spec.rejection_code,
         reason=spec.rejection_reason or spec.rejection_code.value,
+        objective=spec.objective,
     )
 
 
@@ -526,6 +548,15 @@ def strategic_recommendation_to_dict(
                 "mission_time": portfolio.mission_time,
                 "max_concurrent_goals": portfolio.max_concurrent_goals,
                 "existing_open_goal_count": portfolio.existing_open_goal_count,
+                "config": {
+                    "max_concurrent_goals": portfolio.config.max_concurrent_goals,
+                    "defense_duration_s": portfolio.config.defense_duration_s,
+                    "destroy_required_damage": portfolio.config.destroy_required_damage,
+                    "include_runway_denial": portfolio.config.include_runway_denial,
+                    "protect_neutral_infrastructure": portfolio.config.protect_neutral_infrastructure,
+                    "brigade_presence_radius_m": portfolio.config.brigade_presence_radius_m,
+                    "fleet_presence_radius_m": portfolio.config.fleet_presence_radius_m,
+                },
                 "reserved_assets": [
                     {"cohort_id": cohort_id, "count": count}
                     for cohort_id, count in portfolio.reserved_assets
@@ -589,6 +620,29 @@ def strategic_recommendation_to_dict(
             }
             for portfolio in recommendation.portfolios
         ],
+    }
+
+
+def strategic_activation_to_dict(
+    activation: StrategicDecisionActivation,
+) -> dict[str, object]:
+    """Return the stable audit payload for one registry activation."""
+
+    return {
+        "schema_version": 2,
+        "activation_id": activation.activation_id,
+        "mission_generation": activation.mission_generation,
+        "recommendation_mission_time": activation.recommendation_mission_time,
+        "activated_mission_time": activation.activated_mission_time,
+        "candidate_id": activation.candidate_id,
+        "coalition": activation.coalition,
+        "relationship_state": activation.relationship_state,
+        "objective_id": activation.objective.objective_id,
+        "goal_id": activation.goal.goal_id,
+        "plan_id": activation.plan.plan_id,
+        "plan_status": activation.plan.status.value,
+        "feasible": activation.assessment.feasible,
+        "reused": activation.reused,
     }
 
 
@@ -791,10 +845,12 @@ def _bounded(value: float) -> float:
 
 
 __all__ = [
+    "STRATEGIC_ACTIVATION_AUDIT_TYPE",
     "STRATEGIC_DECISION_AUDIT_TYPE",
     "BilateralStrategicRecommendation",
     "StrategicActionSpec",
     "StrategicDecision",
+    "StrategicDecisionActivation",
     "StrategicDecisionConfig",
     "StrategicDecisionDisposition",
     "StrategicDecisionPortfolio",
@@ -809,5 +865,6 @@ __all__ = [
     "derive_strategic_action_specs",
     "rejected_decision",
     "score_strategic_candidate",
+    "strategic_activation_to_dict",
     "strategic_recommendation_to_dict",
 ]

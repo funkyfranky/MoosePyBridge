@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+from unittest.mock import AsyncMock
+
 import pytest
 
 from moosebridge import (
@@ -16,6 +19,8 @@ from moosebridge import (
     ObjectiveKind,
     OperationalPlan,
     OperationalPlanAssessment,
+    OperationalPlanExecution,
+    OperationalPlanStatus,
     OwnershipPolicy,
     PlanPhase,
     RequirementAssessment,
@@ -543,3 +548,247 @@ def test_recommendation_audit_and_formatter_keep_reason_codes() -> None:
     assert payload["schema_version"] == 2
     assert payload["relationship_state"] == "war"
     assert "relationship=war" in output
+
+
+def test_selected_recommendation_activates_once_and_is_idempotent() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    _apply_blue_capture_force(bridge)
+    bridge.relationship = _war()
+    objective = _objective("Activation target", ObjectiveKind.OPSZONE, "red", value=90)
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        clock=DcsTime(mission_time=100),
+        opszones=[_zone("Activation target")],
+    )
+    portfolio = bridge.recommend_strategic_portfolio(
+        "blue",
+        picture,
+        objectives=(objective,),
+    )
+    recommendation = BilateralStrategicRecommendation(
+        bridge.state.mission_generation,
+        100.0,
+        "war",
+        (portfolio,),
+    )
+
+    activated = asyncio.run(
+        bridge.activate_strategic_decision(
+            recommendation,
+            portfolio.selected[0],
+            refresh=False,
+            retain_audit=False,
+        )
+    )
+    repeated = asyncio.run(
+        bridge.activate_strategic_decision(
+            recommendation,
+            portfolio.selected[0].candidate_id,
+            refresh=False,
+            retain_audit=False,
+        )
+    )
+
+    assert activated.reused is False
+    assert repeated.reused is True
+    assert repeated.activation_id == activated.activation_id
+    assert repeated.goal is activated.goal
+    assert repeated.plan is activated.plan
+    assert activated.goal.status is StrategicGoalStatus.ACTIVE
+    assert activated.plan.status is OperationalPlanStatus.VALIDATED
+    assert activated.assessment.feasible is True
+    assert activated.goal.metadata["strategic_activation_id"] == activated.activation_id
+    assert activated.plan.metadata["strategic_activation_id"] == activated.activation_id
+    assert activated.relationship_state == "war"
+    assert len(bridge.strategic_objectives()) == 1
+    assert len(bridge.strategic_goals()) == 1
+    assert len(bridge.operational_plans()) == 1
+
+
+def test_activation_rejects_stale_resources_without_partial_registry_state() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    _apply_blue_capture_force(bridge)
+    bridge.relationship = _war()
+    objective = _objective("Resource target", ObjectiveKind.OPSZONE, "red", value=90)
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        clock=DcsTime(mission_time=100),
+        opszones=[_zone("Resource target")],
+    )
+    portfolio = bridge.recommend_strategic_portfolio("blue", picture, objectives=(objective,))
+    recommendation = BilateralStrategicRecommendation(0, 100.0, "war", (portfolio,))
+    _apply_blue_capture_force(bridge, available=0)
+
+    with pytest.raises(ValueError, match="no longer feasible"):
+        asyncio.run(
+            bridge.activate_strategic_decision(
+                recommendation,
+                portfolio.selected[0],
+                refresh=False,
+                retain_audit=False,
+            )
+        )
+
+    assert not bridge.strategic_objectives()
+    assert not bridge.strategic_goals()
+    assert not bridge.operational_plans()
+
+
+def test_activation_rejects_changed_mission_or_relationship() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    _apply_blue_capture_force(bridge)
+    bridge.relationship = _war()
+    objective = _objective("Policy target", ObjectiveKind.OPSZONE, "red", value=90)
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        clock=DcsTime(mission_time=100),
+        opszones=[_zone("Policy target")],
+    )
+    portfolio = bridge.recommend_strategic_portfolio("blue", picture, objectives=(objective,))
+    recommendation = BilateralStrategicRecommendation(0, 100.0, "war", (portfolio,))
+    bridge.relationship = CoalitionRelationship()
+
+    with pytest.raises(ValueError, match="relationship changed"):
+        asyncio.run(
+            bridge.activate_strategic_decision(
+                recommendation,
+                portfolio.selected[0],
+                refresh=False,
+                retain_audit=False,
+            )
+        )
+
+    bridge.relationship = _war()
+    bridge.state.mission_generation = 1
+    with pytest.raises(ValueError, match="different DCS mission generation"):
+        asyncio.run(
+            bridge.activate_strategic_decision(
+                recommendation,
+                portfolio.selected[0],
+                refresh=False,
+                retain_audit=False,
+            )
+        )
+
+
+def test_strategic_activation_revalidates_approves_and_executes_once() -> None:
+    async def scenario() -> None:
+        bridge = MooseBridgeClient(MooseBridgeServer())
+        _apply_blue_capture_force(bridge)
+        bridge.relationship = _war()
+        objective = _objective("Execution target", ObjectiveKind.OPSZONE, "red", value=90)
+        picture = TacticalPicture(
+            coalition="blue",
+            intel_id="INTEL:Blue",
+            clock=DcsTime(mission_time=100),
+            opszones=[_zone("Execution target")],
+        )
+        portfolio = bridge.recommend_strategic_portfolio("blue", picture, objectives=(objective,))
+        recommendation = BilateralStrategicRecommendation(0, 100.0, "war", (portfolio,))
+        activation = await bridge.activate_strategic_decision(
+            recommendation,
+            portfolio.selected[0],
+            refresh=False,
+            retain_audit=False,
+        )
+        expected = OperationalPlanExecution(
+            plan_id=activation.plan.plan_id,
+            commander_id="COMMANDER:Blue",
+            attempt_id=f"{activation.plan.plan_id}/ATTEMPT:1",
+            status=OperationalPlanStatus.COMPLETED,
+        )
+        bridge.plan_executor.refresh_history = AsyncMock(return_value=())
+        bridge.plan_executor.execute = AsyncMock(return_value=expected)
+
+        result = await bridge.execute_strategic_activation(
+            activation,
+            approved_by="Strategic test",
+            refresh=False,
+        )
+
+        assert result is expected
+        assert activation.plan.status is OperationalPlanStatus.APPROVED
+        assert activation.plan.approved_by == "Strategic test"
+        assert activation.plan.approval_reason == f"Execute strategic activation {activation.activation_id}"
+        bridge.plan_executor.execute.assert_awaited_once()
+
+        existing = OperationalPlanExecution(
+            plan_id=activation.plan.plan_id,
+            commander_id="COMMANDER:Blue",
+            attempt_id=f"{activation.plan.plan_id}/ATTEMPT:1",
+            status=OperationalPlanStatus.COMPLETED,
+        )
+        activation.plan.status = OperationalPlanStatus.VALIDATED
+        bridge.plan_executor.refresh_history = AsyncMock(return_value=(existing,))
+        with pytest.raises(ValueError, match="already has an execution attempt"):
+            await bridge.execute_strategic_activation(activation, refresh=False)
+
+    asyncio.run(scenario())
+
+
+def test_strategic_activation_rejects_changed_relationship_before_approval() -> None:
+    async def scenario() -> None:
+        bridge = MooseBridgeClient(MooseBridgeServer())
+        _apply_blue_capture_force(bridge)
+        bridge.relationship = _war()
+        objective = _objective("Execution policy target", ObjectiveKind.OPSZONE, "red", value=90)
+        picture = TacticalPicture(
+            coalition="blue",
+            intel_id="INTEL:Blue",
+            clock=DcsTime(mission_time=100),
+            opszones=[_zone("Execution policy target")],
+        )
+        portfolio = bridge.recommend_strategic_portfolio("blue", picture, objectives=(objective,))
+        recommendation = BilateralStrategicRecommendation(0, 100.0, "war", (portfolio,))
+        activation = await bridge.activate_strategic_decision(
+            recommendation,
+            portfolio.selected[0],
+            refresh=False,
+            retain_audit=False,
+        )
+        bridge.relationship = CoalitionRelationship()
+
+        with pytest.raises(ValueError, match="relationship changed after strategic activation"):
+            await bridge.execute_strategic_activation(activation, refresh=False)
+
+        assert activation.plan.status is OperationalPlanStatus.VALIDATED
+
+    asyncio.run(scenario())
+
+
+def test_strategic_activation_restores_validation_when_executor_does_not_start() -> None:
+    async def scenario() -> None:
+        bridge = MooseBridgeClient(MooseBridgeServer())
+        _apply_blue_capture_force(bridge)
+        bridge.relationship = _war()
+        objective = _objective("Execution failure target", ObjectiveKind.OPSZONE, "red", value=90)
+        picture = TacticalPicture(
+            coalition="blue",
+            intel_id="INTEL:Blue",
+            clock=DcsTime(mission_time=100),
+            opszones=[_zone("Execution failure target")],
+        )
+        portfolio = bridge.recommend_strategic_portfolio("blue", picture, objectives=(objective,))
+        recommendation = BilateralStrategicRecommendation(0, 100.0, "war", (portfolio,))
+        activation = await bridge.activate_strategic_decision(
+            recommendation,
+            portfolio.selected[0],
+            refresh=False,
+            retain_audit=False,
+        )
+        bridge.plan_executor.refresh_history = AsyncMock(return_value=())
+        bridge.plan_executor.execute = AsyncMock(side_effect=RuntimeError("executor unavailable"))
+
+        with pytest.raises(RuntimeError, match="executor unavailable"):
+            await bridge.execute_strategic_activation(activation, refresh=False)
+
+        assert activation.plan.status is OperationalPlanStatus.VALIDATED
+        assert activation.plan.approved_mission_time is None
+        assert activation.plan.approved_by is None
+        assert activation.plan.approved_client_id is None
+        assert activation.plan.approval_reason is None
+
+    asyncio.run(scenario())

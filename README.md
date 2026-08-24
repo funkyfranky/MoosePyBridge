@@ -81,6 +81,9 @@ Implemented baseline:
 - side-effect-free bilateral strategic recommendations that derive, plan,
   score, reserve, and explain feasible blue and red goal candidates without
   creating executable mission state
+- controlled recommendation activation and execution boundaries that reject
+  stale mission, diplomacy, objective, plan, and resource state before any
+  AUFTRAG is submitted through the coalition COMMANDER
 
 Before starting either coalition's strategic controller, run the editable live
 preflight:
@@ -104,6 +107,26 @@ Recommendation mode builds temporary goal and operational-plan drafts to test
 mission suitability and resources. It retains an audit record, but it does not
 register a Goal or Plan and does not create an AUFTRAG. Executing selected work
 is a separate controller responsibility.
+
+To exercise those boundaries explicitly, first activate one recommendation per
+coalition without submitting an AUFTRAG:
+
+```powershell
+python examples/sdk/activate_bilateral_strategy.py
+```
+
+The controlled execution example repeats readiness and recommendation,
+activates both selections, then executes them concurrently through their own
+coalition COMMANDER:
+
+```powershell
+python examples/sdk/execute_bilateral_strategy.py
+```
+
+This last command creates live AUFTRAGs in the running DCS mission. It requires
+the relationship to be `war` and deliberately runs only one bounded decision
+for each coalition; the recurring coordinator and cooldown policy remain a
+later milestone step.
 
 ## Architecture
 

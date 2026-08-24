@@ -279,7 +279,8 @@ The SDK currently exposes helpers for:
 - AUFTRAG: `add_auftrag`, `apply_auftrag`, `apply_recommended_auftrag`, `trace_auftrag`,
   `get_auftrag_summary`, `wait_for_auftrag_outcome`, `pause_mission`,
   `resume_mission`, `cancel_mission`, `assign_mission`
-- operational execution: `execute_plan`, `execute_operational_plan`,
+- operational execution: `execute_strategic_activation`, `execute_plan`,
+  `execute_operational_plan`,
   `prepare_plan_retry`, `operational_plan_execution`,
   `operational_plan_executions`, `refresh_operational_plan_executions`,
   `restore_operational_plan`, `reconcile_operational_plan`,
@@ -290,6 +291,16 @@ The SDK currently exposes helpers for:
 submitting its AUFTRAGs. Progress callbacks receive `phase.revalidating` and
 `phase.revalidated`; a failed phase-boundary check produces `plan.blocked`
 without creating a mission for that phase.
+
+`execute_strategic_activation(activation, ...)` is the controlled strategic
+entry point. It verifies that the recommendation was activated in the current
+mission generation, that its relationship and objective state remain current,
+that the registered Goal and Plan still match the activation, and that no
+execution attempt already exists. It refreshes current forces, revalidates the
+plan, records approval attribution, and then calls `execute_plan`. Strategic
+controllers should use this method instead of approving and executing a cached
+recommendation themselves. All AUFTRAG submission still flows through
+`MissionExecutionService` and the owning coalition COMMANDER.
 
 `approve_operational_plan(plan, approved_by=..., reason=...)` records explicit
 operator attribution in the plan snapshot. A control-backed SDK uses its

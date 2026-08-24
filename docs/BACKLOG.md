@@ -43,7 +43,7 @@ Priorities:
 - [ ] **Broaden operational planning beyond CAPTURE, DEFEND, DESTROY, and runway denial.** Generate
   and execute plans for remaining DISABLE effects, PROTECT, and INTERDICT while
   preserving the existing validation, approval, audit, and replanning path.
-- [ ] **Add strategic goal selection and prioritization.** Let Python compare
+- [x] **Add deterministic strategic goal selection and prioritization.** Let Python compare
   possible goals using strategic value, current control, visible threats,
   available capabilities, expected cost, and uncertainty. Start with a
   deterministic rule engine before adding an LLM decision layer. The first
@@ -52,8 +52,17 @@ Priorities:
   overbooking across candidate plans. Shared objectives now also produce
   coalition-private CAPTURE/DEFEND/DESTROY goals through one relationship-aware,
   scope-aware SDK derivation used by the conflict controller. Neutral targets
-  remain protected and duplicate open goals are suppressed. Threat, cost,
-  uncertainty, and richer objective relationship scoring remain to be added.
+  remain protected and duplicate open goals are suppressed.
+- [ ] **Finish the recurring bilateral execution coordinator.** Build on the
+  controlled activation and execution boundaries with independent blue/red
+  cadence, explicit per-coalition concurrency, duplicate and collision policy,
+  and cooldowns after completion, failure, or blocking. Validate at least three
+  live cycles without overbooking COHORT capacity or resubmitting the same open
+  requirement.
+- [ ] **Enrich strategic scoring after the MVP coordinator is stable.** Add
+  visible threat, expected cost, uncertainty, and richer objective relationship
+  terms without weakening mission suitability or relationship policy as hard
+  constraints.
 - [x] **Close the deterministic strategic feedback loop.** Reassess active goals and plans
   after objective ownership changes, losses, INTEL changes, mission outcomes,
   and asset availability changes without duplicating MOOSE tactical behavior.

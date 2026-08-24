@@ -486,10 +486,12 @@ from .strategic_selection import (
     StrategicGoalSelection,
 )
 from .strategic_decision import (
+    STRATEGIC_ACTIVATION_AUDIT_TYPE,
     STRATEGIC_DECISION_AUDIT_TYPE,
     BilateralStrategicRecommendation,
     StrategicActionSpec,
     StrategicDecision,
+    StrategicDecisionActivation,
     StrategicDecisionConfig,
     StrategicDecisionDisposition,
     StrategicDecisionPortfolio,
@@ -504,6 +506,7 @@ from .strategic_decision import (
     derive_strategic_action_specs,
     rejected_decision,
     score_strategic_candidate,
+    strategic_activation_to_dict,
     strategic_recommendation_to_dict,
 )
 from .strategic_scope import (
@@ -919,8 +922,10 @@ __all__ = [
     "StrategicGoalPortfolioSelector",
     "StrategicGoalSelection",
     "STRATEGIC_DECISION_AUDIT_TYPE",
+    "STRATEGIC_ACTIVATION_AUDIT_TYPE",
     "StrategicActionSpec",
     "StrategicDecision",
+    "StrategicDecisionActivation",
     "StrategicDecisionConfig",
     "StrategicDecisionDisposition",
     "StrategicDecisionPortfolio",
@@ -1035,6 +1040,7 @@ __all__ = [
     "recommend_auftrag",
     "rejected_decision",
     "score_strategic_candidate",
+    "strategic_activation_to_dict",
     "assess_strategic_force_presence",
     "strategic_recommendation_to_dict",
     "rejected_candidates",

@@ -358,6 +358,17 @@ class OperationalPlanRegistry:
     def all(self) -> tuple[OperationalPlan, ...]:
         return tuple(self._plans[key] for key in sorted(self._plans))
 
+    def remove(self, plan: OperationalPlan | str) -> OperationalPlan:
+        """Remove one plan and its cached feasibility assessment."""
+
+        plan_id = plan.plan_id if isinstance(plan, OperationalPlan) else plan
+        try:
+            removed = self._plans.pop(plan_id)
+        except KeyError as exc:
+            raise KeyError(f"Unknown operational plan: {plan_id}") from exc
+        self._assessments.pop(plan_id, None)
+        return removed
+
     def clear(self) -> None:
         """Discard all mission-scoped plans and feasibility assessments."""
 

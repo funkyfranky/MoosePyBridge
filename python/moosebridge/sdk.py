@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+import hashlib
 import math
 from typing import Any
 
@@ -129,10 +130,12 @@ from .strategic_feedback import (
 )
 from .strategic_selection import StrategicGoalPortfolio
 from .strategic_decision import (
+    STRATEGIC_ACTIVATION_AUDIT_TYPE,
     STRATEGIC_DECISION_AUDIT_TYPE,
     BilateralStrategicRecommendation,
     StrategicActionSpec,
     StrategicDecision,
+    StrategicDecisionActivation,
     StrategicDecisionConfig,
     StrategicDecisionDisposition,
     StrategicDecisionPortfolio,
@@ -145,6 +148,7 @@ from .strategic_decision import (
     derive_strategic_action_specs,
     rejected_decision,
     score_strategic_candidate,
+    strategic_activation_to_dict,
     strategic_recommendation_to_dict,
 )
 from .strategic_scope import (
@@ -1450,6 +1454,7 @@ class MooseBridgeClient:
                         disposition=StrategicDecisionDisposition.REJECTED,
                         reason_code=StrategicDecisionReasonCode.PLANNING_FAILED,
                         reason=str(exc),
+                        objective=spec.objective,
                         goal=goal,
                     )
                 )
@@ -1476,6 +1481,7 @@ class MooseBridgeClient:
                         disposition=StrategicDecisionDisposition.REJECTED,
                         reason_code=StrategicDecisionReasonCode.PLAN_INFEASIBLE,
                         reason="operational plan is infeasible with current coalition assets",
+                        objective=spec.objective,
                         score=score,
                         goal=goal,
                         plan=plan,
@@ -1539,6 +1545,7 @@ class MooseBridgeClient:
                     disposition=disposition,
                     reason_code=reason_code,
                     reason=reason,
+                    objective=spec.objective,
                     score=score,
                     goal=goal,
                     plan=plan,
@@ -1567,6 +1574,7 @@ class MooseBridgeClient:
             reserved_assets=tuple(sorted(reservations.items())),
             max_concurrent_goals=resolved.max_concurrent_goals,
             existing_open_goal_count=open_goal_count,
+            config=resolved,
         )
 
     async def recommend_bilateral_strategy(
@@ -1625,6 +1633,378 @@ class MooseBridgeClient:
                 strategic_recommendation_to_dict(recommendation),
             )
         return recommendation
+
+    async def activate_strategic_decision(
+        self,
+        recommendation: BilateralStrategicRecommendation,
+        decision: StrategicDecision | str,
+        *,
+        refresh: bool = True,
+        retain_audit: bool = True,
+    ) -> StrategicDecisionActivation:
+        """Commit one selected recommendation as an active goal and validated plan.
+
+        The recommendation remains a side-effect-free proposal until it crosses
+        this boundary. Activation is deterministic and idempotent for the same
+        mission generation, recommendation time, coalition, and candidate.
+        """
+
+        candidate_id = decision.candidate_id if isinstance(decision, StrategicDecision) else decision.strip()
+        matches = [
+            item
+            for portfolio in recommendation.portfolios
+            for item in portfolio.decisions
+            if item.candidate_id == candidate_id
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"strategic recommendation contains {len(matches)} candidates named {candidate_id!r}")
+        selected = matches[0]
+        portfolio = recommendation.coalition(selected.coalition)
+        if selected.disposition is not StrategicDecisionDisposition.SELECTED:
+            raise ValueError(f"only selected strategic decisions can be activated: {selected.candidate_id}")
+        if selected.objective is None or selected.goal is None or selected.plan is None:
+            raise ValueError(f"selected strategic decision is incomplete: {selected.candidate_id}")
+        if recommendation.mission_generation != self.state.mission_generation:
+            raise ValueError("strategic recommendation belongs to a different DCS mission generation")
+
+        identity_source = "|".join(
+            (
+                str(recommendation.mission_generation),
+                "-" if recommendation.mission_time is None else f"{recommendation.mission_time:.6f}",
+                selected.coalition,
+                selected.candidate_id,
+            )
+        )
+        digest = hashlib.sha256(identity_source.encode("utf-8")).hexdigest()[:16]
+        activation_id = f"STRATEGIC_ACTIVATION:{selected.coalition}:{digest}"
+        goal_id = f"GOAL:STRATEGIC:{selected.coalition}:{digest}"
+        plan_id = f"PLAN:STRATEGIC:{selected.coalition}:{digest}"
+
+        existing_goal = self.strategic_goal(goal_id)
+        existing_plan = self.operational_plan(plan_id)
+        if existing_goal is not None or existing_plan is not None:
+            if existing_goal is None or existing_plan is None:
+                raise RuntimeError(f"partial strategic activation exists: {activation_id}")
+            if (
+                existing_goal.metadata.get("strategic_activation_id") != activation_id
+                or existing_plan.metadata.get("strategic_activation_id") != activation_id
+                or existing_goal.objective_id != selected.objective_id
+                or existing_plan.goal_id != existing_goal.goal_id
+            ):
+                raise RuntimeError(f"strategic activation id collision: {activation_id}")
+            objective = self.strategic_objective(existing_goal.objective_id)
+            assessment = self.plans.assessment(existing_plan.plan_id)
+            if objective is None or assessment is None:
+                raise RuntimeError(f"incomplete strategic activation state: {activation_id}")
+            return StrategicDecisionActivation(
+                activation_id=activation_id,
+                mission_generation=recommendation.mission_generation,
+                recommendation_mission_time=recommendation.mission_time,
+                activated_mission_time=existing_goal.activated_mission_time,
+                candidate_id=selected.candidate_id,
+                coalition=selected.coalition,
+                relationship_state=str(
+                    existing_plan.metadata.get("recommendation_relationship_state")
+                    or recommendation.relationship_state
+                ),
+                objective=objective,
+                goal=existing_goal,
+                plan=existing_plan,
+                assessment=assessment,
+                reused=True,
+            )
+
+        if refresh:
+            await self.refresh_diplomacy_state()
+            await self.snapshot_legions()
+            await self.snapshot_cohorts()
+            await self.snapshot_opszones()
+            await self.snapshot_airbases()
+            await self.snapshot_statics()
+        if recommendation.mission_generation != self.state.mission_generation:
+            raise ValueError("DCS mission changed while activating the strategic decision")
+        if recommendation.relationship_state != self.relationship.state.value:
+            raise ValueError(
+                "coalition relationship changed since the strategic recommendation "
+                f"({recommendation.relationship_state} -> {self.relationship.state.value})"
+            )
+
+        registered_objective = self.strategic_objective(selected.objective_id)
+        if registered_objective is None:
+            objective_registry = StrategicObjectiveRegistry()
+            objective_registry.add(deepcopy(selected.objective))
+            objective_registry.sync(self.state, source="strategic_activation")
+            objective = objective_registry.get(selected.objective_id)
+            if objective is None:
+                raise RuntimeError(f"strategic objective vanished during activation: {selected.objective_id}")
+        else:
+            objective = registered_objective
+            expected_signature = (
+                selected.objective.kind,
+                selected.objective.control_object_id,
+                tuple(component.object_id for component in selected.objective.components),
+            )
+            current_signature = (
+                objective.kind,
+                objective.control_object_id,
+                tuple(component.object_id for component in objective.components),
+            )
+            if current_signature != expected_signature:
+                raise ValueError(f"strategic objective definition changed since recommendation: {selected.objective_id}")
+
+        open_goals = tuple(
+            goal
+            for goal in self.strategic_goals(coalition=selected.coalition)
+            if goal.status in {StrategicGoalStatus.PLANNED, StrategicGoalStatus.ACTIVE}
+        )
+        if len(open_goals) >= portfolio.max_concurrent_goals:
+            raise ValueError(
+                f"strategic concurrency limit reached for {selected.coalition}: "
+                f"{len(open_goals)}/{portfolio.max_concurrent_goals}"
+            )
+        current_specs = derive_strategic_action_specs(
+            (objective,),
+            selected.coalition,
+            relationship=self.relationship,
+            config=portfolio.config,
+            open_goals=open_goals,
+        )
+        current_spec = next((item for item in current_specs if item.candidate_id == selected.candidate_id), None)
+        if current_spec is None:
+            raise ValueError(f"strategic candidate changed since recommendation: {selected.candidate_id}")
+        if current_spec.rejection_code is not None:
+            raise ValueError(
+                f"strategic candidate is no longer eligible: {current_spec.rejection_code.value}: "
+                f"{current_spec.rejection_reason or current_spec.rejection_code.value}"
+            )
+
+        mission_time = self._current_mission_time()
+        goal = deepcopy(selected.goal)
+        goal.goal_id = goal_id
+        goal.created_mission_time = mission_time
+        goal.metadata.update(
+            {
+                "candidate_id": selected.candidate_id,
+                "strategic_activation_id": activation_id,
+                "recommendation_mission_generation": recommendation.mission_generation,
+                "recommendation_mission_time": recommendation.mission_time,
+                "recommendation_relationship_state": recommendation.relationship_state,
+            }
+        )
+        plan = deepcopy(selected.plan)
+        plan.plan_id = plan_id
+        plan.goal_id = goal_id
+        plan.created_mission_time = mission_time
+        plan.metadata.update(
+            {
+                "candidate_id": selected.candidate_id,
+                "strategic_activation_id": activation_id,
+                "recommendation_mission_generation": recommendation.mission_generation,
+                "recommendation_mission_time": recommendation.mission_time,
+                "recommendation_relationship_state": recommendation.relationship_state,
+            }
+        )
+
+        reservations: dict[str, int] = {}
+        reserving_statuses = {
+            OperationalPlanStatus.VALIDATED,
+            OperationalPlanStatus.APPROVED,
+            OperationalPlanStatus.EXECUTING,
+            OperationalPlanStatus.BLOCKED,
+        }
+        for current_plan in self.operational_plans():
+            if current_plan.coalition != selected.coalition or current_plan.status not in reserving_statuses:
+                continue
+            current_goal = self.strategic_goal(current_plan.goal_id)
+            current_assessment = self.plans.assessment(current_plan.plan_id)
+            if (
+                current_goal is None
+                or current_goal.status not in {StrategicGoalStatus.PLANNED, StrategicGoalStatus.ACTIVE}
+                or current_assessment is None
+            ):
+                continue
+            for cohort_id, count in concurrent_plan_reservations(current_assessment).items():
+                reservations[cohort_id] = reservations.get(cohort_id, 0) + count
+
+        legions = tuple(self.state.legion_objects.values())
+        cohorts = tuple(self.state.cohort_objects.values())
+        temporary_objectives = StrategicObjectiveRegistry()
+        temporary_objectives.add(deepcopy(objective))
+        temporary_goals = StrategicGoalRegistry(temporary_objectives)
+        temporary_goals.add(deepcopy(goal))
+        temporary_plans = OperationalPlanRegistry(temporary_goals)
+        temporary_plan = deepcopy(plan)
+        temporary_plans.add(temporary_plan)
+        self._prepare_operational_assignment_metadata(
+            temporary_plan,
+            legions=legions,
+            cohorts=cohorts,
+            objective=objective,
+        )
+        assessment = temporary_plans.validate(
+            temporary_plan,
+            legions=legions,
+            cohorts=cohorts,
+            mission_time=mission_time,
+            reserved_assets=reservations,
+        )
+        if not assessment.feasible:
+            issue = assessment.errors[0].message if assessment.errors else "current coalition assets are insufficient"
+            raise ValueError(f"strategic plan is no longer feasible: {issue}")
+        plan = temporary_plan
+
+        objective_added = registered_objective is None
+        goal_added = False
+        plan_added = False
+        try:
+            if objective_added:
+                self.add_strategic_objective(deepcopy(objective), sync=False)
+            self.add_strategic_goal(goal)
+            goal_added = True
+            self.add_operational_plan(plan)
+            plan_added = True
+            assessment = self.plans.validate(
+                plan,
+                legions=legions,
+                cohorts=cohorts,
+                mission_time=mission_time,
+                reserved_assets=reservations,
+            )
+            if not assessment.feasible:
+                raise RuntimeError("strategic activation became infeasible during registry commit")
+            self.activate_strategic_goal(goal)
+            activation = StrategicDecisionActivation(
+                activation_id=activation_id,
+                mission_generation=recommendation.mission_generation,
+                recommendation_mission_time=recommendation.mission_time,
+                activated_mission_time=goal.activated_mission_time,
+                candidate_id=selected.candidate_id,
+                coalition=selected.coalition,
+                relationship_state=recommendation.relationship_state,
+                objective=self.strategic_objective(objective.objective_id) or objective,
+                goal=goal,
+                plan=plan,
+                assessment=assessment,
+            )
+            append_audit = getattr(self.server, "append_audit_record", None)
+            if retain_audit and callable(append_audit):
+                await append_audit(
+                    STRATEGIC_ACTIVATION_AUDIT_TYPE,
+                    strategic_activation_to_dict(activation),
+                )
+            return activation
+        except Exception:
+            if plan_added and self.operational_plan(plan_id) is not None:
+                self.plans.remove(plan_id)
+            if goal_added and self.strategic_goal(goal_id) is not None:
+                self.remove_strategic_goal(goal_id)
+            if objective_added and self.strategic_objective(objective.objective_id) is not None:
+                self.remove_strategic_objective(objective.objective_id)
+            raise
+
+    async def execute_strategic_activation(
+        self,
+        activation: StrategicDecisionActivation,
+        *,
+        commander: str | None = None,
+        approved_by: str | None = None,
+        approval_reason: str | None = None,
+        mission_timeout_s: float = 3600.0,
+        on_event: PlanExecutionCallback | None = None,
+        refresh: bool = True,
+    ) -> OperationalPlanExecution:
+        """Approve and execute one current strategic activation exactly once.
+
+        This is the controlled boundary between committed strategic state and
+        MOOSE tasking. It never constructs AUFTRAGs directly; the validated plan
+        is handed to :class:`OperationalPlanExecutor` after all stale-state and
+        duplicate-attempt checks pass.
+        """
+
+        if activation.mission_generation != self.state.mission_generation:
+            raise ValueError("strategic activation belongs to a different DCS mission generation")
+
+        objective = self.strategic_objective(activation.objective.objective_id)
+        goal = self.strategic_goal(activation.goal.goal_id)
+        plan = self.operational_plan(activation.plan.plan_id)
+        if objective is None or goal is None or plan is None:
+            raise ValueError(f"strategic activation is not registered: {activation.activation_id}")
+        if (
+            goal.metadata.get("strategic_activation_id") != activation.activation_id
+            or plan.metadata.get("strategic_activation_id") != activation.activation_id
+            or goal.objective_id != objective.objective_id
+            or plan.goal_id != goal.goal_id
+            or plan.coalition != activation.coalition
+        ):
+            raise ValueError(f"strategic activation registry state is inconsistent: {activation.activation_id}")
+
+        expected_signature = (
+            activation.objective.kind,
+            activation.objective.control_object_id,
+            tuple(component.object_id for component in activation.objective.components),
+        )
+        current_signature = (
+            objective.kind,
+            objective.control_object_id,
+            tuple(component.object_id for component in objective.components),
+        )
+        if current_signature != expected_signature:
+            raise ValueError(
+                f"strategic objective definition changed after activation: {objective.objective_id}"
+            )
+
+        if refresh:
+            await self.refresh_diplomacy_state()
+            await self.snapshot_commanders()
+            await self.snapshot_legions()
+            await self.snapshot_cohorts()
+        if activation.mission_generation != self.state.mission_generation:
+            raise ValueError("DCS mission changed while executing the strategic activation")
+        if activation.relationship_state != self.relationship.state.value:
+            raise ValueError(
+                "coalition relationship changed after strategic activation "
+                f"({activation.relationship_state} -> {self.relationship.state.value})"
+            )
+        if goal.status is not StrategicGoalStatus.ACTIVE:
+            raise ValueError(f"strategic activation goal is not active: {goal.status.value}")
+        if plan.status is not OperationalPlanStatus.VALIDATED:
+            raise ValueError(f"strategic activation plan is not validated: {plan.status.value}")
+
+        history = await self.plan_executor.refresh_history(plan.plan_id)
+        if history:
+            latest = history[-1]
+            raise ValueError(
+                "strategic activation already has an execution attempt: "
+                f"{latest.attempt_id} status={latest.status.value}"
+            )
+
+        assessment = self.validate_operational_plan(plan)
+        if not assessment.feasible:
+            issue = assessment.errors[0].message if assessment.errors else "current coalition assets are insufficient"
+            raise ValueError(f"strategic activation plan is no longer feasible: {issue}")
+
+        self.approve_operational_plan(
+            plan,
+            approved_by=approved_by,
+            reason=approval_reason or f"Execute strategic activation {activation.activation_id}",
+        )
+        try:
+            return await self.execute_plan(
+                plan,
+                commander=commander,
+                mission_timeout_s=mission_timeout_s,
+                on_event=on_event,
+            )
+        except Exception:
+            # Approval is reversible only while no execution attempt exists.
+            # Once the executor starts, its persisted attempt is authoritative.
+            if self.plan_executor.get(plan.plan_id) is None and plan.status is OperationalPlanStatus.APPROVED:
+                plan.status = OperationalPlanStatus.VALIDATED
+                plan.approved_mission_time = None
+                plan.approved_by = None
+                plan.approved_client_id = None
+                plan.approval_reason = None
+            raise
 
     def _propose_recommended_plan(
         self,

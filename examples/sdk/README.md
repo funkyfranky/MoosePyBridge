@@ -29,6 +29,8 @@ default control endpoint `127.0.0.1:42001`.
 | `release_smoke_test.py` | Overlay | Validate the SDK, bridge, snapshots, map datasets, and one temporary F10 markup. |
 | `check_conflict_readiness.py` | Read-only DCS | Validate the active theater, strategic scope, both coalition force structures, INTEL, capabilities, and admitted objectives before starting conflict control. |
 | `recommend_bilateral_strategy.py` | Read-only DCS | Rank feasible blue and red strategic candidates, explain all decisions, and retain an audit without creating Goals, Plans, or AUFTRAGs. |
+| `activate_bilateral_strategy.py` | DCS runtime state | Revalidate and atomically activate one selected decision per coalition as a Goal and validated Plan without creating AUFTRAGs. |
+| `execute_bilateral_strategy.py` | DCS runtime state | Activate one bounded decision per coalition, then approve and execute both plans concurrently through their MOOSE COMMANDERs. |
 | `monitor_global_picture.py` | Read-only | Print and validate the complete global picture periodically. |
 | `run_auftrag_lifecycle.py` | Mission-changing | Run the representative bounded ONGUARD lifecycle used by the release test. |
 | `test_mission_reset.py` | Mission-changing | Verify mission-end/restart generations and mission-scoped state cleanup. |
