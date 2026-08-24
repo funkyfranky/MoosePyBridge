@@ -286,6 +286,8 @@ The SDK currently exposes helpers for:
   `restore_operational_plan`, `reconcile_operational_plan`,
   `monitor_interrupted_operational_plan`, `block_interrupted_operational_plan`,
   `abort_operational_plan`
+- recurring strategy: `BilateralConflictCoordinator.run`,
+  `BilateralConflictCoordinator.run_cycle`
 
 `execute_plan` refreshes and revalidates only the next immediate phase before
 submitting its AUFTRAGs. Progress callbacks receive `phase.revalidating` and
@@ -301,6 +303,16 @@ plan, records approval attribution, and then calls `execute_plan`. Strategic
 controllers should use this method instead of approving and executing a cached
 recommendation themselves. All AUFTRAG submission still flows through
 `MissionExecutionService` and the owning coalition COMMANDER.
+
+`BilateralConflictCoordinator` is the recurring orchestration layer above that
+entry point. Blue and red have independent DCS-mission-time cadence, while a
+short lock serializes only snapshot refresh, recommendation, and activation.
+Plan execution happens outside that lock, so opposing AUFTRAG lifecycles may
+overlap. Completed, blocked, and failed candidates receive separate cooldowns;
+active cooldown IDs are passed back into recommendation so the next eligible
+candidate can be selected. A blocked or failed execution explicitly terminalizes
+its still-active strategic Goal before the cooldown is applied. Every completed
+cycle may be retained as a `strategic_conflict_cycle` audit record.
 
 `approve_operational_plan(plan, approved_by=..., reason=...)` records explicit
 operator attribution in the plan snapshot. A control-backed SDK uses its

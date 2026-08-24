@@ -41,6 +41,7 @@ class StrategicDecisionReasonCode(StrEnum):
     CONCURRENCY_LIMIT = "concurrency_limit"
     RESOURCE_CONFLICT = "resource_conflict"
     ALTERNATIVE_ACTION_SELECTED = "alternative_action_selected"
+    COOLDOWN = "cooldown"
     RELATIONSHIP_FORBIDS = "relationship_forbids"
     DUPLICATE_OPEN_GOAL = "duplicate_open_goal"
     FRIENDLY_OBJECTIVE = "friendly_objective"

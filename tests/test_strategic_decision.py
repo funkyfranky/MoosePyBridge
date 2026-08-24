@@ -462,6 +462,40 @@ def test_recommendation_ranks_and_reserves_without_mutating_registries() -> None
     )
 
 
+def test_recommendation_skips_coordinator_cooldown_and_selects_next_candidate() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    _apply_blue_capture_force(bridge, available=1)
+    bridge.relationship = _war()
+    high = _objective("Cooldown high", ObjectiveKind.OPSZONE, "red", value=90)
+    low = _objective("Cooldown low", ObjectiveKind.OPSZONE, "red", value=30)
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        clock=DcsTime(mission_time=100),
+        opszones=[_zone("Cooldown high"), _zone("Cooldown low")],
+    )
+
+    first = bridge.recommend_strategic_portfolio(
+        "blue",
+        picture,
+        objectives=(low, high),
+    )
+    excluded_id = first.selected[0].candidate_id
+    second = bridge.recommend_strategic_portfolio(
+        "blue",
+        picture,
+        objectives=(low, high),
+        excluded_candidate_ids=(excluded_id,),
+    )
+
+    assert first.selected[0].objective_id == high.objective_id
+    assert second.selected[0].objective_id == low.objective_id
+    cooldown = next(item for item in second.deferred if item.candidate_id == excluded_id)
+    assert cooldown.reason_code is StrategicDecisionReasonCode.COOLDOWN
+    assert cooldown.goal is None
+    assert cooldown.plan is None
+
+
 def test_recommendation_refreshes_dynamic_control_on_a_private_objective_copy() -> None:
     bridge = MooseBridgeClient(MooseBridgeServer())
     _apply_blue_capture_force(bridge)

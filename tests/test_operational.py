@@ -1220,6 +1220,31 @@ class _IncompleteSceneryDestroyExecutionServer(_SceneryDestroyExecutionServer):
         return result
 
 
+class _ScenerySummaryOnlyExecutionServer(_ExecutionServer):
+    """Resolve SCENERY exactly but expose damage only through AUFTRAG summary."""
+
+    def __init__(self, *, target_resolution: str = "scenery_object") -> None:
+        super().__init__()
+        self.target_resolution = target_resolution
+
+    async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
+        ack = await super().send_command(command, timeout)
+        if command.action == "auftrag.create_strike":
+            ack["result"]["target_resolution"] = self.target_resolution
+        return ack
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        event = await super().wait_for_event(event_name, filters, timeout, after_id)
+        event["payload"]["summary"]["damage"] = 100.0
+        return event
+
+
 class _DuplicateStatusExecutionServer(_ExecutionServer):
     """Execution server that repeats one status transition before evaluation."""
 
@@ -1600,7 +1625,7 @@ def _replace_destroy_server(
 
 
 def _executable_scenery_destroy_plan(
-    server: _SceneryDestroyExecutionServer | None = None,
+    server: _ExecutionServer | None = None,
 ) -> tuple[MooseBridgeClient, OperationalPlan]:
     server = server or _SceneryDestroyExecutionServer()
     bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
@@ -2209,6 +2234,43 @@ def test_execute_destroy_plan_does_not_duplicate_live_scenery_destruction_event(
 
         assert execution.status is OperationalPlanStatus.COMPLETED
         assert sum(event.get("event") == "object.destroyed" for event in bridge.state.events) == 1
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_uses_exact_scenery_strike_summary_when_event_is_missing() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_scenery_destroy_plan(_ScenerySummaryOnlyExecutionServer())
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert not any(event.get("event") == "object.destroyed" for event in bridge.state.events)
+        objective = bridge.strategic_objective("OBJECTIVE:Bridge")
+        assert objective is not None and objective.health == 0.0
+        estimate = objective.component_health_estimates["SCENERY:Bridge"]
+        assert estimate.health == 0.0
+        assert estimate.source == "auftrag_summary:AUFTRAG:1"
+        assert execution.damage_assessments[0].achieved_damage == 1.0
+        assert execution.damage_assessments[0].phase_damage is None
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_ignores_coordinate_fallback_strike_summary() -> None:
+    async def scenario() -> None:
+        bridge, plan = _executable_scenery_destroy_plan(
+            _ScenerySummaryOnlyExecutionServer(target_resolution="coordinate_fallback")
+        )
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        objective = bridge.strategic_objective("OBJECTIVE:Bridge")
+        assert objective is not None and objective.health is None
+        assert "SCENERY:Bridge" not in objective.component_health_estimates
+        assert execution.damage_assessments[0].achieved_damage is None
+        assert execution.damage_assessments[0].phase_damage is None
 
     asyncio.run(scenario())
 

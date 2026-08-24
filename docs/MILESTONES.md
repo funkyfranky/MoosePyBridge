@@ -161,13 +161,20 @@ Implemented foundation:
   authoritative and the activation cannot be executed again.
 - `examples/sdk/execute_bilateral_strategy.py` activates one selected decision
   for each coalition and executes both concurrently as one bounded live test.
+- `BilateralConflictCoordinator` schedules blue and red independently using DCS
+  mission time. Recommendation and activation are serialized only while shared
+  snapshots and reservations are established; COMMANDER execution remains
+  concurrent.
+- Per-coalition candidate cooldowns distinguish completed, blocked, and failed
+  work. Cooldown candidates are deferred before planning, allowing the next
+  eligible objective to be selected without creating duplicate Goals or Plans.
+- Blocked and failed plans explicitly fail any still-active strategic Goal, so
+  duplicate-open-goal protection cannot deadlock later cycles.
+- `strategic_conflict_cycle` audit records retain each decision-cycle outcome.
+- `examples/sdk/run_bilateral_conflict.py` is the bounded three-cycle live
+  acceptance script with editable cadence and cooldown constants.
 
-Still required for the autonomous coordinator:
-
-- independent recurring decision cadence and per-coalition concurrency limits
-- collision and duplicate-work policy across later cycles
-- completion, failure, and blocked-result cooldowns
-- live acceptance over at least three bilateral cycles
+Milestone 3 acceptance is complete.
 
 Live acceptance status:
 
@@ -178,6 +185,20 @@ Live acceptance status:
   correctly left its plan blocked. This validates both successful and failed
   terminal execution paths without treating tactical failure as a coordinator
   error.
+- A bounded three-cycle-per-coalition Caucasus run completed successfully. Both
+  coalitions submitted full AUFTRAG lifecycles through their COMMANDERs while
+  executions overlapped. Red completed one verified bridge strike and then
+  attempted a verified port; blue attempted runway denial against Sochi-Adler
+  and Nalchik. Completed and blocked candidates received cooldowns, later cycles
+  selected alternatives while those cooldowns were active, and repeated targets
+  were admitted only after their cooldown elapsed. No duplicate open strategic
+  requirement remained.
+- The same live run exercised mixed terminal outcomes: completed, tactically
+  failed, weighted-damage shortfall, and mission-success-with-strategic-shortfall.
+  These remained coalition-local and did not stop the opposing controller.
+- Recurring coordination remains covered by deterministic SDK tests, including
+  next-candidate selection during cooldown, terminalization after blocking, and
+  overlapping blue/red execution.
 
 Acceptance test:
 

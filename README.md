@@ -84,6 +84,8 @@ Implemented baseline:
 - controlled recommendation activation and execution boundaries that reject
   stale mission, diplomacy, objective, plan, and resource state before any
   AUFTRAG is submitted through the coalition COMMANDER
+- a bounded bilateral conflict coordinator with independent coalition cadence,
+  concurrent execution, terminal-result cooldowns, and per-cycle audit records
 
 Before starting either coalition's strategic controller, run the editable live
 preflight:
@@ -125,8 +127,17 @@ python examples/sdk/execute_bilateral_strategy.py
 
 This last command creates live AUFTRAGs in the running DCS mission. It requires
 the relationship to be `war` and deliberately runs only one bounded decision
-for each coalition; the recurring coordinator and cooldown policy remain a
-later milestone step.
+for each coalition. To exercise recurring decisions, cooldowns, and independent
+blue/red cadence over a finite acceptance run, use:
+
+```powershell
+python examples/sdk/run_bilateral_conflict.py
+```
+
+The constants at the top of that script set the number of cycles, each
+coalition's cadence, terminal-result cooldowns, concurrency, and mission
+timeout. All mission work still crosses the controlled activation boundary and
+is executed through `MissionExecutionService` and the coalition COMMANDER.
 
 ## Architecture
 

@@ -1373,6 +1373,7 @@ class MooseBridgeClient:
         *,
         objectives: Iterable[StrategicObjective],
         config: StrategicDecisionConfig | None = None,
+        excluded_candidate_ids: Iterable[str] = (),
     ) -> StrategicDecisionPortfolio:
         """Recommend a feasible portfolio without registering goals or plans."""
 
@@ -1388,6 +1389,11 @@ class MooseBridgeClient:
         legions = tuple(self.state.legion_objects.values())
         cohorts = tuple(self.state.cohort_objects.values())
         cohorts_by_id = {item.object_id: item for item in cohorts}
+        excluded = {
+            str(candidate_id).strip()
+            for candidate_id in excluded_candidate_ids
+            if str(candidate_id).strip()
+        }
 
         temporary_objectives = StrategicObjectiveRegistry()
         for objective in objective_items:
@@ -1419,6 +1425,22 @@ class MooseBridgeClient:
             ]
         ] = []
         for spec in (item for item in specs if item.rejection_code is None):
+            if spec.candidate_id in excluded:
+                decisions.append(
+                    StrategicDecision(
+                        candidate_id=spec.candidate_id,
+                        coalition=coalition,
+                        objective_id=spec.objective.objective_id,
+                        objective_name=spec.objective.name,
+                        action=spec.action,
+                        effect=spec.effect,
+                        disposition=StrategicDecisionDisposition.DEFERRED,
+                        reason_code=StrategicDecisionReasonCode.COOLDOWN,
+                        reason="candidate is in a coordinator cooldown period",
+                        objective=spec.objective,
+                    )
+                )
+                continue
             goal = create_candidate_goal(spec, mission_time=mission_time, config=resolved)
             force_presence = assess_strategic_force_presence(
                 spec.objective,
@@ -1582,6 +1604,7 @@ class MooseBridgeClient:
         readiness: ConflictReadinessReport,
         *,
         config: StrategicDecisionConfig | None = None,
+        excluded_candidate_ids: Mapping[str, Iterable[str]] | None = None,
         refresh: bool = True,
         retain_audit: bool = True,
     ) -> BilateralStrategicRecommendation:
@@ -1618,6 +1641,7 @@ class MooseBridgeClient:
                     picture,
                     objectives=readiness.objective_generation.objectives,
                     config=config,
+                    excluded_candidate_ids=(excluded_candidate_ids or {}).get(coalition, ()),
                 )
             )
         recommendation = BilateralStrategicRecommendation(

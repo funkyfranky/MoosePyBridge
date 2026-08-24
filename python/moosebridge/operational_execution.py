@@ -1145,15 +1145,29 @@ class OperationalPlanExecutor:
             return
         component_ids = {component.object_id for component in objective.components}
         for mission in missions:
-            if mission.mission_type in {"ARTY", "BOMBING", "BOMBCARPET", "STRIKE"}:
+            if mission.mission_type in {"ARTY", "BOMBING", "BOMBCARPET"}:
                 continue
-            if mission.outcome is None or mission.outcome.damage is None:
+            outcome = mission.outcome
+            if outcome is None:
                 continue
+            if mission.mission_type == "STRIKE":
+                target_resolution = (
+                    mission.command_ack.result.get("target_resolution")
+                    if mission.command_ack is not None
+                    else None
+                )
+                if target_resolution != "scenery_object":
+                    continue
             params = mission.command.to_params() if mission.command is not None else {}
             target = params.get("target")
             if not isinstance(target, str) or target not in component_ids:
                 continue
-            damage = max(0.0, min(100.0, mission.outcome.damage))
+            damage = outcome.damage
+            if damage is None and mission.mission_type == "STRIKE" and outcome.success is True:
+                damage = 100.0
+            if damage is None:
+                continue
+            damage = max(0.0, min(100.0, damage))
             self.client.objectives.record_component_health(
                 objective,
                 target,
