@@ -45,6 +45,7 @@ from moosebridge.protocol import BridgeCommand
 from moosebridge.operational_execution import build_plan_auftrag
 from moosebridge.operational_audit import execution_from_dict, execution_to_dict, plan_from_snapshot, plan_snapshot
 from moosebridge.pictures import TacticalPicture
+from moosebridge.models import OpsZone
 from moosebridge.state import MooseBridgeState
 
 
@@ -1323,6 +1324,39 @@ class _PersistentMissionExecutionServer(_ExecutionServer):
         return event
 
 
+class _CaptureReactionExecutionServer(_ExecutionServer):
+    """Complete CAPTURE, then establish the required persistent patrol."""
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
+        mission_number = int(auftrag_id.partition(":")[2])
+        if self._mission_types.get(mission_number) != "PATROLZONE":
+            return await super().wait_for_event(event_name, filters, timeout, after_id)
+
+        self._event_number += 1
+        event = {
+            "type": "event",
+            "id": f"event-{self._event_number}",
+            "event": "auftrag.status",
+            "payload": {
+                "auftrag_id": auftrag_id,
+                "auftrag_type": "PATROLZONE",
+                "status": "executing",
+                "fsm_event": "Executing",
+                "from": "started",
+                "to": "executing",
+            },
+        }
+        self.event_history.append(event)
+        return event
+
+
 class _CancelBeforeEvaluatedExecutionServer(_ExecutionServer):
     """Reproduce MOOSE's Done -> Cancel -> Evaluated terminal callback order."""
 
@@ -2046,6 +2080,113 @@ def test_persistent_mission_is_established_at_executing_and_remains_running() ->
         assert mission.error is None
         assert observed == ["mission.status", "mission.established"]
         assert server.commands == []
+
+    asyncio.run(scenario())
+
+
+def test_capture_establishes_guard_and_changes_opponent_goal_derivation() -> None:
+    async def scenario() -> None:
+        server = _CaptureReactionExecutionServer(final_owner="blue")
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        objective = bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Town",
+                name="Town",
+                kind=ObjectiveKind.OPSZONE,
+                control_object_id="OPSZONE:Town",
+                ownership_policy=OwnershipPolicy.MOOSE_MANAGED,
+                owner="red",
+            )
+        )
+        goal = bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Capture Town",
+                name="Capture Town",
+                coalition="blue",
+                action=StrategicGoalAction.CAPTURE,
+                objective_id=objective.objective_id,
+            )
+        )
+        for kind, payload in (
+            (
+                "commanders",
+                [{
+                    "object_id": "COMMANDER:Blue Command",
+                    "object_type": "COMMANDER",
+                    "coalition": "blue",
+                    "legion_ids": ["LEGION:Blue Brigade"],
+                }],
+            ),
+            (
+                "legions",
+                [{"object_id": "LEGION:Blue Brigade", "coalition": "blue"}],
+            ),
+            (
+                "cohorts",
+                [{
+                    "object_id": "COHORT:Blue Armor",
+                    "legion_id": "LEGION:Blue Brigade",
+                    "is_ground": True,
+                    "available_asset_count": 4,
+                    "homogeneous": True,
+                    "units_per_asset": 2,
+                    "mission_types": ["CAPTUREZONE", "PATROLZONE"],
+                }],
+            ),
+        ):
+            bridge.state.apply_message(
+                {"type": "snapshot", "kind": kind, "payload": {kind: payload}}
+            )
+
+        zone = OpsZone.from_payload(
+            {
+                "object_id": "OPSZONE:Town",
+                "object_type": "OPSZONE",
+                "owner_current_name": "red",
+                "zone_radius": 5_000.0,
+                "x": 10_000.0,
+                "z": 20_000.0,
+            }
+        )
+        plan = bridge.add_operational_plan(
+            bridge.propose_capture_plan(
+                goal,
+                TacticalPicture(
+                    coalition="blue",
+                    intel_id="INTEL:Blue",
+                    opszones=(zone,),
+                ),
+                plan_id="PLAN:Capture Town",
+            )
+        )
+        assessment = bridge.validate_operational_plan(plan)
+        assert assessment.feasible
+        bridge.approve_operational_plan(plan)
+
+        execution = await bridge.execute_plan(plan, mission_timeout_s=1)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert objective.owner == "blue"
+        assert goal.status is StrategicGoalStatus.ACHIEVED
+        patrol = next(item for item in execution.missions if item.mission_type == "PATROLZONE")
+        assert patrol.required is True
+        assert patrol.persistent is True
+        assert patrol.status is PlanMissionStatus.RUNNING
+        assert patrol.outcome is None
+
+        bridge.declare_war("blue", reason="test capture reaction")
+        blue = bridge.generate_strategic_goals("blue", register=False, generation_id="REACTION")
+        red = bridge.generate_strategic_goals("red", register=False, generation_id="REACTION")
+
+        assert blue.goals == ()
+        assert any(
+            decision.objective_id == objective.objective_id
+            and decision.reason.startswith("friendly OPSZONE is secure")
+            for decision in blue.decisions
+        )
+        assert len(red.goals) == 1
+        assert red.goals[0].objective_id == objective.objective_id
+        assert red.goals[0].action is StrategicGoalAction.CAPTURE
 
     asyncio.run(scenario())
 

@@ -78,6 +78,7 @@ configuration and is not intended to be run directly.
 | `declare_war.py` | Mission-changing | Explicitly transition the coalition relationship to war. |
 | `test_border_violation.py` | Mission-changing | Validate tolerance timing, deduplication, and incursion escalation. |
 | `test_opszone_relationship.py` | Mission-changing | Validate future OPSZONE capture events and diplomacy scoring. |
+| `test_capture_reaction.py` | Mission-changing | Capture one configured OPSZONE, confirm its persistent combat patrol, and validate the opponent's selected recapture reaction. |
 
 ## Topography And Routing
 

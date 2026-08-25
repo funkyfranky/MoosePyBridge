@@ -215,6 +215,14 @@ This milestone is the first playable automated-war release.
 **Outcome:** Capturing or damaging an objective changes later behavior instead
 of ending at the first successful AUFTRAG.
 
+**Status:** Core implementation is complete and the first live Caucasus
+acceptance passed. Blue captured `OPSZONE:Town Gali`; completion was confirmed
+from the changed OPSZONE owner rather than AUFTRAG success alone; a required
+persistent combat `PATROLZONE` remained running; and the red rule engine then
+selected CAPTURE of the same objective as its response. The target had no
+coalition-visible defender, so one deliberately defended or contested live
+capture remains before closing the complete milestone acceptance.
+
 Required work:
 
 1. Confirm CAPTURE from objective ownership, not only from MOOSE mission
@@ -235,6 +243,19 @@ Acceptance test:
 - The opponent subsequently creates a recapture or attack goal.
 - Destroying a verified bridge or infrastructure component updates objective
   health, its aggregate strategic loss report, and future goal selection.
+
+Implementation entry points:
+
+- The rule-based CAPTURE planner always follows seizure with a required,
+  persistent combat `PATROLZONE`; optional air defense and logistics remain
+  independently feasible support tasks.
+- Plan execution confirms CAPTURE from refreshed OPSZONE ownership and leaves
+  the established patrol in `running` state instead of waiting for it to end.
+- `examples/sdk/test_capture_reaction.py` is the bounded live acceptance script
+  for capture, ownership confirmation, persistent security, and opponent
+  recapture selection.
+- `tests/test_operational.py` covers the complete deterministic transition from
+  capture through guard establishment to changed opponent goal derivation.
 
 ## Milestone 5: Stable mission-length conflict
 
