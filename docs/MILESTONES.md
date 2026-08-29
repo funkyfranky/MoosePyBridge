@@ -215,13 +215,30 @@ This milestone is the first playable automated-war release.
 **Outcome:** Capturing or damaging an objective changes later behavior instead
 of ending at the first successful AUFTRAG.
 
-**Status:** Core implementation is complete and the first live Caucasus
-acceptance passed. Blue captured `OPSZONE:Town Gali`; completion was confirmed
-from the changed OPSZONE owner rather than AUFTRAG success alone; a required
-persistent combat `PATROLZONE` remained running; and the red rule engine then
-selected CAPTURE of the same objective as its response. The target had no
-coalition-visible defender, so one deliberately defended or contested live
-capture remains before closing the complete milestone acceptance.
+**Status:** Core behavior is implemented, but live acceptance has been reopened.
+The first bounded acceptance test used `PATROLZONE` to let red claim neutral
+`OPSZONE:Town Gali`, then blue took the opposing zone with `CAPTUREZONE` using
+two combat groups. Completion was confirmed from the changed OPSZONE owner
+rather than AUFTRAG success alone. A required persistent blue `PATROLZONE`
+reported `Executing` while optional logistics was submitted, and the red rule
+engine selected CAPTURE of the same objective as its response. Subsequent map
+inspection showed that only the ammunition truck remained in the zone with
+zero combat power. `Executing` was therefore an insufficient security
+postcondition. Execution now restricts MOOSE recruitment to the exact
+Python-qualified COHORT pool and requires an assigned, alive ground guard
+inside the zone whose own MOOSE threat level is positive before consolidation
+completes. A logistics vehicle cannot satisfy this condition.
+The live acceptance script must be rerun before this milestone is closed.
+Both coalition
+readiness reports exposed an available RECON-capable COHORT, so the prior
+lost-contact reacquisition shortfall no longer blocked the reaction. The
+inverse blue-to-red capture sequence has also passed live. Neutral OPSZONEs are
+claimed by `PATROLZONE` or `ONGUARD`; `CAPTUREZONE` is reserved for taking an
+opposing coalition's zone. Capture assault groups receive a ten-minute
+transition hold while persistent security is established. Verified SCENERY
+damage was separately accepted live: destroying strategic bridge and port
+components updated objective health, aggregate strategic loss reports, and
+subsequent strategic state.
 
 Required work:
 

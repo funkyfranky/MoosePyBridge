@@ -1123,6 +1123,20 @@ See `docs/INTENTS.md` for the tactical intent and recommendation model.
 4. Use the interactive control client or a Python SDK client to request
    snapshots or send a simple semantic command.
 
+For a player-slot lifecycle test, start the normal daemon and DCS mission first.
+Then run the dedicated SDK monitor through the local control API:
+
+```powershell
+python examples/sdk/monitor_player_aircraft.py
+```
+
+Enter and leave a player/client aircraft slot. The script verifies that Python
+receives exactly the normalized lifecycle, adds the session to
+`active_player_aircraft` on enter, removes it on leave, and then exits. It can
+also be started directly with **Run Python File** in VS Code. Player filter,
+cycle count, ports, and timeouts are editable constants at the top of the
+script. The normal daemon continues running after the monitor exits.
+
 Example:
 
 ```python

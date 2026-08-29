@@ -880,8 +880,9 @@ function MOOSE_BRIDGE:_BuildGroupSnapshotItem(group_name, group)
   local active = self:_SafeCall(group, "IsActive")
   local unit_count = self:_CountGroupUnits(group, false)
   local alive_unit_count = self:_CountGroupUnits(group, true)
+  local threat_level = self:_SafeCall(group, "GetThreatLevel")
   local point = self:_PointForGroupName(name)
-  local item = {object_id="GROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="GROUP",category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active),unit_count=self:_NumberOrZero(unit_count),alive_unit_count=self:_NumberOrZero(alive_unit_count)}
+  local item = {object_id="GROUP:"..safe_tostring(name),dcs_name=safe_tostring(name),object_type="GROUP",category=category and safe_tostring(category) or nil,coalition=self:_CoalitionToName(coalition_value),alive=self:_BoolOrFalse(alive),active=self:_BoolOrFalse(active),unit_count=self:_NumberOrZero(unit_count),alive_unit_count=self:_NumberOrZero(alive_unit_count),threat_level=self:_NumberOrZero(threat_level)}
   if point then self:_AddPointFields(item, point) end
   return item
 end

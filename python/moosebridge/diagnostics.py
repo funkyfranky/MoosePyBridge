@@ -107,6 +107,14 @@ def format_conflict_readiness(report: ConflictReadinessReport) -> str:
                     f"capturable={coalition.capturable_objective_count} "
                     f"destroyable={coalition.destroyable_objective_count}"
                 ),
+                (
+                    "    reconnaissance "
+                    + (
+                        f"yes ({', '.join(coalition.recon_cohort_ids)})"
+                        if coalition.recon_cohort_ids
+                        else "no"
+                    )
+                ),
             )
         )
     for issue in report.issues:

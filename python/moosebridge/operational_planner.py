@@ -41,6 +41,7 @@ class RuleBasedPlannerConfig:
     isolation_distance_from_zone_m: float = 30_000.0
     ground_assault_groups: int = 1
     ground_assault_units: int = 2
+    capture_stay_in_zone_s: float = 600.0
     ground_defense_groups: int = 1
     ground_defense_units: int = 2
     contact_fresh_for_s: float = 120.0
@@ -59,6 +60,8 @@ class RuleBasedPlannerConfig:
             raise ValueError("ground assault groups must be at least one")
         if self.ground_assault_units < self.ground_assault_groups:
             raise ValueError("ground assault units must be at least the minimum group count")
+        if not math.isfinite(self.capture_stay_in_zone_s) or self.capture_stay_in_zone_s <= 0:
+            raise ValueError("capture stay-in-zone duration must be finite and positive")
         if self.ground_defense_groups < 1:
             raise ValueError("ground defense groups must be at least one")
         if self.ground_defense_units < self.ground_defense_groups:
@@ -203,6 +206,11 @@ class RuleBasedOperationalPlanner:
                         name="Capture the OPSZONE",
                         auftrag_types=("CAPTUREZONE",),
                         target_object_id=objective.control_object_id,
+                        metadata={
+                            "auftrag_params": {
+                                "stay_in_zone_time_s": self.config.capture_stay_in_zone_s,
+                            }
+                        },
                         asset_requirements=(
                             AssetRequirement(
                                 requirement_id="REQ:Ground assault",
@@ -240,7 +248,11 @@ class RuleBasedOperationalPlanner:
                                 performer_categories=("GROUND",),
                             ),
                         ),
-                        metadata={"persistent": True, "established_on": "Executing"},
+                        metadata={
+                            "persistent": True,
+                            "established_on": "Executing",
+                            "establishment_condition": "assigned_ground_combat_presence_in_zone",
+                        },
                     ),
                     MissionIntent(
                         intent_id="establish-air-defense",

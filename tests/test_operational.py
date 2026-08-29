@@ -720,6 +720,39 @@ def test_operational_execution_uses_resolved_unit_aware_asset_count() -> None:
     assert command.required_assets_max == 1
 
 
+def test_operational_execution_passes_capture_transition_hold_to_moose() -> None:
+    requirement = AssetRequirement(
+        "REQ:Ground assault",
+        AssetRole.COMBAT,
+        mission_types=("CAPTUREZONE",),
+        performer_categories=("GROUND",),
+    )
+    intent = MissionIntent(
+        "capture-zone",
+        "Capture zone",
+        ("CAPTUREZONE",),
+        (requirement,),
+        target_object_id="OPSZONE:Town",
+        metadata={"auftrag_params": {"stay_in_zone_time_s": 600.0}},
+    )
+    plan = OperationalPlan(
+        "PLAN:Capture",
+        "Capture",
+        "GOAL:Capture Town",
+        "blue",
+        (PlanPhase("seize", "Seize", (intent,)),),
+    )
+
+    command = build_plan_auftrag(plan, intent, requirement)
+
+    assert command.mission_type == "CAPTUREZONE"
+    assert command.to_params() == {
+        "opszone": "OPSZONE:Town",
+        "capture_coalition": "blue",
+        "stay_in_zone_time_s": 600.0,
+    }
+
+
 def test_operational_execution_builds_resolved_object_attack_types() -> None:
     cases = (
         ("SEAD", "GROUP:SAM"),
@@ -1327,6 +1360,17 @@ class _PersistentMissionExecutionServer(_ExecutionServer):
 class _CaptureReactionExecutionServer(_ExecutionServer):
     """Complete CAPTURE, then establish the required persistent patrol."""
 
+    def __init__(
+        self,
+        *args: Any,
+        guard_threat: int = 4,
+        guard_group_threat: int = 4,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.guard_threat = guard_threat
+        self.guard_group_threat = guard_group_threat
+
     async def wait_for_event(
         self,
         event_name: str,
@@ -1355,6 +1399,124 @@ class _CaptureReactionExecutionServer(_ExecutionServer):
         }
         self.event_history.append(event)
         return event
+
+    async def snapshot_opszones(self) -> dict[str, Any]:
+        owner = self.final_owner if self._objective_updated else "red"
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "opszones",
+                "payload": {
+                    "opszones": [
+                        {
+                            "object_id": "OPSZONE:Town",
+                            "object_type": "OPSZONE",
+                            "owner_current_name": owner,
+                            "is_contested": False,
+                            "zone_name": "Town",
+                            "zone_radius": 5_000.0,
+                            "x": 10_000.0,
+                            "z": 20_000.0,
+                            "n_blue": 1 if owner == "blue" else 0,
+                            "n_red": 1 if owner == "red" else 0,
+                            "threat_blue": self.guard_threat if owner == "blue" else 0,
+                            "threat_red": self.guard_threat if owner == "red" else 0,
+                        }
+                    ]
+                },
+            }
+        )
+        return {"ok": True, "result": {"kind": "opszones", "count": 1}}
+
+    async def snapshot_zones(self) -> dict[str, Any]:
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "zones",
+                "payload": {
+                    "zones": [
+                        {
+                            "object_id": "ZONE:Town",
+                            "object_type": "ZONE",
+                            "x": 10_000.0,
+                            "z": 20_000.0,
+                            "radius": 5_000.0,
+                        }
+                    ]
+                },
+            }
+        )
+        return {"ok": True, "result": {"kind": "zones", "count": 1}}
+
+    async def snapshot_auftraege(self) -> dict[str, Any]:
+        patrol_number = next(
+            (number for number, mission_type in self._mission_types.items() if mission_type == "PATROLZONE"),
+            None,
+        )
+        snapshots = [] if patrol_number is None else [
+            {
+                "object_id": f"AUFTRAG:{patrol_number}",
+                "object_type": "AUFTRAG",
+                "type": "PATROLZONE",
+                "status": "executing",
+                "assigned_group_ids": ["OPSGROUP:Blue Guard"],
+            }
+        ]
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "auftraege",
+                "payload": {"auftraege": snapshots},
+            }
+        )
+        return {"ok": True, "result": {"kind": "auftraege", "count": len(snapshots)}}
+
+    async def snapshot_opsgroups(self) -> dict[str, Any]:
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "opsgroups",
+                "payload": {
+                    "opsgroups": [
+                        {
+                            "object_id": "OPSGROUP:Blue Guard",
+                            "object_type": "OPSGROUP",
+                            "category": "GROUND",
+                            "class_name": "ARMYGROUP",
+                            "coalition": "blue",
+                            "group_name": "Blue Guard",
+                            "alive": True,
+                            "active": True,
+                            "x": 10_000.0,
+                            "z": 20_000.0,
+                        }
+                    ]
+                },
+            }
+        )
+        return {"ok": True, "result": {"kind": "opsgroups", "count": 1}}
+
+    async def snapshot_groups(self) -> dict[str, Any]:
+        self.state.apply_message(
+            {
+                "type": "snapshot",
+                "kind": "groups",
+                "payload": {
+                    "groups": [
+                        {
+                            "object_id": "GROUP:Blue Guard",
+                            "object_type": "GROUP",
+                            "category": "GROUND",
+                            "coalition": "blue",
+                            "alive": True,
+                            "active": True,
+                            "threat_level": self.guard_group_threat,
+                        }
+                    ]
+                },
+            }
+        )
+        return {"ok": True, "result": {"kind": "groups", "count": 1}}
 
 
 class _CancelBeforeEvaluatedExecutionServer(_ExecutionServer):
@@ -2123,15 +2285,24 @@ def test_capture_establishes_guard_and_changes_opponent_goal_derivation() -> Non
             ),
             (
                 "cohorts",
-                [{
-                    "object_id": "COHORT:Blue Armor",
-                    "legion_id": "LEGION:Blue Brigade",
-                    "is_ground": True,
-                    "available_asset_count": 4,
-                    "homogeneous": True,
-                    "units_per_asset": 2,
-                    "mission_types": ["CAPTUREZONE", "PATROLZONE"],
-                }],
+                [
+                    {
+                        "object_id": "COHORT:Blue Armor",
+                        "legion_id": "LEGION:Blue Brigade",
+                        "is_ground": True,
+                        "available_asset_count": 4,
+                        "homogeneous": True,
+                        "units_per_asset": 2,
+                        "mission_types": ["CAPTUREZONE", "PATROLZONE"],
+                    },
+                    {
+                        "object_id": "COHORT:Blue Helicopters",
+                        "legion_id": "LEGION:Blue Brigade",
+                        "is_air": True,
+                        "available_asset_count": 4,
+                        "mission_types": ["PATROLZONE"],
+                    },
+                ],
             ),
         ):
             bridge.state.apply_message(
@@ -2173,6 +2344,16 @@ def test_capture_establishes_guard_and_changes_opponent_goal_derivation() -> Non
         assert patrol.persistent is True
         assert patrol.status is PlanMissionStatus.RUNNING
         assert patrol.outcome is None
+        create_commands = [
+            command
+            for command in server.commands
+            if command.action.startswith("auftrag.create_")
+        ]
+        assert create_commands
+        assert all(
+            command.params["allowed_cohort_ids"] == ["COHORT:Blue Armor"]
+            for command in create_commands
+        )
 
         bridge.declare_war("blue", reason="test capture reaction")
         blue = bridge.generate_strategic_goals("blue", register=False, generation_id="REACTION")
@@ -2187,6 +2368,48 @@ def test_capture_establishes_guard_and_changes_opponent_goal_derivation() -> Non
         assert len(red.goals) == 1
         assert red.goals[0].objective_id == objective.objective_id
         assert red.goals[0].action is StrategicGoalAction.CAPTURE
+
+    asyncio.run(scenario())
+
+
+def test_capture_guard_is_not_established_when_assigned_group_has_no_combat_power() -> None:
+    async def scenario() -> None:
+        server = _CaptureReactionExecutionServer(
+            final_owner="blue",
+            guard_threat=4,
+            guard_group_threat=0,
+        )
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        server._objective_updated = True
+        server._mission_types[2] = "PATROLZONE"
+        await server.snapshot_opszones()
+        await server.snapshot_zones()
+        await server.snapshot_auftraege()
+        await server.snapshot_opsgroups()
+        await server.snapshot_groups()
+        mission = PlanMissionExecution(
+            phase_id="consolidate",
+            intent_id="secure-zone",
+            requirement_id="REQ:Ground security",
+            mission_type="PATROLZONE",
+            required=True,
+            persistent=True,
+            established_on="Executing",
+            status=PlanMissionStatus.RUNNING,
+            auftrag_id="AUFTRAG:2",
+        )
+
+        established, observation, terminal = bridge.plan_executor._capture_guard_observation(
+            "blue",
+            "OPSZONE:Town",
+            mission,
+        )
+
+        assert established is False
+        assert terminal is False
+        assert "threat_blue=4" in observation
+        assert "ground_inside=1" in observation
+        assert "combat_inside=0" in observation
 
     asyncio.run(scenario())
 

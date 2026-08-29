@@ -77,6 +77,7 @@ class MooseBridgeState:
     intel_clusters: dict[str, dict[str, Any]] = field(default_factory=dict)
     loss_reports: dict[str, dict[str, Any]] = field(default_factory=dict)
     destroyed_object_ids: set[str] = field(default_factory=set)
+    active_player_aircraft: dict[str, dict[str, Any]] = field(default_factory=dict)
     opszone_objects: dict[str, OpsZone] = field(default_factory=dict)
     territory_objects: dict[str, Territory] = field(default_factory=dict)
     opsgroup_objects: dict[str, OpsGroup] = field(default_factory=dict)
@@ -127,6 +128,7 @@ class MooseBridgeState:
                 self.ammunition_objects.clear()
                 self.loss_reports.clear()
                 self.destroyed_object_ids.clear()
+                self.active_player_aircraft.clear()
                 self.lost_intel_contact_objects.clear()
                 self.lost_intel_contacts.clear()
             self.clock = next_clock
@@ -453,6 +455,19 @@ class MooseBridgeState:
         event_name = str(message.get("event") or payload.get("event") or "")
         if event_name == "mission.ended":
             self.reset_mission()
+            return
+        if event_name in {"player.aircraft.entered", "player.aircraft.left"}:
+            player_name = str(payload.get("player_name") or "")
+            unit_id = str(payload.get("unit_id") or "")
+            session_key = player_name or unit_id
+            if event_name == "player.aircraft.entered" and session_key:
+                self.active_player_aircraft[session_key] = {
+                    **payload,
+                    "event_id": message.get("id"),
+                    "mission_time": message.get("mission_time"),
+                }
+            elif session_key:
+                self.active_player_aircraft.pop(session_key, None)
             return
         if event_name == "object.destroyed":
             object_payload = payload.get("object") if isinstance(payload.get("object"), dict) else {}

@@ -52,6 +52,7 @@ configuration and is not intended to be run directly.
 | `monitor_intel.py` | Read-only | Print INTEL agents, contacts, and clusters. |
 | `monitor_group_distance.py` | Read-only | Track the distance between configured groups. |
 | `monitor_relationship.py` | Read-only | Print diplomacy state, escalation, incidents, and doctrine. |
+| `monitor_player_aircraft.py` | Read-only | Verify player aircraft enter/leave state and duplicate-leave suppression through the normal daemon control API. |
 | `monitor_airbase_capture.py` | Read-only | Observe airbase ownership and objective transitions. |
 | `monitor_unit_lost.py` | Destructive | Trigger an explosion and verify the resulting destruction event and snapshots. |
 | `territories.py` | Read-only by default | Inspect passive TERRITORY objects; optional owner changes are disabled by default. |

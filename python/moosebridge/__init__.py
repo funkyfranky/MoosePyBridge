@@ -39,7 +39,7 @@ from .conflict_readiness import (
     ConflictReadinessSeverity,
     evaluate_conflict_readiness,
 )
-from .dcs_events import DestroyedObjectEvent, KillEvent
+from .dcs_events import DestroyedObjectEvent, KillEvent, PlayerAircraftEvent
 from .diplomacy import (
     AIRBASE_CAPTURE_ESCALATION_POINTS,
     OPSZONE_CAPTURE_CONTEXT_MULTIPLIERS,
@@ -769,6 +769,7 @@ __all__ = [
     "DcsMissionEndedError",
     "DcsMissionInfo",
     "KillEvent",
+    "PlayerAircraftEvent",
     "DEFAULT_INCIDENT_WEIGHTS",
     "DEFAULT_DATAMINE_SENSOR_DATA",
     "DEFAULT_SENSOR_RANGE_REGISTRY",

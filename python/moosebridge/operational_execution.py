@@ -826,7 +826,12 @@ class OperationalPlanExecutor:
                             assignment=AuftragAssignment.commander(
                                 commander.object_id,
                                 allowed_legion_ids=tuple(requirement.allowed_legion_ids),
-                                allowed_cohort_ids=tuple(requirement.allowed_cohort_ids),
+                                # Reuse the exact recruitment pool that passed
+                                # Python feasibility. This preserves performer
+                                # category and capability filtering even when
+                                # the declarative requirement did not name a
+                                # specific COHORT.
+                                allowed_cohort_ids=tuple(requirement_assessment.candidate_cohort_ids),
                             ),
                             fire_support=fire_support if isinstance(fire_support, dict) else None,
                             recon_intel_id=(
@@ -894,6 +899,22 @@ class OperationalPlanExecutor:
                     phase,
                     execution,
                     reason,
+                    on_event,
+                )
+
+            security_error = await self._confirm_capture_security(
+                plan,
+                phase,
+                execution,
+                timeout_s=mission_timeout_s,
+                callback=on_event,
+            )
+            if security_error is not None:
+                return await self._block(
+                    plan,
+                    phase,
+                    execution,
+                    security_error,
                     on_event,
                 )
 
@@ -1256,6 +1277,177 @@ class OperationalPlanExecutor:
             if str(message.get("event") or "") == "mission.ended":
                 raise DcsMissionEndedError("DCS mission ended while monitoring DEFEND goal")
         return goal.status
+
+    async def _confirm_capture_security(
+        self,
+        plan: OperationalPlan,
+        phase: PlanPhase,
+        execution: OperationalPlanExecution,
+        *,
+        timeout_s: float,
+        callback: PlanExecutionCallback | None,
+    ) -> str | None:
+        """Wait until a required persistent guard has real combat presence."""
+
+        guarded_intents = tuple(
+            intent
+            for intent in phase.intents
+            if intent.metadata.get("establishment_condition")
+            == "assigned_ground_combat_presence_in_zone"
+        )
+        if not guarded_intents:
+            return None
+        if timeout_s <= 0:
+            return "capture security monitoring requires a positive timeout"
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        last_observation = "no guard observation available"
+        while True:
+            await self.client.snapshot_opszones()
+            await self.client.snapshot_zones()
+            await self.client.snapshot_auftraege()
+            await self.client.snapshot_opsgroups()
+            await self.client.snapshot_groups()
+
+            all_established = True
+            observations: list[str] = []
+            for intent in guarded_intents:
+                mission = next(
+                    (
+                        item
+                        for item in execution.missions
+                        if item.phase_id == phase.phase_id
+                        and item.intent_id == intent.intent_id
+                        and item.required
+                    ),
+                    None,
+                )
+                if mission is None or mission.auftrag_id is None:
+                    return f"required capture guard is unavailable for {intent.intent_id}"
+                established, observation, terminal = self._capture_guard_observation(
+                    plan.coalition,
+                    intent.target_object_id,
+                    mission,
+                )
+                observations.append(observation)
+                all_established = all_established and established
+                if terminal:
+                    return observation
+
+            last_observation = "; ".join(observations)
+            if all_established:
+                await self._emit(
+                    execution,
+                    PlanExecutionEvent(
+                        "strategic.security_established",
+                        plan.plan_id,
+                        phase_id=phase.phase_id,
+                        status="satisfied",
+                        message=last_observation,
+                    ),
+                    callback,
+                )
+                return None
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return f"capture guard did not establish combat presence: {last_observation}"
+            await asyncio.sleep(min(5.0, remaining))
+
+    def _capture_guard_observation(
+        self,
+        coalition: str,
+        opszone_id: str | None,
+        mission: PlanMissionExecution,
+    ) -> tuple[bool, str, bool]:
+        """Return guard establishment, diagnostic text, and terminal failure."""
+
+        if not opszone_id:
+            return False, "capture guard has no OPSZONE target", True
+        opszone = self.client.opszone(opszone_id)
+        if opszone is None:
+            return False, f"capture guard target is unavailable: {opszone_id}", False
+        owner = (opszone.owner_current_name or "neutral").lower()
+        threat = opszone.threat_blue if coalition == "blue" else opszone.threat_red
+        snapshot = self.client.auftrag(mission.auftrag_id or "")
+        status = (snapshot.status or "").lower() if snapshot is not None else "unknown"
+        if status in {"cancelled", "failed", "done", "success", "succeeded"}:
+            return (
+                False,
+                f"capture guard {mission.auftrag_id} ended with {status} before securing {opszone_id}",
+                True,
+            )
+
+        assigned_ids = tuple(snapshot.assigned_group_ids) if snapshot is not None else ()
+        inside: list[str] = []
+        combat_capable_inside: list[str] = []
+        for assigned_id in assigned_ids:
+            opsgroup = self.client.state.opsgroup_objects.get(assigned_id)
+            if opsgroup is None:
+                continue
+            category = f"{opsgroup.category or ''} {opsgroup.class_name or ''}".upper()
+            if "GROUND" not in category and "ARMY" not in category:
+                continue
+            if not opsgroup.alive or not opsgroup.active or opsgroup.x is None or opsgroup.z is None:
+                continue
+            if self._point_in_opszone(opsgroup.x, opsgroup.z, opszone):
+                inside.append(assigned_id)
+                group_name = str(opsgroup.group_name or opsgroup.name or "")
+                group_id = group_name if group_name.startswith("GROUP:") else f"GROUP:{group_name}"
+                group = self.client.state.groups.get(group_id, {})
+                if float(group.get("threat_level") or 0) > 0:
+                    combat_capable_inside.append(assigned_id)
+
+        established = (
+            owner == coalition
+            and not opszone.is_contested
+            and (threat or 0) > 0
+            and bool(combat_capable_inside)
+        )
+        observation = (
+            f"{opszone_id} owner={owner} contested={opszone.is_contested} "
+            f"threat_{coalition}={threat or 0} guard={mission.auftrag_id} "
+            f"assigned={len(assigned_ids)} ground_inside={len(inside)} "
+            f"combat_inside={len(combat_capable_inside)}"
+        )
+        return established, observation, False
+
+    def _point_in_opszone(self, x: float, z: float, opszone: Any) -> bool:
+        """Test a DCS-local point against the underlying MOOSE zone geometry."""
+
+        zone_name = str(opszone.zone_name or "")
+        zone_id = zone_name if zone_name.startswith("ZONE:") else f"ZONE:{zone_name}"
+        raw_zone = self.client.state.zones.get(zone_id, {})
+        vertices = raw_zone.get("vertices")
+        if isinstance(vertices, list) and len(vertices) >= 3:
+            polygon = [
+                (float(item["x"]), float(item["z"]))
+                for item in vertices
+                if isinstance(item, dict) and item.get("x") is not None and item.get("z") is not None
+            ]
+            if len(polygon) >= 3:
+                inside = False
+                previous_x, previous_z = polygon[-1]
+                for current_x, current_z in polygon:
+                    crosses = (current_z > z) != (previous_z > z)
+                    if crosses:
+                        edge_x = (
+                            (previous_x - current_x) * (z - current_z)
+                            / (previous_z - current_z)
+                            + current_x
+                        )
+                        if x < edge_x:
+                            inside = not inside
+                    previous_x, previous_z = current_x, current_z
+                return inside
+
+        center_x = raw_zone.get("x", opszone.x)
+        center_z = raw_zone.get("z", opszone.z)
+        radius = raw_zone.get("radius", opszone.zone_radius)
+        if center_x is None or center_z is None or radius is None:
+            return False
+        return (x - float(center_x)) ** 2 + (z - float(center_z)) ** 2 <= float(radius) ** 2
 
     async def _replay_destroyed_events(self, *, after_id: str | None) -> int:
         """Apply retained DCS destruction events before strategic assessment."""

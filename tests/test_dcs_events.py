@@ -11,6 +11,7 @@ from moosebridge import (
     DestroyedObjectEvent,
     InformationRequirement,
     KillEvent,
+    PlayerAircraftEvent,
     MissionIntent,
     MooseBridgeClient,
     MooseBridgeServer,
@@ -137,6 +138,35 @@ def kill_message() -> dict[str, object]:
     }
 
 
+def player_aircraft_message(event_name: str = "player.aircraft.entered") -> dict[str, object]:
+    return {
+        "type": "event",
+        "id": f"event-{event_name}",
+        "event": event_name,
+        "mission_time": 42.0,
+        "payload": {
+            "dcs_event_name": (
+                "MOOSE_PLAYER_ENTER_AIRCRAFT"
+                if event_name == "player.aircraft.entered"
+                else "S_EVENT_PLAYER_LEAVE_UNIT"
+            ),
+            "dcs_event_time": 41.8,
+            "player_name": "Hornet Pilot",
+            "unit_id": "UNIT:Ford 1-1",
+            "unit_name": "Ford 1-1",
+            "group_id": "GROUP:Ford 1",
+            "group_name": "Ford 1",
+            "opsgroup_id": "OPSGROUP:Ford 1",
+            "aircraft_type": "FA-18C_hornet",
+            "coalition": "blue",
+            "opsgroup": {
+                "object_id": "OPSGROUP:Ford 1",
+                "category": "FLIGHTGROUP",
+            },
+        },
+    }
+
+
 def airbase_captured_message() -> dict[str, object]:
     return {
         "type": "event",
@@ -212,6 +242,53 @@ def test_destroyed_object_event_model() -> None:
     assert event.mission_time == 125.5
     assert event.dcs_event_time == 125.25
     assert event.dcs_event_name == "S_EVENT_UNIT_LOST"
+
+
+def test_player_aircraft_event_model_and_state_lifecycle() -> None:
+    entered_message = player_aircraft_message()
+    event = PlayerAircraftEvent.from_message(entered_message)
+
+    assert event.entered is True
+    assert event.player_name == "Hornet Pilot"
+    assert event.unit_id == "UNIT:Ford 1-1"
+    assert event.group_id == "GROUP:Ford 1"
+    assert event.opsgroup_id == "OPSGROUP:Ford 1"
+    assert event.opsgroup == {"object_id": "OPSGROUP:Ford 1", "category": "FLIGHTGROUP"}
+
+    state = MooseBridgeState()
+    state.apply_message(entered_message)
+    assert state.active_player_aircraft["Hornet Pilot"]["aircraft_type"] == "FA-18C_hornet"
+
+    state.apply_message(player_aircraft_message("player.aircraft.left"))
+    assert not state.active_player_aircraft
+
+
+def test_sdk_waits_for_player_aircraft_lifecycle() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        bridge = MooseBridgeClient(server)
+        entered_waiter = asyncio.create_task(
+            bridge.wait_for_player_aircraft_entered("Hornet Pilot", timeout=1.0)
+        )
+        await asyncio.sleep(0)
+
+        await server._handle_line(json.dumps(player_aircraft_message()))
+        entered = await entered_waiter
+
+        assert entered.entered is True
+        assert bridge.state.active_player_aircraft["Hornet Pilot"]["unit_id"] == "UNIT:Ford 1-1"
+
+        left_waiter = asyncio.create_task(
+            bridge.wait_for_player_aircraft_left("Hornet Pilot", timeout=1.0)
+        )
+        await asyncio.sleep(0)
+        await server._handle_line(json.dumps(player_aircraft_message("player.aircraft.left")))
+        left = await left_waiter
+
+        assert left.entered is False
+        assert not bridge.state.active_player_aircraft
+
+    asyncio.run(scenario())
 
 
 def test_kill_event_model_and_diplomatic_incident_are_attributed_once() -> None:

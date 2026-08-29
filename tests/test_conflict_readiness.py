@@ -87,7 +87,7 @@ def _ready_inputs() -> tuple[MooseBridgeState, object, StrategicObjectiveGenerat
                 "dcs_name": coalition,
                 "legion_id": legion.object_id,
                 "available_asset_count": 4,
-                "mission_types": ["CAPTUREZONE", "ONGUARD", "STRIKE"],
+                "mission_types": ["CAPTUREZONE", "ONGUARD", "RECON", "STRIKE"],
             }
         )
         intel = Intel.from_payload(
@@ -129,6 +129,36 @@ def test_complete_bilateral_scenario_is_ready() -> None:
     assert report.coalition("blue").supports(ConflictCapability.CAPTURE)
     assert report.coalition("red").supports(ConflictCapability.DEFEND)
     assert report.coalition("red").supports(ConflictCapability.DESTROY)
+    assert report.coalition("red").recon_cohort_ids == ("COHORT:red",)
+    assert not any(issue.code == "recon_capability_missing" for issue in report.warnings)
+
+
+def test_missing_recon_capability_is_an_actionable_non_blocking_warning() -> None:
+    state, scope, objectives = _ready_inputs()
+    red = state.cohort_objects["COHORT:red"]
+    state.cohort_objects[red.object_id] = Cohort.from_payload(
+        {
+            "object_id": red.object_id,
+            "dcs_name": red.dcs_name,
+            "legion_id": red.legion_id,
+            "available_asset_count": red.available_asset_count,
+            "mission_types": ["CAPTUREZONE", "ONGUARD", "STRIKE"],
+        }
+    )
+
+    report = evaluate_conflict_readiness(
+        state,
+        scope,  # type: ignore[arg-type]
+        objectives,
+        configured_theater_id="Caucasus",
+        active_theater_id="Caucasus",
+    )
+
+    assert report.ready is True
+    assert report.coalition("red").recon_cohort_ids == ()
+    issue = next(issue for issue in report.warnings if issue.code == "recon_capability_missing")
+    assert issue.coalition == "red"
+    assert "lost contacts" in issue.message
 
 
 def test_theater_mismatch_blocks_controller_startup() -> None:

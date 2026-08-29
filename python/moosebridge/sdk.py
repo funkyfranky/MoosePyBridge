@@ -16,7 +16,7 @@ from .ammunition import DcsWeaponFlag, TaskWeaponSelection, UnitAmmunition, Weap
 from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsMissionInfo, DcsTime
 from .conflict_readiness import ConflictReadinessReport, evaluate_conflict_readiness
-from .dcs_events import DestroyedObjectEvent, KillEvent
+from .dcs_events import DestroyedObjectEvent, KillEvent, PlayerAircraftEvent
 from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
 from .infrastructure_sites import (
     GeographicSurveyPoint,
@@ -2771,6 +2771,44 @@ class MooseBridgeClient:
         )
         _raise_if_mission_ended(message, f"waiting for destruction of {object_id}")
         return DestroyedObjectEvent.from_message(message)
+
+    async def wait_for_player_aircraft_entered(
+        self,
+        player_name: str | None = None,
+        *,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> PlayerAircraftEvent:
+        """Wait until a player enters an aircraft, optionally filtered by name."""
+
+        filters = {"player_name": player_name} if player_name else None
+        message = await self.server.wait_for_event(
+            "player.aircraft.entered",
+            filters=filters,
+            timeout=timeout,
+            after_id=after_id,
+        )
+        _raise_if_mission_ended(message, "waiting for a player to enter an aircraft")
+        return PlayerAircraftEvent.from_message(message)
+
+    async def wait_for_player_aircraft_left(
+        self,
+        player_name: str | None = None,
+        *,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> PlayerAircraftEvent:
+        """Wait until a player leaves an aircraft, optionally filtered by name."""
+
+        filters = {"player_name": player_name} if player_name else None
+        message = await self.server.wait_for_event(
+            "player.aircraft.left",
+            filters=filters,
+            timeout=timeout,
+            after_id=after_id,
+        )
+        _raise_if_mission_ended(message, "waiting for a player to leave an aircraft")
+        return PlayerAircraftEvent.from_message(message)
 
     def _rebuild_strategic_scenery_index(self) -> None:
         """Index fixed scenery baselines belonging to current objectives."""

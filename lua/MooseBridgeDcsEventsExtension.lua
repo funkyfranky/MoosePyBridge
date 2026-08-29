@@ -85,6 +85,16 @@ function MOOSE_BRIDGE:_StartDcsEventForwarding()
     self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.Kill
     self:_Log("DCS Kill event forwarding enabled")
   end
+  if bridge_event_available(EVENTS.PlayerEnterAircraft) then
+    self:HandleEvent(EVENTS.PlayerEnterAircraft)
+    self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.PlayerEnterAircraft
+    self:_Log("MOOSE PlayerEnterAircraft event forwarding enabled")
+  end
+  if bridge_event_available(EVENTS.PlayerLeaveUnit) then
+    self:HandleEvent(EVENTS.PlayerLeaveUnit)
+    self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.PlayerLeaveUnit
+    self:_Log("DCS PlayerLeaveUnit event forwarding enabled")
+  end
   if bridge_event_available(EVENTS.MarkAdded) then
     self:HandleEvent(EVENTS.MarkAdded)
     self.DcsRegisteredEvents[#self.DcsRegisteredEvents + 1] = EVENTS.MarkAdded
@@ -122,6 +132,8 @@ function MOOSE_BRIDGE:_StopDcsEventForwarding()
   end
   self.DcsRegisteredEvents = {}
   self.DcsEventForwardingStarted = false
+  self.PlayerAircraftSessions = {}
+  self.PlayerAircraftLeaveTimes = {}
   return self
 end
 
@@ -310,6 +322,202 @@ function MOOSE_BRIDGE:OnEventKill(EventData)
   if not ok then
     self:_Log("Failed to forward Kill event: " .. tostring(err))
   end
+end
+
+--- Resolve the OPSGROUP specialization belonging to a player's DCS group.
+-- FLIGHTGROUP inherits OPSGROUP and MOOSE stores every OPSGROUP specialization
+-- in DATABASE.FLIGHTGROUPS despite that collection's historical name.
+function MOOSE_BRIDGE:_PlayerEventOpsGroup(group_name)
+  if not group_name then return nil, nil end
+  local opsgroup = self.RegisteredOpsGroups and self.RegisteredOpsGroups[group_name] or nil
+  local source = opsgroup and "registered" or nil
+  if not opsgroup and _DATABASE and type(_DATABASE.FLIGHTGROUPS) == "table" then
+    opsgroup = _DATABASE.FLIGHTGROUPS[group_name]
+    source = opsgroup and "database.FLIGHTGROUPS" or nil
+  end
+  return opsgroup, source
+end
+
+--- Find cached enter data when PlayerLeaveUnit omits player or wrapper fields.
+function MOOSE_BRIDGE:_CachedPlayerAircraftSession(player_name, unit_name)
+  for key, session in pairs(self.PlayerAircraftSessions or {}) do
+    if (player_name and session.player_name == player_name)
+      or (not player_name and unit_name and session.unit_name == unit_name) then
+      return session, key
+    end
+  end
+  return nil, nil
+end
+
+--- Announce a player entering an aircraft in dcs.log and to that DCS group.
+function MOOSE_BRIDGE:_NotifyPlayerEnteredAircraft(session, group)
+  local player_name = session.player_name or "<unknown player>"
+  local unit_name = session.unit_name or "<unknown unit>"
+  local aircraft_type = session.aircraft_type or "<unknown aircraft>"
+  local group_name = session.group_name or "<unknown group>"
+  self:_Log(string.format(
+    "Player/client entered aircraft: player='%s', unit='%s', type='%s', group='%s'",
+    player_name,
+    unit_name,
+    aircraft_type,
+    group_name
+  ))
+
+  if not MESSAGE then
+    self:_Log("Cannot display player-enter message: MOOSE MESSAGE is unavailable")
+    return self
+  end
+  if not group then
+    self:_Log("Cannot display player-enter message: group '" .. group_name .. "' is unavailable")
+    return self
+  end
+
+  local text = string.format(
+    "Spieler %s hat den Flugzeug-Slot %s (%s) betreten.",
+    player_name,
+    unit_name,
+    aircraft_type
+  )
+  local ok, err = pcall(function()
+    MESSAGE:New(text, 10, "MoosePyBridge"):ToGroup(group)
+  end)
+  if not ok then
+    self:_Log("Failed to display player-enter message for group '"
+      .. group_name .. "': " .. tostring(err))
+  end
+  return self
+end
+
+--- Record a player leaving an aircraft after enriching the event from cache.
+function MOOSE_BRIDGE:_LogPlayerLeftAircraft(session)
+  self:_Log(string.format(
+    "Player/client left aircraft: player='%s', unit='%s', type='%s', group='%s'",
+    session.player_name or "<unknown player>",
+    session.unit_name or "<unknown unit>",
+    session.aircraft_type or "<unknown aircraft>",
+    session.group_name or "<unknown group>"
+  ))
+  return self
+end
+
+--- Normalize the player slot lifecycle for Python consumers.
+function MOOSE_BRIDGE:_ForwardPlayerAircraftEvent(EventData, event_name, dcs_event_name, entering)
+  local ok, err = pcall(function()
+    if type(EventData) ~= "table" then error(dcs_event_name .. " event data is missing") end
+
+    local player_name = EventData.IniPlayerName or EventData.PlayerName
+    local unit_name = EventData.IniUnitName or EventData.IniDCSUnitName
+    local cached, cache_key = self:_CachedPlayerAircraftSession(player_name, unit_name)
+    player_name = player_name or (cached and cached.player_name)
+    unit_name = unit_name or (cached and cached.unit_name)
+    local group_name = EventData.IniGroupName or EventData.IniDCSGroupName
+      or (cached and cached.group_name)
+    local aircraft_type = EventData.IniTypeName or (cached and cached.aircraft_type)
+    local coalition_name = self:_CoalitionToName(EventData.IniCoalition)
+      or (cached and cached.coalition)
+    if not player_name and not unit_name then
+      error(dcs_event_name .. " has neither player nor unit identity")
+    end
+
+    local unit = EventData.IniUnit
+    if not unit and unit_name and _DATABASE and type(_DATABASE.UNITS) == "table" then
+      unit = _DATABASE.UNITS[unit_name]
+    end
+    local unit_item = nil
+    if unit and unit_name then
+      local snapshot_ok, value = pcall(function() return self:_BuildUnitSnapshotItem(unit_name, unit) end)
+      if snapshot_ok then unit_item = value end
+    end
+
+    local group = EventData.IniGroup
+    if not group and group_name and _DATABASE and type(_DATABASE.GROUPS) == "table" then
+      group = _DATABASE.GROUPS[group_name]
+    end
+    local group_item = nil
+    if group and group_name then
+      local snapshot_ok, value = pcall(function() return self:_BuildGroupSnapshotItem(group_name, group) end)
+      if snapshot_ok then group_item = value end
+    end
+
+    local opsgroup, opsgroup_source = self:_PlayerEventOpsGroup(group_name)
+    local opsgroup_item = nil
+    if opsgroup then
+      local snapshot_ok, value = pcall(function()
+        return self:_BuildOpsGroupSnapshotItem(group_name, opsgroup, opsgroup_source)
+      end)
+      if snapshot_ok then opsgroup_item = value end
+    end
+
+    local session = {
+      player_name=player_name and tostring(player_name) or nil,
+      unit_name=unit_name and tostring(unit_name) or nil,
+      group_name=group_name and tostring(group_name) or nil,
+      aircraft_type=aircraft_type and tostring(aircraft_type) or nil,
+      coalition=coalition_name,
+    }
+    self.PlayerAircraftSessions = self.PlayerAircraftSessions or {}
+    self.PlayerAircraftLeaveTimes = self.PlayerAircraftLeaveTimes or {}
+    local lifecycle_key = session.player_name or (session.unit_name and ("UNIT:" .. session.unit_name))
+    local lifecycle_time = tonumber(EventData.time)
+      or (timer and timer.getTime and timer.getTime()) or 0
+    if entering then
+      local key = session.player_name or ("UNIT:" .. tostring(session.unit_name))
+      if lifecycle_key then self.PlayerAircraftLeaveTimes[lifecycle_key] = nil end
+      self.PlayerAircraftSessions[key] = session
+      self:_NotifyPlayerEnteredAircraft(session, group)
+    else
+      local previous_leave = lifecycle_key and self.PlayerAircraftLeaveTimes[lifecycle_key] or nil
+      if previous_leave and math.abs(lifecycle_time - previous_leave) <= 1 then
+        self:_Log("Suppressed duplicate PlayerLeaveUnit for player='"
+          .. tostring(session.player_name or "<unknown player>") .. "', unit='"
+          .. tostring(session.unit_name or "<unknown unit>") .. "'")
+        return
+      end
+      if lifecycle_key then self.PlayerAircraftLeaveTimes[lifecycle_key] = lifecycle_time end
+      self:_LogPlayerLeftAircraft(session)
+      if cache_key then self.PlayerAircraftSessions[cache_key] = nil end
+    end
+
+    self:SendEvent(event_name, {
+      dcs_event_id=EventData.id,
+      dcs_event_name=dcs_event_name,
+      dcs_event_time=EventData.time,
+      player_name=session.player_name,
+      unit_id=session.unit_name and ("UNIT:" .. session.unit_name) or nil,
+      unit_name=session.unit_name,
+      group_id=session.group_name and ("GROUP:" .. session.group_name) or nil,
+      group_name=session.group_name,
+      opsgroup_id=opsgroup_item and opsgroup_item.object_id or nil,
+      aircraft_type=session.aircraft_type,
+      coalition=session.coalition,
+      unit=unit_item,
+      group=group_item,
+      opsgroup=opsgroup_item,
+    })
+  end)
+  if not ok then
+    self:_Log("Failed to forward " .. tostring(dcs_event_name) .. " event: " .. tostring(err))
+  end
+end
+
+--- Forward MOOSE's multiplayer-safe delayed player-enter event.
+function MOOSE_BRIDGE:OnEventPlayerEnterAircraft(EventData)
+  self:_ForwardPlayerAircraftEvent(
+    EventData,
+    "player.aircraft.entered",
+    "MOOSE_PLAYER_ENTER_AIRCRAFT",
+    true
+  )
+end
+
+--- Forward DCS S_EVENT_PLAYER_LEAVE_UNIT and close the cached player session.
+function MOOSE_BRIDGE:OnEventPlayerLeaveUnit(EventData)
+  self:_ForwardPlayerAircraftEvent(
+    EventData,
+    "player.aircraft.left",
+    "S_EVENT_PLAYER_LEAVE_UNIT",
+    false
+  )
 end
 
 --- Forward one DCS F10 map-marker event without interpreting its text.

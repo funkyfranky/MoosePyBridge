@@ -141,6 +141,8 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert "self:HandleEvent(EVENTS.UnitLost)" in source
     assert "self:HandleEvent(EVENTS.Dead)" in source
     assert "self:HandleEvent(EVENTS.Kill)" in source
+    assert "self:HandleEvent(EVENTS.PlayerEnterAircraft)" in source
+    assert "self:HandleEvent(EVENTS.PlayerLeaveUnit)" in source
     assert "self:HandleEvent(EVENTS.MarkAdded)" in source
     assert "self:HandleEvent(EVENTS.MarkChange)" in source
     assert "self:HandleEvent(EVENTS.MarkRemoved)" in source
@@ -149,6 +151,8 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert "function MOOSE_BRIDGE:OnEventUnitLost(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventDead(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventKill(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventPlayerEnterAircraft(EventData)" in source
+    assert "function MOOSE_BRIDGE:OnEventPlayerLeaveUnit(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventMarkAdded(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventMarkChange(EventData)" in source
     assert "function MOOSE_BRIDGE:OnEventMarkRemoved(EventData)" in source
@@ -156,6 +160,17 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert 'self:SendEvent("airbase.coalition_changed"' in source
     assert 'self:SendEvent("object.destroyed"' in source
     assert 'self:SendEvent("combat.kill"' in source
+    assert '"player.aircraft.entered"' in source
+    assert '"player.aircraft.left"' in source
+    assert "self.PlayerAircraftSessions" in source
+    assert "function MOOSE_BRIDGE:_NotifyPlayerEnteredAircraft(session, group)" in source
+    assert 'self:_Log(string.format(' in source
+    assert 'MESSAGE:New(text, 10, "MoosePyBridge"):ToGroup(group)' in source
+    assert "function MOOSE_BRIDGE:_LogPlayerLeftAircraft(session)" in source
+    assert '"Player/client left aircraft: player=' in source
+    assert "self.PlayerAircraftLeaveTimes" in source
+    assert "Suppressed duplicate PlayerLeaveUnit" in source
+    assert "math.abs(lifecycle_time - previous_leave) <= 1" in source
     assert 'self:SendEvent(event_name' in source
     assert '"map.marker.changed"' in source
     assert 'self:SendEvent("mission.ended"' in source

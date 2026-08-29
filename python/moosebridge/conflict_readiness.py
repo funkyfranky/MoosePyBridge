@@ -48,6 +48,7 @@ class CoalitionConflictReadiness:
     legion_ids: tuple[str, ...]
     cohort_ids: tuple[str, ...]
     available_asset_count: int
+    recon_cohort_ids: tuple[str, ...]
     capability_cohort_ids: Mapping[ConflictCapability, tuple[str, ...]]
     owned_objective_count: int
     opposing_objective_count: int
@@ -313,6 +314,23 @@ def _evaluate_coalition(
     elif not available_cohorts:
         issues.append(_error("assets_unavailable", f"{coalition} has no currently available COHORT assets", coalition))
 
+    recon_cohort_ids = tuple(
+        item.object_id
+        for item in available_cohorts
+        if "RECON" in item.mission_type_keys
+    )
+    if not recon_cohort_ids:
+        issues.append(
+            _warning(
+                "recon_capability_missing",
+                (
+                    f"{coalition} has no available RECON-capable COHORT; important lost contacts "
+                    "can make otherwise valid operational plans infeasible"
+                ),
+                coalition,
+            )
+        )
+
     capability_cohorts: dict[ConflictCapability, tuple[str, ...]] = {}
     for capability, mission_types in _CAPABILITY_MISSION_TYPES.items():
         ids = tuple(
@@ -359,6 +377,7 @@ def _evaluate_coalition(
         legion_ids=tuple(item.object_id for item in legions),
         cohort_ids=tuple(item.object_id for item in cohorts),
         available_asset_count=sum(item.available_asset_count or 0 for item in available_cohorts),
+        recon_cohort_ids=recon_cohort_ids,
         capability_cohort_ids=capability_cohorts,
         owned_objective_count=len(owned),
         opposing_objective_count=len(opposing),

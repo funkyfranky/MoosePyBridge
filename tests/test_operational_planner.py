@@ -116,8 +116,10 @@ def test_rule_based_capture_proposal_uses_highest_threat_visible_nearby_defender
     assert [phase.phase_id for phase in plan.phases] == ["isolate", "seize", "consolidate"]
     assert plan.phases[0].intents[0].target_object_id == "GROUP:High threat"
     assert plan.phases[1].depends_on == ("isolate",)
-    assert plan.phases[1].intents[0].target_object_id == "OPSZONE:Town"
-    assault = plan.phases[1].intents[0].asset_requirements[0]
+    capture = plan.phases[1].intents[0]
+    assert capture.target_object_id == "OPSZONE:Town"
+    assert capture.metadata["auftrag_params"]["stay_in_zone_time_s"] == 600.0
+    assault = capture.asset_requirements[0]
     assert assault.min_count == 1
     assert assault.max_count == 2
     assert assault.min_unit_count == 2
@@ -134,7 +136,11 @@ def test_rule_based_capture_proposal_uses_highest_threat_visible_nearby_defender
     assert security.asset_requirements[0].min_count == 1
     assert security.asset_requirements[0].max_count == 2
     assert security.asset_requirements[0].min_unit_count == 2
-    assert security.metadata == {"persistent": True, "established_on": "Executing"}
+    assert security.metadata == {
+        "persistent": True,
+        "established_on": "Executing",
+        "establishment_condition": "assigned_ground_combat_presence_in_zone",
+    }
     assert plan.provenance is not None
     assert plan.provenance.source_type is PlanSourceType.RULE_ENGINE
     assert plan.provenance.picture_mission_time == 321.5

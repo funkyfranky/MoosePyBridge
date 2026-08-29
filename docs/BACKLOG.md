@@ -81,6 +81,11 @@ Priorities:
 
 ## P1 - Intelligence and RECON
 
+- [x] **Expose missing reconnaissance capacity in conflict readiness.** CAPTURE,
+  DEFEND, and DESTROY remain the blocking core capabilities, but a coalition
+  without an available RECON-capable COHORT cannot reacquire an important lost
+  contact before replanning. Report this as an actionable non-blocking preflight
+  warning and include the relevant COHORT ids when capacity exists.
 - [ ] **Optional satellite picture.** Provide an explicit omniscient INTEL
   source that can add all relevant groups as known contacts independently of
   normal DCS detection. The Lua integration should use

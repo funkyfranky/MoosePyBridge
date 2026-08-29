@@ -92,6 +92,61 @@ class KillEvent:
         )
 
 
+@dataclass(slots=True, frozen=True)
+class PlayerAircraftEvent:
+    """One player entering or leaving a DCS aircraft slot."""
+
+    event_name: str
+    player_name: str | None
+    unit_id: str | None
+    group_id: str | None = None
+    opsgroup_id: str | None = None
+    aircraft_type: str | None = None
+    coalition: str | None = None
+    mission_time: float | None = None
+    dcs_event_time: float | None = None
+    dcs_event_name: str | None = None
+    unit: dict[str, Any] | None = field(default=None, repr=False, compare=False)
+    group: dict[str, Any] | None = field(default=None, repr=False, compare=False)
+    opsgroup: dict[str, Any] | None = field(default=None, repr=False, compare=False)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    @property
+    def entered(self) -> bool:
+        """Whether this event starts a player aircraft session."""
+
+        return self.event_name == "player.aircraft.entered"
+
+    @classmethod
+    def from_message(cls, message: dict[str, Any]) -> "PlayerAircraftEvent":
+        """Build a typed event from a normalized bridge event message."""
+
+        event_name = str(message.get("event") or "")
+        if event_name not in {"player.aircraft.entered", "player.aircraft.left"}:
+            raise ValueError(f"unsupported player aircraft event: {event_name or '<missing>'}")
+        payload = message.get("payload") if isinstance(message.get("payload"), dict) else {}
+        player_name = _optional_text(payload.get("player_name"))
+        unit_id = _optional_text(payload.get("unit_id"))
+        if player_name is None and unit_id is None:
+            raise ValueError(f"{event_name} event has neither player_name nor unit_id")
+        return cls(
+            event_name=event_name,
+            player_name=player_name,
+            unit_id=unit_id,
+            group_id=_optional_text(payload.get("group_id")),
+            opsgroup_id=_optional_text(payload.get("opsgroup_id")),
+            aircraft_type=_optional_text(payload.get("aircraft_type")),
+            coalition=_optional_text(payload.get("coalition")),
+            mission_time=_optional_float(message.get("mission_time")),
+            dcs_event_time=_optional_float(payload.get("dcs_event_time")),
+            dcs_event_name=_optional_text(payload.get("dcs_event_name")),
+            unit=payload.get("unit") if isinstance(payload.get("unit"), dict) else None,
+            group=payload.get("group") if isinstance(payload.get("group"), dict) else None,
+            opsgroup=payload.get("opsgroup") if isinstance(payload.get("opsgroup"), dict) else None,
+            raw=message,
+        )
+
+
 def _optional_text(value: Any) -> str | None:
     return str(value) if value is not None and value != "" else None
 
