@@ -17,6 +17,7 @@ from .auftraege import AuftragCommand, AuftragEvent
 from .clock import DcsMissionInfo, DcsTime
 from .conflict_readiness import ConflictReadinessReport, evaluate_conflict_readiness
 from .dcs_events import DestroyedObjectEvent, KillEvent, PlayerAircraftEvent
+from .flight_routes import FlightGroupRoute
 from .debug_overlay import DcsRoadRoute, DcsSurfacePoint, DebugMarkup, DebugMarkupPoint, RoadPointMatch, validate_debug_overlay
 from .infrastructure_sites import (
     GeographicSurveyPoint,
@@ -5168,6 +5169,39 @@ class MooseBridgeClient:
             }
         )
         return require_ok(await self.server.send_command(BridgeCommand(action="zone.draw", params=params), timeout=timeout))
+
+    async def get_flightgroup_route(
+        self,
+        opsgroup_id: str,
+        *,
+        route_source: str = "mission_editor",
+        timeout: float = 10.0,
+    ) -> FlightGroupRoute:
+        """Read original ME waypoints or the current route from a FLIGHTGROUP.
+
+        Mission Editor data comes from the inherited OPSGROUP.waypoints0;
+        current route data comes from OPSGROUP:GetWaypoints(). Neither source
+        is mutated. The original route retains its landing waypoint.
+        """
+
+        if not opsgroup_id.startswith("OPSGROUP:") or not opsgroup_id[9:].strip():
+            raise ValueError("opsgroup_id must be a nonempty OPSGROUP: id")
+        if route_source not in {"mission_editor", "current"}:
+            raise ValueError("route_source must be mission_editor or current")
+        ack = require_ok(await self.server.send_command(
+            BridgeCommand(
+                action="flightgroup.route.get",
+                params={"opsgroup_id": opsgroup_id, "route_source": route_source},
+            ),
+            timeout=timeout,
+        ))
+        result = ack.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("DCS returned an invalid flight route result")
+        route = FlightGroupRoute.from_payload(result)
+        if route.opsgroup_id != opsgroup_id or route.route_source != route_source:
+            raise ValueError("DCS returned a different flight route than requested")
+        return route
 
     async def draw_debug_overlay(
         self,

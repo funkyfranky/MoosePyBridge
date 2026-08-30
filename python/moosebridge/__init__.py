@@ -40,6 +40,8 @@ from .conflict_readiness import (
     evaluate_conflict_readiness,
 )
 from .dcs_events import DestroyedObjectEvent, KillEvent, PlayerAircraftEvent
+from .flight_routes import FlightGroupRoute, FlightRouteWaypoint
+from .navigation import NavigationSolution, RouteNavigator, format_navigation_status
 from .diplomacy import (
     AIRBASE_CAPTURE_ESCALATION_POINTS,
     OPSZONE_CAPTURE_CONTEXT_MULTIPLIERS,
@@ -770,6 +772,11 @@ __all__ = [
     "DcsMissionInfo",
     "KillEvent",
     "PlayerAircraftEvent",
+    "FlightGroupRoute",
+    "FlightRouteWaypoint",
+    "NavigationSolution",
+    "RouteNavigator",
+    "format_navigation_status",
     "DEFAULT_INCIDENT_WEIGHTS",
     "DEFAULT_DATAMINE_SENSOR_DATA",
     "DEFAULT_SENSOR_RANGE_REGISTRY",

@@ -182,6 +182,46 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
     assert '"destruction_event"' in source
 
 
+def test_flightgroup_route_command_reads_me_and_current_without_changing_route() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeDcsEventsExtension.lua").read_text(encoding="utf-8")
+    route_code = source.split("function MOOSE_BRIDGE:_GetFlightGroupRoute(params)", 1)[1]
+    route_code = route_code.split("--- Find cached enter data", 1)[0]
+    assert "waypoints = opsgroup.waypoints0" in route_code
+    assert 'self:_SafeCall(opsgroup, "GetWaypoints")' in route_code
+    assert 'self:_SafeCall(opsgroup, "IsFlightgroup")' in route_code
+    assert "local z = tonumber(waypoint.y)" in route_code
+    assert "altitude_m=altitude" in route_code
+    assert "altitude_type=waypoint.alt_type" in route_code
+    assert '#waypoints > 501' in route_code
+    assert 'self:RegisterCommand("flightgroup.route.get"' in route_code
+    assert "_player_route_register_default_commands(self)" in route_code
+    assert "UpdateRoute" not in route_code
+    assert "AddWaypoint" not in route_code
+
+
+def test_player_enter_waits_for_flightgroup_and_preserves_lifecycle_order() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridgeDcsEventsExtension.lua").read_text(encoding="utf-8")
+    enter = source.split("function MOOSE_BRIDGE:OnEventPlayerEnterAircraft(EventData)", 1)[1]
+    enter = enter.split("function MOOSE_BRIDGE:OnEventPlayerLeaveUnit(EventData)", 1)[0]
+    assert "for key, value in pairs(EventData) do pending[key] = value end" in enter
+    assert "SCHEDULER:New(self, function(bridge)" in enter
+    assert "end, {}, 0.5)" in enter
+    assert "bridge:_FlushPendingPlayerAircraftEnter(pending)" in enter
+    assert "self:ScheduleOnce(" not in enter
+    assert "self.Scheduler =" not in enter
+    leave = source.split("function MOOSE_BRIDGE:OnEventPlayerLeaveUnit(EventData)", 1)[1]
+    leave = leave.split("--- Forward one DCS F10", 1)[0]
+    assert leave.index("self:_FlushPendingPlayerAircraftEnter(pending)") < leave.index(
+        "self:_ForwardPlayerAircraftEvent("
+    )
+    stop = source.split("function MOOSE_BRIDGE:_StopDcsEventForwarding()", 1)[1].split(
+        "--- Forward DCS S_EVENT_BASE_CAPTURED", 1
+    )[0]
+    assert "self.PendingPlayerAircraftEnters = {}" in stop
+    mission_end = source.split("function MOOSE_BRIDGE:OnEventMissionEnd(EventData)", 1)[1]
+    assert "self.PendingPlayerAircraftEnters = {}" in mission_end
+
+
 def test_opszone_capture_fsm_event_composes_public_callback_without_touching_internal_fsm() -> None:
     source = (REPO_ROOT / "lua" / "MooseBridgeAuftragExecutionExtension.lua").read_text(encoding="utf-8")
 

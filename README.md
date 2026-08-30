@@ -1137,6 +1137,33 @@ also be started directly with **Run Python File** in VS Code. Player filter,
 cycle count, ports, and timeouts are editable constants at the top of the
 script. The normal daemon continues running after the monitor exits.
 
+The monitor now also reads the player's FLIGHTGROUP route and connects the
+Mission Editor waypoints with a cyan line on the coalition's F10 map. Set
+`DRAW_ROUTE_ON_ENTER = False` for the original lifecycle-only test. The overlay
+is replaced on re-entry and removed on leave or script exit.
+
+`bridge.get_flightgroup_route("OPSGROUP:Test Hornet")` reads the preserved
+`OPSGROUP.waypoints0` route, including its landing point. With
+`route_source="current"`, it reads the processed route via
+`OPSGROUP:GetWaypoints()` instead. The original altitude reference (BARO/RADIO),
+altitude in metres, speed in m/s, and point order are preserved. No DCS route or
+cockpit waypoints are modified.
+
+The same script now samples the player's `UNIT:` coordinates every two seconds
+and prints live horizontal distance to the target (NM), geographic/true bearing,
+and signed cross-track deviation from the active F10 segment (metres, left/right).
+Its independent `RouteNavigator` starts with WP 1 -> WP 2 and advances within a
+500 m capture radius, or on a close sampled crossing of the waypoint's end plane.
+This is not the active avionics waypoint, a magnetic heading, or a wind-corrected
+steering command. Reaching the final point is not proof of landing.
+
+VS Code configuration constants: `MONITOR_NAVIGATION`,
+`NAVIGATION_INTERVAL_SECONDS`, `INITIAL_TARGET_WAYPOINT`,
+`WAYPOINT_CAPTURE_RADIUS_M`, and `NAVIGATION_MAX_SAMPLE_GAP_SECONDS`.
+Positions are queried live with the existing `object.coords` API; no new Lua
+timer is required. Navigation polling is cancelled on slot leave, mission end,
+and script exit. The F10 route remains visible while flying.
+
 Example:
 
 ```python
@@ -1146,6 +1173,81 @@ ack = await server.message_to_coalition(
     duration=10,
 )
 ```
+
+### Navigation radio menu
+
+Start the normal daemon and restart the mission after the Lua update. Run
+`examples/sdk/run_navigation_menu.py` with **Run Python File** in VS Code, then
+open **radio menu > F10 Other > Navigation**. Starting in an already occupied
+slot is supported. Stop the old menu/lifecycle test scripts first to avoid their
+independent route overlays and console output. The normal daemon can keep running.
+
+- **Route anzeigen / Route ausblenden**: show/hide the cyan Mission Editor route
+  for the group's coalition, using the existing F10 drawing implementation.
+- **Navigationsstatus**: send the reference aircraft, target waypoint, distance
+  in NM, true bearing, and cross-track error to the group via MOOSE MESSAGE.
+- **Hinweise ein / Hinweise aus**: sample every two seconds and display guidance
+  about every ten seconds, also at waypoint capture. Repeated enable is idempotent.
+
+Route display and hints start **off**. Display toggling does not reset progress
+or stop hints. Without hints, positions are queried only for status requests.
+The Python tracker starts at WP 1 -> WP 2; it neither reads nor changes cockpit
+waypoints. Final capture is horizontal proximity, not a landing check.
+
+The menu is group-scoped. Status/hints require exactly one distinct player
+aircraft in the group and its FLIGHTGROUP; multiple crew seats in the same unit
+are supported as one aircraft. Multiple player aircraft produce an explanatory
+message instead of guessing whose position to use. The F10 line is visible to
+the coalition, not exclusively to the group. Navigation errors are reported to
+the group and Python console; failed periodic guidance stops until re-enabled.
+
+The Lua menu session owns its F10 line. Last occupant leave, mission end, Ctrl+C,
+or replacing the menu run clears only that session's line. Messages and overlay
+commands validate owner, menu-session token, group ID and current occupancy in
+Lua, preventing delayed writes to a new slot session. Python cancels the matching
+hint task on `player.menu.closed`. Mission end/reset ends the script; start it
+again for the next mission. If the process is forcibly killed, Lua cleanup still
+runs on last leave or mission end, and a new script run replaces abandoned menus.
+
+The old `monitor_player_menu.py` remains a diagnostic two-action test; the new
+navigation script replaces that test menu rather than adding another tree.
+Configuration: `NAVIGATION_INTERVAL_SECONDS`, `HINT_INTERVAL_SECONDS`,
+`INITIAL_TARGET_WAYPOINT`, `WAYPOINT_CAPTURE_RADIUS_M` and
+`NAVIGATION_MAX_SAMPLE_GAP_SECONDS` at the top of the script.
+
+Manual check (possible while parked): show/hide the line, request status, enable
+hints for at least ten seconds, disable them, leave/re-enter the slot, then stop
+with Ctrl+C. Check that only the navigation menu's line disappears and no hints
+continue after disabling/leaving. Airborne sequencing/XTE testing remains open.
+
+### Player radio-menu test
+
+Start the normal daemon, restart the DCS mission with the updated
+`MooseBridgeDcsEventsExtension.lua`, then run
+`examples/sdk/monitor_player_menu.py` with **Run Python File** in VS Code.
+The script enables a test menu for already occupied aircraft groups and for
+later player entries. No flight, FLIGHTGROUP creation, or route is required.
+
+Open the **radio menu**, then **F10 Other > MoosePyBridge Test** (not the F10 map):
+
+- **Nachricht anzeigen**: display a ten-second message with MOOSE
+  `MESSAGE:New(...):ToGroup(group)`; this action stays in Lua.
+- **Python-Konsole**: forward `player.menu.selected` through the running daemon;
+  the test script prints `MENU CLICK ... group=GROUP:Test Hornet ...` for each click.
+
+MOOSE `MENU_GROUP`/`MENU_GROUP_COMMAND` are group-scoped: all players in the group
+share the menu and message. DCS does not provide the clicking player's identity.
+The event includes `group_sessions` as context, not as click attribution.
+Only the last occupant leaving removes the group's test menu. Re-entry recreates
+it; stale callbacks are ignored. Unrelated mission menus are not removed.
+
+Stop the script with **Ctrl+C** to disable its menus. Mission end also clears them
+and ends the script; run it again for the next mission. A forced process kill may
+leave the menus until slot exit or mission end; a new run replaces the abandoned
+test. Only one run owns this test at a time, with an `owner_id` guarding cleanup
+and event filtering. Menus are disabled by default and enabled through the
+`player.menu.test.configure` command (`enabled`, `owner_id`). The normal daemon
+does not need a restart for this test.
 
 ## Interactive control client
 

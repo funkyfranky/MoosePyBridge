@@ -305,6 +305,12 @@ unterdrückt deshalb gleiche Leave-Ereignisse pro Spieler beziehungsweise Unit
 innerhalb einer Sekunde; ein erneuter Einstieg setzt dieses Fenster sofort
 zurück.
 
+Die Bridge verarbeitet `PlayerEnterAircraft` zusätzlich um 0,5 Sekunden
+verzögert. So können Missionsskripte im selben Event zunächst die
+`FLIGHTGROUP` erstellen; die Bridge löst die `OPSGROUP` erst danach auf.
+Verlässt der Spieler den Slot vorher, wird der ausstehende Eintritt vor dem
+Austritt verarbeitet, damit keine verspätete aktive Session zurückbleibt.
+
 MOOSE kann für semantische Missionsobjekte, KI-Gruppen und Routen verwendet
 werden. Es ist jedoch keine universelle Schnittstelle zur Bedienung der Avionik
 eines Spielerflugzeugs.
@@ -331,10 +337,111 @@ ergänzen. Dieser Testpfad ermöglicht ohne externe Navigationsdaten bereits:
 - Player-Session beim Einsteigen starten und beim Slot-Verlassen beenden
 - später dieselbe neutrale Route mit Navigraph- und DTC-Adaptern vergleichen
 
+Implementierter erster Routenabruf:
+
+- Lua-Kommando `flightgroup.route.get`, Python-SDK
+  `get_flightgroup_route(opsgroup_id, route_source="mission_editor")`.
+- Die vollständige ME-Route stammt aus der geerbten `waypoints0`-Liste.
+  `GetWaypoints()` liefert dagegen die bearbeitete aktuelle Route; MOOSE kann
+  dort insbesondere den Landepunkt entfernen. Diese Quelle ist separat mit
+  `route_source="current"` verfügbar.
+- DCS-Wegpunkt-`x/y` sind horizontale Koordinaten und werden als Welt-`x/z`
+  behandelt. `alt` (Meter), `alt_type` (BARO/RADIO) und `speed` (m/s) bleiben
+  erhalten. Die F10-Darstellung verwendet nur die horizontale Projektion.
+- `examples/sdk/monitor_player_aircraft.py` fragt die Route nach dem Einstieg
+  ab und zeichnet die aufeinanderfolgenden Punkte als cyanfarbene Linie für
+  die eigene Koalition. Mindestens zwei, höchstens 501 Punkte werden unterstützt.
+  Beim Slot-Verlassen oder Skriptende wird nur dieses Overlay entfernt.
+- Die Darstellung verändert weder die Route noch die Avionik. Sie verbindet
+  lediglich Wegpunkte geradlinig und bildet noch keine Kurven, Holdings oder
+  Instrumentenverfahren ab.
+
+Live-Routenverfolgung im selben Python-Skript:
+
+- Positionsabfrage der konkreten Spieler-`UNIT` alle zwei Sekunden über das
+  vorhandene `object.coords`; kein zusätzlicher Lua-Timer.
+- Entfernung zum nächsten Wegpunkt in NM und Peilung auf geografisch Nord.
+  Kein magnetischer Steuerkurs und noch keine Windkorrektur.
+- Seitliche Abweichung (XTE) in Metern zur aktiven geraden Segmentlinie:
+  positiv rechts, negativ links. Berechnet in DCS-`x/z` passend zur F10-Linie;
+  kein 3D-Schrägabstand. Vor/hinter dem Segment bezieht sie sich auf dessen
+  verlängerte Linie, nicht auf den Abstand zum Endpunkt.
+- Eigene deterministische Fortschrittsverfolgung ab WP 1 -> WP 2, konfigurierbar
+  mit `INITIAL_TARGET_WAYPOINT`. Sie liest nicht die Avionik-Wegpunktauswahl aus.
+- Umschalten beim Erreichen eines 500-m-Radius. Ein Überflug zwischen zwei
+  Messungen zählt ebenfalls bei seitlicher Nähe und höchstens zehn Sekunden
+  Messabstand. Keine automatische Übernahme eines weit voraus liegenden
+  Wegpunkts beim ersten Positionssample.
+- Zielpunkt erreicht bedeutet ausschließlich horizontale Nähe, nicht
+  erfolgreiche Landung oder Einhaltung von Höhe und Geschwindigkeit.
+- Die Positionsabfrage wird bei Leave, Missionsende und Skriptende abgebrochen.
+
 Navigraph bildet überwiegend aktuelle reale zivile Navigation ab. DCS besitzt
 eigene und teilweise historische Theaterdaten. Deshalb ist ein expliziter
 Abgleich nötig. Ein identischer ICAO-Code garantiert nicht automatisch gleiche
 Runways, Frequenzen, Verfahren oder Koordinaten.
+
+### Ingame-Menü: erster Funktionstest
+
+- MOOSE-Basis: `MENU_GROUP:New(group, text)` erstellt das Untermenü;
+  `MENU_GROUP_COMMAND:New(group, text, parent, callback)` bindet die Aktionen.
+- Testskript: `examples/sdk/monitor_player_menu.py`, direkt in VS Code starten,
+  während der normale Python-Daemon und die DCS-Mission laufen. Nach dem
+  Lua-Update die Mission einmal neu starten. Die Lua-Projektdatei wird zusätzlich
+  ins MOOSE-Verzeichnis auf Branch `FF/PyBridge` synchronisiert.
+- Funkmenü → F10 Other/Andere → **MoosePyBridge Test**; nicht die F10-Karte.
+  **Nachricht anzeigen** nutzt `MESSAGE:ToGroup` direkt in Lua;
+  **Python-Konsole** sendet `player.menu.selected` zur Ausgabe im Testskript.
+- Die Menüs sind standardmäßig aus. Das Skript aktiviert sie per
+  `player.menu.test.configure` für bereits besetzte und später betretene Gruppen.
+  Eine `FLIGHTGROUP` oder ein Flug ist dafür nicht nötig.
+- Wichtige Grenze: Gruppensichtbarkeit, keine personenbezogenen Berechtigungen.
+  DCS liefert beim Klick keinen Spieler-Namen. `group_sessions` nennt deshalb
+  nur die aktuellen Gruppenmitglieder, nicht den tatsächlichen Klickenden.
+- Eine Menüinstanz je Gruppe; Entfernen erst beim letzten Slot-Austritt.
+  Doppelte Leave-Events bleiben unterdrückt. Wiedereinstieg berücksichtigt eine
+  geänderte DCS-Gruppen-ID. Entfernte Callbacks bleiben wirkungslos.
+- Ctrl+C entfernt die Menüs dieses Skriptlaufs. Missionsende räumt ebenfalls auf
+  und beendet das Skript. Hartes Beenden kann Menüs hinterlassen; ein neuer Lauf
+  übernimmt den Test. Eine Lauf-ID verhindert Aufräumen durch einen älteren Lauf.
+- Automatische Prüfung: Lua-Lifecycle-Test mit simulierten DCS-/MOOSE-Grenzen
+  und Python-Tests für Ereignisempfang, Filter, Cursor und Aufräumen.
+  Den Lua-Test über `MOOSEBRIDGE_TEST_LUA` auf einen lokalen Lua-Interpreter
+  verweisen lassen. Beide Testaktionen wurden vom Benutzer in DCS bestätigt:
+  Cockpitnachricht und `MENU CLICK` mit `GROUP:Test Hornet` / `funkyfranky`: PASS.
+
+### Navigation über das Funkmenü
+
+- Neuer normaler Einstieg: `examples/sdk/run_navigation_menu.py` in VS Code;
+  Server unverändert weiterlaufen lassen, Mission nach Lua-Update neu starten.
+  Das alte Menü-Testskript vorher beenden. Das neue Profil ersetzt das Testmenü.
+- Funkmenü → F10 Other/Andere → **Navigation**, fünf Aktionen:
+  **Route anzeigen**, **Route ausblenden**, **Navigationsstatus**,
+  **Hinweise ein**, **Hinweise aus**.
+- Route und Hinweise starten ausgeschaltet. Routenanzeige nutzt die erhaltene
+  ME-Route und eine cyanfarbene F10-Linie für die eigene Koalition. Die Linie ist
+  nicht nur für die Gruppe sichtbar. Ausblenden beeinflusst die Hinweise nicht.
+- Status zeigt Referenzflugzeug, nächstes Ziel, NM-Entfernung, TRUE-Peilung und
+  XTE per `MESSAGE:ToGroup`. Hinweise fragen standardmäßig alle zwei Sekunden ab
+  und melden ungefähr alle zehn Sekunden sowie bei Wegpunkterfassung.
+- Der vorhandene `RouteNavigator` wird pro Gruppen-Menüsitzung wiederverwendet;
+  Fortschritt bleibt beim Aus-/Einblenden und beim Abschalten der Hinweise erhalten.
+  Ohne Hinweise gibt es keine regelmäßigen Positionsabfragen. Kein Lesen oder
+  Schreiben der Avionik-Wegpunktauswahl; Zielerfassung ist kein Landungsnachweis.
+- Status/Hinweise verlangen genau ein Spielerflugzeug pro Gruppe und dessen
+  FLIGHTGROUP. Mehrere Sitze desselben UNIT zählen als ein Flugzeug. Bei mehreren
+  Spielerflugzeugen erfolgt eine Fehlermeldung statt einer willkürlichen Auswahl.
+- Lua prüft bei Kontext-, Nachrichten- und Overlay-Aufrufen Besitzer-ID,
+  Menüsitzungs-ID, DCS-Gruppen-ID und Belegung. Verspätete Aufträge einer alten
+  Sitzung werden zurückgewiesen. Die letzte Person verlässt die Gruppe:
+  `player.menu.closed`, Abbruch der Python-Hinweise, Entfernen der eigenen Linie.
+- Lua räumt seine Linie auch ohne erreichbaren Python-Client auf. Ctrl+C,
+  Missionsende oder ein neuer Menülauf entfernen das Menü und seine Linie;
+  andere Overlays bleiben bestehen. Nach Missionsende das Skript neu starten.
+- Prüfen am Boden: Linie ein/aus, Status, Hinweise ein (mindestens zehn Sekunden),
+  Hinweise aus, Slot verlassen/wieder betreten und Ctrl+C. Automatische Tests
+  decken Lua-Lifecycle/Schreibschutz und Python-Aktionen/Task-Abbruch ab;
+  dieser neue Navigation-Menütest in DCS steht noch aus.
 
 ## DTC-Erkenntnisse
 
@@ -546,6 +653,15 @@ DTC-Adapter, Telemetrie und spätere Instructor-Funktionen.
       aktive Spieler-Flugzeug-Sessions in Python spiegeln.
 - [ ] Mission-Editor-Wegpunkte einer F/A-18C-`FLIGHTGROUP` als ersten Flugplan
       einlesen und über die geerbte `OPSGROUP`-Basis beobachten.
+- [x] Read-only-Routenabruf und F10-Linienanzeige im Python-Testskript implementieren.
+- [x] F10-Linienverlauf einschließlich Start-/Landepunkt live gegen die
+      Mission-Editor-Route prüfen.
+- [x] Live-Entfernung, True-Peilung und XTE mit eigener Wegpunktsequenz implementieren.
+- [ ] Wegpunktwechsel und Links-/Rechts-Abweichungen im Flug live prüfen.
+- [x] Opt-in-Gruppenmenü mit Cockpitnachricht und Python-Konsolenausgabe implementieren.
+- [x] Beide einfachen Menüaktionen in DCS live bestätigen.
+- [x] Navigation-Menü für Routenanzeige, Status und ein-/ausschaltbare Hinweise anbinden.
+- [ ] Navigation-Menü am Boden inklusive Entfernen und Wiedereinstieg live prüfen.
 - [ ] Testfälle für identische Fix-Identifiers und DCS/Navigraph-Abweichungen
       definieren.
 

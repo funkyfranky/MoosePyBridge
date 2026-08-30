@@ -125,6 +125,8 @@ end
 
 --- Unsubscribe from DCS events owned by this bridge instance.
 function MOOSE_BRIDGE:_StopDcsEventForwarding()
+  self.PlayerTestMenuConfig = nil
+  self:_ClearPlayerTestMenus()
   if self.DcsEventForwardingStarted and self.UnHandleEvent then
     for _, event_id in ipairs(self.DcsRegisteredEvents or {}) do
       self:UnHandleEvent(event_id)
@@ -134,6 +136,7 @@ function MOOSE_BRIDGE:_StopDcsEventForwarding()
   self.DcsEventForwardingStarted = false
   self.PlayerAircraftSessions = {}
   self.PlayerAircraftLeaveTimes = {}
+  self.PendingPlayerAircraftEnters = {}
   return self
 end
 
@@ -338,6 +341,302 @@ function MOOSE_BRIDGE:_PlayerEventOpsGroup(group_name)
   return opsgroup, source
 end
 
+
+--- Read a FLIGHTGROUP route without changing its waypoints or DCS tasks.
+-- waypoints0 is OPSGROUP's preserved Mission Editor route, including landing.
+-- GetWaypoints() instead returns the processed/current operational route.
+function MOOSE_BRIDGE:_GetFlightGroupRoute(params)
+  local object_id = params.opsgroup_id
+  if type(object_id) ~= "string" or not string.find(object_id, "^OPSGROUP:.+") then
+    error("flightgroup.route.get requires an OPSGROUP: id")
+  end
+  local group_name = string.sub(object_id, 10)
+  local opsgroup = self:_PlayerEventOpsGroup(group_name)
+  if not opsgroup then error("OPSGROUP not found: " .. object_id) end
+  if not self:_SafeCall(opsgroup, "IsFlightgroup") then
+    error("OPSGROUP is not a FLIGHTGROUP: " .. object_id)
+  end
+  local source = params.route_source or "mission_editor"
+  local waypoints
+  if source == "mission_editor" then
+    waypoints = opsgroup.waypoints0
+  elseif source == "current" then
+    waypoints = self:_SafeCall(opsgroup, "GetWaypoints")
+  else
+    error("route_source must be mission_editor or current")
+  end
+  if type(waypoints) ~= "table" or #waypoints == 0 then
+    error("No " .. source .. " waypoints available for " .. object_id)
+  end
+  if #waypoints > 501 then error("Flight route exceeds the 501-waypoint display limit") end
+  local items = {}
+  for index, waypoint in ipairs(waypoints) do
+    local x = tonumber(waypoint.x)
+    local z = tonumber(waypoint.y) -- DCS route Vec2.y is world Vec3.z, not altitude.
+    local altitude = tonumber(waypoint.alt)
+    if not x or not z then error("Invalid coordinates at waypoint " .. tostring(index)) end
+    local coordinates = self:_CoordinatesForPoint({x=x, y=0, z=z}, "ll")
+    if not coordinates.latitude or not coordinates.longitude then
+      error("Cannot convert waypoint " .. tostring(index) .. " to latitude/longitude")
+    end
+    items[#items + 1] = {
+      index=index,
+      uid=waypoint.uid,
+      name=waypoint.name or ("WP " .. tostring(index)),
+      x=x,
+      z=z,
+      latitude=coordinates.latitude,
+      longitude=coordinates.longitude,
+      altitude_m=altitude,
+      altitude_type=waypoint.alt_type,
+      speed_mps=tonumber(waypoint.speed),
+      type=waypoint.type,
+      action=waypoint.action,
+    }
+  end
+  return {
+    opsgroup_id=object_id,
+    group_id="GROUP:" .. group_name,
+    coalition=self:_OpsCoalition(opsgroup),
+    route_source=source,
+    waypoints=items,
+  }
+end
+
+-- Compose with the other extensions' command registration before Bridge:New().
+local _player_route_register_default_commands = MOOSE_BRIDGE.RegisterDefaultCommands
+function MOOSE_BRIDGE:RegisterDefaultCommands()
+  _player_route_register_default_commands(self)
+  self:RegisterCommand("flightgroup.route.get", function(cmd)
+    return self:_GetFlightGroupRoute(cmd.params or {})
+  end)
+  self:RegisterCommand("player.menu.test.configure", function(cmd)
+    return self:_ConfigurePlayerTestMenus(cmd.params or {})
+  end)
+  self:RegisterCommand("player.menu.navigation.configure", function(cmd)
+    return self:_ConfigurePlayerTestMenus(cmd.params or {}, "navigation")
+  end)
+  self:RegisterCommand("player.menu.navigation.context", function(cmd)
+    local params = cmd.params or {}
+    local entry = self:_NavigationMenuEntry(params)
+    return self:_NavigationMenuPayload(entry.group:GetName(), entry)
+  end)
+  self:RegisterCommand("player.menu.navigation.message", function(cmd)
+    local params = cmd.params or {}
+    local entry = self:_NavigationMenuEntry(params)
+    if type(params.text) ~= "string" or #params.text == 0 or #params.text > 2000 then
+      error("navigation message text must contain 1..2000 bytes")
+    end
+    MESSAGE:New(params.text, 10, "Navigation"):ToGroup(entry.group)
+    return {delivered=true}
+  end)
+  self:RegisterCommand("player.menu.navigation.overlay", function(cmd)
+    local params = cmd.params or {}
+    local entry = self:_NavigationMenuEntry(params)
+    if type(params.show) ~= "boolean" then error("show must be boolean") end
+    if not params.show then
+      return {removed=self:_ClearDebugOverlay(entry.overlay_id)}
+    end
+    local coalition_name = self:_CoalitionToName(self:_SafeCall(entry.group, "GetCoalition"))
+    if coalition_name ~= "blue" and coalition_name ~= "red" and coalition_name ~= "neutral" then
+      error("Cannot determine navigation overlay coalition")
+    end
+    return self:_DrawDebugOverlay({overlay_id=entry.overlay_id, features=params.features,
+      coalition=coalition_name, replace=true, read_only=true})
+  end)
+end
+
+--- Validate at execution time so delayed Python work cannot address a new slot.
+function MOOSE_BRIDGE:_NavigationMenuEntry(params)
+  local group_name = type(params.group_id) == "string"
+    and string.match(params.group_id, "^GROUP:(.+)$") or nil
+  local config = self.PlayerTestMenuConfig
+  local entry = group_name and self.PlayerTestMenus and self.PlayerTestMenus[group_name]
+  if not config or config.mode ~= "navigation" or config.owner_id ~= params.owner_id
+    or not entry or entry.session_id ~= params.session_id
+    or entry.owner_id ~= params.owner_id or not self:_SafeCall(entry.group, "IsAlive")
+    or self:_SafeCall(entry.group, "GetID") ~= entry.group_id
+    or #self:_PlayerTestMenuSessions(group_name) == 0 then
+    error("Navigation menu session inactive")
+  end
+  return entry
+end
+
+function MOOSE_BRIDGE:_NavigationMenuPayload(group_name, entry)
+  local opsgroup = self:_PlayerEventOpsGroup(group_name)
+  return {menu_id="navigation", scope="group", owner_id=entry.owner_id,
+    session_id=entry.session_id, group_id="GROUP:" .. group_name,
+    group_name=group_name, group_sessions=self:_PlayerTestMenuSessions(group_name),
+    opsgroup_id=opsgroup and ("OPSGROUP:" .. group_name) or nil}
+end
+
+--- Group context, NOT the identity of the player who clicked the radio menu.
+-- DCS/MOOSE group command callbacks only receive our bound arguments.
+function MOOSE_BRIDGE:_PlayerTestMenuSessions(group_name)
+  local sessions = {}
+  for _, session in pairs(self.PlayerAircraftSessions or {}) do
+    if session.group_name == group_name then
+      sessions[#sessions + 1] = {
+        player_name=session.player_name,
+        unit_id=session.unit_name and ("UNIT:" .. session.unit_name) or nil,
+      }
+    end
+  end
+  table.sort(sessions, function(a, b)
+    return (a.player_name or a.unit_id or "") < (b.player_name or b.unit_id or "")
+  end)
+  return sessions
+end
+
+--- Remove only this bridge's test tree, including stale MOOSE index entries.
+function MOOSE_BRIDGE:_RemovePlayerTestMenu(group_name)
+  local entry = self.PlayerTestMenus and self.PlayerTestMenus[group_name]
+  if not entry then return end
+  self.PlayerTestMenus[group_name] = nil -- Invalidate callbacks before removal.
+  if entry.mode == "navigation" then
+    -- Use only this entry's overlay; other scripts' F10 drawings stay untouched.
+    local cleared, clear_err = pcall(function() self:_ClearDebugOverlay(entry.overlay_id) end)
+    if not cleared then self:_Log("Navigation overlay cleanup failed: " .. tostring(clear_err)) end
+    self:SendEvent("player.menu.closed", {menu_id="navigation", owner_id=entry.owner_id,
+      session_id=entry.session_id, group_id="GROUP:" .. group_name})
+  end
+  local ok, err = pcall(function()
+    -- MENU_GROUP:Remove() checks IsAlive(). After despawn it can leave the
+    -- index intact, causing New() to reuse an obsolete GroupID on respawn.
+    local owned = {}
+    local function collect(menu)
+      owned[#owned + 1] = menu
+      for _, child in pairs(menu.Menus or {}) do collect(child) end
+    end
+    collect(entry.menu)
+    local removed, remove_err = pcall(function() entry.menu:Remove() end)
+    if not removed then self:_Log("MOOSE menu removal failed: " .. tostring(remove_err)) end
+    local index = MENU_INDEX and MENU_INDEX.Group[group_name]
+    for _, menu in ipairs(owned) do
+      if index and index.Menus[menu.Path] == menu then
+        missionCommands.removeItemForGroup(menu.GroupID, menu.MenuPath)
+        index.Menus[menu.Path] = nil
+      end
+    end
+  end)
+  if not ok then self:_Log("Failed to remove player test menu: " .. tostring(err)) end
+end
+
+function MOOSE_BRIDGE:_ClearPlayerTestMenus()
+  local names = {}
+  for name, _ in pairs(self.PlayerTestMenus or {}) do names[#names + 1] = name end
+  for _, name in ipairs(names) do self:_RemovePlayerTestMenu(name) end
+end
+
+--- Keep a single menu per occupied group; independent of FLIGHTGROUP creation.
+function MOOSE_BRIDGE:_SyncPlayerTestMenu(group_name, group)
+  if not group_name then return end
+  local sessions = self:_PlayerTestMenuSessions(group_name)
+  local config = self.PlayerTestMenuConfig
+  if not config or #sessions == 0 then
+    self:_RemovePlayerTestMenu(group_name)
+    return
+  end
+  group = group or (_DATABASE and _DATABASE.GROUPS and _DATABASE.GROUPS[group_name])
+  if not group or not self:_SafeCall(group, "IsAlive") then
+    self:_RemovePlayerTestMenu(group_name)
+    return
+  end
+  self.PlayerTestMenus = self.PlayerTestMenus or {}
+  local entry = self.PlayerTestMenus[group_name]
+  if entry and entry.group_id == group:GetID() then return end
+  self:_RemovePlayerTestMenu(group_name)
+  self.PlayerMenuSerial = (self.PlayerMenuSerial or 0) + 1
+  entry = {group=group, group_id=group:GetID(), owner_id=config.owner_id,
+    mode=config.mode, session_id=tostring(self.PlayerMenuSerial),
+    overlay_id="navigation-menu-" .. tostring(self.PlayerMenuSerial)}
+  if config.mode == "navigation" then
+    entry.menu = MENU_GROUP:New(group, "Navigation")
+  else
+    entry.menu = MENU_GROUP:New(group, "MoosePyBridge Test")
+  end
+  self.PlayerTestMenus[group_name] = entry -- Also owns a partially built tree.
+  if config.mode == "navigation" then
+    local actions = {{"Route anzeigen", "route_show"}, {"Route ausblenden", "route_hide"},
+      {"Navigationsstatus", "status"}, {"Hinweise ein", "hints_on"}, {"Hinweise aus", "hints_off"}}
+    for _, item in ipairs(actions) do
+      local action = item[2] -- One binding per callback, also on Lua 5.1.
+      MENU_GROUP_COMMAND:New(group, item[1], entry.menu, function()
+        self:_OnPlayerTestMenuSelected(group_name, entry, action)
+      end)
+    end
+    return
+  end
+  MENU_GROUP_COMMAND:New(group, "Nachricht anzeigen", entry.menu, function()
+    self:_OnPlayerTestMenuSelected(group_name, entry, "message")
+  end)
+  MENU_GROUP_COMMAND:New(group, "Python-Konsole", entry.menu, function()
+    self:_OnPlayerTestMenuSelected(group_name, entry, "python_console")
+  end)
+end
+
+function MOOSE_BRIDGE:_OnPlayerTestMenuSelected(group_name, entry, action)
+  local config = self.PlayerTestMenuConfig
+  if not config or config.owner_id ~= entry.owner_id
+    or not self.PlayerTestMenus or self.PlayerTestMenus[group_name] ~= entry then return end
+  local sessions = self:_PlayerTestMenuSessions(group_name)
+  if #sessions == 0 or not self:_SafeCall(entry.group, "IsAlive")
+    or self:_SafeCall(entry.group, "GetID") ~= entry.group_id then return end
+  if entry.mode == "navigation" then
+    if action ~= "route_show" and action ~= "route_hide" and action ~= "status"
+      and action ~= "hints_on" and action ~= "hints_off" then return end
+    local payload = self:_NavigationMenuPayload(group_name, entry)
+    payload.action = action
+    self:SendEvent("player.menu.selected", payload)
+  elseif action == "message" then
+    MESSAGE:New("Menue-Test erfolgreich! Gruppe: " .. group_name, 10, "MoosePyBridge")
+      :ToGroup(entry.group)
+  elseif action == "python_console" then
+    self:SendEvent("player.menu.selected", {
+      menu_id="player-menu-test",
+      action=action,
+      owner_id=entry.owner_id,
+      scope="group",
+      group_id="GROUP:" .. group_name,
+      group_name=group_name,
+      group_sessions=sessions,
+    })
+  end
+end
+
+--- Opt-in test, enabled by the VS Code client, never by default.
+-- A new run replaces an abandoned test; an old client's cleanup cannot remove it.
+function MOOSE_BRIDGE:_ConfigurePlayerTestMenus(params, mode)
+  if type(params.enabled) ~= "boolean" then error("enabled must be boolean") end
+  if type(params.owner_id) ~= "string" or #params.owner_id == 0 or #params.owner_id > 128 then
+    error("owner_id must be a non-empty string of at most 128 characters")
+  end
+  if params.enabled then
+    if not MENU_GROUP or not MENU_GROUP_COMMAND or not MESSAGE then
+      error("MOOSE MENU_GROUP, MENU_GROUP_COMMAND and MESSAGE are required")
+    end
+    self.PlayerTestMenuConfig = nil
+    self:_ClearPlayerTestMenus()
+    self.PlayerTestMenuConfig = {owner_id=params.owner_id, mode=mode or "test"}
+    local ok, err = pcall(function()
+      for _, session in pairs(self.PlayerAircraftSessions or {}) do
+        self:_SyncPlayerTestMenu(session.group_name)
+      end
+    end)
+    if not ok then
+      self.PlayerTestMenuConfig = nil
+      self:_ClearPlayerTestMenus()
+      error(err)
+    end
+  elseif self.PlayerTestMenuConfig and self.PlayerTestMenuConfig.owner_id == params.owner_id then
+    self.PlayerTestMenuConfig = nil
+    self:_ClearPlayerTestMenus()
+  end
+  local count = 0
+  for group_name in pairs(self.PlayerTestMenus or {}) do count = count + 1 end
+  return {enabled=self.PlayerTestMenuConfig ~= nil, group_count=count}
+end
+
 --- Find cached enter data when PlayerLeaveUnit omits player or wrapper fields.
 function MOOSE_BRIDGE:_CachedPlayerAircraftSession(player_name, unit_name)
   for key, session in pairs(self.PlayerAircraftSessions or {}) do
@@ -494,14 +793,27 @@ function MOOSE_BRIDGE:_ForwardPlayerAircraftEvent(EventData, event_name, dcs_eve
       group=group_item,
       opsgroup=opsgroup_item,
     })
+    -- Menu failures must not interrupt the established player lifecycle.
+    local menu_ok, menu_err = pcall(function()
+      if cached and cached.group_name ~= session.group_name then
+        self:_SyncPlayerTestMenu(cached.group_name)
+      end
+      self:_SyncPlayerTestMenu(session.group_name, group)
+    end)
+    if not menu_ok then
+      self:_RemovePlayerTestMenu(session.group_name)
+      self:_Log("Failed to update player test menu: " .. tostring(menu_err))
+    end
   end)
   if not ok then
     self:_Log("Failed to forward " .. tostring(dcs_event_name) .. " event: " .. tostring(err))
   end
 end
 
---- Forward MOOSE's multiplayer-safe delayed player-enter event.
-function MOOSE_BRIDGE:OnEventPlayerEnterAircraft(EventData)
+--- Finish an entry once, resolving FLIGHTGROUP/OPSGROUP at processing time.
+function MOOSE_BRIDGE:_FlushPendingPlayerAircraftEnter(EventData)
+  if not self.PendingPlayerAircraftEnters or not self.PendingPlayerAircraftEnters[EventData] then return end
+  self.PendingPlayerAircraftEnters[EventData] = nil
   self:_ForwardPlayerAircraftEvent(
     EventData,
     "player.aircraft.entered",
@@ -510,8 +822,40 @@ function MOOSE_BRIDGE:OnEventPlayerEnterAircraft(EventData)
   )
 end
 
+--- Allow mission handlers for the same event to create their FLIGHTGROUP first.
+function MOOSE_BRIDGE:OnEventPlayerEnterAircraft(EventData)
+  if type(EventData) ~= "table" then
+    self:_Log("Cannot schedule PlayerEnterAircraft: event data is missing")
+    return
+  end
+  -- MOOSE may reuse the event table; preserve its fields and original time.
+  local pending = {}
+  for key, value in pairs(EventData) do pending[key] = value end
+  self.PendingPlayerAircraftEnters = self.PendingPlayerAircraftEnters or {}
+  -- BASE:ScheduleOnce reuses self.Scheduler and changes its MasterObject to
+  -- nil. That scheduler drives _Tick and must retain the bridge as its owner.
+  -- Keep this one-shot scheduler separate and alive until the entry is flushed.
+  self.PendingPlayerAircraftEnters[pending] = SCHEDULER:New(self, function(bridge)
+    bridge:_FlushPendingPlayerAircraftEnter(pending)
+  end, {}, 0.5)
+end
+
 --- Forward DCS S_EVENT_PLAYER_LEAVE_UNIT and close the cached player session.
 function MOOSE_BRIDGE:OnEventPlayerLeaveUnit(EventData)
+  -- A rapid exit must never be followed by a delayed, stale entry in Python.
+  -- Flush its pending entry first so Enter -> Leave ordering is preserved.
+  if type(EventData) == "table" then
+    local player_name = EventData.IniPlayerName or EventData.PlayerName
+    local unit_name = EventData.IniUnitName or EventData.IniDCSUnitName
+    for pending, _ in pairs(self.PendingPlayerAircraftEnters or {}) do
+      local pending_player = pending.IniPlayerName or pending.PlayerName
+      local pending_unit = pending.IniUnitName or pending.IniDCSUnitName
+      if (player_name and pending_player == player_name)
+        or (not player_name and unit_name and pending_unit == unit_name) then
+        self:_FlushPendingPlayerAircraftEnter(pending)
+      end
+    end
+  end
   self:_ForwardPlayerAircraftEvent(
     EventData,
     "player.aircraft.left",
@@ -567,6 +911,10 @@ end
 -- Flush immediately because normal bridge scheduling stops with the mission.
 -- @param Core.Event#EVENTDATA EventData MOOSE-normalized DCS event data.
 function MOOSE_BRIDGE:OnEventMissionEnd(EventData)
+  self.PendingPlayerAircraftEnters = {}
+  self.PlayerTestMenuConfig = nil
+  self:_ClearPlayerTestMenus()
+  self.PlayerAircraftSessions = {}
   local ok, err = pcall(function()
     self:SendEvent("mission.ended", {
       dcs_event_id=EventData and EventData.id or nil,
