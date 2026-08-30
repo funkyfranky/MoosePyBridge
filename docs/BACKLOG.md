@@ -376,6 +376,16 @@ Priorities:
   and effect restrictions with simultaneous goals and confirm that Python
   blocks out-of-scope offensive action while permitting defense.
 
+## P3 - Deferred player missions
+
+- [ ] **Connect conflict-generated objectives to player mission offers.** Bridge
+  the conflict controller and navigation subproject so players can review and
+  accept or decline missions with a briefing and navigation route through the
+  in-game menu. Preserve coalition-specific intelligence, coordinate with AI
+  assignments, and define outcome feedback. Deferred idea only: do not promote
+  it to the next task or expand an active milestone. Details are tracked in the
+  [navigation TODOs](navigation/README.md#later).
+
 ## P3 - Platform hardening
 
 - [ ] **Add authenticated remote clients.** Build authentication and

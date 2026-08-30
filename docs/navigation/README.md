@@ -692,6 +692,14 @@ adapter, telemetry, and later instructor features.
 
 ### Later
 
+- [ ] **Connect the conflict simulation to optional player missions.** Derive
+      mission offers from the player's coalition objectives and operational
+      plans, using only information available to that coalition. Offer an English
+      briefing and navigation route through the in-game menu, with explicit
+      player acceptance or rejection. Define coordination with AI assignments
+      and mission-result feedback to avoid duplicate tasking. This is a deferred
+      integration idea, not the next implementation step or a current milestone
+      requirement; see the [project backlog](../BACKLOG.md#p3---deferred-player-missions).
 - [ ] Develop an airway router and procedure resolver.
 - [ ] Integrate live DCS weather and runway selection.
 - [ ] Define aircraft navigation profiles.
