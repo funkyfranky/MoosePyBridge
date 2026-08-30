@@ -47,21 +47,20 @@ def reference_unit(context: dict[str, Any]) -> str:
     """Multicrew in one aircraft is unambiguous; multiple aircraft are not."""
     units = {item["unit_id"] for item in context.get("group_sessions", []) if item.get("unit_id")}
     if len(units) != 1:
-        raise ValueError("Navigation benoetigt genau ein Spielerflugzeug pro Gruppe.")
+        raise ValueError("Navigation requires exactly one player aircraft per group.")
     return next(iter(units))
 
 
 def cockpit_status(unit_id: str, solution: NavigationSolution) -> str:
-    bearing = "---" if solution.bearing_true_deg is None else f"{solution.bearing_true_deg:.1f} Grad TRUE"
-    side = {"left": "links", "right": "rechts", "on track": "auf Kurs", "undefined": "undefiniert"}
-    xte = "undefiniert" if solution.cross_track_m is None else (
-        f"{abs(solution.cross_track_m):.0f} m {side[solution.cross_track_side]}"
+    bearing = "---" if solution.bearing_true_deg is None else f"{solution.bearing_true_deg:.1f} deg TRUE"
+    xte = "undefined" if solution.cross_track_m is None else (
+        f"{abs(solution.cross_track_m):.0f} m {solution.cross_track_side}"
     )
-    text = (f"Referenz: {unit_id.removeprefix('UNIT:')}\n"
+    text = (f"Reference: {unit_id.removeprefix('UNIT:')}\n"
             f"WP {solution.from_waypoint_index} -> {solution.target_waypoint_index} ({solution.target_name})\n"
-            f"Entfernung: {solution.distance_nm:.2f} NM | Peilung: {bearing}\nXTE: {xte}")
+            f"Distance: {solution.distance_nm:.2f} NM | Bearing: {bearing}\nXTE: {xte}")
     if solution.route_complete:
-        text += "\nLetzter Wegpunkt horizontal erreicht; Landung NICHT geprueft."
+        text += "\nFinal waypoint reached horizontally; landing NOT checked."
     return text
 
 
@@ -88,7 +87,7 @@ class NavigationMenuController:
 
     async def _call(self, state: GroupNavigation, operation: str, **params: Any) -> dict[str, Any]:
         if self.bridge.state.mission_ended:
-            raise ConnectionError("DCS-Mission beendet.")
+            raise ConnectionError("DCS mission ended.")
         ack = require_ok(await self.bridge.server.send_command(BridgeCommand(
             action=f"player.menu.navigation.{operation}",
             params={**params, "owner_id": self.owner_id,
@@ -115,7 +114,7 @@ class NavigationMenuController:
     async def _route(self, state: GroupNavigation, context: dict[str, Any]) -> FlightGroupRoute:
         opsgroup_id = context.get("opsgroup_id")
         if not opsgroup_id:
-            raise ValueError("Keine FLIGHTGROUP vorhanden. Bitte in der Mission erzeugen.")
+            raise ValueError("No FLIGHTGROUP available. Please create it in the mission.")
         if state.route is None or state.route.opsgroup_id != opsgroup_id:
             state.route = await self.bridge.get_flightgroup_route(
                 opsgroup_id, route_source="mission_editor", timeout=self.timeout,
@@ -134,7 +133,7 @@ class NavigationMenuController:
         current = await self._context(state)
         if reference_unit(current) != unit_id or current.get("opsgroup_id") != context.get("opsgroup_id"):
             state.navigator = None
-            raise ValueError("Spielerflugzeug gewechselt; bitte Status erneut abrufen.")
+            raise ValueError("Player aircraft changed; please request status again.")
         if state.navigator is None or state.unit_id != unit_id:
             state.navigator = RouteNavigator(
                 route, initial_target_index=self.initial_target,
@@ -169,7 +168,7 @@ class NavigationMenuController:
                     if solution.route_complete:
                         return
         except ERRORS as exc:
-            await self._report_error(state, exc, prefix="Hinweise gestoppt")
+            await self._report_error(state, exc, prefix="Navigation hints stopped")
 
     async def _report_error(self, state: GroupNavigation, exc: Exception, *, prefix: str = "Navigation") -> None:
         logging.warning("%s: %s: %s", state.group_id, prefix, exc)
@@ -201,23 +200,23 @@ class NavigationMenuController:
         try:
             if action == "hints_off":
                 await self._stop_hints(state)
-                await self._reply(state, "Navigationshinweise aus.")
+                await self._reply(state, "Navigation hints disabled.")
                 return
             async with state.lock:
                 if action == "route_hide":
                     await self._call(state, "overlay", show=False)
-                    await self._reply(state, "Route auf der F10-Karte ausgeblendet.")
+                    await self._reply(state, "Route hidden on the F10 map.")
                 elif action == "route_show":
                     route = await self._route(state, await self._context(state))
                     await self._call(state, "overlay", show=True, features=[route.to_map_line().to_payload()])
-                    await self._reply(state, f"F10-Route angezeigt: {len(route.waypoints)} Wegpunkte (eigene Koalition).")
+                    await self._reply(state, f"F10 route displayed: {len(route.waypoints)} waypoints (own coalition).")
                 elif action == "hints_on" and state.hints is not None and not state.hints.done():
-                    await self._reply(state, "Navigationshinweise sind bereits eingeschaltet.")
+                    await self._reply(state, "Navigation hints are already enabled.")
                 else:
                     solution = await self._sample(state)
                     text = cockpit_status(state.unit_id or "", solution)
                     if action == "hints_on" and not solution.route_complete:
-                        text = f"Hinweise ein (ca. alle {self.hint_interval:g} s).\n" + text
+                        text = f"Navigation hints enabled (approximately every {self.hint_interval:g} s).\n" + text
                     await self._reply(state, text)
                     if action == "hints_on" and not solution.route_complete:
                         state.hints = asyncio.create_task(self._hints(state))

@@ -116,8 +116,8 @@ def test_monitor_prints_click_and_cleans_up_its_own_run(example, monkeypatch, ca
 def test_lua_menu_hooks_preserve_lifecycle_and_use_moose_classes() -> None:
     source = (ROOT / "lua/MooseBridgeDcsEventsExtension.lua").read_text(encoding="utf-8")
     assert 'MENU_GROUP:New(group, "MoosePyBridge Test")' in source
-    assert 'MENU_GROUP_COMMAND:New(group, "Nachricht anzeigen"' in source
-    assert 'MENU_GROUP_COMMAND:New(group, "Python-Konsole"' in source
+    assert 'MENU_GROUP_COMMAND:New(group, "Show message"' in source
+    assert 'MENU_GROUP_COMMAND:New(group, "Python console"' in source
     assert ':ToGroup(entry.group)' in source
     assert 'self:SendEvent("player.menu.selected"' in source
     assert 'self:_SyncPlayerTestMenu(session.group_name, group)' in source

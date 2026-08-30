@@ -10,7 +10,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from moosebridge import FlightGroupRoute, MooseBridgeState
-from moosebridge.navigation_menu import NavigationMenuController, reference_unit
+from moosebridge.navigation import NavigationSolution
+from moosebridge.navigation_menu import NavigationMenuController, cockpit_status, reference_unit
 from moosebridge.sdk import CoordinateResult
 
 
@@ -134,7 +135,7 @@ def test_final_waypoint_is_not_landing_and_does_not_start_hints():
         await controller.handle(event())
         bridge.x = 20000
         await controller.handle(event("hints_on"))
-        assert "Landung NICHT geprueft" in bridge.messages()[-1]
+        assert "landing NOT checked" in bridge.messages()[-1]
         assert controller.groups[("GROUP:Hornet", "1")].hints is None
         await controller.close()
     asyncio.run(scenario())
@@ -169,6 +170,45 @@ def test_invalid_navigation_reports_to_group_without_starting_hints(failure):
 
 def test_multiple_seats_of_same_unit_are_not_ambiguous():
     assert reference_unit({"group_sessions": [{"unit_id": "UNIT:A"}, {"unit_id": "UNIT:A"}]}) == "UNIT:A"
+
+
+@pytest.mark.parametrize("cross_track,expected", [
+    (-125, "125 m left"), (125, "125 m right"), (0, "0 m on track"), (None, "undefined"),
+])
+def test_cockpit_output_is_english_without_translating_user_defined_names(cross_track, expected):
+    # These names are user data, not project-authored interface text.
+    solution = NavigationSolution(
+        from_waypoint_index=1, target_waypoint_index=2, target_name="K\u00fcstenpunkt",
+        distance_m=1852, bearing_true_deg=90, cross_track_m=cross_track,
+        along_track_m=0, leg_length_m=1852, reached_waypoint_indexes=(), route_complete=True,
+    )
+    text = cockpit_status("UNIT:\u00dcberflug", solution)
+    assert text == (
+        "Reference: \u00dcberflug\nWP 1 -> 2 (K\u00fcstenpunkt)\n"
+        "Distance: 1.00 NM | Bearing: 90.0 deg TRUE\n"
+        f"XTE: {expected}\nFinal waypoint reached horizontally; landing NOT checked."
+    )
+
+
+def test_navigation_feedback_and_errors_are_english():
+    async def scenario():
+        bridge = Bridge()
+        controller = NavigationMenuController(bridge, "run")
+        await controller.handle(event("route_show"))
+        assert bridge.messages()[-1] == "F10 route displayed: 3 waypoints (own coalition)."
+        await controller.handle(event("route_hide"))
+        assert bridge.messages()[-1] == "Route hidden on the F10 map."
+        await controller.handle(event("hints_on"))
+        assert bridge.messages()[-1].startswith("Navigation hints enabled (approximately every 10 s).")
+        await controller.handle(event("hints_on"))
+        assert bridge.messages()[-1] == "Navigation hints are already enabled."
+        await controller.handle(event("hints_off"))
+        assert bridge.messages()[-1] == "Navigation hints disabled."
+        bridge.context["opsgroup_id"] = None
+        await controller.handle(event("status"))
+        assert bridge.messages()[-1] == "Navigation: No FLIGHTGROUP available. Please create it in the mission."
+        await controller.close()
+    asyncio.run(scenario())
 
 
 def test_foreign_owner_is_ignored_and_old_close_does_not_reset_new_group_session():

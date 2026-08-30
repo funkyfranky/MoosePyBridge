@@ -3,6 +3,11 @@
 MoosePyBridge is a semantic Python control plane for Digital Combat Simulator
 (DCS) missions that use the MOOSE framework.
 
+Project language: English for menus, messages, console output, logs, errors,
+documentation, and code comments unless explicitly requested otherwise.
+Conversation with contributors may use their preferred language. User-defined
+names, identifiers, and imported source data retain their original spelling.
+
 Current release: **0.1.0**, the first named development baseline. See
 [RELEASE_NOTES.md](RELEASE_NOTES.md) for its scope and known limitations.
 
@@ -1182,11 +1187,11 @@ open **radio menu > F10 Other > Navigation**. Starting in an already occupied
 slot is supported. Stop the old menu/lifecycle test scripts first to avoid their
 independent route overlays and console output. The normal daemon can keep running.
 
-- **Route anzeigen / Route ausblenden**: show/hide the cyan Mission Editor route
+- **Show route / Hide route**: show/hide the cyan Mission Editor route
   for the group's coalition, using the existing F10 drawing implementation.
-- **Navigationsstatus**: send the reference aircraft, target waypoint, distance
+- **Navigation status**: send the reference aircraft, target waypoint, distance
   in NM, true bearing, and cross-track error to the group via MOOSE MESSAGE.
-- **Hinweise ein / Hinweise aus**: sample every two seconds and display guidance
+- **Enable hints / Disable hints**: sample every two seconds and display guidance
   about every ten seconds, also at waypoint capture. Repeated enable is idempotent.
 
 Route display and hints start **off**. Display toggling does not reset progress
@@ -1218,7 +1223,8 @@ Configuration: `NAVIGATION_INTERVAL_SECONDS`, `HINT_INTERVAL_SECONDS`,
 Manual check (possible while parked): show/hide the line, request status, enable
 hints for at least ten seconds, disable them, leave/re-enter the slot, then stop
 with Ctrl+C. Check that only the navigation menu's line disappears and no hints
-continue after disabling/leaving. Airborne sequencing/XTE testing remains open.
+continue after disabling/leaving. Initial airborne waypoint sequencing has been
+confirmed; deliberate left/right XTE sign checks remain open.
 
 ### Player radio-menu test
 
@@ -1230,9 +1236,9 @@ later player entries. No flight, FLIGHTGROUP creation, or route is required.
 
 Open the **radio menu**, then **F10 Other > MoosePyBridge Test** (not the F10 map):
 
-- **Nachricht anzeigen**: display a ten-second message with MOOSE
+- **Show message**: display a ten-second message with MOOSE
   `MESSAGE:New(...):ToGroup(group)`; this action stays in Lua.
-- **Python-Konsole**: forward `player.menu.selected` through the running daemon;
+- **Python console**: forward `player.menu.selected` through the running daemon;
   the test script prints `MENU CLICK ... group=GROUP:Test Hornet ...` for each click.
 
 MOOSE `MENU_GROUP`/`MENU_GROUP_COMMAND` are group-scoped: all players in the group

@@ -49,7 +49,7 @@ async def run() -> int:
         generation = bridge.state.mission_generation
         print(f"Connected to MoosePyBridge control API at {CONTROL_HOST}:{CONTROL_PORT}", flush=True)
         print("Radio menu > F10 Other > Navigation enabled for occupied and future player groups.", flush=True)
-        print("Route anzeigen / Route ausblenden / Navigationsstatus / Hinweise ein / Hinweise aus", flush=True)
+        print("Show route / Hide route / Navigation status / Enable hints / Disable hints", flush=True)
         print("Route and hints start OFF. Bearings are TRUE; cockpit waypoints are unchanged.", flush=True)
         print("Status requires one player aircraft per group and its FLIGHTGROUP. Ctrl+C to stop.", flush=True)
         while True:

@@ -557,8 +557,8 @@ function MOOSE_BRIDGE:_SyncPlayerTestMenu(group_name, group)
   end
   self.PlayerTestMenus[group_name] = entry -- Also owns a partially built tree.
   if config.mode == "navigation" then
-    local actions = {{"Route anzeigen", "route_show"}, {"Route ausblenden", "route_hide"},
-      {"Navigationsstatus", "status"}, {"Hinweise ein", "hints_on"}, {"Hinweise aus", "hints_off"}}
+    local actions = {{"Show route", "route_show"}, {"Hide route", "route_hide"},
+      {"Navigation status", "status"}, {"Enable hints", "hints_on"}, {"Disable hints", "hints_off"}}
     for _, item in ipairs(actions) do
       local action = item[2] -- One binding per callback, also on Lua 5.1.
       MENU_GROUP_COMMAND:New(group, item[1], entry.menu, function()
@@ -567,10 +567,10 @@ function MOOSE_BRIDGE:_SyncPlayerTestMenu(group_name, group)
     end
     return
   end
-  MENU_GROUP_COMMAND:New(group, "Nachricht anzeigen", entry.menu, function()
+  MENU_GROUP_COMMAND:New(group, "Show message", entry.menu, function()
     self:_OnPlayerTestMenuSelected(group_name, entry, "message")
   end)
-  MENU_GROUP_COMMAND:New(group, "Python-Konsole", entry.menu, function()
+  MENU_GROUP_COMMAND:New(group, "Python console", entry.menu, function()
     self:_OnPlayerTestMenuSelected(group_name, entry, "python_console")
   end)
 end
@@ -589,7 +589,7 @@ function MOOSE_BRIDGE:_OnPlayerTestMenuSelected(group_name, entry, action)
     payload.action = action
     self:SendEvent("player.menu.selected", payload)
   elseif action == "message" then
-    MESSAGE:New("Menue-Test erfolgreich! Gruppe: " .. group_name, 10, "MoosePyBridge")
+    MESSAGE:New("Menu test successful! Group: " .. group_name, 10, "MoosePyBridge")
       :ToGroup(entry.group)
   elseif action == "python_console" then
     self:SendEvent("player.menu.selected", {
@@ -672,7 +672,7 @@ function MOOSE_BRIDGE:_NotifyPlayerEnteredAircraft(session, group)
   end
 
   local text = string.format(
-    "Spieler %s hat den Flugzeug-Slot %s (%s) betreten.",
+    "Player %s entered aircraft slot %s (%s).",
     player_name,
     unit_name,
     aircraft_type

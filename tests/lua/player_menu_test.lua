@@ -92,10 +92,11 @@ assert(not menu(hornet), "menu must be opt-in")
 assert(config(true).group_count == 1, "existing occupant must get menu")
 local first = assert(menu(hornet))
 local before = #events
-click(first, "Nachricht anzeigen")
+click(first, "Show message")
 assert(#messages == 1 and messages[1].group == hornet)
+assert(messages[1].text == "Menu test successful! Group: Hornet")
 assert(#events == before, "message command must stay local")
-click(first, "Python-Konsole")
+click(first, "Python console")
 local payload = events[#events].payload
 assert(events[#events].event == "player.menu.selected")
 assert(payload.group_id == "GROUP:Hornet" and payload.scope == "group")
@@ -104,14 +105,14 @@ assert(payload.player_name == nil and payload.group_sessions[1].player_name == "
 local menu_count = created
 enter("Wingman", hornet, 2)
 assert(created == menu_count and menu(hornet) == first, "same group must share a menu")
-click(first, "Python-Konsole")
+click(first, "Python console")
 assert(#events[#events].payload.group_sessions == 2)
 leave("Pilot", hornet, 3)
 assert(menu(hornet) == first, "other occupant still needs the menu")
 before = #events
 leave("Pilot", hornet, 3.001)
 assert(#events == before, "duplicate leave must remain suppressed")
-local stale_callback = first.menu.Menus["Python-Konsole"].callback
+local stale_callback = first.menu.Menus["Python console"].callback
 leave("Wingman", hornet, 4)
 assert(not menu(hornet))
 before = #events
@@ -123,13 +124,13 @@ hornet.id = 11
 enter("Pilot", hornet, 5)
 local second = assert(menu(hornet))
 assert(second ~= first and second.group_id == 11)
-local old_callback = second.menu.Menus["Python-Konsole"].callback
+local old_callback = second.menu.Menus["Python console"].callback
 config(true, "new-run")
 assert(config(false, "test").enabled, "old script cannot remove new run's menu")
 before = #events
 old_callback()
 assert(#events == before)
-click(assert(menu(hornet)), "Python-Konsole")
+click(assert(menu(hornet)), "Python console")
 assert(events[#events].payload.owner_id == "new-run")
 
 -- Dead wrappers cause MOOSE Remove to return without clearing its index.
@@ -137,7 +138,7 @@ hornet.alive = false
 leave("Pilot", hornet, 6)
 assert(not menu(hornet))
 assert(MENU_INDEX.Group.Hornet.Menus["@MoosePyBridge Test"] == nil)
-assert(MENU_INDEX.Group.Hornet.Menus["@MoosePyBridge Test@Python-Konsole"] == nil)
+assert(MENU_INDEX.Group.Hornet.Menus["@MoosePyBridge Test@Python console"] == nil)
 assert(MENU_INDEX.Group.Hornet.Menus[foreign.Path] == foreign)
 hornet.alive, hornet.id = true, 12
 enter("Pilot", hornet, 7)
@@ -192,8 +193,8 @@ navconfig({params={enabled=true, owner_id="nav-run"}})
 assert(MENU_INDEX.Group.Hornet.Menus["@MoosePyBridge Test"] == nil)
 local nav = assert(menu(hornet))
 assert(nav.menu.Path == "@Navigation")
-local expected = { ["Route anzeigen"]="route_show", ["Route ausblenden"]="route_hide",
-  ["Navigationsstatus"]="status", ["Hinweise ein"]="hints_on", ["Hinweise aus"]="hints_off" }
+local expected = { ["Show route"]="route_show", ["Hide route"]="route_hide",
+  ["Navigation status"]="status", ["Enable hints"]="hints_on", ["Disable hints"]="hints_off" }
 local count = 0
 for label, action in pairs(expected) do
   count = count + 1
@@ -238,4 +239,8 @@ assert(not pcall(navcall, "context", nav))
 bridge:OnEventMissionEnd({time=16})
 assert(next(overlays) == nil and not menu(hornet) and not menu(other))
 assert(MENU_INDEX.Group.Hornet.Menus[foreign.Path] == foreign)
+MOOSE_BRIDGE._NotifyPlayerEnteredAircraft(bridge, {
+  player_name="Pilot", unit_name="Hornet-1", group_name="Hornet", aircraft_type="FA-18C_hornet",
+}, hornet)
+assert(messages[#messages].text == "Player Pilot entered aircraft slot Hornet-1 (FA-18C_hornet).")
 print("PLAYER MENU LUA TEST PASSED")

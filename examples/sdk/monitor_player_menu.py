@@ -54,8 +54,8 @@ async def run() -> int:
         print(f"Connected to MoosePyBridge control API at {CONTROL_HOST}:{CONTROL_PORT}", flush=True)
         print("Menu enabled for occupied player groups (also on later slot entry).", flush=True)
         print("Radio menu > F10 Other > MoosePyBridge Test:", flush=True)
-        print("  Nachricht anzeigen: MOOSE MESSAGE to your group.", flush=True)
-        print("  Python-Konsole: print one received click below.", flush=True)
+        print("  Show message: MOOSE MESSAGE to your group.", flush=True)
+        print("  Python console: print one received click below.", flush=True)
         print("Group-scoped: DCS does not identify the clicking player. Ctrl+C to stop.", flush=True)
         while True:
             try:

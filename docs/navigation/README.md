@@ -1,532 +1,540 @@
 # DCS Navigation Project
 
-Status: Konzept- und Vorbereitungsphase  
-Stand: 29. August 2026
+Status: Concept, preparation, and navigation prototype
 
-## Zweck dieses Dokuments
+Updated: August 30, 2026
 
-Dieses Dokument sammelt den bisherigen Erkenntnisstand, Architekturideen,
-Entscheidungen, Risiken und nächsten Schritte für ein neues Python-basiertes
-Navigationsprojekt im Umfeld von DCS World und MOOSE.
+## Purpose of this document
 
-Das Projekt ist noch nicht auf einen endgültigen Produktumfang festgelegt. Der
-empfohlene Einstieg ist ein deterministischer Navigations- und
-Flugplanungskern. Ein AI-Copilot und ein AI-ATC können später auf demselben Kern
-aufbauen.
+This document collects findings, architecture ideas, decisions, risks, and next
+steps for a new Python-based navigation project for DCS World and MOOSE.
 
-## Produktvision
+The final product scope has not been fixed. The recommended starting point is a
+deterministic navigation and flight-planning core. An AI copilot and AI ATC can
+later build on the same core.
 
-Eine Python-basierte Navigations- und Flugplanungsplattform für DCS World, die
-aktuelle Navigationsdaten mit dem tatsächlichen DCS-Missionszustand verbindet
-und Piloten, Cockpitsystemen, MOOSE-gesteuerten KI-Flügen und später
-sprachbasierten Assistenten strukturierte Navigationsdienste bereitstellt.
+## Product vision
 
-Ein erster vollständiger Anwendungsfall soll sein:
+A Python-based navigation and flight-planning platform for DCS World that
+connects current navigation data with the actual DCS mission state and provides
+structured navigation services to pilots, cockpit systems, MOOSE-controlled AI
+flights, and eventually voice assistants.
 
-> Der Nutzer wählt Start, Ziel und Flugzeug. Das System erzeugt eine fliegbare
-> Route mit Runway, Abflug, Enroute-Segment, Ankunft und Approach und begleitet
-> den Piloten während des Fluges.
+An initial end-to-end use case would be:
 
-## Projektprinzipien
+> The user selects departure, destination, and aircraft. The system generates a
+> flyable route with runway, departure, enroute segment, arrival, and approach,
+> then assists the pilot throughout the flight.
 
-- Navigation, Routenberechnung und Validierung sind deterministische
-  Kernfunktionen. Ein Sprachmodell darf sie bedienen und erklären, aber nicht
-  durch unkontrollierte freie Entscheidungen ersetzen.
-- Der interne Flugplan bleibt unabhängig von Navigraph, DCS, MOOSE und einem
-  bestimmten Flugzeugmodul.
-- Navigraph, DCS/MOOSE, DTC und Cockpitmodule werden über Adapter angebunden.
-- DCS bleibt für den laufenden Simulationszustand maßgeblich.
-- Navigraph-Daten dürfen ausschließlich für Flugsimulation und gemäß den
-  Navigraph-Lizenzbedingungen verwendet werden.
-- Automatische Aktionen benötigen typisierte Aufträge, Validierung und bei
-  risikoreichen Aktionen eine explizite Bestätigung. Das Aktivierungsmodell von
-  MoosePyBridge ist dafür ein geeignetes Vorbild.
-- Geheimnisse wie Navigraph Client Secret, Access Token und Refresh Token
-  dürfen weder in Git noch in Logs oder DTC-Dateien gelangen.
+## Project principles
 
-## Vorgesehene Ausbaustufen
+- All project-facing text is in English unless explicitly requested otherwise.
+  This includes menus, messages, logs, errors, documentation, and code comments.
+  Conversation with the user may remain in German.
+- Navigation, routing, and validation are deterministic core functions. A
+  language model may operate and explain them, but must not replace them with
+  unconstrained decisions.
+- The internal flight plan remains independent of Navigraph, DCS, MOOSE, and
+  any particular aircraft module.
+- Navigraph, DCS/MOOSE, DTC, and cockpit modules connect through adapters.
+- DCS remains authoritative for the live simulation state.
+- Navigraph data may only be used for flight simulation and in accordance with
+  Navigraph's license terms.
+- Automatic actions require typed requests, validation, and explicit
+  confirmation for high-risk actions. MoosePyBridge's activation model is a
+  suitable reference.
+- Secrets such as the Navigraph Client Secret, Access Token, and Refresh Token
+  must never appear in Git, logs, or DTC files.
 
-### 1. Navigations- und Flugplanungskern
+## Planned development stages
 
-Eingaben können unter anderem sein:
+### 1. Navigation and flight-planning core
 
-- Start- und Zielflugplatz
-- Flugzeugtyp und Navigationsausstattung
-- IFR/VFR oder taktische Missionsart
-- Startzeit
-- DCS-Wetter und Wind
-- gewünschte Reiseflughöhe oder Optimierungsziel
-- zu meidende Lufträume und Bedrohungsgebiete
+Possible inputs include:
 
-Mögliche Ergebnisse:
+- Departure and destination airport
+- Aircraft type and navigation equipment
+- IFR/VFR or tactical mission type
+- Departure time
+- DCS weather and wind
+- Desired cruise altitude or optimization objective
+- Airspace and threat areas to avoid
 
-- Start- und Landebahn
-- SID oder sinnvolle Abflugroute
-- Enroute-Wegpunkte und Airways
-- Reiseflughöhe
-- STAR oder Anflugübergang
-- Instrumentenanflug und Missed Approach
-- optionale Holdings
-- Kurse, Distanzen, Höhen, Geschwindigkeitsbeschränkungen und ETA
-- strukturierte Wegpunktliste für verschiedene Ausgaben
+Possible outputs include:
 
-Holdings werden nicht pauschal in jede Route eingebaut. Sie entstehen aus
-einem Verfahren, einer ATC-Anweisung, einer Warteanforderung oder einer
-dynamischen Verkehrssituation.
+- Departure and landing runway
+- SID or suitable departure route
+- Enroute waypoints and airways
+- Cruise altitude
+- STAR or arrival transition
+- Instrument approach and missed approach
+- Optional holds
+- Courses, distances, altitudes, speed constraints, and ETA
+- A structured waypoint list for different output formats
 
-### 2. DTC- und Cockpitintegration
+Holds are not added to every route by default. They arise from a procedure, an
+ATC instruction, a holding requirement, or a dynamic traffic situation.
 
-Der berechnete Flugplan soll für unterstützte DCS-Module in ein geeignetes
-Data-Transfer-Cartridge-Format übersetzt werden. Dadurch kann die Cockpiteingabe
-stark vereinfacht oder vollständig ersetzt werden.
+### 2. DTC and cockpit integration
 
-Zusätzliche Ausgaben können sein:
+The generated flight plan should be translated into a suitable Data Transfer
+Cartridge format for supported DCS modules. This can substantially simplify or
+replace manual cockpit entry.
 
-- MOOSE-/DCS-Route für KI-Flugzeuge
-- Kneeboard oder Mission Card
-- F10-Marker
-- maschinenlesbare JSON-Ausgabe
-- schrittweise Eingabeanleitung für den Copiloten
+Additional outputs may include:
 
-### 3. AI-Copilot
+- MOOSE/DCS routes for AI aircraft
+- Kneeboards or mission cards
+- F10 markers
+- Machine-readable JSON
+- Step-by-step entry instructions for the copilot
 
-Der Copilot kann schrittweise erweitert werden:
+### 3. AI copilot
 
-1. **Advisory:** Er erklärt Flugplan, Frequenzen, Kurse, Checklisten und
-   Cockpiteingaben.
-2. **Assisted:** Er bereitet typisierte Eingaben vor und wartet auf eine
-   Bestätigung.
-3. **Automatic:** Er bedient ausdrücklich unterstützte Cockpitsysteme über
-   modulspezifische Adapter.
+The copilot can be expanded gradually:
 
-Mögliche Aufgaben:
+1. **Advisory:** Explain the flight plan, frequencies, courses, checklists, and
+   cockpit inputs.
+2. **Assisted:** Prepare typed inputs and wait for confirmation.
+3. **Automatic:** Operate explicitly supported cockpit systems through
+   module-specific adapters.
 
-- Flugplan erklären und Änderungen begründen
-- Wegpunkt- und Funkdaten vorbereiten
-- Checklisten begleiten
-- Navigation und Cross-Track-Error überwachen
-- nächste Aktionen, Höhen und Frequenzen ansagen
-- Treibstoff, ETA und Ausweichoptionen überwachen
-- Funktexte vorbereiten
-- bei einer Umplanung eine neue DTC oder Eingabesequenz erzeugen
+Possible tasks:
 
-Eine generische Cockpitbedienung gibt es in DCS nicht. F-16C, F/A-18C, A-10C,
-AH-64D und andere Module benötigen jeweils eigene Adapter, möglicherweise über
-DCS-BIOS, Export-Lua oder modulspezifische Cockpitbefehle.
+- Explain the flight plan and justify changes
+- Prepare waypoint and radio data
+- Guide the pilot through checklists
+- Monitor navigation and cross-track error
+- Announce upcoming actions, altitudes, and frequencies
+- Monitor fuel, ETA, and diversion options
+- Prepare radio calls
+- Generate a new DTC or input sequence when replanning
+
+DCS has no universal cockpit-control interface. F-16C, F/A-18C, A-10C, AH-64D,
+and other modules each need their own adapters, potentially through DCS-BIOS,
+Export Lua, or module-specific cockpit commands.
 
 ### 4. Flight Instructor
 
-Der Flight Instructor ist eine eigene Rolle neben dem Copiloten. Der Copilot
-hilft bei der Ausführung, während der Instructor beobachtet, bewertet, erklärt
-und gezielt trainiert.
+The Flight Instructor is a separate role from the copilot. The copilot assists
+with execution; the instructor observes, evaluates, explains, and provides
+targeted training.
 
-Vorgesehene Betriebsarten:
+Planned modes:
 
-- **Briefing:** Route, Verfahren, Lernziele und erwartete Fehlerquellen erklären
-- **Silent:** nur auf Nachfrage helfen
-- **Training:** kontextbezogene Hinweise bei relevanten Abweichungen geben
-- **Strict:** Verfahren und Toleranzen eng überwachen
-- **Exam:** während des Fluges schweigen und anschließend bewerten
-- **Debriefing:** Fehlerchronik, Bewertung und Übungsempfehlungen erzeugen
+- **Briefing:** Explain the route, procedures, learning objectives, and likely
+  sources of error
+- **Silent:** Help only when asked
+- **Training:** Provide contextual guidance for relevant deviations
+- **Strict:** Closely monitor procedures and tolerances
+- **Exam:** Remain silent during the flight and evaluate afterward
+- **Debriefing:** Produce an error timeline, assessment, and exercise suggestions
 
-Mögliche Überwachungsbereiche:
+Possible monitoring areas:
 
-- Soll- und Ist-Höhe, Geschwindigkeit und Kurs
-- Cross-Track-Error, Steig-/Sinkrate und ETA
-- Flugphase und korrekte Flugzeugkonfiguration
-- Anflugprofil, Localizer, Glideslope und Angle of Attack
-- Fahrwerk, Klappen, Airbrake, Treibstoff und Bingo
-- Checklisten und Verfahrensschritte
-- Sensor-, Radar-, Defensive- und Waffensystemzustände
-- Voraussetzungen und simulierte Einsatzparameter eines Waffeneinsatzes
+- Target versus actual altitude, speed, and course
+- Cross-track error, climb/descent rate, and ETA
+- Flight phase and correct aircraft configuration
+- Approach profile, localizer, glideslope, and angle of attack
+- Landing gear, flaps, airbrake, fuel, and bingo
+- Checklists and procedure steps
+- Sensor, radar, defensive-system, and weapon-system states
+- Prerequisites and simulated parameters for weapon employment
 
-Die Erkennung einer Abweichung erfolgt deterministisch aus DCS-Telemetrie,
-Flugplan, Flugphase und einem flugzeugspezifischen Trainingsprofil. Ein
-Sprachmodell entscheidet nur über verständliche Erklärung, Dialog und den
-geeigneten Zeitpunkt einer nichtkritischen Hilfestellung. Toleranzen,
-Prioritäten, Hysterese und Wiederholungsunterdrückung verhindern unnötige oder
-ständige Hinweise.
+Deviations are detected deterministically from DCS telemetry, the flight plan,
+flight phase, and an aircraft-specific training profile. A language model only
+handles clear explanations, dialogue, and the timing of noncritical assistance.
+Tolerances, priorities, hysteresis, and duplicate suppression prevent unnecessary
+or constant prompts.
 
-Als erstes Referenz- und Testflugzeug wird die **DCS: F/A-18C Hornet**
-verwendet. Der erste Instructor-Prototyp soll IFR-Navigation, Flugphasen,
-Höhen-/Geschwindigkeitsführung und einen stabilisierten Anflug überwachen.
-Sensor- und Waffensystemkurse werden danach modular ergänzt.
+The **DCS: F/A-18C Hornet** is the first reference and test aircraft. The initial
+instructor prototype should monitor IFR navigation, flight phases,
+altitude/speed guidance, and a stabilized approach. Sensor and weapon-system
+courses can be added as separate modules later.
 
-### 5. ATIS und AI-ATC
+### 5. ATIS and AI ATC
 
-Ein vollständiges AI-ATC ist ein langfristiges, eigenständiges Großprojekt. Es
-soll auf dem Navigationskern aufbauen und in kleinen Stufen entstehen:
+Full AI ATC is a substantial, long-term project in its own right. It should build
+on the navigation core in small stages:
 
 1. ATIS/AWOS
-2. unverbindliche Verkehrsinformationen
-3. Tower für einen Flugplatz
-4. Approach Controller mit Sequenzierung, Vektoren und Holdings
-5. regionales ATC mit Sektoren, Übergaben und Staffelung
-6. militärische Ergänzungen wie Formation Flights, GCI, Marshal, Carrier und
-   taktische Lufträume
+2. Advisory traffic information
+3. Tower for one airport
+4. Approach control with sequencing, vectors, and holds
+5. Regional ATC with sectors, handoffs, and separation
+6. Military additions such as formation flights, GCI, marshal, carrier
+   operations, and tactical airspace
 
-Staffelung, Runway-Belegung, Konflikterkennung und Freigabestatus müssen
-deterministisch berechnet werden. Ein Sprachmodell ist nur für Dialog,
-Interpretation und natürliche Formulierungen zuständig.
+Separation, runway occupancy, conflict detection, and clearance state must be
+computed deterministically. A language model only handles dialogue,
+interpretation, and natural-language phrasing.
 
-## Navigraph-Erkenntnisse
+## Navigraph findings
 
-### Zugriff
+These notes retain the research findings from August 29, 2026. API access and
+license conditions still need confirmation for the intended application.
 
-- Der Antrag auf Navigraph-Entwicklerzugang wurde am 29. August 2026 per E-Mail
-  versendet.
-- Angefragt werden sollen beziehungsweise wurden empfohlen:
+### Access
+
+- The Navigraph developer-access request was emailed on August 29, 2026.
+- Requested or recommended capabilities:
+
   - Navigation Data API
-  - DFD v2 im SQLite-Format
+  - DFD v2 in SQLite format
   - Device Authorization Flow with PKCE
-  - lokale Python-Anwendung für DCS World
-- Das persönliche Navigraph-Abonnement berechtigt das Benutzerkonto zu den
-  abonnierten Daten, ersetzt aber nicht die Entwicklerfreigabe.
-- Für die API werden anwendungsbezogene `Client ID` und `Client Secret`
-  benötigt.
-- Jeder Endnutzer authentifiziert sich mit seinem eigenen Navigraph-Konto.
+  - A local Python application for DCS World
+
+- A personal Navigraph subscription grants the account access to subscribed
+  data, but does not replace developer approval.
+- The API requires an application-specific `Client ID` and `Client Secret`.
+- Each end user authenticates with their own Navigraph account.
 
 ### Navigation Data API
 
-Die API ist keine Such-API für einzelne Wegpunkte. Sie liefert vollständige,
-AIRAC-gebundene Datenpakete. Der relevante Einstiegspunkt ist:
+This is not a search API for individual waypoints. It provides complete,
+AIRAC-based data packages. The relevant entry point is:
 
 ```http
 GET https://api.navigraph.com/v1/navdata/packages
 Authorization: Bearer <access-token>
 ```
 
-Die Paketbeschreibung enthält unter anderem:
+Package descriptions include:
 
-- AIRAC Cycle und Revision
-- Paketstatus `outdated`, `current` oder `future`
+- AIRAC cycle and revision
+- Package status: `outdated`, `current`, or `future`
 - Format
-- Dateien
-- SHA-256-Prüfsummen
-- kurzlebige Download-URLs
+- Files
+- SHA-256 checksums
+- Short-lived download URLs
 
-Die Anwendung lädt das passende Paket herunter und führt Suche,
-Graphaufbereitung und Routenberechnung lokal aus. Beim Start werden Cycle,
-Revision und Hash geprüft und nur geänderte Pakete aktualisiert.
+The application downloads the appropriate package and performs searches, graph
+preparation, and route calculation locally. On startup, it checks the cycle,
+revision, and hash, updating only packages that have changed.
 
-### Authentifizierung
+### Authentication
 
-Für eine lokale Desktop- beziehungsweise Simulatoranwendung ist der Device
-Authorization Flow mit PKCE vorgesehen. Typische Scopes sind:
+Device Authorization Flow with PKCE is planned for the local desktop/simulator
+application. Typical scopes are:
 
 ```text
 openid offline_access fmsdata
 ```
 
-Der Benutzer autorisiert die Anwendung über Browser, Code oder QR-Code. Das
-Access Token ist ungefähr eine Stunde gültig. Das langlebigere Refresh Token
-wird beim Refresh ersetzt und muss atomar sowie geschützt gespeichert werden.
+The user authorizes the application through a browser, code, or QR code. The
+Access Token is valid for approximately one hour. The longer-lived Refresh Token
+is replaced on refresh and must be stored securely and atomically.
 
 ### DFD v2
 
-DFD v2 ist an ARINC 424 angelehnt und kann als SQLite oder Textdatensatz
-geliefert werden. Relevante Datentypen sind:
+DFD v2 follows ARINC 424 concepts and can be supplied as SQLite or text data.
+Relevant data types include:
 
-- Airports, Runways und Gates
-- VHF-Navaids, DME, ILS und GLS
-- Enroute- und Terminal-NDBs
-- Enroute- und Terminal-Waypoints
-- Airways und Airway Restrictions
-- Holdings
-- SID, STAR und Instrument Approaches
-- Airport- und Enroute-Kommunikation
-- MSA und Grid MORA
-- kontrollierte und beschränkte Lufträume
+- Airports, runways, and gates
+- VHF navaids, DME, ILS, and GLS
+- Enroute and terminal NDBs
+- Enroute and terminal waypoints
+- Airways and airway restrictions
+- Holds
+- SIDs, STARs, and instrument approaches
+- Airport and enroute communications
+- MSA and Grid MORA
+- Controlled and restricted airspace
 - FIR/UIR
-- Procedure Path Points
+- Procedure path points
 
-Die Verfahrensdaten enthalten ARINC-artige Legs und Constraints. Der Planner
-muss daraus fliegbare, zusammenhängende Segmente erzeugen.
+Procedure data contains ARINC-style legs and constraints. The planner must
+convert these into connected, flyable segments.
 
-Offizielle Entwicklungsmuster stehen bereits mit geografisch begrenzten,
-älteren DFD-v1/v2-Beispieldaten zur Verfügung. Diese dürfen nur zur Entwicklung
-und Evaluation und nicht zur Weiterverteilung verwendet werden.
+Official development samples are available as geographically limited, older
+DFD v1/v2 datasets. They may be used for development and evaluation, not
+redistribution.
 
 ### Charts API
 
-Die Charts API liefert Airport-Charts als hochauflösende Tag-/Nacht-PNGs sowie
-Enroute-Karten als Web-Mercator-Tiles. Airport-Charts können Metadaten,
-Verfahrens- und Runway-Zuordnungen sowie Georeferenzierung enthalten.
+The Charts API provides high-resolution day/night airport-chart PNGs and enroute
+maps as Web Mercator tiles. Airport charts may include metadata, procedure and
+runway associations, and georeferencing.
 
-Für dieses Projekt wird die Charts API zunächst nicht benötigt. Wichtige
-Einschränkungen:
+The Charts API is not needed initially. Important restrictions recorded during
+the research:
 
-- Charts dürfen nicht offline gespeichert oder gecacht werden.
-- Eine normale eigenständige Desktop-Charts-Anwendung wird grundsätzlich nicht
-  genehmigt.
-- Zulässig sind typischerweise virtuelle EFBs im Simulator. Eng an eine aktive
-  Simulation gebundene lokale Zusatzanzeigen müssen von Navigraph geprüft
-  werden.
-- Aus FMS-Navigationsdaten dürfen keine kartenähnlichen Navigraph-Ersatzprodukte
-  erzeugt werden.
+- Charts must not be stored or cached offline.
+- A conventional standalone desktop charts application is generally not
+  approved.
+- Virtual EFBs within the simulator are typically allowed. Local supplementary
+  displays closely tied to an active simulation require Navigraph review.
+- FMS navigation data must not be used to create map-like substitutes for
+  Navigraph products.
 
-Eine spätere Kartenansicht muss deshalb technisch und lizenzrechtlich klar von
-einem Navigraph-Charts-Produkt abgegrenzt und gegebenenfalls vorab genehmigt
-werden.
+Any later map view must therefore be clearly distinguished from a Navigraph
+charts product, both technically and under the license, and approved in advance
+where necessary.
 
 ### SimBrief
 
-SimBrief kann als optionaler Flugplanlieferant beziehungsweise Importquelle
-dienen. Der letzte OFP eines Benutzers kann als XML oder JSON abgerufen werden.
-Das aktive Erzeugen von Flugplänen über eine eigene Integration benötigt einen
-separat beantragten SimBrief-API-Key.
+SimBrief can be an optional flight-plan provider or import source. A user's
+latest OFP can be retrieved as XML or JSON. Creating flight plans through a
+custom integration requires a separately requested SimBrief API key.
 
-SimBrief ist für zivile Flugplanung nützlich, ersetzt aber keinen eigenen
-Planner für militärische DCS-Flugzeuge, taktische Routen oder
-Bedrohungsvermeidung.
+SimBrief is useful for civil flight planning, but does not replace a dedicated
+planner for military DCS aircraft, tactical routes, or threat avoidance.
 
-## DCS- und MOOSE-Erkenntnisse
+## DCS and MOOSE findings
 
-DCS liefert beziehungsweise kontrolliert:
+DCS provides or controls:
 
-- laufenden Missionszustand
-- Spieler- und KI-Positionen
-- Wetter und Wind
-- DCS-Flugplätze und tatsächlich implementierte Funkfeuer
-- Terrain und Theaterkoordinaten
-- missionsspezifische Beacons, Carrier und TACAN-Stationen
-- Bedrohungen, Koalitionen und taktische Missionslage
+- Live mission state
+- Player and AI positions
+- Weather and wind
+- DCS airports and actually implemented radio navaids
+- Terrain and theater coordinates
+- Mission-specific beacons, carriers, and TACAN stations
+- Threats, coalitions, and the tactical mission situation
 
-MoosePyBridge überwacht jetzt den Spieler-Slot-Lebenszyklus über MOOSE
-`PlayerEnterAircraft` und DCS `PlayerLeaveUnit`. Die normalisierten Events
-`player.aircraft.entered` und `player.aircraft.left` enthalten Spieler, Unit,
-Gruppe und – sofern vorhanden – die zugehörige `FLIGHTGROUP` als geerbte
-`OPSGROUP`. Damit können Navigation, Copilot und Flight Instructor ihre Session
-beim Einstieg starten und beim Verlassen zuverlässig beenden. Eintrittsdaten
-werden kurzzeitig in Lua zwischengespeichert, weil das Leave-Event nicht in
-allen DCS-Situationen noch sämtliche Spieler- und Wrapperdaten enthält. DCS kann
-`PlayerLeaveUnit` innerhalb weniger Millisekunden doppelt auslösen. Die Bridge
-unterdrückt deshalb gleiche Leave-Ereignisse pro Spieler beziehungsweise Unit
-innerhalb einer Sekunde; ein erneuter Einstieg setzt dieses Fenster sofort
-zurück.
+MoosePyBridge monitors the player-slot lifecycle through MOOSE
+`PlayerEnterAircraft` and DCS `PlayerLeaveUnit`. The normalized events
+`player.aircraft.entered` and `player.aircraft.left` include the player, unit,
+group, and, where available, the associated `FLIGHTGROUP` through its inherited
+`OPSGROUP` identity. Navigation, copilot, and instructor sessions can start on
+entry and end on departure. Lua caches entry data because leave events do not
+always retain all player and wrapper fields. DCS can emit `PlayerLeaveUnit`
+twice within milliseconds. The bridge suppresses duplicate leave events for the
+same player or unit within one second; re-entry immediately resets this window.
 
-Die Bridge verarbeitet `PlayerEnterAircraft` zusätzlich um 0,5 Sekunden
-verzögert. So können Missionsskripte im selben Event zunächst die
-`FLIGHTGROUP` erstellen; die Bridge löst die `OPSGROUP` erst danach auf.
-Verlässt der Spieler den Slot vorher, wird der ausstehende Eintritt vor dem
-Austritt verarbeitet, damit keine verspätete aktive Session zurückbleibt.
+The bridge also delays processing `PlayerEnterAircraft` by 0.5 seconds. Mission
+scripts handling the same event can create the `FLIGHTGROUP` first; the bridge
+then resolves the `OPSGROUP`. If the player leaves earlier, the pending entry is
+processed before the leave, preventing a delayed active session from remaining.
 
-MOOSE kann für semantische Missionsobjekte, KI-Gruppen und Routen verwendet
-werden. Es ist jedoch keine universelle Schnittstelle zur Bedienung der Avionik
-eines Spielerflugzeugs.
+MOOSE provides semantic mission objects, AI groups, and routes. It is not a
+universal interface for operating player-aircraft avionics.
 
-### Erster DCS-Testpfad: Mission-Editor-Route
+### First DCS test path: Mission Editor route
 
-Bevor Navigraph-Routing und DTC-Erzeugung verfügbar sind, dient eine im DCS
-Mission Editor angelegte Route als erster ausführbarer Flugplan. MOOSE übernimmt
-die bestehende Gruppe als `FLIGHTGROUP`. Dabei gilt ausdrücklich die
-Vererbungskette:
+Before Navigraph routing and DTC generation are available, a route created in
+the DCS Mission Editor serves as the first executable flight plan. MOOSE adopts
+the existing group as a `FLIGHTGROUP`. The inheritance relationship is explicit:
 
 ```text
 FLIGHTGROUP -> OPSGROUP
 ```
 
-Die Navigation darf deshalb die allgemeinen Zustände und Funktionen der
-`OPSGROUP`-Basis nutzen und flugspezifische Informationen über `FLIGHTGROUP`
-ergänzen. Dieser Testpfad ermöglicht ohne externe Navigationsdaten bereits:
+Navigation can use general state and functions from the `OPSGROUP` base and
+supplement them with flight-specific information from `FLIGHTGROUP`. This test
+path enables the following experiments without external navigation data:
 
-- Mission-Editor-Wegpunkte und aktuellen Wegpunkt auslesen
-- Sollroute mit Position, Kurs, Höhe und Geschwindigkeit vergleichen
-- Flugphasen und Cross-Track-Abweichungen erproben
-- Copilot- und Instructor-Hinweise testen
-- Player-Session beim Einsteigen starten und beim Slot-Verlassen beenden
-- später dieselbe neutrale Route mit Navigraph- und DTC-Adaptern vergleichen
+- Read Mission Editor waypoints and investigate current-waypoint state
+- Compare the planned route with position, course, altitude, and speed
+- Test flight phases and cross-track deviations
+- Test copilot and instructor guidance
+- Start player sessions on slot entry and stop them on departure
+- Later compare the same neutral route with Navigraph and DTC adapters
 
-Implementierter erster Routenabruf:
+Implemented initial route retrieval:
 
-- Lua-Kommando `flightgroup.route.get`, Python-SDK
+- Lua command `flightgroup.route.get`, Python SDK
   `get_flightgroup_route(opsgroup_id, route_source="mission_editor")`.
-- Die vollständige ME-Route stammt aus der geerbten `waypoints0`-Liste.
-  `GetWaypoints()` liefert dagegen die bearbeitete aktuelle Route; MOOSE kann
-  dort insbesondere den Landepunkt entfernen. Diese Quelle ist separat mit
-  `route_source="current"` verfügbar.
-- DCS-Wegpunkt-`x/y` sind horizontale Koordinaten und werden als Welt-`x/z`
-  behandelt. `alt` (Meter), `alt_type` (BARO/RADIO) und `speed` (m/s) bleiben
-  erhalten. Die F10-Darstellung verwendet nur die horizontale Projektion.
-- `examples/sdk/monitor_player_aircraft.py` fragt die Route nach dem Einstieg
-  ab und zeichnet die aufeinanderfolgenden Punkte als cyanfarbene Linie für
-  die eigene Koalition. Mindestens zwei, höchstens 501 Punkte werden unterstützt.
-  Beim Slot-Verlassen oder Skriptende wird nur dieses Overlay entfernt.
-- Die Darstellung verändert weder die Route noch die Avionik. Sie verbindet
-  lediglich Wegpunkte geradlinig und bildet noch keine Kurven, Holdings oder
-  Instrumentenverfahren ab.
+- The full Mission Editor route comes from the inherited `waypoints0` list.
+  `GetWaypoints()` returns the processed current route instead; MOOSE may remove
+  the landing point from it. That source is available separately through
+  `route_source="current"`.
+- DCS waypoint `x/y` values are horizontal coordinates, treated as world
+  `x/z`. The `alt` (meters), `alt_type` (BARO/RADIO), and `speed` (m/s)
+  values are preserved. F10 display uses only the horizontal projection.
+- `examples/sdk/monitor_player_aircraft.py` retrieves the route after entry and
+  draws consecutive points as a cyan line for the player's coalition. The
+  display supports two to 501 points. Only this overlay is removed on slot
+  departure or script exit.
+- The display changes neither the route nor avionics. It connects waypoints
+  with straight lines, without modeling turns, holds, or instrument procedures.
 
-Live-Routenverfolgung im selben Python-Skript:
+Live route tracking in the same Python script:
 
-- Positionsabfrage der konkreten Spieler-`UNIT` alle zwei Sekunden über das
-  vorhandene `object.coords`; kein zusätzlicher Lua-Timer.
-- Entfernung zum nächsten Wegpunkt in NM und Peilung auf geografisch Nord.
-  Kein magnetischer Steuerkurs und noch keine Windkorrektur.
-- Seitliche Abweichung (XTE) in Metern zur aktiven geraden Segmentlinie:
-  positiv rechts, negativ links. Berechnet in DCS-`x/z` passend zur F10-Linie;
-  kein 3D-Schrägabstand. Vor/hinter dem Segment bezieht sie sich auf dessen
-  verlängerte Linie, nicht auf den Abstand zum Endpunkt.
-- Eigene deterministische Fortschrittsverfolgung ab WP 1 -> WP 2, konfigurierbar
-  mit `INITIAL_TARGET_WAYPOINT`. Sie liest nicht die Avionik-Wegpunktauswahl aus.
-- Umschalten beim Erreichen eines 500-m-Radius. Ein Überflug zwischen zwei
-  Messungen zählt ebenfalls bei seitlicher Nähe und höchstens zehn Sekunden
-  Messabstand. Keine automatische Übernahme eines weit voraus liegenden
-  Wegpunkts beim ersten Positionssample.
-- Zielpunkt erreicht bedeutet ausschließlich horizontale Nähe, nicht
-  erfolgreiche Landung oder Einhaltung von Höhe und Geschwindigkeit.
-- Die Positionsabfrage wird bei Leave, Missionsende und Skriptende abgebrochen.
+- Query the specific player `UNIT` every two seconds through the existing
+  `object.coords` API; no additional Lua timer.
+- Distance to the next waypoint in NM and bearing referenced to true north.
+  This is not a magnetic steering heading and does not include wind correction.
+- Cross-track error (XTE) in meters relative to the active straight segment:
+  positive right, negative left. Calculated in DCS `x/z` to match the F10 line,
+  not as a 3D slant distance. Before/after the segment, XTE refers to its extended
+  line rather than distance to the endpoint.
+- Independent deterministic progress tracking starts at WP 1 -> WP 2,
+  configurable through `INITIAL_TARGET_WAYPOINT`. It does not read the active
+  avionics waypoint.
+- Advance within a 500 m capture radius. A crossing between two samples also
+  counts if lateral proximity is sufficient and the sample gap is at most ten
+  seconds. The first position sample does not automatically skip a distant
+  waypoint already behind the aircraft.
+- Reaching the target means horizontal proximity only, not a successful landing
+  or compliance with altitude and speed constraints.
+- Position polling stops on slot departure, mission end, and script exit.
 
-Navigraph bildet überwiegend aktuelle reale zivile Navigation ab. DCS besitzt
-eigene und teilweise historische Theaterdaten. Deshalb ist ein expliziter
-Abgleich nötig. Ein identischer ICAO-Code garantiert nicht automatisch gleiche
-Runways, Frequenzen, Verfahren oder Koordinaten.
+Navigraph mainly represents current real-world civil navigation. DCS has its own,
+sometimes historical, theater data. Explicit reconciliation is therefore needed:
+matching ICAO codes do not guarantee matching runways, frequencies, procedures,
+or coordinates.
 
-### Ingame-Menü: erster Funktionstest
+### In-game menu: initial functional test
 
-- MOOSE-Basis: `MENU_GROUP:New(group, text)` erstellt das Untermenü;
-  `MENU_GROUP_COMMAND:New(group, text, parent, callback)` bindet die Aktionen.
-- Testskript: `examples/sdk/monitor_player_menu.py`, direkt in VS Code starten,
-  während der normale Python-Daemon und die DCS-Mission laufen. Nach dem
-  Lua-Update die Mission einmal neu starten. Die Lua-Projektdatei wird zusätzlich
-  ins MOOSE-Verzeichnis auf Branch `FF/PyBridge` synchronisiert.
-- Funkmenü → F10 Other/Andere → **MoosePyBridge Test**; nicht die F10-Karte.
-  **Nachricht anzeigen** nutzt `MESSAGE:ToGroup` direkt in Lua;
-  **Python-Konsole** sendet `player.menu.selected` zur Ausgabe im Testskript.
-- Die Menüs sind standardmäßig aus. Das Skript aktiviert sie per
-  `player.menu.test.configure` für bereits besetzte und später betretene Gruppen.
-  Eine `FLIGHTGROUP` oder ein Flug ist dafür nicht nötig.
-- Wichtige Grenze: Gruppensichtbarkeit, keine personenbezogenen Berechtigungen.
-  DCS liefert beim Klick keinen Spieler-Namen. `group_sessions` nennt deshalb
-  nur die aktuellen Gruppenmitglieder, nicht den tatsächlichen Klickenden.
-- Eine Menüinstanz je Gruppe; Entfernen erst beim letzten Slot-Austritt.
-  Doppelte Leave-Events bleiben unterdrückt. Wiedereinstieg berücksichtigt eine
-  geänderte DCS-Gruppen-ID. Entfernte Callbacks bleiben wirkungslos.
-- Ctrl+C entfernt die Menüs dieses Skriptlaufs. Missionsende räumt ebenfalls auf
-  und beendet das Skript. Hartes Beenden kann Menüs hinterlassen; ein neuer Lauf
-  übernimmt den Test. Eine Lauf-ID verhindert Aufräumen durch einen älteren Lauf.
-- Automatische Prüfung: Lua-Lifecycle-Test mit simulierten DCS-/MOOSE-Grenzen
-  und Python-Tests für Ereignisempfang, Filter, Cursor und Aufräumen.
-  Den Lua-Test über `MOOSEBRIDGE_TEST_LUA` auf einen lokalen Lua-Interpreter
-  verweisen lassen. Beide Testaktionen wurden vom Benutzer in DCS bestätigt:
-  Cockpitnachricht und `MENU CLICK` mit `GROUP:Test Hornet` / `funkyfranky`: PASS.
+- MOOSE foundation: `MENU_GROUP:New(group, text)` creates the submenu;
+  `MENU_GROUP_COMMAND:New(group, text, parent, callback)` binds actions.
+- Test script: `examples/sdk/monitor_player_menu.py`, run directly in VS Code
+  while the normal Python daemon and DCS mission are running. Restart the mission
+  after a Lua update. The project Lua file is also synchronized to the MOOSE
+  directory on branch `FF/PyBridge`.
+- Radio menu -> F10 Other -> **MoosePyBridge Test**, not the F10 map.
+  **Show message** calls `MESSAGE:ToGroup` directly in Lua;
+  **Python console** sends `player.menu.selected` for output in the test script.
+- Menus are off by default. The script enables them through
+  `player.menu.test.configure` for already occupied and subsequently entered
+  groups. Neither a `FLIGHTGROUP` nor flight is required.
+- Important limitation: group visibility, not individual permissions.
+  DCS supplies no clicking-player name. `group_sessions` identifies current
+  group occupants, not the actual person who clicked.
+- One menu instance per group, removed only when the last occupant leaves.
+  Duplicate leave events remain suppressed. Re-entry handles changed DCS group
+  IDs. Removed callbacks become inert.
+- Ctrl+C removes the current run's menus. Mission end also cleans up and ends the
+  script. A forced process kill can leave menus behind; a new run takes ownership.
+  A run ID prevents an older run from removing the new run's menus.
+- Automated verification uses a Lua lifecycle harness with simulated DCS/MOOSE
+  boundaries and Python tests for event reception, filters, cursors, and cleanup.
+  Set `MOOSEBRIDGE_TEST_LUA` to a local Lua interpreter to run the Lua harness.
+  The user confirmed both actions in DCS: cockpit message and `MENU CLICK` for
+  `GROUP:Test Hornet` / `funkyfranky`: PASS.
 
-### Navigation über das Funkmenü
+### Navigation through the radio menu
 
-- Neuer normaler Einstieg: `examples/sdk/run_navigation_menu.py` in VS Code;
-  Server unverändert weiterlaufen lassen, Mission nach Lua-Update neu starten.
-  Das alte Menü-Testskript vorher beenden. Das neue Profil ersetzt das Testmenü.
-- Funkmenü → F10 Other/Andere → **Navigation**, fünf Aktionen:
-  **Route anzeigen**, **Route ausblenden**, **Navigationsstatus**,
-  **Hinweise ein**, **Hinweise aus**.
-- Route und Hinweise starten ausgeschaltet. Routenanzeige nutzt die erhaltene
-  ME-Route und eine cyanfarbene F10-Linie für die eigene Koalition. Die Linie ist
-  nicht nur für die Gruppe sichtbar. Ausblenden beeinflusst die Hinweise nicht.
-- Status zeigt Referenzflugzeug, nächstes Ziel, NM-Entfernung, TRUE-Peilung und
-  XTE per `MESSAGE:ToGroup`. Hinweise fragen standardmäßig alle zwei Sekunden ab
-  und melden ungefähr alle zehn Sekunden sowie bei Wegpunkterfassung.
-- Der vorhandene `RouteNavigator` wird pro Gruppen-Menüsitzung wiederverwendet;
-  Fortschritt bleibt beim Aus-/Einblenden und beim Abschalten der Hinweise erhalten.
-  Ohne Hinweise gibt es keine regelmäßigen Positionsabfragen. Kein Lesen oder
-  Schreiben der Avionik-Wegpunktauswahl; Zielerfassung ist kein Landungsnachweis.
-- Status/Hinweise verlangen genau ein Spielerflugzeug pro Gruppe und dessen
-  FLIGHTGROUP. Mehrere Sitze desselben UNIT zählen als ein Flugzeug. Bei mehreren
-  Spielerflugzeugen erfolgt eine Fehlermeldung statt einer willkürlichen Auswahl.
-- Lua prüft bei Kontext-, Nachrichten- und Overlay-Aufrufen Besitzer-ID,
-  Menüsitzungs-ID, DCS-Gruppen-ID und Belegung. Verspätete Aufträge einer alten
-  Sitzung werden zurückgewiesen. Die letzte Person verlässt die Gruppe:
-  `player.menu.closed`, Abbruch der Python-Hinweise, Entfernen der eigenen Linie.
-- Lua räumt seine Linie auch ohne erreichbaren Python-Client auf. Ctrl+C,
-  Missionsende oder ein neuer Menülauf entfernen das Menü und seine Linie;
-  andere Overlays bleiben bestehen. Nach Missionsende das Skript neu starten.
-- Prüfen am Boden: Linie ein/aus, Status, Hinweise ein (mindestens zehn Sekunden),
-  Hinweise aus, Slot verlassen/wieder betreten und Ctrl+C. Automatische Tests
-  decken Lua-Lifecycle/Schreibschutz und Python-Aktionen/Task-Abbruch ab;
-  dieser neue Navigation-Menütest in DCS steht noch aus.
+- Normal entry point: `examples/sdk/run_navigation_menu.py` in VS Code. Keep the
+  existing daemon running; restart the mission after a Lua update. Stop the old
+  menu test script first. The new profile replaces the test menu.
+- Radio menu -> F10 Other -> **Navigation**, with five actions:
+  **Show route**, **Hide route**, **Navigation status**, **Enable hints**,
+  **Disable hints**.
+- Route display and hints start off. The display uses the preserved Mission
+  Editor route and a cyan F10 line for the group's coalition, not exclusively
+  for the group. Hiding the line does not affect hints.
+- Status shows reference aircraft, next target, distance in NM, TRUE bearing,
+  and XTE through `MESSAGE:ToGroup`. Hints sample every two seconds by default
+  and display approximately every ten seconds and on waypoint capture.
+- The existing `RouteNavigator` is reused per group-menu session. Progress
+  survives showing/hiding the line and disabling hints. There is no periodic
+  polling while hints are off. Cockpit waypoint selection is neither read nor
+  changed; target capture does not prove a landing.
+- Status/hints require exactly one player aircraft per group and its FLIGHTGROUP.
+  Multiple crew seats in the same UNIT count as one aircraft. Multiple player
+  aircraft produce an error message instead of an arbitrary reference choice.
+- Lua validates owner ID, menu-session ID, DCS group ID, and occupancy for
+  context, message, and overlay calls. Delayed work from an old session is
+  rejected. When the last occupant leaves, `player.menu.closed` stops Python
+  hints and the session's line is removed.
+- Lua removes its line even without a reachable Python client. Ctrl+C, mission
+  end, or a new menu run removes the menu and its line; unrelated overlays remain.
+  Restart the script for the next mission.
+- Ground checks: show/hide the line, request status, enable hints for at least
+  ten seconds, disable hints, leave/re-enter the slot, and stop with Ctrl+C.
+  Automated tests cover Lua lifecycle/write guards and Python actions/task
+  cancellation. The user confirmed the navigation-menu ground test.
 
-## DTC-Erkenntnisse
+### Initial airborne test
 
-### Grundsätzliche Eignung
+The user supplied a test log for `GROUP:Test Hornet Air`:
 
-DCS kann DTCs im Mission Editor und im Spiel erzeugen, speichern, importieren
-und exportieren. DTCs können:
+- The first run could not resolve a FLIGHTGROUP at the time of the status query.
+  The second run resolved it and provided guidance.
+- Distance to WP 2 decreased from 12.10 NM to 0.59 NM in the displayed samples.
+- The navigator then advanced from WP 1 -> WP 2 to WP 2 -> WP 3.
+- XTE changed during flight, including left/right indications on the new leg.
+- Tracking continued after the route-display command.
+- The script stopped at mission end/reset.
 
-- in einer `.miz` gespeichert werden
-- einzelnen Player-/Client-Flugzeugen oder Flights zugeordnet werden
-- als `.dtc` exportiert und später importiert werden
-- vor Missionsstart ausgewählt werden
-- am Boden auf einem freundlichen Flugplatz über das Ground-Crew-Menü verwaltet
-  werden
-- partitionsweise im Cockpit geladen werden
+This confirms initial live tracking and waypoint sequencing. Deliberate left/right
+maneuvers to validate XTE sign against the flown path remain a separate test.
 
-DTCs sind für Spieler-/Client-Flugzeuge gedacht. KI-Flugzeuge benötigen
-weiterhin DCS- oder MOOSE-Routen.
+## DTC findings
 
-### Aktueller Funktionsumfang
+### General suitability
 
-Die DTC-Unterstützung begann bei F-16C und F/A-18C und wurde auf MiG-29A
-erweitert. AH-64D ist weit fortgeschritten, A-10C II ist geplant. Funktionen und
-Speicheraufteilung sind flugzeugspezifisch.
+DCS can create, save, import, and export DTCs in the Mission Editor and in-game.
+DTCs can be:
 
-Für die F-16C sind unter anderem relevant:
+- Stored in a `.miz` file
+- Assigned to individual player/client aircraft or flights
+- Exported as `.dtc` files and imported later
+- Selected before mission start
+- Managed on the ground at a friendly airport through the ground-crew menu
+- Loaded by partition in the cockpit
 
-- Navigation Steerpoints und Routes
-- VIP/VRP und Offset Aimpoints
-- TACAN, ILS und Bingo
-- Geo Lines, Steerpoints 31 bis 55
-- Threat Points, Steerpoints 56 bis 70
-- Destination Points, Steerpoints 81 bis 99
+DTCs are intended for player/client aircraft. AI aircraft still need DCS or MOOSE
+routes.
 
-Für die F/A-18C sind unter anderem Navigation Points sowie SA-Daten wie CAP
-Points, Corridors, FAOR/FLOT und Missile Engagement Zones relevant.
+### Functionality recorded during research
 
-### Grenzen und Risiken
+DTC support began with F-16C and F/A-18C and was extended to MiG-29A. AH-64D was
+well advanced and A-10C II planned at the time of research. Features and memory
+partitions are aircraft-specific.
 
-- Es ist derzeit keine stabile öffentliche DTC-API oder verbindliche
-  Modul-übergreifende Dateispezifikation bekannt.
-- ED- und Drittanbietermodule können unterschiedliche Datenmodelle und
-  Oberflächen verwenden.
-- Das Format und die DTC-Funktionen entwickeln sich schnell weiter.
-- Ein DTC-Import kann bestehende Wegpunktslots überschreiben; ein generisches
-  Merge-Verhalten darf nicht vorausgesetzt werden.
-- Dynamic-Spawn-Workflows sind laut Forum noch nicht durchgehend zuverlässig.
-- Eine dynamische Umplanung während eines laufenden Fluges ist nicht für jedes
-  Modul oder jede Startart verfügbar.
+Relevant F-16C capabilities include:
 
-Daher ist DTC ein Ausgabeadapter und ausdrücklich nicht das interne
-Flugplanmodell.
+- Navigation steerpoints and routes
+- VIP/VRP and offset aimpoints
+- TACAN, ILS, and bingo
+- Geo lines, steerpoints 31 through 55
+- Threat points, steerpoints 56 through 70
+- Destination points, steerpoints 81 through 99
 
-### Geplanter Formatversuch
+For the F/A-18C, relevant data includes navigation points and SA data such as CAP
+points, corridors, FAOR/FLOT, and missile engagement zones.
 
-Sobald Zeit dafür ist, werden mit DCS mindestens diese Testdateien exportiert:
+### Limitations and risks
 
-- `empty.dtc`: Default-DTC ohne eigene Navigationspunkte
-- `one-point.dtc`: ein eindeutig benannter Wegpunkt
-- `changed-point.dtc`: derselbe Punkt mit geänderter Koordinate und Höhe
+- No stable public DTC API or binding cross-module file specification is known
+  from the research so far.
+- ED and third-party modules can use different data models and interfaces.
+- The format and DTC features are evolving rapidly.
+- Importing a DTC can overwrite existing waypoint slots; generic merge behavior
+  must not be assumed.
+- Forum reports indicate that dynamic-spawn workflows are not consistently
+  reliable yet.
+- Dynamic replanning during flight is not available for every module or start
+  type.
 
-Danach werden Dateityp, Serialisierung, Koordinaten, Partitionen, IDs,
-Prüfsummen und Versionsabhängigkeiten untersucht. Der Versuch wird zuerst mit
-der F/A-18C und danach optional mit der F-16C wiederholt.
+DTC is therefore an output adapter, explicitly not the internal flight-plan
+model.
 
-## Vorgeschlagene Architektur
+### Planned format experiment
+
+When time permits, export at least these test files from DCS:
+
+- `empty.dtc`: default DTC without custom navigation points
+- `one-point.dtc`: one uniquely named waypoint
+- `changed-point.dtc`: the same point with changed coordinates and altitude
+
+Then inspect file type, serialization, coordinates, partitions, IDs, checksums,
+and version dependencies. Perform the experiment with the F/A-18C first and
+optionally repeat it with the F-16C.
+
+## Proposed architecture
 
 ```text
 Navigraph DFD ---------+
                        |
-DCS/MOOSE Live State --+--> Normalisierung --> Navigationskern
+DCS/MOOSE Live State --+--> Normalization --> Navigation Core
                        |                         |
 Aircraft Profiles -----+                         +--> Route/Procedure Planner
                                                  +--> Guidance/Monitoring
                                                  +--> Conflict Validation
                                                  |
-                                                 +--> DTC Adapter je Modul
+                                                 +--> Per-module DTC Adapter
                                                  +--> MOOSE/DCS AI Route
                                                  +--> Copilot Tools
                                                  +--> Instructor/Evaluator
                                                  +--> Kneeboard/Mission Card
-                                                 +--> später ATC Services
+                                                 +--> Future ATC Services
 ```
 
-### Mögliche Kernmodelle
+### Potential core models
 
 - `Airport`
 - `Runway`
@@ -553,157 +561,152 @@ Aircraft Profiles -----+                         +--> Route/Procedure Planner
 - `TrainingSession`
 - `DebriefingReport`
 
-### Adaptergrenzen
+### Adapter boundaries
 
-- `NavigraphRepository`: DFD-Import und lokale Abfragen
-- `DcsStateAdapter`: Wetter, Flugplätze, Beacons und Live-Zustand
-- `MooseRouteAdapter`: semantische KI-Routen und Missionsbefehle
-- `AircraftProfileRepository`: Leistung und Avionikgrenzen
-- `DtcExporter`: Modul-spezifische Cartridge-Erzeugung
-- `CockpitAdapter`: optionale direkte Avionikbedienung
-- `FlightTelemetryAdapter`: Flugzustand und verfügbare Cockpitparameter
-- `TrainingEvaluator`: deterministische Regeln, Toleranzen und Bewertungen
-- `SimBriefAdapter`: optionaler OFP-Import
+- `NavigraphRepository`: DFD import and local queries
+- `DcsStateAdapter`: weather, airports, beacons, and live state
+- `MooseRouteAdapter`: semantic AI routes and mission commands
+- `AircraftProfileRepository`: performance and avionics limitations
+- `DtcExporter`: module-specific cartridge generation
+- `CockpitAdapter`: optional direct avionics operation
+- `FlightTelemetryAdapter`: flight state and available cockpit parameters
+- `TrainingEvaluator`: deterministic rules, tolerances, and assessments
+- `SimBriefAdapter`: optional OFP import
 
-## Vorläufiger MVP
+## Preliminary MVP
 
-Der erste MVP soll ohne AI, Voice und direkte Cockpitbedienung funktionieren.
-Die F/A-18C Hornet ist das erste Referenzflugzeug für Flugzeugprofil,
-DTC-Adapter, Telemetrie und spätere Instructor-Funktionen.
+The first MVP should work without AI, voice, or direct cockpit control. The
+F/A-18C Hornet is the first reference aircraft for the aircraft profile, DTC
+adapter, telemetry, and later instructor features.
 
-### Funktionsumfang
+### Scope
 
-1. DFD-v2-SQLite-Datenbank öffnen und Metadaten prüfen.
-2. Airports, Runways, Navaids und Waypoints suchen.
-3. Mehrdeutige Identifiers geografisch korrekt auflösen.
-4. Start und Ziel mit einem DCS-Theater abgleichen.
-5. eine Enroute-Verbindung über das Airway-Netz berechnen.
-6. passende SID, STAR und Approach-Kandidaten bestimmen.
-7. Procedure Legs und Constraints in einen neutralen Flugplan überführen.
-8. Distanzen, Kurse und eine einfache ETA berechnen.
-9. den Plan als JSON und lesbare Textdarstellung exportieren.
-10. Tests mit bekannten Routen und Randfällen bereitstellen.
+1. Open a DFD v2 SQLite database and validate its metadata.
+2. Search airports, runways, navaids, and waypoints.
+3. Resolve ambiguous identifiers geographically.
+4. Match departure and destination to a DCS theater.
+5. Calculate an enroute connection through the airway network.
+6. Identify suitable SID, STAR, and approach candidates.
+7. Convert procedure legs and constraints into a neutral flight plan.
+8. Calculate distances, courses, and a basic ETA.
+9. Export the plan as JSON and readable text.
+10. Provide tests using known routes and edge cases.
 
-### Noch nicht Teil des ersten MVP
+### Outside the first MVP
 
-- vollständige Flugleistungsoptimierung
-- Wetter- und NOTAM-Routing
-- vollständige Terrain-Freigabe
-- taktische Bedrohungsvermeidung
+- Full aircraft-performance optimization
+- Weather- and NOTAM-aware routing
+- Comprehensive terrain-clearance validation
+- Tactical threat avoidance
 - Charts API
-- automatische Cockpiteingabe
-- AI-Copilot mit Schreibrechten
+- Automatic cockpit entry
+- AI copilot with write access
 - ATC
 
-## Entscheidungen
+## Decisions
 
-- Der Navigationskern wird deterministisch und unabhängig von einem LLM.
-- Das Projekt wird als eigenständiges Python-Teilprojekt entwickelt, darf aber
-  geeignete Transport-, Koordinaten-, Theater- und Zustandskomponenten aus
-  MoosePyBridge wiederverwenden.
-- Navigraph ist eine Datenquelle, nicht das Domänenmodell.
-- DTC wird als flugzeugspezifisches Ausgabeformat behandelt.
-- Die F/A-18C Hornet ist das erste Test- und Referenzflugzeug.
-- Spieler-Sessions beginnen mit `PlayerEnterAircraft` und enden mit
-  `PlayerLeaveUnit`; `FLIGHTGROUP` wird dabei als Spezialisierung der geerbten
-  `OPSGROUP`-Basis behandelt.
-- MOOSE bleibt der bevorzugte semantische Ausführungsweg für KI-Einheiten.
-- Für Spielerflugzeuge werden DTC und später modulspezifische Cockpitadapter
-  untersucht.
-- Flight Instructor und Copilot bleiben getrennte Rollen. Der Instructor nutzt
-  einen deterministischen Evaluator und das Sprachmodell nur für Erklärung und
-  Dialog.
-- AI-ATC beginnt, wenn überhaupt, mit ATIS und Advisory statt mit vollständiger
-  Staffelungsverantwortung.
+- The navigation core is deterministic and independent of an LLM.
+- The project is developed as a separate Python subproject, while reusing
+  suitable MoosePyBridge transport, coordinate, theater, and state components.
+- Navigraph is a data source, not the domain model.
+- DTC is treated as an aircraft-specific output format.
+- The F/A-18C Hornet is the first test and reference aircraft.
+- Player sessions start with `PlayerEnterAircraft` and end with
+  `PlayerLeaveUnit`; `FLIGHTGROUP` is a specialization of its inherited
+  `OPSGROUP` base.
+- MOOSE remains the preferred semantic execution path for AI units.
+- DTC and, later, module-specific cockpit adapters will be investigated for
+  player aircraft.
+- Flight Instructor and copilot remain separate roles. The instructor uses a
+  deterministic evaluator; the language model only explains and converses.
+- AI ATC, if pursued, begins with ATIS and advisory services rather than full
+  separation responsibility.
+- English is the default language for project artifacts and output; other
+  languages require an explicit request.
 
-## Offene Fragen
+## Open questions
 
-- Soll das Teilprojekt im bestehenden Repository oder langfristig in einem
-  eigenen Repository leben?
-- Welche DCS-Karte bildet zusammen mit der F/A-18C den ersten vertikalen
-  Prototyp?
-- Beginnen wir mit zivilem IFR-Routing oder direkt mit taktischer
-  Bedrohungsvermeidung?
-- Welche DCS-Datenquellen stehen für Wetter, Runway und Funkfeuer zuverlässig
-  zur Verfügung?
-- Wie werden reale Navigraph-Airports und DCS-Flugplätze versioniert und
-  abgeglichen?
-- Welche Flugzeugleistungsdaten dürfen verwendet und verteilt werden?
-- Soll die erste Oberfläche CLI, Browserkarte oder In-Game-Overlay sein?
-- Welcher Teil einer Route darf automatisch geändert werden, nachdem der Pilot
-  sie bestätigt hat?
-- Welche Lizenzgrenzen gelten für die gewünschte Routendarstellung im Detail?
-- Ist das exportierte `.dtc`-Format stabil und ohne DCS-interne Prüfsumme
-  erzeugbar?
-- Wie verhalten sich DTC-Import und Slot-Merge je Flugzeugmodul?
+- Should the subproject remain in the existing repository or eventually use its
+  own repository?
+- Which DCS map should be paired with the F/A-18C for the first vertical
+  prototype?
+- Should routing start with civil IFR planning or tactical threat avoidance?
+- Which DCS data sources reliably expose weather, runways, and radio navaids?
+- How should real-world Navigraph airports and DCS airfields be versioned and
+  reconciled?
+- Which aircraft-performance data may be used and distributed?
+- Should the first broader interface be a CLI, browser map, or in-game overlay?
+- Which parts of a route may change automatically after pilot confirmation?
+- What exact license restrictions apply to the intended route display?
+- Is the exported `.dtc` format stable and reproducible without an internal DCS
+  checksum?
+- How do DTC import and slot merging behave for each aircraft module?
 
-## Aufgabenliste
+## Task list
 
-### Jetzt möglich
+### Possible now
 
-- [ ] Offizielle DFD-v2-Beispieldaten herunterladen und Lizenzhinweis
-      dokumentieren.
-- [ ] DFD-v2-SQLite-Schema gegen die Dokumentation inventarisieren.
-- [ ] kleines Python-Experiment für Airport-, Navaid- und Waypoint-Suche bauen.
-- [ ] neutralen `FlightPlan`- und `RouteLeg`-Entwurf erstellen.
-- [x] F/A-18C Hornet als erstes Test- und Referenzflugzeug auswählen.
-- [ ] erstes DCS-Theater für den MVP auswählen.
-- [ ] vorhandene MoosePyBridge-Komponenten auf Wiederverwendbarkeit prüfen.
-- [x] `PlayerEnterAircraft` und `PlayerLeaveUnit` in MoosePyBridge anbinden und
-      aktive Spieler-Flugzeug-Sessions in Python spiegeln.
-- [ ] Mission-Editor-Wegpunkte einer F/A-18C-`FLIGHTGROUP` als ersten Flugplan
-      einlesen und über die geerbte `OPSGROUP`-Basis beobachten.
-- [x] Read-only-Routenabruf und F10-Linienanzeige im Python-Testskript implementieren.
-- [x] F10-Linienverlauf einschließlich Start-/Landepunkt live gegen die
-      Mission-Editor-Route prüfen.
-- [x] Live-Entfernung, True-Peilung und XTE mit eigener Wegpunktsequenz implementieren.
-- [ ] Wegpunktwechsel und Links-/Rechts-Abweichungen im Flug live prüfen.
-- [x] Opt-in-Gruppenmenü mit Cockpitnachricht und Python-Konsolenausgabe implementieren.
-- [x] Beide einfachen Menüaktionen in DCS live bestätigen.
-- [x] Navigation-Menü für Routenanzeige, Status und ein-/ausschaltbare Hinweise anbinden.
-- [ ] Navigation-Menü am Boden inklusive Entfernen und Wiedereinstieg live prüfen.
-- [ ] Testfälle für identische Fix-Identifiers und DCS/Navigraph-Abweichungen
-      definieren.
+- [ ] Download official DFD v2 sample data and document its license notice.
+- [ ] Inventory the DFD v2 SQLite schema against the documentation.
+- [ ] Build a small Python airport, navaid, and waypoint search experiment.
+- [ ] Draft neutral `FlightPlan` and `RouteLeg` models.
+- [x] Select the F/A-18C Hornet as the first test and reference aircraft.
+- [ ] Select the first DCS theater for the MVP.
+- [ ] Review existing MoosePyBridge components for reuse.
+- [x] Connect `PlayerEnterAircraft` and `PlayerLeaveUnit` to MoosePyBridge and
+      mirror active player-aircraft sessions in Python.
+- [x] Read a F/A-18C FLIGHTGROUP's Mission Editor waypoints as the initial route
+      through the inherited OPSGROUP base.
+- [x] Implement read-only route retrieval and F10 line display in the Python test.
+- [x] Validate the F10 line, including departure/landing points, against the
+      Mission Editor route in DCS.
+- [x] Implement live distance, true bearing, and XTE with independent sequencing.
+- [x] Observe automatic WP 2 -> WP 3 sequencing in an airborne test.
+- [ ] Validate XTE signs with deliberate left/right maneuvers in flight.
+- [x] Implement an opt-in group menu with cockpit and Python-console test actions.
+- [x] Confirm both simple menu actions in DCS.
+- [x] Connect route display, status, and switchable hints to the navigation menu.
+- [x] Confirm the navigation-menu ground test.
+- [x] Standardize project-facing text and documentation on English.
+- [ ] Define tests for duplicate fix identifiers and DCS/Navigraph discrepancies.
 
-### Nach Navigraph-Freigabe
+### After Navigraph approval
 
-- [ ] Client ID und Client Secret ausschließlich lokal konfigurieren.
-- [ ] Device Authorization Flow mit PKCE implementieren.
-- [ ] sicheren, atomaren Token-Store implementieren.
-- [ ] `packages`-Endpoint anbinden.
-- [ ] Cycle-, Revision- und SHA-256-Prüfung implementieren.
-- [ ] Subscription- und Fehlerzustände verständlich behandeln.
-- [ ] aktuellen DFD-v2-Datensatz laden und mit dem Sample vergleichen.
+- [ ] Configure Client ID and Client Secret locally only.
+- [ ] Implement Device Authorization Flow with PKCE.
+- [ ] Implement a secure, atomic token store.
+- [ ] Connect the `packages` endpoint.
+- [ ] Implement cycle, revision, and SHA-256 validation.
+- [ ] Provide clear subscription and error handling.
+- [ ] Load a current DFD v2 dataset and compare it with the sample.
 
-### Nach Erzeugung der DTC-Testdateien
+### After generating DTC test files
 
-- [ ] `.dtc`-Dateityp und Struktur bestimmen.
-- [ ] kontrollierte Diffs der drei F/A-18C-Dateien erstellen.
-- [ ] Koordinaten-, Höhen-, Namens- und Slotkodierung identifizieren.
-- [ ] Import einer extern reproduzierten Testdatei in DCS validieren.
-- [ ] Versuch optional mit F-16C wiederholen.
-- [ ] Formatversion und DCS-Build in Test-Fixtures speichern.
-- [ ] Entscheidung über einen ersten read-only oder write-fähigen DTC-Adapter
-      treffen.
+- [ ] Determine the `.dtc` file type and structure.
+- [ ] Produce controlled diffs of the three F/A-18C files.
+- [ ] Identify coordinate, altitude, name, and slot encodings.
+- [ ] Validate import of an externally reproduced test file in DCS.
+- [ ] Optionally repeat the experiment with F-16C.
+- [ ] Record format version and DCS build in test fixtures.
+- [ ] Decide whether the first DTC adapter should be read-only or write-capable.
 
-### Später
+### Later
 
-- [ ] Airway-Router und Procedure Resolver entwickeln.
-- [ ] DCS-Live-Wetter und Runway-Auswahl anbinden.
-- [ ] Aircraft Navigation Profiles definieren.
-- [ ] F/A-18C-DTC-Exporter entwickeln.
-- [ ] MOOSE-Route-Exporter entwickeln.
-- [ ] Guidance- und Monitoring-Service entwickeln.
-- [ ] Advisory-Copilot als Tool-Consumer anbinden.
-- [ ] F/A-18C-Trainingsprofil und Flugphasenerkennung entwickeln.
-- [ ] regelbasierten Instructor-Evaluator mit Toleranzen und Hysterese
-      entwickeln.
-- [ ] IFR-/Anflug-Instructor und Debriefing-Bericht prototypisieren.
-- [ ] Sensor- und Waffensystemkurse modular ergänzen.
-- [ ] ATIS-Prototyp evaluieren.
-- [ ] erst danach Tower-/Approach-ATC evaluieren.
+- [ ] Develop an airway router and procedure resolver.
+- [ ] Integrate live DCS weather and runway selection.
+- [ ] Define aircraft navigation profiles.
+- [ ] Develop a F/A-18C DTC exporter.
+- [ ] Develop a MOOSE route exporter.
+- [ ] Develop a guidance and monitoring service.
+- [ ] Integrate an advisory copilot as a tool consumer.
+- [ ] Develop a F/A-18C training profile and flight-phase detection.
+- [ ] Develop a rule-based instructor evaluator with tolerances and hysteresis.
+- [ ] Prototype an IFR/approach instructor and debriefing report.
+- [ ] Add modular sensor and weapon-system courses.
+- [ ] Evaluate an ATIS prototype.
+- [ ] Evaluate tower/approach ATC only afterward.
 
-## Referenzen
+## References
 
 - [Navigraph Developer Portal](https://developers.navigraph.com/docs/general/introduction)
 - [Navigraph API Access Request](https://developers.navigraph.com/docs/request-access)
