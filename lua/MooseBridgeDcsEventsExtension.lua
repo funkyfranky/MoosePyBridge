@@ -421,9 +421,16 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     local entry = self:_NavigationMenuEntry(params)
     return self:_NavigationMenuPayload(entry.group:GetName(), entry)
   end)
+  self:RegisterCommand("player.menu.navigation.flight_status", function(cmd)
+    return self:_GetPlayerFlightStatus(cmd.params or {})
+  end)
   self:RegisterCommand("player.menu.navigation.message", function(cmd)
     local params = cmd.params or {}
     local entry = self:_NavigationMenuEntry(params)
+    if params.unit_id ~= nil then
+      local unit_name = self:_FlightStatusReferenceUnit(entry)
+      if params.unit_id ~= "UNIT:" .. unit_name then error("Flight status reference aircraft changed") end
+    end
     if type(params.text) ~= "string" or #params.text == 0 or #params.text > 2000 then
       error("navigation message text must contain 1..2000 bytes")
     end
@@ -468,6 +475,76 @@ function MOOSE_BRIDGE:_NavigationMenuPayload(group_name, entry)
     session_id=entry.session_id, group_id="GROUP:" .. group_name,
     group_name=group_name, group_sessions=self:_PlayerTestMenuSessions(group_name),
     opsgroup_id=opsgroup and ("OPSGROUP:" .. group_name) or nil}
+end
+
+--- Resolve exactly one live player aircraft; multicrew seats may share a unit.
+-- Never use a group's first unit or cached position as a telemetry fallback.
+function MOOSE_BRIDGE:_FlightStatusReferenceUnit(entry)
+  local unit_name = nil
+  for _, session in ipairs(self:_PlayerTestMenuSessions(entry.group:GetName())) do
+    local name = session.unit_id and string.match(session.unit_id, "^UNIT:(.+)$")
+    if not name or (unit_name and unit_name ~= name) then
+      error("Flight status requires exactly one player aircraft per group")
+    end
+    unit_name = name
+  end
+  if not unit_name then error("No player aircraft available for flight status") end
+  local wrapper = _DATABASE and _DATABASE.UNITS and _DATABASE.UNITS[unit_name]
+  local unit = self:_SafeCall(wrapper, "GetDCSObject")
+  if not unit or not unit:isExist() then error("Flight status aircraft is unavailable") end
+  local group = unit:getGroup()
+  if not group or group:getID() ~= entry.group_id then
+    error("Flight status aircraft no longer belongs to this group")
+  end
+  return unit_name, unit
+end
+
+local function flight_status_number(value)
+  if type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge then
+    return value
+  end
+  return nil
+end
+
+local function flight_status_vector(value)
+  if type(value) == "table" and flight_status_number(value.x)
+    and flight_status_number(value.y) and flight_status_number(value.z) then
+    return {x=value.x, y=value.y, z=value.z}
+  end
+  return nil
+end
+
+--- Read DCS world telemetry once; Python derives labeled flight-state quantities.
+function MOOSE_BRIDGE:_GetPlayerFlightStatus(params)
+  local entry = self:_NavigationMenuEntry(params)
+  local name, unit = self:_FlightStatusReferenceUnit(entry)
+  local position = unit:getPosition()
+  local point = type(position) == "table" and flight_status_vector(position.p)
+  if not point then error("Flight status position is unavailable") end
+  local velocity_ok, velocity = pcall(function() return unit:getVelocity() end)
+  local terrain_ok, terrain = pcall(function()
+    return land.getHeight({x=point.x, y=point.z}) -- DCS land API uses Vec2.
+  end)
+  local north_ok, north = pcall(function()
+    local lat, lon = coord.LOtoLL(point)
+    if not flight_status_number(lat) or not flight_status_number(lon) or math.abs(lat) >= 89.999 then
+      return nil
+    end
+    -- Local geographic north tangent. Subtract endpoints to avoid inverse-map
+    -- round-trip offsets. Heading/track must not treat DCS grid north as TRUE.
+    local a = flight_status_vector(coord.LLtoLO(lat - 0.001, lon))
+    local b = flight_status_vector(coord.LLtoLO(lat + 0.001, lon))
+    if not a or not b then return nil end
+    return {x=b.x-a.x, y=0, z=b.z-a.z}
+  end)
+  return {owner_id=entry.owner_id, session_id=entry.session_id,
+    group_id="GROUP:" .. entry.group:GetName(), unit_id="UNIT:" .. name,
+    sample_time_s=flight_status_number(timer.getTime()),
+    altitude_msl_m=point.y,
+    terrain_elevation_m=terrain_ok and flight_status_number(terrain) or nil,
+    velocity_mps=velocity_ok and flight_status_vector(velocity) or nil,
+    forward=flight_status_vector(position.x),
+    true_north=north_ok and flight_status_vector(north) or nil}
 end
 
 --- Group context, NOT the identity of the player who clicked the radio menu.
@@ -558,7 +635,8 @@ function MOOSE_BRIDGE:_SyncPlayerTestMenu(group_name, group)
   self.PlayerTestMenus[group_name] = entry -- Also owns a partially built tree.
   if config.mode == "navigation" then
     local actions = {{"Show route", "route_show"}, {"Hide route", "route_hide"},
-      {"Navigation status", "status"}, {"Enable hints", "hints_on"}, {"Disable hints", "hints_off"}}
+      {"Navigation status", "status"}, {"Flight status", "flight_status"},
+      {"Enable hints", "hints_on"}, {"Disable hints", "hints_off"}}
     for _, item in ipairs(actions) do
       local action = item[2] -- One binding per callback, also on Lua 5.1.
       MENU_GROUP_COMMAND:New(group, item[1], entry.menu, function()
@@ -584,7 +662,7 @@ function MOOSE_BRIDGE:_OnPlayerTestMenuSelected(group_name, entry, action)
     or self:_SafeCall(entry.group, "GetID") ~= entry.group_id then return end
   if entry.mode == "navigation" then
     if action ~= "route_show" and action ~= "route_hide" and action ~= "status"
-      and action ~= "hints_on" and action ~= "hints_off" then return end
+      and action ~= "flight_status" and action ~= "hints_on" and action ~= "hints_off" then return end
     local payload = self:_NavigationMenuPayload(group_name, entry)
     payload.action = action
     self:SendEvent("player.menu.selected", payload)

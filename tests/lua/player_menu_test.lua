@@ -194,7 +194,8 @@ assert(MENU_INDEX.Group.Hornet.Menus["@MoosePyBridge Test"] == nil)
 local nav = assert(menu(hornet))
 assert(nav.menu.Path == "@Navigation")
 local expected = { ["Show route"]="route_show", ["Hide route"]="route_hide",
-  ["Navigation status"]="status", ["Enable hints"]="hints_on", ["Disable hints"]="hints_off" }
+  ["Navigation status"]="status", ["Flight status"]="flight_status",
+  ["Enable hints"]="hints_on", ["Disable hints"]="hints_off" }
 local count = 0
 for label, action in pairs(expected) do
   count = count + 1
@@ -205,7 +206,7 @@ for label, action in pairs(expected) do
 end
 local actual = 0
 for _ in pairs(nav.menu.Menus) do actual = actual + 1 end
-assert(count == actual and count == 5)
+assert(count == actual and count == 6)
 local function navcall(operation, entry, extra)
   local params = extra or {}
   params.owner_id = params.owner_id or "nav-run"
@@ -218,6 +219,70 @@ assert(context.opsgroup_id == "OPSGROUP:Hornet" and #context.group_sessions == 1
 navcall("message", nav, {text="NAV status"})
 assert(messages[#messages].group == hornet)
 assert(not pcall(navcall, "message", nav, {text="wrong owner", owner_id="old-run"}))
+-- Flight telemetry is read from the occupied DCS unit, without a FLIGHTGROUP.
+local position = {p={x=100, y=3048, z=200}, x={x=1, y=0, z=0}}
+local velocity = {x=100, y=-5, z=20}
+local exists, unit_group_id = true, hornet.id
+local dcsunit = {
+  isExist=function() return exists end,
+  getGroup=function() return {getID=function() return unit_group_id end} end,
+  getPosition=function() return position end,
+  getVelocity=function() return velocity end,
+}
+_DATABASE.UNITS = {["Pilot-unit"]={GetDCSObject=function() return dcsunit end}}
+local terrain = 100
+land = {getHeight=function(point)
+  assert(point.x == 100 and point.y == 200, "terrain uses x/z, not altitude")
+  return terrain
+end}
+coord = {
+  LOtoLL=function(point) assert(point.y == 3048) return 42, 41 end,
+  LLtoLO=function(lat, lon)
+    assert(lon == 41)
+    -- A rotated map, with an arbitrary round-trip position offset.
+    return {x=lat * 100000 + 800, y=0, z=lat * 10000 + 900}
+  end,
+}
+_DATABASE.FLIGHTGROUPS.Hornet = nil
+local telemetry = navcall("flight_status", nav)
+assert(telemetry.unit_id == "UNIT:Pilot-unit" and telemetry.group_id == "GROUP:Hornet")
+assert(telemetry.owner_id == "nav-run" and telemetry.session_id == nav.session_id)
+assert(telemetry.sample_time_s == 100 and telemetry.altitude_msl_m == 3048)
+assert(telemetry.terrain_elevation_m == 100 and telemetry.velocity_mps.y == -5)
+assert(math.abs(telemetry.true_north.x - 200) < 1e-6)
+assert(math.abs(telemetry.true_north.z - 20) < 1e-6)
+navcall("message", nav, {text="Flight status", unit_id="UNIT:Pilot-unit"})
+assert(not pcall(navcall, "message", nav, {text="wrong aircraft", unit_id="UNIT:Other"}))
+local saved_sessions = bridge._PlayerTestMenuSessions
+bridge._PlayerTestMenuSessions = function()
+  return {{unit_id="UNIT:Pilot-unit"}, {unit_id="UNIT:Pilot-unit"}}
+end
+assert(navcall("flight_status", nav).unit_id == "UNIT:Pilot-unit", "multicrew is unambiguous")
+bridge._PlayerTestMenuSessions = function()
+  return {{unit_id="UNIT:Pilot-unit"}, {unit_id="UNIT:Wingman-unit"}}
+end
+assert(not pcall(navcall, "flight_status", nav), "multiple aircraft cannot choose a reference")
+assert(not pcall(navcall, "message", nav, {text="now ambiguous", unit_id="UNIT:Pilot-unit"}))
+bridge._PlayerTestMenuSessions = saved_sessions
+exists = false
+assert(not pcall(navcall, "flight_status", nav), "dead DCS unit cannot supply telemetry")
+exists, unit_group_id = true, -1
+assert(not pcall(navcall, "flight_status", nav), "DCS group membership must match")
+unit_group_id = hornet.id
+local saved_position, saved_velocity, saved_coord = position, velocity, coord
+position = {p={x=100, y=0, z=200}}
+velocity, terrain, coord = nil, 0, nil
+telemetry = navcall("flight_status", nav)
+assert(telemetry.altitude_msl_m == 0 and telemetry.terrain_elevation_m == 0)
+assert(telemetry.velocity_mps == nil and telemetry.forward == nil and telemetry.true_north == nil)
+land.getHeight = function() error("terrain unavailable") end
+assert(navcall("flight_status", nav).terrain_elevation_m == nil, "no sea-level fallback")
+velocity = {x=0/0, y=0, z=0}
+assert(navcall("flight_status", nav).velocity_mps == nil, "non-finite optional values are unavailable")
+position.p.y = math.huge
+assert(not pcall(navcall, "flight_status", nav), "invalid position must reject status")
+position, velocity, coord = saved_position, saved_velocity, saved_coord
+_DATABASE.FLIGHTGROUPS.Hornet = {}
 navcall("overlay", nav, {show=true, features={{kind="line"}}, coalition="all"})
 assert(overlays[nav.overlay_id].coalition == "blue", "coalition must come from group, not caller")
 navcall("overlay", nav, {show=false})
@@ -236,6 +301,7 @@ assert(menu(hornet).session_id ~= nav.session_id)
 assert(not pcall(navcall, "message", nav, {text="stale reply"}))
 assert(not pcall(navcall, "overlay", nav, {show=true, features={{kind="line"}}}))
 assert(not pcall(navcall, "context", nav))
+assert(not pcall(navcall, "flight_status", nav), "old session cannot read a respawned unit")
 bridge:OnEventMissionEnd({time=16})
 assert(next(overlays) == nil and not menu(hornet) and not menu(other))
 assert(MENU_INDEX.Group.Hornet.Menus[foreign.Path] == foreign)

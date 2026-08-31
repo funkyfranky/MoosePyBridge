@@ -41,10 +41,17 @@ class Bridge:
             "opsgroup_id": "OPSGROUP:Hornet", "group_sessions": [{"unit_id": "UNIT:Hornet-1"}],
         }
         self.x = 0
+        self.flight_status = {
+            "owner_id": "run", "session_id": "1", "group_id": "GROUP:Hornet",
+            "unit_id": "UNIT:Hornet-1", "altitude_msl_m": 3048,
+            "terrain_elevation_m": 0, "velocity_mps": {"x": 100, "y": 0, "z": 0},
+        }
 
     async def send_command(self, command, **kwargs):
         self.calls.append(command)
         result = deepcopy(self.context) if command.action.endswith(".context") else {}
+        if command.action.endswith(".flight_status"):
+            result = deepcopy(self.flight_status)
         return {"ok": True, "result": result}
 
     async def get_flightgroup_route(self, object_id, **kwargs):
@@ -74,6 +81,56 @@ def test_route_show_hide_are_guarded_and_do_not_start_polling():
         assert all(c.params["owner_id"] == "run" and c.params["session_id"] == "1" for c in overlays)
         assert all("coalition" not in c.params and "overlay_id" not in c.params for c in overlays)
         assert len(bridge.routes) == 1 and not bridge.positions
+        await controller.close()
+    asyncio.run(scenario())
+
+
+def test_flight_status_is_fresh_on_demand_without_flightgroup_or_navigation_changes(capsys):
+    async def scenario():
+        bridge = Bridge()
+        bridge.context["opsgroup_id"] = None
+        controller = NavigationMenuController(bridge, "run")
+        await controller.handle(event("flight_status"))
+        first = bridge.messages()[-1]
+        assert "10,000 ft MSL" in first
+        bridge.flight_status["altitude_msl_m"] = 6096
+        await controller.handle(event("flight_status"))
+        assert "20,000 ft MSL" in bridge.messages()[-1]
+        assert not bridge.routes and not bridge.positions
+        state = controller.groups[("GROUP:Hornet", "1")]
+        assert state.route is None and state.navigator is None and state.hints is None
+        assert [c.action.rsplit(".", 1)[-1] for c in bridge.calls] == [
+            "flight_status", "message", "flight_status", "message",
+        ]
+        assert all(c.params["unit_id"] == "UNIT:Hornet-1" for c in bridge.calls if c.action.endswith(".message"))
+        assert first in capsys.readouterr().out
+        await controller.close()
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["owner_id", "session_id", "group_id", "invalid_altitude", "mission_end", "stale_reply"])
+def test_flight_status_rejects_invalid_or_stale_results(failure, capsys):
+    async def scenario():
+        bridge = Bridge()
+        if failure in {"owner_id", "session_id", "group_id"}:
+            bridge.flight_status[failure] = "another-session"
+        elif failure == "invalid_altitude":
+            bridge.flight_status["altitude_msl_m"] = float("nan")
+        original = bridge.send_command
+
+        async def send(command, **kwargs):
+            if failure == "stale_reply" and command.action.endswith(".message"):
+                raise RuntimeError("Flight status reference aircraft changed")
+            result = await original(command, **kwargs)
+            if failure == "mission_end":
+                bridge.state.reset_mission()
+            return result
+        bridge.send_command = send
+        controller = NavigationMenuController(bridge, "run")
+        await controller.handle(event("flight_status"))
+        assert not any(text.startswith("Flight status |") for text in bridge.messages())
+        assert "Flight status |" not in capsys.readouterr().out
+        assert not bridge.routes and not bridge.positions
         await controller.close()
     asyncio.run(scenario())
 

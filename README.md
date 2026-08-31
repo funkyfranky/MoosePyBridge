@@ -1191,6 +1191,10 @@ independent route overlays and console output. The normal daemon can keep runnin
   for the group's coalition, using the existing F10 drawing implementation.
 - **Navigation status**: send the reference aircraft, target waypoint, distance
   in NM, true bearing, and cross-track error to the group via MOOSE MESSAGE.
+- **Flight status**: read live aircraft telemetry once, then show geometric MSL
+  altitude and terrain AGL in feet, horizontal groundspeed in knots, TRUE
+  heading/track, and vertical speed in ft/min in a group message and Python console.
+  No FLIGHTGROUP is needed; this action does not change navigation progress or hints.
 - **Enable hints / Disable hints**: sample every two seconds and display guidance
   about every ten seconds, also at waypoint capture. Repeated enable is idempotent.
 
@@ -1199,12 +1203,21 @@ or stop hints. Without hints, positions are queried only for status requests.
 The Python tracker starts at WP 1 -> WP 2; it neither reads nor changes cockpit
 waypoints. Final capture is horizontal proximity, not a landing check.
 
-The menu is group-scoped. Status/hints require exactly one distinct player
+The menu is group-scoped. Navigation status/hints require exactly one distinct player
 aircraft in the group and its FLIGHTGROUP; multiple crew seats in the same unit
 are supported as one aircraft. Multiple player aircraft produce an explanatory
 message instead of guessing whose position to use. The F10 line is visible to
 the coalition, not exclusively to the group. Navigation errors are reported to
 the group and Python console; failed periodic guidance stops until re-enabled.
+
+Flight status also requires exactly one distinct player aircraft per group.
+It reads the occupied UNIT's DCS position/orientation and velocity, with terrain
+height and a local geographic-north tangent from DCS coordinate conversions.
+GS is not IAS or TAS; MSL is not a pressure/QNH altitude, and AGL is clearance
+above terrain, not a radar-altimeter or carrier-deck reading. TRUE heading/track
+are not magnetic cockpit headings. Track is unavailable below 1 m/s horizontal
+speed; other unavailable optional values appear as N/A instead of guessed data.
+This is an on-demand, read-only status report, not a flight-instructor warning.
 
 The Lua menu session owns its F10 line. Last occupant leave, mission end, Ctrl+C,
 or replacing the menu run clears only that session's line. Messages and overlay
@@ -1225,6 +1238,9 @@ hints for at least ten seconds, disable them, leave/re-enter the slot, then stop
 with Ctrl+C. Check that only the navigation menu's line disappears and no hints
 continue after disabling/leaving. Initial airborne waypoint sequencing has been
 confirmed; deliberate left/right XTE sign checks remain open.
+Also request **Flight status** while parked and from the air-start slot. Check
+the stated references when comparing values with cockpit instruments. Live DCS
+validation of this new action is pending.
 
 ### Player radio-menu test
 

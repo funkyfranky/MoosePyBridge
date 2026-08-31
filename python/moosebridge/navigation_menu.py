@@ -13,6 +13,7 @@ import math
 from typing import Any, TYPE_CHECKING
 
 from .flight_routes import FlightGroupRoute
+from .flight_status import FlightStatus, format_flight_status
 from .navigation import NavigationSolution, RouteNavigator, format_navigation_status
 from .protocol import BridgeCommand
 from .sdk import require_ok
@@ -93,15 +94,20 @@ class NavigationMenuController:
             params={**params, "owner_id": self.owner_id,
                     "group_id": state.group_id, "session_id": state.session_id},
         ), timeout=self.timeout))
+        if self.bridge.state.mission_ended:
+            raise ConnectionError("DCS mission ended.")
         result = ack.get("result")
         if not isinstance(result, dict):
             raise ValueError("Invalid navigation menu response")
         return result
 
-    async def _reply(self, state: GroupNavigation, text: str) -> None:
+    async def _reply(self, state: GroupNavigation, text: str, *, unit_id: str | None = None) -> None:
         # Lua bounds bytes, not Unicode characters (player/waypoint names vary).
         bounded = text.encode("utf-8")[:1900].decode("utf-8", errors="ignore")
-        await self._call(state, "message", text=bounded)
+        params = {"text": bounded}
+        if unit_id is not None:
+            params["unit_id"] = unit_id
+        await self._call(state, "message", **params)
 
     async def _context(self, state: GroupNavigation) -> dict[str, Any]:
         result = await self._call(state, "context")
@@ -192,7 +198,7 @@ class NavigationMenuController:
             return  # Lua already removed this session's overlay, even after disconnect.
         action = payload.get("action")
         if message.get("event") != "player.menu.selected" or action not in {
-            "route_show", "route_hide", "status", "hints_on", "hints_off",
+            "route_show", "route_hide", "status", "flight_status", "hints_on", "hints_off",
         }:
             return
         state = self.groups.setdefault(key, GroupNavigation(group_id, session_id))
@@ -203,7 +209,17 @@ class NavigationMenuController:
                 await self._reply(state, "Navigation hints disabled.")
                 return
             async with state.lock:
-                if action == "route_hide":
+                if action == "flight_status":
+                    payload = await self._call(state, "flight_status")
+                    if (payload.get("owner_id"), payload.get("group_id"), payload.get("session_id")) != (
+                        self.owner_id, state.group_id, state.session_id,
+                    ):
+                        raise ValueError("Flight status belongs to another menu session")
+                    status = FlightStatus.from_payload(payload)
+                    text = format_flight_status(status)
+                    await self._reply(state, text, unit_id=status.unit_id)
+                    print(f"{state.group_id}: {text}", flush=True)
+                elif action == "route_hide":
                     await self._call(state, "overlay", show=False)
                     await self._reply(state, "Route hidden on the F10 map.")
                 elif action == "route_show":

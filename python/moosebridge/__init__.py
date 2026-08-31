@@ -41,6 +41,7 @@ from .conflict_readiness import (
 )
 from .dcs_events import DestroyedObjectEvent, KillEvent, PlayerAircraftEvent
 from .flight_routes import FlightGroupRoute, FlightRouteWaypoint
+from .flight_status import FlightStatus, format_flight_status
 from .navigation import NavigationSolution, RouteNavigator, format_navigation_status
 from .diplomacy import (
     AIRBASE_CAPTURE_ESCALATION_POINTS,
@@ -773,6 +774,8 @@ __all__ = [
     "KillEvent",
     "PlayerAircraftEvent",
     "FlightGroupRoute",
+    "FlightStatus",
+    "format_flight_status",
     "FlightRouteWaypoint",
     "NavigationSolution",
     "RouteNavigator",

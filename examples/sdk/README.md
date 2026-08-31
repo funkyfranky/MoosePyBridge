@@ -54,7 +54,7 @@ configuration and is not intended to be run directly.
 | `monitor_relationship.py` | Read-only | Print diplomacy state, escalation, incidents, and doctrine. |
 | `monitor_player_aircraft.py` | Overlay | Draw the FLIGHTGROUP ME route and monitor player-to-waypoint distance, true bearing, and cross-track error; stop polling and remove the line on leave/exit. |
 | `monitor_player_menu.py` | In-game menu | Enable two MOOSE group-radio test actions: a cockpit message and a click event printed in Python. Remove menus on last occupant leave or Ctrl+C. |
-| `run_navigation_menu.py` | In-game menu / Overlay | Use Navigation radio actions to show/hide the ME route, request distance/bearing/XTE, and enable/disable group cockpit hints. Replaces the test menu for this run. |
+| `run_navigation_menu.py` | In-game menu / Overlay | Use Navigation radio actions to show/hide the ME route, request distance/bearing/XTE or on-demand live Flight status (altitude, GS, TRUE heading/track, vertical speed), and enable/disable group cockpit hints. Flight status needs no FLIGHTGROUP. Replaces the test menu for this run. |
 | `monitor_airbase_capture.py` | Read-only | Observe airbase ownership and objective transitions. |
 | `monitor_unit_lost.py` | Destructive | Trigger an explosion and verify the resulting destruction event and snapshots. |
 | `territories.py` | Read-only by default | Inspect passive TERRITORY objects; optional owner changes are disabled by default. |

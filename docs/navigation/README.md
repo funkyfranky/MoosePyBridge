@@ -409,8 +409,8 @@ or coordinates.
 - Normal entry point: `examples/sdk/run_navigation_menu.py` in VS Code. Keep the
   existing daemon running; restart the mission after a Lua update. Stop the old
   menu test script first. The new profile replaces the test menu.
-- Radio menu -> F10 Other -> **Navigation**, with five actions:
-  **Show route**, **Hide route**, **Navigation status**, **Enable hints**,
+- Radio menu -> F10 Other -> **Navigation**, with six actions:
+  **Show route**, **Hide route**, **Navigation status**, **Flight status**, **Enable hints**,
   **Disable hints**.
 - Route display and hints start off. The display uses the preserved Mission
   Editor route and a cyan F10 line for the group's coalition, not exclusively
@@ -422,7 +422,7 @@ or coordinates.
   survives showing/hiding the line and disabling hints. There is no periodic
   polling while hints are off. Cockpit waypoint selection is neither read nor
   changed; target capture does not prove a landing.
-- Status/hints require exactly one player aircraft per group and its FLIGHTGROUP.
+- Navigation status/hints require exactly one player aircraft per group and its FLIGHTGROUP.
   Multiple crew seats in the same UNIT count as one aircraft. Multiple player
   aircraft produce an error message instead of an arbitrary reference choice.
 - Lua validates owner ID, menu-session ID, DCS group ID, and occupancy for
@@ -436,6 +436,24 @@ or coordinates.
   ten seconds, disable hints, leave/re-enter the slot, and stop with Ctrl+C.
   Automated tests cover Lua lifecycle/write guards and Python actions/task
   cancellation. The user confirmed the navigation-menu ground test.
+
+**Flight status** is a separate on-demand action. It reads the occupied UNIT's
+live DCS position/orientation and velocity without needing a FLIGHTGROUP. Python
+formats one group message and console report: geometric MSL and terrain AGL in
+feet, horizontal GS in knots (not IAS/TAS), TRUE heading and track, and vertical
+speed in ft/min. Geographic north comes from a local DCS coordinate-conversion
+tangent, not uncorrected grid north. Track is unavailable below 1 m/s GS.
+Unavailable optional telemetry is N/A; missing position or an ambiguous/dead
+reference aircraft rejects the report. Lua validates the reference again before
+delivering the group message. Multiple seats in one aircraft remain supported.
+
+These are world-state quantities, not cockpit instrument readings: geometric
+MSL is not pressure/QNH altitude, terrain AGL is not radar altitude or carrier
+deck clearance, and TRUE is not magnetic. The action leaves route progress,
+hints, and cockpit systems unchanged and starts no timer. Instructor warnings,
+target-altitude/speed comparisons, and cockpit IAS are outside this first step.
+Automated telemetry/conversion tests are included; live parked and airborne
+Flight status checks remain pending.
 
 ### Initial airborne test
 
@@ -667,6 +685,9 @@ adapter, telemetry, and later instructor features.
 - [x] Confirm both simple menu actions in DCS.
 - [x] Connect route display, status, and switchable hints to the navigation menu.
 - [x] Confirm the navigation-menu ground test.
+- [x] Add on-demand, read-only Flight status to the navigation menu, with explicit
+      altitude, speed, and direction references and no FLIGHTGROUP dependency.
+- [ ] Validate Flight status in DCS while parked and from the air-start slot.
 - [x] Standardize project-facing text and documentation on English.
 - [ ] Define tests for duplicate fix identifiers and DCS/Navigraph discrepancies.
 
