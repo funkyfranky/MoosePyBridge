@@ -35,9 +35,21 @@ def radio_record(index: int, uid: int | None, *, callsign="Tower", frequencies=T
     }
 
 
-def airbase(uid: int, name: str, x: float):
+def runway(name: str, heading: float, center_x: float, *, length=2_500, width=45, left=None):
+    value = {"name": name, "heading_true_deg": heading,
+             "heading_magnetic_deg": int(name[:2]) * 10,
+             "length_m": length, "width_m": width, "center_x": center_x, "center_z": 0}
+    if left is not None:
+        value["is_left"] = left
+    return value
+
+
+def airbase(uid: int, name: str, x: float, *, wind_status="available", suggested="13"):
     return {"airbase_id": uid, "name": name, "dcs_name": name, "object_id": f"AIRBASE:{name}",
-            "x": x, "y": 0, "z": 0, "latitude": x / 100_000, "longitude": 0}
+            "x": x, "y": 0, "z": 0, "latitude": x / 100_000, "longitude": 0,
+            "runways": [runway("13", 130, x), runway("31", 310, x)],
+            "runway_wind_status": wind_status,
+            "suggested_runway": suggested if wind_status == "available" else None}
 
 
 def catalog(*records):
@@ -88,7 +100,32 @@ def test_listing_orders_live_airbases_and_formats_readable_atc_details():
     assert "Callsigns: Common Batumi" in text
     assert "ATC roles: Ground, Tower, Approach" in text
     assert "UHF: 250.5 MHz AM" in text and "VHF: 118.45 MHz AM" in text
+    assert "Runways:\n  13/31 - 2,500 x 45 m" in text
+    assert "Suggested into-wind runway: 13 (MOOSE wind calculation)" in text
+    assert "advisory, not a DCS ATC clearance" in text
     assert "shared ATC alternatives, not role-specific" in text and "Cockpit unchanged" in text
+
+
+@pytest.mark.parametrize(("wind_status", "expected"), [
+    ("calm", "N/A (calm wind)"), ("unavailable", "N/A (wind unavailable)"),
+])
+def test_runway_suggestion_does_not_invent_an_active_runway(wind_status, expected):
+    data = catalog(radio_record(1, 42))
+    stations, unresolved = resolve_airfield_radios(
+        data, [airbase(42, "Batumi", 1_000, wind_status=wind_status, suggested=None)],
+    )
+    listing = AirfieldRadioListing(data, "UNIT:Hornet-1", stations, position(), unresolved)
+    assert f"Suggested into-wind runway: {expected}" in airfield_radio_message(
+        listing, listing.stations[0], position(),
+    )
+
+
+def test_invalid_live_runway_payload_is_rejected():
+    data = catalog(radio_record(1, 42))
+    live = airbase(42, "Batumi", 1_000)
+    live["suggested_runway"] = "99"
+    with pytest.raises(ValueError, match="runway suggestion"):
+        resolve_airfield_radios(data, [live])
 
 
 def test_controller_initializes_refreshes_pages_and_shows_airfield_details(capsys):
@@ -106,6 +143,8 @@ def test_controller_initializes_refreshes_pages_and_shows_airfield_details(capsy
         assert len(initial) == 1 and len(initial[0].params["items"]) == 6
         await controller.handle(click("airfield_details", station_key="1"))
         assert "Airfield communications: Airfield 1" in bridge.messages()[-1]
+        resolves = [call for call in bridge.calls if call.action.endswith("airfields.resolve")]
+        assert len(resolves) == 2, "details must refresh the live MOOSE runway wind suggestion"
         await controller.handle(click("airfields_page", page=1))
         assert state.airfields.revision == 2 and state.airfields.page == 1
         bridge.x = 50_000

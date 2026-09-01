@@ -2,8 +2,35 @@
 local source = assert(arg[1], "extension path required")
 local events, messages, logs, scheduled = {}, {}, {}, {}
 local created = 0
-timer = {getTime=function() return 100 end}
+local mission_time = 100
+timer = {getTime=function() return mission_time end}
 env = {mission={theatre="Caucasus"}}
+radio = {modulation={AM=0, FM=1}}
+COORDINATE = {}
+function COORDINATE:New(x, y, z) return {x=x, y=y, z=z, GetVec3=function(self) return self end} end
+local tones, transmissions = {}, {}
+HoundTTS = {SRS_HOST="127.0.0.1", DEFAULT_TRANSMITTER="srs",
+  getSpeechTime=function(text, speed) return #text / (8 * (speed or 1)) end,
+  TestTone=function(...) tones[#tones + 1] = {...} end,
+  Transmit=function() end}
+MSRS = {Backend={HOUND="hound"}}
+function MSRS:New(path, frequency, modulation, backend)
+  local item = {path=path, frequencies={frequency}, modulations={modulation}, backend=backend}
+  function item:SetProvider(value) self.provider=value return self end
+  function item:SetCoalition(value) self.coalition=value return self end
+  function item:SetVoice(value) self.voice=value return self end
+  function item:SetVolume(value) self.volume=value return self end
+  function item:SetLabel(value) self.Label=value return self end
+  function item:SetPort(value) self.port=value return self end
+  function item:PlayTextExt(text, delay, frequencies, modulations, gender, culture, voice,
+      volume, label, coordinate, speed, speaker)
+    local transmission = {text=text, msrs=self, coordinate=coordinate, speed=speed,
+      started_at=timer.getTime()}
+    transmissions[#transmissions + 1] = transmission
+    return self
+  end
+  return item
+end
 MOOSE_BRIDGE = {
   RegisterDefaultCommands=function() end,
   RegisterCommand=function(self, name, handler)
@@ -26,7 +53,8 @@ local function group(name, id)
   return {name=name, id=id, alive=true,
     GetName=function(self) return self.name end,
     GetID=function(self) return self.id end,
-    IsAlive=function(self) return self.alive end}
+    IsAlive=function(self) return self.alive end,
+    GetCoalition=function() return 2 end}
 end
 local hornet, other = group("Hornet", 10), group("Other", 20)
 _DATABASE = {GROUPS={Hornet=hornet, Other=other}}
@@ -207,6 +235,26 @@ bridge._CreateMapMarker = function() error("preflight must not create markers") 
 _DATABASE.FLIGHTGROUPS = {Hornet={}}
 config(true)
 local navconfig = bridge.commands["player.menu.navigation.configure"]
+local speechconfig = bridge.commands["speech.configure"]
+local speech_profile = {srs_path="D:/DCS/_SRS", srs_host="127.0.0.1", srs_port=5002,
+  frequency_mhz=305, modulation="AM", provider="piper", voice="en_US-lessac-low",
+  label="COPILOT", volume=1, speed=1, interval_s=0.5,
+  profile_id="hornet_copilot", network_id="blue_305", arbitration="disciplined",
+  backoff_min_s=0.25, backoff_max_s=0.75, collision_probability=0.1,
+  emergency_break_in=true}
+local function alternate_profile(profile_id, network_id, frequency, arbitration, collisions)
+  local result = {}
+  for key, value in pairs(speech_profile) do result[key] = value end
+  result.profile_id, result.network_id, result.frequency_mhz = profile_id, network_id, frequency
+  result.arbitration, result.collision_probability = arbitration, collisions
+  return result
+end
+local uncontrolled_profile = alternate_profile("uncontrolled", "test_uncontrolled", 306, "uncontrolled", 0)
+local congested_profile = alternate_profile("congested", "test_congested", 307, "congested", 1)
+local strict_profile = alternate_profile("strict", "test_strict", 308, "strict", 0)
+strict_profile.emergency_break_in = false
+assert(speechconfig({params={enabled=true, owner_id="nav-run",
+  profiles={speech_profile, uncontrolled_profile, congested_profile, strict_profile}}}).enabled)
 navconfig({params={enabled=true, owner_id="nav-run"}})
 assert(MENU_INDEX.Group.Hornet.Menus["@MoosePyBridge Test"] == nil)
 local nav = assert(menu(hornet))
@@ -220,6 +268,7 @@ assert(runtime.api_version == 1 and runtime.ready and runtime.theater_id == "Cau
 assert(runtime.capabilities.navaid_overlay and runtime.owner_id == "nav-run")
 assert(runtime.capabilities.navaids_initialize)
 assert(runtime.capabilities.airfield_radios)
+assert(runtime.capabilities.airfield_runways)
 assert(not pcall(navconfig, {params={enabled=true, owner_id="wrong-instance", expected_instance_id="old-instance"}}))
 assert(menu(hornet) == nav and bridge.PlayerTestMenuConfig.owner_id == "nav-run")
 assert(bridge.commands["player.menu.navigation.status"]({params={}}).instance_id == runtime.instance_id)
@@ -229,8 +278,7 @@ assert(not bridge.commands["player.menu.navigation.status"]({params={}}).capabil
 bridge._CreateMapMarker = marker_method
 assert(nav.menu.Path == "@Navigation")
 local expected = { ["Show route"]="route_show", ["Hide route"]="route_hide",
-  ["Navigation status"]="status", ["Flight status"]="flight_status",
-  ["Enable hints"]="hints_on", ["Disable hints"]="hints_off" }
+  ["Navigation status"]="status", ["Flight status"]="flight_status" }
 local count = 0
 for label, action in pairs(expected) do
   count = count + 1
@@ -241,7 +289,20 @@ for label, action in pairs(expected) do
 end
 local actual = 0
 for _ in pairs(nav.menu.Menus) do actual = actual + 1 end
-assert(count == 6 and actual == 8 and nav.menu.Menus.Navaids and nav.menu.Menus["Airfields / ATC"])
+assert(count == 4 and actual == 7 and nav.menu.Menus.Navaids and nav.menu.Menus["Airfields / ATC"]
+  and nav.menu.Menus.Copilot)
+for label, action in pairs({["Start monitoring"]="copilot_start", ["Stop monitoring"]="copilot_stop",
+    ["Copilot status"]="copilot_status", ["Enable text output"]="copilot_text_on",
+    ["Disable text output"]="copilot_text_off", ["Enable radio output"]="copilot_radio_on",
+    ["Disable radio output"]="copilot_radio_off", ["Repeat last advisory"]="copilot_repeat"}) do
+  nav.menu.Menus.Copilot.Menus[label].callback()
+  assert(events[#events].payload.action == action)
+end
+for label, action in pairs({["SRS test tone"]="speech_tone", ["Radio check"]="speech_radio_check",
+    ["Queue test"]="speech_queue_test"}) do
+  nav.menu.Menus.Copilot.Menus["Radio diagnostics"].Menus[label].callback()
+  assert(events[#events].payload.action == action)
+end
 local function verify_menu_limit(root)
   local size = 0
   for _, child in pairs(root.Menus or {}) do
@@ -276,15 +337,125 @@ local dcsunit = {
   getPosition=function() return position end,
   getVelocity=function() return velocity end,
 }
-_DATABASE.UNITS = {["Pilot-unit"]={GetDCSObject=function() return dcsunit end}}
+local player_coordinate = {GetVec3=function() return position.p end}
+_DATABASE.UNITS = {["Pilot-unit"]={GetDCSObject=function() return dcsunit end,
+  GetCoordinate=function() return player_coordinate end}}
+local function speechcall(operation, extra)
+  local params = extra or {}
+  params.owner_id, params.profile_id = "nav-run", "hornet_copilot"
+  params.sender = params.sender or {sender_id="player:GROUP:Hornet", kind="player", radio_id="copilot",
+    group_id="GROUP:Hornet", session_id=nav.session_id}
+  if operation == "enqueue" then
+    params.intent_id = params.intent_id or ("intent-" .. tostring(#transmissions + 1))
+    params.urgency = params.urgency or "routine"
+    params.ttl_s = params.ttl_s or 30
+  end
+  return bridge.commands["speech." .. operation]({params=params})
+end
+local tone = speechcall("test_tone")
+assert(tone.requested and tone.frequency_mhz == 305 and #tones == 1)
+local queued = speechcall("enqueue", {text="MoosePyBridge copilot radio check.", priority=50})
+assert(queued.queued and queued.provider == "piper" and queued.voice == "en_US-lessac-low")
+assert(queued.sender_queue_depth == 1 and #transmissions == 0)
+bridge:_SpeechTick(100)
+assert(#transmissions == 1 and transmissions[1].coordinate == player_coordinate
+  and transmissions[1].text == "MoosePyBridge copilot radio check.")
+assert(not pcall(speechcall, "enqueue", {text="", priority=50}))
+assert(not pcall(speechcall, "enqueue", {text="invalid", priority=101}))
+-- Sender queues and network arbitration are independent. The disciplined net
+-- chooses priority, expires stale traffic, and permits configured emergencies.
+local function coordinate_sender(id, radio_id)
+  return {sender_id=id, kind="coordinate", radio_id=radio_id or "primary",
+    coalition="blue", x=1000, y=100, z=2000}
+end
+local generic_serial = 0
+local function generic(profile_id, sender, text, priority, urgency, ttl, dedupe, intent_id)
+  generic_serial = generic_serial + 1
+  return bridge.commands["speech.enqueue"]({params={owner_id="nav-run", profile_id=profile_id,
+    intent_id=intent_id or ("generic-" .. tostring(generic_serial)), sender=sender, text=text,
+    priority=priority or 50, urgency=urgency or "routine", ttl_s=ttl or 30,
+    dedupe_key=dedupe}})
+end
+local low_sender, high_sender = coordinate_sender("ground-low"), coordinate_sender("air-high")
+generic("hornet_copilot", low_sender, "Low priority report.", 20)
+generic("hornet_copilot", high_sender, "High priority warning.", 90)
+generic("hornet_copilot", coordinate_sender("emergency"), "Mayday.", 100, "emergency")
+local expiring = generic("hornet_copilot", coordinate_sender("stale"), "Stale report.", 30,
+  "routine", 0.1).intent_id
+bridge:_SpeechTick(100)
+assert(#transmissions == 2 and transmissions[2].text == "Mayday.",
+  "emergency traffic must break into a busy synthetic net")
+bridge:_SpeechTick(100.2)
+assert(bridge.SpeechIntentHistory[expiring].status == "expired")
+bridge:_SpeechTick(106)
+assert(transmissions[#transmissions].text == "High priority warning.",
+  "the highest-priority ready sender must win an idle network")
+-- One logical sender/radio never overlaps itself.
+mission_time = 106
+local serial_sender = coordinate_sender("serial-sender")
+generic("hornet_copilot", serial_sender, "Serial message one.", 60)
+generic("hornet_copilot", serial_sender, "Serial message two.", 60)
+bridge:_SpeechTick(112)
+local serial_first_count = #transmissions
+assert(transmissions[serial_first_count].text == "Serial message one.")
+bridge:_SpeechTick(112)
+assert(#transmissions == serial_first_count, "one sender/radio must not transmit twice at once")
+bridge:_SpeechTick(115)
+assert(transmissions[#transmissions].text == "Serial message two.")
+-- Retries are idempotent and dedupe keys replace only pending traffic.
+local duplicate_sender = coordinate_sender("duplicate")
+generic("hornet_copilot", duplicate_sender, "Original.", 50, "routine", 30, nil, "stable-id")
+local duplicate = generic("hornet_copilot", duplicate_sender, "Must not queue.", 50,
+  "routine", 30, nil, "stable-id")
+assert(duplicate.duplicate and bridge.SpeechIntentHistory["stable-id"].status == "queued")
+generic("hornet_copilot", duplicate_sender, "Old status.", 50, "routine", 30, "status")
+generic("hornet_copilot", duplicate_sender, "New status.", 50, "routine", 30, "status")
+local duplicate_queue = bridge.SpeechSenders[bridge:_SpeechSenderKey(duplicate_sender)].queue
+local status_count = 0
+for _, intent in ipairs(duplicate_queue) do if intent.dedupe_key == "status" then status_count = status_count + 1 end end
+assert(status_count == 1)
+-- Uncontrolled and congested modes can deliberately produce simultaneous synthetic calls.
+local before_uncontrolled = #transmissions
+generic("uncontrolled", coordinate_sender("u1"), "Uncontrolled one.")
+generic("uncontrolled", coordinate_sender("u2"), "Uncontrolled two.")
+bridge:_SpeechTick(115)
+assert(#transmissions == before_uncontrolled + 2)
+local before_congested = #transmissions
+generic("congested", coordinate_sender("c1"), "Congested one.")
+generic("congested", coordinate_sender("c2"), "Congested two.")
+bridge:_SpeechTick(115)
+assert(#transmissions == before_congested + 2)
+local before_strict = #transmissions
+generic("strict", coordinate_sender("s1"), "Strict one.")
+bridge:_SpeechTick(115)
+generic("strict", coordinate_sender("s2"), "Strict two.", 100, "emergency")
+bridge:_SpeechTick(115)
+assert(#transmissions == before_strict + 1,
+  "strict mode must serialize senders and respect disabled emergency break-in")
+mission_time = 100
 _DATABASE.AIRBASES = {
   Batumi={x=1000, z=2000, latitude=41.6, longitude=41.6, GetID=function() return 22 end},
   Kutaisi={x=3000, z=4000, latitude=42.1, longitude=42.4, GetID=function() return 25 end},
 }
+local function add_runways(airbase, center)
+  local coordinate = {GetWindWithTurbulenceVec3=function() return {x=-5, y=0, z=0} end}
+  local r13 = {name="13", heading=130, magheading=130, length=2500, width=45,
+    center={GetVec2=function() return {x=center, y=0} end}}
+  local r31 = {name="31", heading=310, magheading=310, length=2500, width=45,
+    center={GetVec2=function() return {x=center, y=0} end}}
+  airbase.GetRunways=function() return {r13, r31} end
+  airbase.GetRunwayName=function(_, runway) return runway.name end
+  airbase.GetCoordinate=function() return coordinate end
+  airbase.GetRunwayIntoWind=function() return r13 end
+end
+add_runways(_DATABASE.AIRBASES.Batumi, 1000)
+add_runways(_DATABASE.AIRBASES.Kutaisi, 3000)
 local resolved = navcall("airfields.resolve", nav, {unit_id="UNIT:Pilot-unit", theater_id="Caucasus",
   airbase_ids={22, 25, 99}})
 assert(#resolved.airbases == 2 and #resolved.unresolved_airbase_ids == 1
   and resolved.unresolved_airbase_ids[1] == 99)
+assert(#resolved.airbases[1].runways == 2 and resolved.airbases[1].suggested_runway == "13"
+  and resolved.airbases[1].runway_wind_status == "available")
 local airfields = nav.airfields
 local initial_airfields = navcall("airfields.initialize", nav, {unit_id="UNIT:Pilot-unit",
   theater_id="Caucasus", page=0, pages=1,
@@ -584,6 +755,15 @@ assert(nav.overlay_id ~= other_nav.overlay_id)
 leave("Pilot", hornet, 14)
 assert(not overlays[nav.overlay_id] and overlays[other_nav.overlay_id])
 assert(not overlays[nav.navaid_overlay_id] and overlays[other_nav.navaid_overlay_id])
+local pending_speech = 0
+for _, speech_sender in pairs(bridge.SpeechSenders or {}) do
+  for _, pending_intent in ipairs(speech_sender.queue) do
+    if pending_intent.sender.kind == "player" and pending_intent.sender.session_id == nav.session_id then
+      pending_speech = pending_speech + 1
+    end
+  end
+end
+assert(pending_speech == 0, "leaving must remove pending speech for the old menu session")
 assert(events[#events].event == "player.menu.closed")
 assert(events[#events].payload.session_id == nav.session_id)
 enter("Pilot", hornet, 15)
@@ -596,6 +776,7 @@ assert(not pcall(navcall, "navaids.overlay", nav, {show=false}))
 assert(not pcall(navcall, "navaids.overlay", nav, map_params(true)))
 assert(not pcall(navcall, "context", nav))
 assert(not pcall(navcall, "flight_status", nav), "old session cannot read a respawned unit")
+assert(not pcall(speechcall, "enqueue", {text="stale speech", priority=50}))
 before = #events
 stale_navaid_refresh()
 stale_show()
@@ -660,4 +841,5 @@ assert(initial_nav.navaids.VOR.menu.Menus["Refresh nearby"], "failed types retai
 bridge._BuildNavaidMenuPage = original_build
 verify_menu_limit(initial_nav.menu)
 bridge:OnEventMissionEnd({time=20})
+assert(not bridge.commands["speech.status"]({params={}}).enabled)
 print("PLAYER MENU LUA TEST PASSED")

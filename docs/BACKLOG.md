@@ -385,6 +385,17 @@ Priorities:
   assignments, and define outcome feedback. Deferred idea only: do not promote
   it to the next task or expand an active milestone. Details are tracked in the
   [navigation TODOs](navigation/README.md#later).
+- [ ] **Make Hound-backed radio-arbiter completion session-aware.** Preserve the
+  `sessionId` returned by `HoundTTS.Transmit()`, poll `HoundTTS.UpdateSession()`
+  and release the next same-channel message only after the active session ends.
+  Keep estimated duration as an ETA/fallback, add a bounded failure timeout and
+  cancel only sessions owned by the arbiter. Other MSRS backends retain their
+  existing duration behavior.
+- [ ] **Add one persistent multi-producer radio coordinator.** Let navigation,
+  the conflict controller and future AI behavior publishers submit intents to
+  one mission-scoped profile owner without competing `speech.configure` calls.
+  Keep producer identity/audit metadata and per-producer cancellation while the
+  Lua arbiter remains authoritative for sender and network scheduling.
 
 ## P3 - Platform hardening
 

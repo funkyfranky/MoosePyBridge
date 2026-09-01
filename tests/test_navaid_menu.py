@@ -72,7 +72,8 @@ def test_menu_creation_initializes_all_types_once_from_one_position(count, capsy
         assert all(listing.position is state.navaids["TACAN"].position for listing in state.navaids.values())
         assert all(listing.revision == 1 and listing.page == 0 for listing in state.navaids.values())
         assert len(state.navaids["TACAN"].records) == count
-        assert state.hints is state.route is state.navigator is state.selected_navaid is None
+        assert state.copilot_task is not None
+        assert state.route is state.navigator is state.selected_navaid is None
         assert not bridge.routes and not bridge.messages()
         assert not any(command.action.endswith("overlay") for command in bridge.calls)
         batches = [command for command in bridge.calls if command.action.endswith("navaids.initialize")]
@@ -256,7 +257,7 @@ def test_refresh_page_details_use_normal_group_commands_without_flightgroup(caps
         state = controller.groups[("GROUP:Hornet", "1")]
         listing = state.navaids["TACAN"]
         assert listing.revision == 1 and listing.page == 0
-        assert state.route is None and state.navigator is None and state.hints is None
+        assert state.route is None and state.navigator is None and state.copilot_task is None
         bridge.x = 50000
         await controller.handle(click("navaids_page", revision=1, page=1))
         pages = [command for command in bridge.calls if command.action.endswith("navaids.page")]
@@ -376,7 +377,7 @@ def test_map_actions_are_explicit_and_independent_of_route_paging_and_hints():
         assert next(c for c in reversed(bridge.calls) if c.action.endswith("navaids.overlay")).params["point"]["latitude"] == .02
         await controller.handle(map_click("navaid_hide"))
         assert state.selected_navaid.record["source_index"] == 2
-        assert not bridge.routes and state.route is None and state.hints is None and state.navigator is None
+        assert not bridge.routes and state.route is None and state.copilot_task is None and state.navigator is None
         await controller.handle(event(closed=True))
         assert not controller.groups
         await controller.close()

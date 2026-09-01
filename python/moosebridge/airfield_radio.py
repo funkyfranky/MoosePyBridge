@@ -13,6 +13,7 @@ from .navigation import _bearing_true
 
 BAND_LABELS = {"UHF": "UHF", "VHF_HI": "VHF", "VHF_LOW": "VHF Low", "HF": "HF"}
 BAND_ORDER = {name: index for index, name in enumerate(BAND_LABELS)}
+RUNWAY_WIND_STATUSES = {"available", "calm", "unavailable", "no_runways"}
 
 
 def _number(value: Any) -> bool:
@@ -24,6 +25,40 @@ def _airbase_coordinates(airbase: dict) -> tuple[float, float, float, float] | N
     if all(_number(value) for value in values) and abs(values[2]) <= 90 and abs(values[3]) <= 180:
         return values
     return None
+
+
+def _validate_runways(airbase: dict) -> None:
+    runways = airbase.get("runways")
+    status, suggestion = airbase.get("runway_wind_status"), airbase.get("suggested_runway")
+    if not isinstance(runways, list) or status not in RUNWAY_WIND_STATUSES:
+        raise ValueError(f"Live AIRBASE {airbase.get('airbase_id')} has invalid runway data")
+    names, directions = set(), set()
+    for runway in runways:
+        if not isinstance(runway, dict):
+            raise ValueError("Invalid live AIRBASE runway entry")
+        name = runway.get("name")
+        numbers = {key: runway.get(key) for key in (
+            "heading_true_deg", "heading_magnetic_deg", "length_m", "width_m", "center_x", "center_z",
+        )}
+        if (not isinstance(name, str) or not name or len(name) > 8
+                or not all(_number(value) for value in numbers.values())
+                or not 0 <= numbers["heading_true_deg"] <= 360
+                or not 0 <= numbers["heading_magnetic_deg"] <= 360
+                or not 1 <= numbers["length_m"] <= 20_000
+                or not 1 <= numbers["width_m"] <= 1_000
+                or abs(numbers["center_x"]) > 100_000_000 or abs(numbers["center_z"]) > 100_000_000
+                or ("is_left" in runway and type(runway["is_left"]) is not bool)):
+            raise ValueError(f"Live AIRBASE {airbase.get('airbase_id')} has invalid runway fields")
+        key = (name, numbers["center_x"], numbers["center_z"])
+        if key in directions:
+            raise ValueError(f"Live AIRBASE {airbase.get('airbase_id')} has duplicate runway directions")
+        directions.add(key)
+        names.add(name)
+    if status == "available":
+        if not isinstance(suggestion, str) or suggestion not in names:
+            raise ValueError(f"Live AIRBASE {airbase.get('airbase_id')} has an invalid runway suggestion")
+    elif suggestion is not None or (status == "no_runways") != (not runways):
+        raise ValueError(f"Live AIRBASE {airbase.get('airbase_id')} has inconsistent runway status")
 
 
 @dataclass(frozen=True)
@@ -53,6 +88,7 @@ def resolve_airfield_radios(catalog: NavaidCatalog, airbases: Any) -> tuple[tupl
             raise ValueError(f"Live AIRBASE ID is ambiguous: {uid}")
         if _airbase_coordinates(item) is None or type(item.get("name")) is not str or not item["name"]:
             raise ValueError(f"Live AIRBASE {uid} has no usable name or coordinates")
+        _validate_runways(item)
         live[uid] = item
     result, unresolved = [], 0
     for record in catalog.radio_records:
@@ -120,6 +156,33 @@ def _frequency_text(item: dict) -> str:
     return f"{BAND_LABELS[item['band_symbol']]}: {frequency:g} MHz {modulation}"
 
 
+def _runway_lines(airbase: dict) -> list[str]:
+    physical: dict[tuple[float, float, float, float], list[dict]] = {}
+    for runway in airbase["runways"]:
+        key = (round(runway["center_x"], 1), round(runway["center_z"], 1),
+               round(runway["length_m"], 1), round(runway["width_m"], 1))
+        physical.setdefault(key, []).append(runway)
+    lines = ["Runways:"]
+    if not physical:
+        lines.append("  N/A from live MOOSE AIRBASE")
+    for (_, _, length, width), directions in sorted(
+            physical.items(), key=lambda item: min(runway["name"] for runway in item[1])):
+        names = sorted({runway["name"] for runway in directions},
+                       key=lambda value: (int(value[:2]) if value[:2].isdigit() else 99, value))
+        lines.append(f"  {'/'.join(names)} - {length:,.0f} x {width:,.0f} m")
+    status, suggestion = airbase["runway_wind_status"], airbase.get("suggested_runway")
+    if status == "available":
+        lines.append(f"Suggested into-wind runway: {suggestion} (MOOSE wind calculation)")
+    elif status == "calm":
+        lines.append("Suggested into-wind runway: N/A (calm wind)")
+    elif status == "no_runways":
+        lines.append("Suggested into-wind runway: N/A (no runway data)")
+    else:
+        lines.append("Suggested into-wind runway: N/A (wind unavailable)")
+    lines.append("Runway suggestion is advisory, not a DCS ATC clearance.")
+    return lines
+
+
 def airfield_radio_message(listing: AirfieldRadioListing, station: ResolvedAirfieldRadio,
                            position: Any) -> str:
     value = station.record["normalized"]
@@ -128,6 +191,7 @@ def airfield_radio_message(listing: AirfieldRadioListing, station: ResolvedAirfi
     lines = [f"Airfield communications: {station.name}",
              f"Reference: {listing.unit_id.removeprefix('UNIT:')} | AIRBASE ID: {station.airbase_uid}",
              f"Distance: {distance / 1852:.2f} NM horizontal | Bearing: {bearing_text}"]
+    lines.extend(_runway_lines(station.airbase))
     callsigns = [f"{item['variant'].title()} {item['name']}" for item in value.get("callsigns", [])]
     lines.append("Callsigns: " + (" | ".join(callsigns) if callsigns else "N/A"))
     roles = [role.title() for role in value.get("roles", [])]

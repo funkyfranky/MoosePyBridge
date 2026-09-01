@@ -29,6 +29,10 @@ def test_local_overrides_and_relative_paths_do_not_depend_on_cwd(config_file, tm
     assert config.control_port == 43001 and config.command_timeout == 10
     assert config.dcs_directory == tmp_path / "DCS"
     assert config.cache_directory == (tmp_path / "../tmp/navaids").resolve()
+    assert config.speech_srs_port == 5002 and config.speech_frequency_mhz == 305
+    assert config.speech_provider == "piper" and config.speech_voice == "en_US-lessac-low"
+    assert config.copilot_auto_start and config.copilot_text_enabled and config.copilot_radio_enabled
+    assert config.copilot_altitude_warning_ft == 300 and config.copilot_altitude_recovery_ft == 150
 
 
 @pytest.mark.parametrize("override", [
@@ -36,8 +40,13 @@ def test_local_overrides_and_relative_paths_do_not_depend_on_cwd(config_file, tm
     {"control": {"port": 65536}}, {"control": {"command_timeout_seconds": 0}},
     {"control": {"reconnect_interval_seconds": float("nan")}}, {"control": {"host": ""}},
     {"navigation": {"initial_target_waypoint": 1}}, {"navigation": {"sample_interval_seconds": False}},
+    {"copilot": {"auto_start": "yes"}}, {"copilot": {"sustain_seconds": 0}},
+    {"copilot": {"speed_recovery_kt": 20}}, {"copilot": {"cross_track_warning_nm": float("nan")}},
     {"navaids": {"enabled": "yes"}}, {"navaids": {"cache_directory": ""}},
     {"navaids": {"dcs_directory": 3}}, {"navigation": []},
+    {"speech": {"enabled": "yes"}}, {"speech": {"srs_port": 0}},
+    {"speech": {"frequency_mhz": 0}}, {"speech": {"modulation": "SSB"}},
+    {"speech": {"volume": 2}}, {"speech": {"voice": ""}}, {"speech": {"speed": 0}},
 ])
 def test_invalid_overrides_fail_before_connecting(config_file, override):
     config_file.with_name("navigation.local.json").write_text(json.dumps(override), encoding="utf-8")

@@ -30,6 +30,8 @@ from .ammunition import (
     select_task_weapon,
 )
 from .clock import DcsMissionInfo, DcsTime
+from .copilot import (CopilotAdvisory, CopilotEvaluator, CopilotProfile, CopilotSnapshot,
+                      build_copilot_snapshot, format_copilot_status)
 from .conflict_readiness import (
     CoalitionConflictReadiness,
     ConflictCapability,
@@ -43,6 +45,8 @@ from .dcs_events import DestroyedObjectEvent, KillEvent, PlayerAircraftEvent
 from .flight_routes import FlightGroupRoute, FlightRouteWaypoint
 from .flight_status import FlightStatus, format_flight_status
 from .navigation import NavigationSolution, RouteNavigator, format_navigation_status
+from .speech import RadioIntent, RadioSender, SpeechProfile, clear_speech, configure_speech, enqueue_speech, test_tone
+from .radio_rules import status_report as radio_status_report, support_request as radio_support_request, threat_warning
 from .diplomacy import (
     AIRBASE_CAPTURE_ESCALATION_POINTS,
     OPSZONE_CAPTURE_CONTEXT_MULTIPLIERS,
@@ -1093,6 +1097,16 @@ __all__ = [
     "TopographyDetailLevel",
     "coverage_from_picture",
     "merge_topography_features",
+    "RadioIntent",
+    "RadioSender",
+    "SpeechProfile",
+    "clear_speech",
+    "configure_speech",
+    "enqueue_speech",
+    "test_tone",
+    "radio_status_report",
+    "radio_support_request",
+    "threat_warning",
     "DebugMarkup",
     "DebugMarkupPoint",
     "DcsRoadRoute",

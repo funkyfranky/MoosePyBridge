@@ -8,14 +8,47 @@
   },
   "navigation": {
     "sample_interval_seconds": 2.0,
-    "hint_interval_seconds": 10.0,
     "initial_target_waypoint": 2,
     "capture_radius_m": 500.0,
     "max_sample_gap_seconds": 10.0
+  },
+  "copilot": {
+    "auto_start": true,
+    "text_enabled": true,
+    "radio_enabled": true,
+    "altitude_warning_ft": 300.0,
+    "altitude_recovery_ft": 150.0,
+    "speed_warning_kt": 20.0,
+    "speed_recovery_kt": 10.0,
+    "cross_track_warning_nm": 0.5,
+    "cross_track_recovery_nm": 0.25,
+    "sustain_seconds": 10.0,
+    "reminder_cooldown_seconds": 60.0
   },
   "navaids": {
     "enabled": true,
     "dcs_directory": null,
     "cache_directory": "../tmp/navaids"
+  },
+  "speech": {
+    "enabled": true,
+    "profile_id": "hornet_copilot",
+    "network_id": "blue_305",
+    "srs_path": "C:/Program Files/DCS-SimpleRadio-Standalone/ExternalAudio",
+    "srs_host": "127.0.0.1",
+    "srs_port": 5002,
+    "frequency_mhz": 305.0,
+    "modulation": "AM",
+    "provider": "piper",
+    "voice": "en_US-lessac-low",
+    "label": "COPILOT",
+    "volume": 1.0,
+    "speed": 1.0,
+    "interval_seconds": 0.5,
+    "arbitration": "disciplined",
+    "backoff_min_seconds": 0.25,
+    "backoff_max_seconds": 0.75,
+    "collision_probability": 0.1,
+    "emergency_break_in": true
   }
 }

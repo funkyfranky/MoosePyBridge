@@ -424,9 +424,9 @@ cache semantics, the type-based radio menu, limitations, and remaining TODOs.
   once; it waits for the normal daemon and mission and survives mission changes.
   Restart the mission after a Lua update. Stop old diagnostic menu scripts first.
   Shared configuration and loading/recovery rules: [Navigation Client Workflow](WORKFLOW.md).
-- Radio menu -> F10 Other -> **Navigation**, with eight top-level items:
-  **Show route**, **Hide route**, **Navigation status**, **Flight status**, **Enable hints**,
-  **Disable hints**, **Navaids**, and **Airfields / ATC**.
+- Radio menu -> F10 Other -> **Navigation**, with seven top-level items:
+  **Show route**, **Hide route**, **Navigation status**, **Flight status**,
+  **Navaids**, **Airfields / ATC**, and **Copilot**.
 - **Navaids** groups imported stations by type. New group menus initialize all
   type lists once from one current aircraft-position snapshot. **Refresh nearby**
   updates a type's list later; select a station for source data, horizontal
@@ -444,11 +444,35 @@ cache semantics, the type-based radio menu, limitations, and remaining TODOs.
   guidance or change cockpit settings. The type root remains at nine entries.
 - **Airfields / ATC** joins imported `radioId` UIDs to live MOOSE AIRBASE objects
   by `AIRBASE:GetID()`, never by name. Six-airfield pages provide callsign,
-  shared ATC roles, source frequencies, live distance and TRUE bearing. Empty or
-  nonstandard source records remain visible in the issue/unresolved counts.
-- Route display and hints start off. The display uses the preserved Mission
+  shared ATC roles, source frequencies, live distance and TRUE bearing. Details
+  also pair reciprocal MOOSE runway directions into physical runways and obtain
+  a fresh advisory into-wind suggestion; it is not presented as DCS ATC state.
+  Empty or nonstandard source records remain visible in the issue/unresolved counts.
+- **Copilot** is always present. Monitoring, text output and radio output default
+  to enabled and can be switched independently. The status action performs a
+  fresh comparison; Repeat last advisory uses the currently enabled channels.
+  The deterministic first version evaluates sustained altitude, route-GS and
+  cross-track deviations on normal route legs. It linearly interpolates waypoint
+  altitude only for matching BARO or RADIO references, compares the target
+  waypoint speed with GS, excludes takeoff/landing legs, uses warning/recovery
+  hysteresis and emits short recovery calls. It never changes cockpit waypoints.
+  If the FLIGHTGROUP is late after slot entry, automatic monitoring keeps retrying.
+  **Radio diagnostics** appears when the mission-scoped speech profile passes its
+  Hound and MSRS preflight. The initial profile uses local SRS port 5002,
+  Piper `en_US-lessac-low` and 305.000 MHz AM. **SRS test tone** checks the Hound
+  to SRS path without TTS, **Radio check** queues one spoken message, and
+  **Queue test** queues two messages to verify serialization. Python selects a
+  fixed profile; menu/AI text cannot override its radio or provider settings.
+  A queue per logical sender/radio prevents self-overlap and a synthetic network
+  arbiter coordinates senders by policy, priority, TTL and urgency. Human SRS
+  PTT is not observable and may overlap. The reusable service is documented in
+  [Radio Speech Service](../RADIO_SPEECH.md).
+  Pending messages from a closed player-menu session are removed; a transmission
+  already handed to Hound may finish. Audible reception requires a connected,
+  tuned SRS client and is not proven by the bridge acknowledgement.
+- Route and navaid-map display start off; Copilot monitoring starts on. The route display uses the preserved Mission
   Editor route and a cyan F10 line for the group's coalition, not exclusively
-  for the group. Hiding the line does not affect hints.
+  for the group. Hiding the line does not affect monitoring.
 - Status shows the reference aircraft, active leg and target, distance in NM,
   TRUE bearing, and spelled-out cross-track error through `MESSAGE:ToGroup`:
 
@@ -459,26 +483,24 @@ cache semantics, the type-based radio menu, limitations, and remaining TODOs.
   Cross-track error: 15 m left
   ```
 
-  Hints sample every two seconds by default and display approximately every ten
-  seconds and on waypoint capture.
 - The existing `RouteNavigator` is reused per group-menu session. Progress
-  survives showing/hiding the line and disabling hints. There is no periodic
-  aircraft-position polling while hints are off. The application still checks
+  survives showing/hiding the line and stopping/restarting the Copilot. There is no periodic
+  aircraft-position polling while monitoring is stopped. The application still checks
   connection/mission health. Cockpit waypoint selection is neither read nor
   changed; target capture does not prove a landing.
-- Navigation status/hints require exactly one player aircraft per group and its FLIGHTGROUP.
+- Navigation status/Copilot require exactly one player aircraft per group and its FLIGHTGROUP.
   Multiple crew seats in the same UNIT count as one aircraft. Multiple player
   aircraft produce an error message instead of an arbitrary reference choice.
 - Lua validates owner ID, menu-session ID, DCS group ID, and occupancy for
   context, message, and overlay calls. Delayed work from an old session is
   rejected. When the last occupant leaves, `player.menu.closed` stops Python
-  hints and the session's line is removed.
+  Copilot monitoring and the session's line is removed.
 - Lua removes its line even without a reachable Python client. Ctrl+C, mission
   end, or a new menu run removes the menu and its line; unrelated overlays remain.
   The client waits for the next mission and creates fresh state. It also recovers
-  from server/connection changes; hints and selections are never restored.
-- Ground checks: show/hide the line, request status, enable hints for at least
-  ten seconds, disable hints, leave/re-enter the slot, and stop with Ctrl+C.
+  from server/connection changes; Copilot evaluator state and selections are never restored.
+- Ground checks: show/hide the line, request all three status reports, toggle
+  Copilot monitoring/text/radio, leave/re-enter the slot, and stop with Ctrl+C.
   Automated tests cover Lua lifecycle/write guards and Python actions/task
   cancellation. The user confirmed the navigation-menu ground test.
 
@@ -532,8 +554,9 @@ These are world-state quantities, not cockpit instrument readings: geometric
 MSL is not pressure/QNH altitude, terrain AGL is not radar altitude or carrier
 deck clearance, and displayed MAG/TRUE references are intentionally distinct.
 The action leaves route progress,
-hints, and cockpit systems unchanged and starts no timer. Instructor warnings,
-target-altitude/speed comparisons, and cockpit IAS are outside this first step.
+  Copilot state and cockpit systems unchanged and starts no timer. The separate
+  Copilot uses this telemetry for route-altitude/GS comparison; Instructor mode
+  and cockpit-IAS targets remain deferred.
 The IAS value is calculated CAS, not a cockpit reading or an aircraft-specific
 instrument/position-error correction. Restart the mission after installing the
 POSITIONABLE methods and their UTILS dependencies or updating the bridge Lua.
@@ -768,7 +791,7 @@ adapter, telemetry, and later instructor features.
 - [ ] Validate XTE signs with deliberate left/right maneuvers in flight.
 - [x] Implement an opt-in group menu with cockpit and Python-console test actions.
 - [x] Confirm both simple menu actions in DCS.
-- [x] Connect route display, status, and switchable hints to the navigation menu.
+- [x] Connect route display and on-demand status to the navigation menu.
 - [x] Confirm the navigation-menu ground test.
 - [x] Add on-demand, read-only Flight status to the navigation menu, with explicit
       altitude, speed, and direction references and no FLIGHTGROUP dependency.
@@ -788,8 +811,9 @@ adapter, telemetry, and later instructor features.
       frequency bands/modulation, raw records, encoding and validation issues.
 - [x] Join standard radioId UIDs exclusively to live MOOSE AIRBASE:GetID()
       values and add a paged Airfields / ATC menu with read-only details.
-- [ ] Validate Airfields / ATC in DCS on Caucasus and Sinai, including automatic
-      initialization, nearby ordering, paging, source callsigns and frequencies.
+- [ ] Complete Airfields / ATC validation on Sinai. Caucasus automatic
+      initialization, 21/21 live ID matches, source callsigns, frequencies and
+      Batumi runway/wind output are confirmed (2026-09-01).
 - [x] Add a type-based Navaids menu with six-station pages, guarded group messages,
       nearest ordering and a source-validated snapshot pinned per activation.
 - [x] Confirm the initial Navaids menu test in DCS: TACAN/NDB station selection,
@@ -812,7 +836,25 @@ adapter, telemetry, and later instructor features.
       incompatible Lua, unavailable caches and competing menu ownership.
 - [ ] Validate the persistent workflow in DCS without flying: start before the
       mission, end/start another mission, restart the daemon, and check cleanup.
+- [x] Validate the initial HoundTTS/MSRS path in DCS: test tone, Piper
+      `en_US-lessac-low` radio check and two serialized messages were audible on
+      305.000 MHz AM without overlap (2026-09-01).
+- [x] Repeat the Copilot tone, radio check and sender-queue test after deployment
+      of the general radio-network arbiter; all audio was correct and the
+      expected active-plus-one-pending state was observed (2026-09-01).
+- [x] Implement the first deterministic Copilot route-conformance monitor with
+      automatic per-slot start, independent default-on text/radio channels,
+      altitude/GS/XTE tolerances, persistence, hysteresis, cooldowns and recovery calls.
+- [ ] Validate Copilot altitude, GS and XTE warnings/recoveries in the airborne
+      Hornet slot, including independent text/radio toggles and lifecycle cleanup.
+- [ ] Add the separate Instructor submenu and modes after the Copilot flight test;
+      keep its evaluator and preferences independent from Copilot assistance.
 - [ ] Extract menu/telemetry modules and standardize internal test-era names.
+- [ ] Enhance Hound-backed radio-arbiter completion with the `sessionId` returned by
+      `HoundTTS.Transmit()` and poll `HoundTTS.UpdateSession()` instead of using
+      estimated duration as the primary completion boundary. Retain duration for
+      subtitles/ETA/fallback, use a bounded timeout and stop only sessions owned
+      by the arbiter.
 - [ ] Add bounded raw-log rotation separately from semantic audit persistence.
 - [ ] Add reviewed navaid overrides, explicit stale-cache use and live availability.
 - [ ] Define tests for duplicate fix identifiers and DCS/Navigraph discrepancies.
@@ -852,12 +894,12 @@ adapter, telemetry, and later instructor features.
 - [ ] Define aircraft navigation profiles.
 - [ ] Develop a F/A-18C DTC exporter.
 - [ ] Develop a MOOSE route exporter.
-- [ ] Develop a guidance and monitoring service.
-- [ ] Integrate an advisory copilot as a tool consumer.
+- [x] Develop the first route-conformance guidance and monitoring service.
+- [x] Integrate the first deterministic advisory Copilot with text and radio outputs.
 - [ ] Develop a F/A-18C training profile and flight-phase detection.
 - [ ] Develop a rule-based instructor evaluator with tolerances and hysteresis.
-- [ ] Start with opt-in target-altitude monitoring using an explicit altitude
-      reference, sustained-deviation threshold and reminder cooldown.
+- [x] Start with explicit-reference target-altitude monitoring using a
+      sustained-deviation threshold, hysteresis and reminder cooldown.
 - [ ] Prototype an IFR/approach instructor and debriefing report.
 - [ ] Add modular sensor and weapon-system courses.
 - [ ] Evaluate an ATIS prototype.

@@ -1220,9 +1220,28 @@ Lua loading, recovery behavior and the pending live lifecycle test.
   Mach, MAG/TRUE heading/track, vertical speed in ft/min, temperature in Celsius,
   pressure in hPa/inHg, and the optional FLIGHTGROUP FSM state. The grouped report is
   shown to the group for 15 seconds and printed in the Python console.
-  No FLIGHTGROUP is needed; this action does not change navigation progress or hints.
-- **Enable hints / Disable hints**: sample every two seconds and display guidance
-  about every ten seconds, also at waypoint capture. Repeated enable is idempotent.
+  No FLIGHTGROUP is needed; this action does not start or stop Copilot monitoring.
+- **Copilot**: automatically compare the occupied aircraft with the preserved
+  Mission Editor route. **Start/Stop monitoring**, **Copilot status**, independent
+  **Enable/Disable text output**, independent **Enable/Disable radio output**, and
+  **Repeat last advisory** are group-scoped. Monitoring, text and radio start on.
+  Normal route legs use linear BARO-MSL or RADIO-AGL altitude interpolation,
+  target-waypoint route speed versus live GS, and cross-track error. Takeoff and
+  landing legs are deliberately excluded from these comparisons. Deviations must
+  persist before a warning; hysteresis, recovery calls and cooldowns prevent chatter.
+  The default warning/recovery thresholds are 300/150 ft, 20/10 kt and
+  0.50/0.25 NM, with a 10-second persistence and 60-second reminder cooldown.
+  Unsupported or ambiguous references remain N/A and do not produce guessed advice.
+- **Copilot > Radio diagnostics**: use HoundTTS through MOOSE MSRS and the general
+  bridge radio arbiter for an SRS test tone, one Piper radio check, or two
+  sender-serialized queue-test messages. The initial
+  profile is `en_US-lessac-low` on 305.000 MHz AM through local SRS port 5002.
+  The SRS client and Hornet radio must be connected and tuned; a queue ACK does
+  not itself prove audible reception.
+  The same service supports player, UNIT, GROUP, AIRBASE and coordinate senders,
+  multiple trusted profiles, priority, TTL, deduplication, Emergency Break-in
+  and four synthetic network modes. Human SRS PTT is not observable. See
+  [Radio Speech Service](docs/RADIO_SPEECH.md).
 - **Navaids**: browse the active terrain's imported stations by type (TACAN, VOR,
   DME, VOR/DME, VORTAC, NDB, ILS; **More types** contains RSBN, PRMG, ICLS and
   **Other / unknown**). All type lists initialize once per new group menu from
@@ -1240,21 +1259,27 @@ Lua loading, recovery behavior and the pending live lifecycle test.
 - **Airfields / ATC**: browse six nearby airfields per page. Imported
   `radioId` UIDs are matched only to live MOOSE `AIRBASE:GetID()` values; the
   live object supplies name and position. Details show callsigns, shared ATC
-  roles, source frequencies, current distance and TRUE bearing without tuning
-  the cockpit radios. Nonstandard/unmatched IDs and empty frequencies are
-  reported rather than guessed.
+  roles, source frequencies, current distance and TRUE bearing. Reciprocal
+  MOOSE runway directions are paired into physical runways with dimensions;
+  details refresh a clearly advisory `GetRunwayIntoWind()` suggestion. Calm or
+  unavailable wind produces N/A instead of an invented active runway. Nothing
+  tunes the cockpit radios, and nonstandard/unmatched IDs or empty frequencies
+  are reported rather than guessed.
 
-Route display and hints start **off**. Display toggling does not reset progress
-or stop hints. Without hints, positions are queried only for on-demand actions.
+Route and navaid-map display start **off**. Copilot monitoring and both output
+channels start **on**. Display toggling does not reset route progress or stop the
+Copilot. Stopping the Copilot stops its periodic aircraft polling; on-demand
+Navigation status, Flight status and Copilot status remain available.
 The Python tracker starts at WP 1 -> WP 2; it neither reads nor changes cockpit
 waypoints. Final capture is horizontal proximity, not a landing check.
 
-The menu is group-scoped. Navigation status/hints require exactly one distinct player
+The menu is group-scoped. Navigation status and Copilot monitoring require exactly one distinct player
 aircraft in the group and its FLIGHTGROUP; multiple crew seats in the same unit
 are supported as one aircraft. Multiple player aircraft produce an explanatory
 message instead of guessing whose position to use. The F10 line is visible to
 the coalition, not exclusively to the group. Navigation errors are reported to
-the group and Python console; failed periodic guidance stops until re-enabled.
+the group and Python console. Automatic monitoring retries transiently missing
+FLIGHTGROUP/route data instead of terminating during the slot-entry race.
 
 Flight status also requires exactly one distinct player aircraft per group.
 It reads the occupied UNIT's DCS position/orientation and velocity, with terrain
@@ -1271,7 +1296,8 @@ values remain N/A. GS is not IAS or TAS; MSL is not a pressure/QNH altitude, and
 above terrain, not a radar-altimeter or carrier-deck reading. MAG and TRUE are
 shown explicitly; they are not interchangeable. Track is unavailable below 1 m/s horizontal
 speed; other unavailable optional values appear as N/A instead of guessed data.
-This is an on-demand, read-only status report, not a flight-instructor warning.
+This is an on-demand, read-only status report. The Copilot consumes the same
+telemetry but remains a separate, deterministic route-conformance service.
 
 Navaids also needs one distinct player aircraft, but no FLIGHTGROUP. Run the
 offline importer first; the shared configuration selects the cache and local
@@ -1300,9 +1326,9 @@ mission end, Ctrl+C, or replacing the menu run clears only that session's
 drawings. Messages and overlay
 commands validate owner, menu-session token, group ID and current occupancy in
 Lua, preventing delayed writes to a new slot session. Python cancels the matching
-hint task on `player.menu.closed`. Mission end/reset or connection recovery
+Copilot task on `player.menu.closed`. Mission end/reset or connection recovery
 discards the old controller; the script waits and enables a fresh menu session.
-Route progress, station selection and hints are not restored. If another client
+Route progress, station selection and Copilot evaluator state are not restored. If another client
 takes menu ownership, the older client stops instead of taking the menus back.
 If forcibly killed, Lua cleanup still runs on last leave or mission end, and a
 new activation replaces abandoned menus.
@@ -1314,10 +1340,13 @@ Configuration: `config/navigation.json`, overridden by the optional Git-ignored
 directory. Restart the script after editing settings. Startup validates the Lua
 navigation API before creating menus; incompatibility keeps the client waiting.
 
-Manual check (possible while parked): show/hide the line, request status, enable
-hints for at least ten seconds, disable them, leave/re-enter the slot, then stop
-with Ctrl+C. Check that only the navigation menu's line disappears and no hints
-continue after disabling/leaving. Initial airborne waypoint sequencing has been
+Manual check: show/hide the line; request Navigation, Flight and Copilot status;
+toggle each Copilot output independently; stop/start monitoring; then leave and
+re-enter the slot and stop the client with Ctrl+C. Check that no automatic
+advisory continues after stopping/leaving. In the air-start slot, deliberately
+hold altitude, GS and XTE outside their warning bands for at least ten seconds,
+then recover inside the smaller recovery band. Confirm one useful warning and
+one recovery call over each enabled output, without rapid repeats. Initial airborne waypoint sequencing has been
 confirmed; deliberate left/right XTE sign checks remain open.
 Also request **Flight status** while parked and from the air-start slot. Check
 the grouped layout, 15-second display, and IAS/TAS/GS/Mach values. The displayed

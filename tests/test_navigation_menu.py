@@ -10,16 +10,20 @@ from unittest.mock import AsyncMock
 import pytest
 
 from moosebridge import FlightGroupRoute, MooseBridgeState
+from moosebridge.copilot import CopilotProfile
 from moosebridge.navigation import NavigationSolution
 from moosebridge.navigation_menu import NavigationMenuController, cockpit_status, reference_unit
 from moosebridge.sdk import CoordinateResult
+from moosebridge.speech import SpeechProfile
 
 
 def route(group="Hornet"):
     return FlightGroupRoute.from_payload({
         "opsgroup_id": f"OPSGROUP:{group}", "route_source": "mission_editor", "coalition": "blue",
         "waypoints": [{"index": i, "name": f"WP {i}", "x": x, "z": 0,
-                       "latitude": x / 100000, "longitude": 0}
+                       "latitude": x / 100000, "longitude": 0,
+                       "altitude_m": 3048, "altitude_type": "BARO", "speed_mps": 100,
+                       "type": "Turning Point", "action": "Turning Point"}
                       for i, x in enumerate((0, 10000, 20000), 1)],
     })
 
@@ -29,6 +33,21 @@ def event(action="status", *, group="Hornet", session="1", owner="run", closed=F
         "menu_id": "navigation", "owner_id": owner, "session_id": session,
         "group_id": f"GROUP:{group}", "action": action,
     }}
+
+
+def created_event(*, group="Hornet", session="1", owner="run"):
+    message = event(group=group, session=session, owner=owner)
+    message["event"] = "player.menu.created"
+    message["payload"].pop("action")
+    return message
+
+
+def speech_profile():
+    return SpeechProfile(
+        srs_path=r"D:\DCS\_SRS", srs_host="127.0.0.1", srs_port=5002,
+        frequency_mhz=305.0, modulation="AM", provider="piper",
+        voice="en_US-lessac-low", label="COPILOT", volume=1.0, speed=1.0, interval_s=0.5,
+    )
 
 
 class Bridge:
@@ -69,6 +88,12 @@ class Bridge:
             result = {"initialized": True, "airfield_revision": 1, "page": 0}
         if command.action.endswith(".airfields.page"):
             result = {"airfield_revision": command.params["airfield_revision"] + 1}
+        if command.action == "speech.test_tone":
+            result = {"requested": True, "frequency_mhz": 305.0, "modulation": "AM"}
+        if command.action == "speech.enqueue":
+            result = {"queued": True, "sender_queue_depth": len([
+                call for call in self.calls if call.action == "speech.enqueue"
+            ]), "estimated_duration_s": 2.0}
         if command.action.endswith(".message") and command.params.get("station_key"):
             self.selection_serial += 1
             result = {"selection_id": str(self.selection_serial)}
@@ -85,6 +110,94 @@ class Bridge:
 
     def messages(self):
         return [c.params["text"] for c in self.calls if c.action.endswith(".message")]
+
+
+def test_copilot_radio_actions_use_guarded_speech_profile(capsys):
+    async def scenario():
+        bridge = Bridge()
+        controller = NavigationMenuController(bridge, "run", speech_profile=speech_profile())
+        await controller.handle(event("speech_tone"))
+        await controller.handle(event("speech_radio_check"))
+        await controller.handle(event("speech_queue_test"))
+        speech = [call for call in bridge.calls if call.action.startswith("speech.")]
+        assert [call.action for call in speech] == [
+            "speech.test_tone", "speech.enqueue", "speech.enqueue", "speech.enqueue",
+        ]
+        assert [call.params.get("text") for call in speech[1:]] == [
+            "MoosePyBridge copilot radio check.",
+            "MoosePyBridge queue test, message one.",
+            "Queue test, message two. No transmissions should overlap.",
+        ]
+        assert all(call.params["owner_id"] == "run"
+                   and call.params["sender"]["group_id"] == "GROUP:Hornet"
+                   and call.params["sender"]["session_id"] == "1"
+                   and call.params["profile_id"] == "default" for call in speech)
+        assert "305.000 MHz AM" in bridge.messages()[-1]
+        assert "queue depth=3" in capsys.readouterr().out
+        await controller.close()
+    asyncio.run(scenario())
+
+
+def test_copilot_emits_sustained_speed_warning_and_recovery_over_text_and_radio():
+    async def scenario():
+        bridge = Bridge()
+        bridge.flight_status["velocity_mps"]["x"] = 150
+        profile = CopilotProfile(
+            speed_warning_kt=10, speed_recovery_kt=5,
+            sustain_s=0.002, reminder_cooldown_s=10,
+        )
+        controller = NavigationMenuController(
+            bridge, "run", sample_interval=0.001, speech_profile=speech_profile(),
+            copilot_profile=profile,
+        )
+        await controller.handle(created_event())
+        for _ in range(200):
+            if any("Ground speed is" in text for text in bridge.messages()):
+                break
+            await asyncio.sleep(0.001)
+        warning = next(text for text in bridge.messages() if "Ground speed is" in text)
+        assert warning.startswith("Copilot: Ground speed is")
+        speech = [call for call in bridge.calls if call.action == "speech.enqueue"]
+        assert speech and "Ground speed is" in speech[-1].params["text"]
+        assert speech[-1].params["priority"] == 60
+        assert speech[-1].params["urgency"] == "urgent"
+
+        bridge.flight_status["velocity_mps"]["x"] = 100
+        for _ in range(200):
+            if any("back within" in text for text in bridge.messages()):
+                break
+            await asyncio.sleep(0.001)
+        assert any(text == "Copilot: Ground speed is back within the planned route tolerance."
+                   for text in bridge.messages())
+        speech = [call for call in bridge.calls if call.action == "speech.enqueue"]
+        assert speech[-1].params["urgency"] == "routine"
+        await controller.close()
+    asyncio.run(scenario())
+
+
+def test_copilot_menu_controls_status_channels_and_repeat():
+    async def scenario():
+        bridge = Bridge()
+        controller = NavigationMenuController(
+            bridge, "run", sample_interval=10, speech_profile=speech_profile(),
+            copilot_auto_start=False,
+        )
+        await controller.handle(event("copilot_status"))
+        assert "Copilot monitoring: STOPPED" in bridge.messages()[-1]
+        assert "Text output: ENABLED | Radio output: ENABLED" in bridge.messages()[-1]
+        await controller.handle(event("copilot_text_off"))
+        await controller.handle(event("copilot_radio_off"))
+        await controller.handle(event("copilot_repeat"))
+        assert bridge.messages()[-1] == "No Copilot advisory is available to repeat."
+        await controller.handle(event("copilot_text_on"))
+        await controller.handle(event("copilot_radio_on"))
+        await controller.handle(event("copilot_start"))
+        state = controller.groups[("GROUP:Hornet", "1")]
+        assert state.copilot_monitoring and state.copilot_task is not None
+        await controller.handle(event("copilot_stop"))
+        assert not state.copilot_monitoring and state.copilot_task is None
+        await controller.close()
+    asyncio.run(scenario())
 
 
 def test_route_show_hide_are_guarded_and_do_not_start_polling():
@@ -124,7 +237,7 @@ def test_flight_status_is_fresh_on_demand_without_flightgroup_or_navigation_chan
         assert "IAS: N/A" in bridge.messages()[-1]  # Never reuse the previous sample.
         assert not bridge.routes and not bridge.positions
         state = controller.groups[("GROUP:Hornet", "1")]
-        assert state.route is None and state.navigator is None and state.hints is None
+        assert state.route is None and state.navigator is None and state.copilot_task is None
         assert [c.action.rsplit(".", 1)[-1] for c in bridge.calls] == [
             "flight_status", "message", "flight_status", "message",
         ]
@@ -176,31 +289,31 @@ def test_status_uses_player_unit_and_retains_progress_when_route_is_hidden():
         await controller.handle(event())
         assert "Leg: WP 2 -> WP 3" in bridge.messages()[-1]
         assert set(bridge.positions) == {"UNIT:Hornet-1"}
-        assert controller.groups[("GROUP:Hornet", "1")].hints is None
+        assert controller.groups[("GROUP:Hornet", "1")].copilot_task is None
         await controller.close()
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("action", ["hints_off", "closed", "shutdown"])
-def test_hints_are_idempotent_periodic_and_cancelled(action):
+@pytest.mark.parametrize("action", ["copilot_stop", "closed", "shutdown"])
+def test_copilot_is_automatic_idempotent_and_cancelled(action):
     async def scenario():
         bridge = Bridge()
-        controller = NavigationMenuController(bridge, "run", sample_interval=0.001, hint_interval=0.002)
-        await controller.handle(event("hints_on"))
-        task = controller.groups[("GROUP:Hornet", "1")].hints
-        await controller.handle(event("hints_on"))
-        assert controller.groups[("GROUP:Hornet", "1")].hints is task
+        controller = NavigationMenuController(bridge, "run", sample_interval=0.001)
+        await controller.handle(created_event())
+        task = controller.groups[("GROUP:Hornet", "1")].copilot_task
+        await controller.handle(event("copilot_start"))
+        assert controller.groups[("GROUP:Hornet", "1")].copilot_task is task
         for _ in range(100):
             if len(bridge.positions) >= 4:
                 break
             await asyncio.sleep(0.001)
         assert len(bridge.positions) >= 4
-        assert len([text for text in bridge.messages() if "Leg: WP 1 -> WP 2" in text]) >= 2
+        assert not any(text.startswith("Copilot:") for text in bridge.messages())
         if action == "closed":
             await controller.handle(event(closed=True))
             assert not controller.groups
-        elif action == "hints_off":
-            await controller.handle(event("hints_off"))
+        elif action == "copilot_stop":
+            await controller.handle(event("copilot_stop"))
         else:
             await controller.close()
         count = len(bridge.positions)
@@ -210,22 +323,21 @@ def test_hints_are_idempotent_periodic_and_cancelled(action):
     asyncio.run(scenario())
 
 
-def test_final_waypoint_is_not_landing_and_does_not_start_hints():
+def test_final_waypoint_status_is_horizontal_completion_not_landing_evaluation():
     async def scenario():
         bridge = Bridge()
         bridge.x = 10000
         controller = NavigationMenuController(bridge, "run")
         await controller.handle(event())
         bridge.x = 20000
-        await controller.handle(event("hints_on"))
+        await controller.handle(event("status"))
         assert "landing status not checked" in bridge.messages()[-1]
-        assert controller.groups[("GROUP:Hornet", "1")].hints is None
         await controller.close()
     asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("failure", ["missing_route", "multiple_aircraft", "wrong_position", "stale_context"])
-def test_invalid_navigation_reports_to_group_without_starting_hints(failure):
+def test_invalid_copilot_status_reports_to_group_without_starting_task(failure):
     async def scenario():
         bridge = Bridge()
         if failure == "missing_route":
@@ -241,11 +353,11 @@ def test_invalid_navigation_reports_to_group_without_starting_hints(failure):
                     return await original(*args, **kwargs)
                 return await original("UNIT:OtherAircraft")
             bridge.coords = coords
-        controller = NavigationMenuController(bridge, "run")
-        await controller.handle(event("hints_on"))
+        controller = NavigationMenuController(bridge, "run", copilot_auto_start=False)
+        await controller.handle(event("copilot_status"))
         assert bridge.messages() and "Navigation:" in bridge.messages()[-1]
         state = controller.groups[("GROUP:Hornet", "1")]
-        assert state.hints is None and state.navigator is None
+        assert state.copilot_task is None and state.navigator is None
         assert not any(c.action.endswith(".overlay") for c in bridge.calls)
         await controller.close()
     asyncio.run(scenario())
@@ -283,12 +395,16 @@ def test_navigation_feedback_and_errors_are_english():
         assert bridge.messages()[-1] == "F10 route displayed: 3 waypoints (own coalition)."
         await controller.handle(event("route_hide"))
         assert bridge.messages()[-1] == "Route hidden on the F10 map."
-        await controller.handle(event("hints_on"))
-        assert bridge.messages()[-1].startswith("Navigation hints enabled (approximately every 10 s).")
-        await controller.handle(event("hints_on"))
-        assert bridge.messages()[-1] == "Navigation hints are already enabled."
-        await controller.handle(event("hints_off"))
-        assert bridge.messages()[-1] == "Navigation hints disabled."
+        await controller.handle(event("copilot_start"))
+        assert bridge.messages()[-1].startswith("Copilot monitoring started.")
+        await controller.handle(event("copilot_start"))
+        assert bridge.messages()[-1] == "Copilot monitoring is already active."
+        await controller.handle(event("copilot_text_off"))
+        assert bridge.messages()[-1] == "Copilot text output disabled. Menu confirmations remain visible."
+        await controller.handle(event("copilot_radio_off"))
+        assert bridge.messages()[-1] == "Copilot radio output disabled."
+        await controller.handle(event("copilot_stop"))
+        assert bridge.messages()[-1] == "Copilot monitoring stopped. Output settings are unchanged."
         bridge.context["opsgroup_id"] = None
         await controller.handle(event("status"))
         assert bridge.messages()[-1] == "Navigation: No FLIGHTGROUP available. Please create it in the mission."
@@ -312,23 +428,25 @@ def test_foreign_owner_is_ignored_and_old_close_does_not_reset_new_group_session
     asyncio.run(scenario())
 
 
-def test_two_groups_have_independent_trackers_and_hint_tasks():
+def test_two_groups_have_independent_trackers_and_copilot_tasks():
     async def scenario():
         bridge = Bridge()
         controller = NavigationMenuController(bridge, "run", sample_interval=10)
-        await controller.handle(event("hints_on"))
+        await controller.handle(event("copilot_start"))
+        await controller.handle(event("copilot_status"))
         first = controller.groups[("GROUP:Hornet", "1")]
-        first_task = first.hints
+        first_task = first.copilot_task
         bridge.context.update(group_id="GROUP:Other", opsgroup_id="OPSGROUP:Other", session_id="2",
                               group_sessions=[{"unit_id": "UNIT:Other-1"}])
-        await controller.handle(event("hints_on", group="Other", session="2"))
+        await controller.handle(event("copilot_start", group="Other", session="2"))
+        await controller.handle(event("copilot_status", group="Other", session="2"))
         other = controller.groups[("GROUP:Other", "2")]
         assert first.navigator is not other.navigator
         assert other.unit_id == "UNIT:Other-1"
         await controller.handle(event(closed=True))
-        assert first_task.done() and not other.hints.done()
+        assert first_task.done() and not other.copilot_task.done()
         await controller.close()
-        assert other.hints is None
+        assert other.copilot_task is None
     asyncio.run(scenario())
 
 
@@ -342,9 +460,9 @@ def test_mission_ending_during_position_query_does_not_emit_guidance():
             return await original(*args, **kwargs)
         bridge.coords = coords
         controller = NavigationMenuController(bridge, "run")
-        await controller.handle(event("hints_on"))
+        await controller.handle(event("copilot_status"))
         assert not bridge.messages()
-        assert controller.groups[("GROUP:Hornet", "1")].hints is None
+        assert controller.groups[("GROUP:Hornet", "1")].copilot_task is None
         await controller.close()
     asyncio.run(scenario())
 

@@ -30,6 +30,7 @@ class Backend:
         self.online = True
         self.instance = "lua-a"
         self.owner = None
+        self.speech_owner = None
         self.mode = None
         self.api_version = 1
         self.ready = True
@@ -73,7 +74,15 @@ class Backend:
                     if backend.missing_command:
                         return {"ok": False, "error": "Unknown command"}
                     return {"ok": True, "result": deepcopy(backend.runtime())}
-                if command.action.endswith(".configure"):
+                if command.action == "speech.configure":
+                    if command.params["expected_instance_id"] != backend.instance:
+                        return {"ok": False, "error": "Speech bridge instance changed"}
+                    if command.params["enabled"]:
+                        backend.speech_owner = command.params["owner_id"]
+                    elif backend.speech_owner == command.params["owner_id"]:
+                        backend.speech_owner = None
+                    return {"ok": True, "result": {"available": True, "enabled": command.params["enabled"]}}
+                if command.action == "player.menu.navigation.configure":
                     if command.params["expected_instance_id"] != backend.instance:
                         return {"ok": False, "error": "Navigation bridge instance changed"}
                     if command.params["enabled"]:
@@ -114,7 +123,11 @@ class Backend:
         monkeypatch.setattr(app, "NavigationMenuController", controller)
 
     def enables(self):
-        return [c for c in self.commands if c.action.endswith(".configure") and c.params["enabled"]]
+        return [c for c in self.commands
+                if c.action == "player.menu.navigation.configure" and c.params["enabled"]]
+
+    def navigation_configs(self):
+        return [c for c in self.commands if c.action == "player.menu.navigation.configure"]
 
 
 async def until(predicate):
@@ -147,8 +160,8 @@ def test_start_before_server_and_mission_then_cancel_cleans_only_owned_menu(monk
             assert len(backend.enables()) == 1
         finally:
             await stop(task)
-        assert backend.owner is None and all(b.closed for b in backend.bridges)
-        configs = [c for c in backend.commands if c.action.endswith(".configure")]
+        assert backend.owner is None and backend.speech_owner is None and all(b.closed for b in backend.bridges)
+        configs = backend.navigation_configs()
         assert [c.params["enabled"] for c in configs] == [True, False]
         assert configs[0].params["owner_id"] == configs[1].params["owner_id"]
     asyncio.run(scenario())
@@ -158,7 +171,7 @@ def test_start_before_server_and_mission_then_cancel_cleans_only_owned_menu(monk
 
 
 @pytest.mark.parametrize("boundary", ["mission_event", "missed_end", "server_restart", "instance_change", "disconnect"])
-def test_recovery_uses_fresh_controller_without_old_hints_or_selection(monkeypatch, boundary):
+def test_recovery_uses_fresh_controller_without_old_copilot_or_selection(monkeypatch, boundary):
     async def scenario():
         backend = Backend()
         backend.install(monkeypatch)
@@ -166,12 +179,12 @@ def test_recovery_uses_fresh_controller_without_old_hints_or_selection(monkeypat
         try:
             await until(lambda: backend.owner is not None)
             old_owner, old = backend.owner, backend.controllers[0]
-            message = event("hints_on", owner=old_owner)
+            message = event("copilot_start", owner=old_owner)
             message["id"] = "click-1"
             await backend.queue.put(message)
-            await until(lambda: old.groups and next(iter(old.groups.values())).hints is not None)
+            await until(lambda: old.groups and next(iter(old.groups.values())).copilot_task is not None)
             state = next(iter(old.groups.values()))
-            hints = state.hints
+            copilot_task = state.copilot_task
             state.selected_navaid = object()
             if boundary in {"mission_event", "missed_end"}:
                 backend.state.reset_mission()
@@ -189,7 +202,7 @@ def test_recovery_uses_fresh_controller_without_old_hints_or_selection(monkeypat
                 await until(lambda: not old.groups)
                 backend.state.connected = True
             await until(lambda: len(backend.enables()) >= 2)
-            assert backend.owner != old_owner and not old.groups and hints.done()
+            assert backend.owner != old_owner and not old.groups and copilot_task.done()
             fresh = backend.controllers[-1]
             assert fresh is not old and not fresh.groups
             assert fresh.owner_id == backend.owner
@@ -232,7 +245,7 @@ def test_lost_enable_ack_is_cleaned_before_retrying(monkeypatch):
         task = asyncio.create_task(app.NavigationApplication(config()).run())
         try:
             await until(lambda: len(backend.enables()) == 2)
-            commands = [c for c in backend.commands if c.action.endswith(".configure")]
+            commands = backend.navigation_configs()
             assert [c.params["enabled"] for c in commands[:3]] == [True, False, True]
             assert commands[0].params["owner_id"] == commands[1].params["owner_id"]
             assert commands[2].params["owner_id"] != commands[0].params["owner_id"]

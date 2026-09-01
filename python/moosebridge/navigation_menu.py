@@ -13,12 +13,15 @@ import math
 from typing import Any, TYPE_CHECKING
 
 from .airfield_radio import AirfieldRadioListing, airfield_radio_message, resolve_airfield_radios
+from .copilot import (CopilotAdvisory, CopilotEvaluator, CopilotProfile, CopilotSnapshot,
+                      build_copilot_snapshot, format_copilot_status)
 from .flight_routes import FlightGroupRoute
 from .flight_status import FlightStatus, format_flight_status
 from .navaid_menu import NavaidCatalogProvider, NavaidListing, NavaidSelection, TYPE_LABELS, station_message, validate_position
 from .navigation import NavigationSolution, RouteNavigator, format_navigation_status
 from .protocol import BridgeCommand
 from .sdk import require_ok
+from .speech import RadioIntent, RadioSender, SpeechProfile, enqueue_speech, test_tone
 
 if TYPE_CHECKING:
     from .sdk import MooseBridgeClient
@@ -46,7 +49,14 @@ class GroupNavigation:
     route: FlightGroupRoute | None = None
     navigator: RouteNavigator | None = None
     unit_id: str | None = None
-    hints: asyncio.Task[None] | None = None
+    copilot_task: asyncio.Task[None] | None = None
+    copilot_monitoring: bool = False
+    copilot_text_enabled: bool = True
+    copilot_radio_enabled: bool = True
+    copilot: CopilotEvaluator | None = None
+    copilot_last_advisory: CopilotAdvisory | None = None
+    copilot_last_snapshot: CopilotSnapshot | None = None
+    copilot_last_error: str | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     navaids: dict[str, NavaidListing] = field(default_factory=dict)
     selected_navaid: NavaidSelection | None = None
@@ -81,29 +91,61 @@ def cockpit_status(unit_id: str, solution: NavigationSolution) -> str:
 
 
 class NavigationMenuController:
-    """One route tracker per occupied group-menu session, opt-in periodic hints."""
+    """One route tracker and route-conformance Copilot per occupied group session."""
 
     def __init__(
         self, bridge: MooseBridgeClient, owner_id: str, *, sample_interval: float = 2,
-        hint_interval: float = 10, timeout: float = 10, initial_target: int = 2,
+        timeout: float = 10, initial_target: int = 2,
         capture_radius_m: float = 500, max_sample_gap_s: float = 10,
         navaid_catalogs: NavaidCatalogProvider | None = None,
         navaid_error: str | None = None,
+        speech_profile: SpeechProfile | None = None,
+        copilot_profile: CopilotProfile | None = None,
+        copilot_auto_start: bool = True,
+        copilot_text_enabled: bool = True,
+        copilot_radio_enabled: bool = True,
     ) -> None:
-        for name, value in (("sample_interval", sample_interval), ("hint_interval", hint_interval),
-                            ("timeout", timeout), ("capture_radius_m", capture_radius_m),
+        for name, value in (("sample_interval", sample_interval), ("timeout", timeout),
+                            ("capture_radius_m", capture_radius_m),
                             ("max_sample_gap_s", max_sample_gap_s)):
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{name} must be positive and finite")
         if type(initial_target) is not int or initial_target < 2:
             raise ValueError("initial_target must be an integer >= 2")
+        for name, value in (("copilot_auto_start", copilot_auto_start),
+                            ("copilot_text_enabled", copilot_text_enabled),
+                            ("copilot_radio_enabled", copilot_radio_enabled)):
+            if type(value) is not bool:
+                raise ValueError(f"{name} must be boolean")
         self.bridge, self.owner_id = bridge, owner_id
-        self.sample_interval, self.hint_interval, self.timeout = sample_interval, hint_interval, timeout
+        self.sample_interval, self.timeout = sample_interval, timeout
         self.initial_target, self.capture_radius_m = initial_target, capture_radius_m
         self.max_sample_gap_s = max_sample_gap_s
         self.groups: dict[tuple[str, str], GroupNavigation] = {}
         self.navaid_catalogs = navaid_catalogs
         self.navaid_error = navaid_error
+        self.speech_profile = speech_profile
+        self.copilot_profile = copilot_profile or CopilotProfile()
+        self.copilot_auto_start = copilot_auto_start
+        self.copilot_text_enabled = copilot_text_enabled
+        self.copilot_radio_enabled = copilot_radio_enabled and speech_profile is not None
+
+    def _new_state(self, group_id: str, session_id: str) -> GroupNavigation:
+        return GroupNavigation(
+            group_id, session_id,
+            copilot_monitoring=self.copilot_auto_start,
+            copilot_text_enabled=self.copilot_text_enabled,
+            copilot_radio_enabled=self.copilot_radio_enabled,
+            copilot=CopilotEvaluator(self.copilot_profile),
+        )
+
+    def _state(self, group_id: str, session_id: str) -> GroupNavigation:
+        key = (group_id, session_id)
+        state = self.groups.get(key)
+        if state is None:
+            state = self._new_state(group_id, session_id)
+            self.groups[key] = state
+        return state
 
     async def _call(self, state: GroupNavigation, operation: str, **params: Any) -> dict[str, Any]:
         if self.bridge.state.mission_ended:
@@ -175,8 +217,8 @@ class NavigationMenuController:
         print(f"{state.group_id}: {format_navigation_status(solution)}", flush=True)
         return solution
 
-    async def _stop_hints(self, state: GroupNavigation) -> None:
-        task, state.hints = state.hints, None
+    async def _cancel_copilot_task(self, state: GroupNavigation) -> None:
+        task, state.copilot_task = state.copilot_task, None
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
@@ -361,8 +403,15 @@ class NavigationMenuController:
                 raise ValueError("Airfield list is stale; use Refresh nearby.")
             page = payload.get("page")
         if action == "airfield_details":
-            station = listing.selected(payload.get("station_key"))
-            text = airfield_radio_message(listing, station, position)
+            selected = listing.selected(payload.get("station_key"))
+            # Runway wind advice is live MOOSE data. Re-resolve it when details
+            # are requested instead of reusing the menu initialization sample.
+            fresh = await self._airfield_listing(state, unit_id, theater, position)
+            station = next((item for item in fresh.stations
+                            if item.record["source_index"] == selected.record["source_index"]), None)
+            if station is None:
+                raise ValueError("Selected airfield is no longer available; use Refresh nearby.")
+            text = airfield_radio_message(fresh, station, position)
         else:
             response = await self._call(
                 state, "airfields.page", airfield_revision=revision,
@@ -383,22 +432,96 @@ class NavigationMenuController:
         await self._call(state, "message", text=bounded, unit_id=unit_id, **extra)
         print(f"{state.group_id}: {bounded}", flush=True)
 
-    async def _hints(self, state: GroupNavigation) -> None:
-        last_message = asyncio.get_running_loop().time()
+    async def _flight_status(self, state: GroupNavigation) -> FlightStatus:
+        payload = await self._call(state, "flight_status")
+        if (payload.get("owner_id"), payload.get("group_id"), payload.get("session_id")) != (
+            self.owner_id, state.group_id, state.session_id,
+        ):
+            raise ValueError("Flight status belongs to another menu session")
+        status = FlightStatus.from_payload(payload)
+        if state.unit_id is not None and status.unit_id != state.unit_id:
+            raise ValueError("Flight status belongs to another aircraft")
+        return status
+
+    async def _copilot_sample(self, state: GroupNavigation) -> CopilotSnapshot:
+        solution = await self._sample(state)
+        status = await self._flight_status(state)
+        if state.route is None:
+            raise ValueError("No Mission Editor route is available.")
+        snapshot = build_copilot_snapshot(state.route, solution, status)
+        state.copilot_last_snapshot = snapshot
+        state.copilot_last_error = None
+        return snapshot
+
+    async def _emit_copilot(self, state: GroupNavigation, advisory: CopilotAdvisory) -> None:
+        state.copilot_last_advisory = advisory
+        print(f"{state.group_id}: COPILOT [{advisory.kind}] {advisory.text}", flush=True)
+        if state.copilot_text_enabled:
+            try:
+                await self._reply(state, f"Copilot: {advisory.text}",
+                                  unit_id=state.unit_id, duration_s=advisory.ttl_s)
+            except ERRORS as exc:
+                state.copilot_last_error = f"Copilot text output failed: {exc}"
+                logging.warning("%s: %s", state.group_id, state.copilot_last_error)
+        if state.copilot_radio_enabled:
+            profile = self.speech_profile
+            if profile is None:
+                state.copilot_last_error = "Copilot radio is enabled but no speech profile is configured."
+                logging.warning("%s: %s", state.group_id, state.copilot_last_error)
+                return
+            try:
+                await enqueue_speech(
+                    self.bridge, self.owner_id,
+                    RadioIntent(
+                        profile_id=profile.profile_id,
+                        sender=RadioSender.player(state.group_id, state.session_id, radio_id="copilot"),
+                        text=advisory.text, priority=advisory.priority, urgency=advisory.urgency,
+                        ttl_s=advisory.ttl_s,
+                        dedupe_key=f"{state.group_id}:{state.session_id}:{advisory.dedupe_key}",
+                    ),
+                    timeout=self.timeout,
+                )
+            except ERRORS as exc:
+                state.copilot_last_error = f"Copilot radio transmission failed: {exc}"
+                logging.warning("%s: %s", state.group_id, state.copilot_last_error)
+
+    async def _copilot_loop(self, state: GroupNavigation) -> None:
+        previous_error = None
         try:
-            while not self.bridge.state.mission_ended:
+            while state.copilot_monitoring and not self.bridge.state.mission_ended:
                 await asyncio.sleep(self.sample_interval)
                 async with state.lock:
-                    solution = await self._sample(state)
-                    now = asyncio.get_running_loop().time()
-                    if (now - last_message >= self.hint_interval
-                            or solution.reached_waypoint_indexes or solution.route_complete):
-                        await self._reply(state, cockpit_status(state.unit_id or "", solution))
-                        last_message = now
-                    if solution.route_complete:
-                        return
-        except ERRORS as exc:
-            await self._report_error(state, exc, prefix="Navigation hints stopped")
+                    try:
+                        snapshot = await self._copilot_sample(state)
+                        evaluator = state.copilot
+                        if evaluator is None:
+                            evaluator = state.copilot = CopilotEvaluator(self.copilot_profile)
+                        advisories = evaluator.update(snapshot, asyncio.get_running_loop().time())
+                        previous_error = None
+                    except ERRORS as exc:
+                        state.copilot_last_error = str(exc)
+                        if str(exc) != previous_error:
+                            logging.warning("%s: Copilot waiting: %s", state.group_id, exc)
+                            previous_error = str(exc)
+                        continue
+                    for advisory in advisories:
+                        await self._emit_copilot(state, advisory)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            if state.copilot_task is asyncio.current_task():
+                state.copilot_task = None
+
+    def _start_copilot(self, state: GroupNavigation) -> bool:
+        state.copilot_monitoring = True
+        if state.copilot_task is not None and not state.copilot_task.done():
+            return False
+        if state.copilot is None:
+            state.copilot = CopilotEvaluator(self.copilot_profile)
+        else:
+            state.copilot.reset()
+        state.copilot_task = asyncio.create_task(self._copilot_loop(state))
+        return True
 
     async def _report_error(self, state: GroupNavigation, exc: Exception, *, prefix: str = "Navigation") -> None:
         logging.warning("%s: %s: %s", state.group_id, prefix, exc)
@@ -406,6 +529,36 @@ class NavigationMenuController:
             await self._reply(state, f"{prefix}: {exc}")
         except ERRORS:
             pass  # Stale session/disconnected mission: never fall back to a public message.
+
+    async def _speech_action(self, state: GroupNavigation, action: str) -> None:
+        profile = self.speech_profile
+        if profile is None:
+            raise ValueError("Copilot radio is not configured.")
+        sender = RadioSender.player(state.group_id, state.session_id, radio_id="copilot")
+        channel = f"{profile.frequency_mhz:.3f} MHz {profile.modulation}"
+        if action == "speech_tone":
+            await test_tone(
+                self.bridge, self.owner_id, profile.profile_id, sender, timeout=self.timeout,
+            )
+            await self._reply(state, f"SRS test tone requested on {channel}.")
+            print(f"{state.group_id}: SRS test tone requested on {channel}.", flush=True)
+            return
+        texts = (["MoosePyBridge copilot radio check."] if action == "speech_radio_check" else [
+            "MoosePyBridge queue test, message one.",
+            "Queue test, message two. No transmissions should overlap.",
+        ])
+        results = []
+        for text in texts:
+            results.append(await enqueue_speech(
+                self.bridge, self.owner_id,
+                RadioIntent(profile_id=profile.profile_id, sender=sender, text=text,
+                            priority=50, ttl_s=30.0),
+                timeout=self.timeout,
+            ))
+        await self._reply(state, f"{len(texts)} copilot transmission(s) queued on {channel}.")
+        queued = results[-1].get("sender_queue_depth", "unknown")
+        print(f"{state.group_id}: queued {len(texts)} copilot transmission(s) on {channel}; "
+              f"queue depth={queued}.", flush=True)
 
     async def handle(self, message: dict[str, Any]) -> None:
         payload = message.get("payload") or {}
@@ -418,10 +571,11 @@ class NavigationMenuController:
         if message.get("event") == "player.menu.closed":
             state = self.groups.pop(key, None)
             if state is not None:
-                await self._stop_hints(state)
+                state.copilot_monitoring = False
+                await self._cancel_copilot_task(state)
             return  # Lua already removed this session's overlay, even after disconnect.
         if message.get("event") == "player.menu.created":
-            state = self.groups.setdefault(key, GroupNavigation(group_id, session_id))
+            state = self._state(group_id, session_id)
             async with state.lock:
                 try:
                     await self._initialize_navaids(state)
@@ -437,36 +591,39 @@ class NavigationMenuController:
                 except ERRORS as exc:
                     logging.warning("%s: Automatic airfield radio initialization unavailable: %s; use Refresh nearby.",
                                     group_id, exc)
+            if state.copilot_monitoring:
+                self._start_copilot(state)
             return
         action = payload.get("action")
         if message.get("event") != "player.menu.selected" or action not in {
-            "route_show", "route_hide", "status", "flight_status", "hints_on", "hints_off",
+            "route_show", "route_hide", "status", "flight_status",
+            "copilot_start", "copilot_stop", "copilot_status", "copilot_repeat",
+            "copilot_text_on", "copilot_text_off", "copilot_radio_on", "copilot_radio_off",
             "navaids_refresh", "navaids_page", "navaid_details",
             "navaid_show", "navaid_show_line", "navaid_hide",
             "airfields_refresh", "airfields_page", "airfield_details",
+            "speech_tone", "speech_radio_check", "speech_queue_test",
         }:
             return
-        state = self.groups.setdefault(key, GroupNavigation(group_id, session_id))
+        state = self._state(group_id, session_id)
         print(f"NAV MENU: {group_id} action={action}", flush=True)
         try:
-            if action == "hints_off":
-                await self._stop_hints(state)
-                await self._reply(state, "Navigation hints disabled.")
+            if action == "copilot_stop":
+                state.copilot_monitoring = False
+                await self._cancel_copilot_task(state)
+                await self._reply(state, "Copilot monitoring stopped. Output settings are unchanged.")
                 return
             async with state.lock:
                 if action in {"navaids_refresh", "navaids_page", "navaid_details"}:
                     await self._navaid_action(state, payload)
                 elif action in {"airfields_refresh", "airfields_page", "airfield_details"}:
                     await self._airfield_action(state, payload)
+                elif action in {"speech_tone", "speech_radio_check", "speech_queue_test"}:
+                    await self._speech_action(state, action)
                 elif action in {"navaid_show", "navaid_show_line", "navaid_hide"}:
                     await self._navaid_map_action(state, payload)
                 elif action == "flight_status":
-                    payload = await self._call(state, "flight_status")
-                    if (payload.get("owner_id"), payload.get("group_id"), payload.get("session_id")) != (
-                        self.owner_id, state.group_id, state.session_id,
-                    ):
-                        raise ValueError("Flight status belongs to another menu session")
-                    status = FlightStatus.from_payload(payload)
+                    status = await self._flight_status(state)
                     text = format_flight_status(status)
                     await self._reply(state, text, unit_id=status.unit_id, duration_s=15)
                     print(f"{state.group_id}: {text}", flush=True)
@@ -477,20 +634,50 @@ class NavigationMenuController:
                     route = await self._route(state, await self._context(state))
                     await self._call(state, "overlay", show=True, features=[route.to_map_line().to_payload()])
                     await self._reply(state, f"F10 route displayed: {len(route.waypoints)} waypoints (own coalition).")
-                elif action == "hints_on" and state.hints is not None and not state.hints.done():
-                    await self._reply(state, "Navigation hints are already enabled.")
+                elif action == "copilot_start":
+                    started = self._start_copilot(state)
+                    text = ("Copilot monitoring started. It will retry until the player FLIGHTGROUP and route are available."
+                            if started else "Copilot monitoring is already active.")
+                    await self._reply(state, text)
+                elif action == "copilot_text_on":
+                    state.copilot_text_enabled = True
+                    await self._reply(state, "Copilot text output enabled.")
+                elif action == "copilot_text_off":
+                    state.copilot_text_enabled = False
+                    await self._reply(state, "Copilot text output disabled. Menu confirmations remain visible.")
+                elif action == "copilot_radio_on":
+                    if self.speech_profile is None:
+                        raise ValueError("Copilot radio is not configured.")
+                    state.copilot_radio_enabled = True
+                    await self._reply(state, "Copilot radio output enabled.")
+                elif action == "copilot_radio_off":
+                    state.copilot_radio_enabled = False
+                    await self._reply(state, "Copilot radio output disabled.")
+                elif action == "copilot_repeat":
+                    advisory = state.copilot_last_advisory
+                    if advisory is None:
+                        await self._reply(state, "No Copilot advisory is available to repeat.")
+                    elif not state.copilot_text_enabled and not state.copilot_radio_enabled:
+                        await self._reply(state, "Both Copilot output channels are disabled.")
+                    else:
+                        await self._emit_copilot(state, advisory)
+                elif action == "copilot_status":
+                    snapshot = await self._copilot_sample(state)
+                    text = format_copilot_status(
+                        snapshot, monitoring=state.copilot_monitoring,
+                        text_enabled=state.copilot_text_enabled,
+                        radio_enabled=state.copilot_radio_enabled,
+                    )
+                    await self._reply(state, text, unit_id=snapshot.unit_id, duration_s=20)
+                    print(f"{state.group_id}: {text}", flush=True)
                 else:
                     solution = await self._sample(state)
-                    text = cockpit_status(state.unit_id or "", solution)
-                    if action == "hints_on" and not solution.route_complete:
-                        text = f"Navigation hints enabled (approximately every {self.hint_interval:g} s).\n" + text
-                    await self._reply(state, text)
-                    if action == "hints_on" and not solution.route_complete:
-                        state.hints = asyncio.create_task(self._hints(state))
+                    await self._reply(state, cockpit_status(state.unit_id or "", solution))
         except ERRORS as exc:
             await self._report_error(state, exc)
 
     async def close(self) -> None:
         for state in list(self.groups.values()):
-            await self._stop_hints(state)
+            state.copilot_monitoring = False
+            await self._cancel_copilot_task(state)
         self.groups.clear()

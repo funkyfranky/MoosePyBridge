@@ -215,6 +215,10 @@ page has at most six airfields plus **Refresh nearby** and applicable
 **Previous page / Next page** commands. Selecting an airfield reports:
 
 - live AIRBASE name, numeric ID, distance and TRUE bearing;
+- physical runways, pairing the reciprocal directions returned by MOOSE, with
+  length and width;
+- a fresh `AIRBASE:GetRunwayIntoWind()` suggestion, explicitly labeled as a
+  MOOSE wind calculation rather than a DCS ATC clearance;
 - source callsign variants and the shared Ground/Tower/Approach roles;
 - available HF, VHF Low, VHF and UHF frequencies with modulation;
 - catalog/review status and unresolved-source limitations.
@@ -222,7 +226,14 @@ page has at most six airfields plus **Refresh nearby** and applicable
 The action is read-only and does not tune either Hornet radio. Empty frequency
 tables are shown as unavailable rather than filled from external data. `[!]`
 marks source issues. A DCS update can change both `radio.lua` and AIRBASE UIDs;
-rerun the importer after an update. A live DCS menu test remains pending.
+rerun the importer after an update. Runway inventory is cached by MOOSE for the
+mission; the wind suggestion is resolved again when details are selected. Calm
+or unavailable wind is shown as N/A. Caucasus initialization, ID matching,
+radio details and runway/wind output are confirmed; Sinai remains pending.
+
+The Caucasus live test at Batumi reported physical runway `13/31` as
+`2,070 x 60 m` and suggested runway `31` from the current MOOSE wind
+calculation. The output retained the advisory/not-an-ATC-clearance warning.
 
 ### Explicit F10 station display
 

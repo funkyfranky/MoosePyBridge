@@ -1,7 +1,7 @@
 """Persistent navigation client: wait, preflight, activate, release, reconnect.
 
 Never starts a server, imports data or deploys Lua. Each activation owns a fresh
-controller; route progress, selection and hints never survive connection recovery.
+controller; route progress, selection and Copilot state never survive connection recovery.
 """
 
 from __future__ import annotations
@@ -12,15 +12,17 @@ from uuid import uuid4
 
 from .control import MooseBridgeControlClient
 from .control_sdk import sdk_from_control_client
+from .copilot import CopilotProfile
 from .navaid_menu import NavaidCatalogProvider
 from .navigation_config import NavigationConfig
 from .navigation_menu import NavigationMenuController, configure_navigation_menu, ERRORS
 from .protocol import BridgeCommand
 from .sdk import MooseBridgeCommandError, require_ok
+from .speech import SpeechProfile, configure_speech
 
 
 REQUIRED_CAPABILITIES = ("player_lifecycle", "route", "flight_status", "navaids", "navaid_overlay",
-                         "navaids_initialize", "airfield_radios")
+                         "navaids_initialize", "airfield_radios", "airfield_runways", "speech")
 
 
 class NavigationWaiting(Exception):
@@ -72,6 +74,34 @@ class NavigationApplication:
         if message != self._notice:
             print(message, flush=True)
             self._notice = message
+
+    def _speech_profile(self) -> SpeechProfile:
+        config = self.config
+        return SpeechProfile(
+            srs_path=str(config.speech_srs_path), srs_host=config.speech_srs_host,
+            srs_port=config.speech_srs_port, frequency_mhz=config.speech_frequency_mhz,
+            modulation=config.speech_modulation, provider=config.speech_provider,
+            voice=config.speech_voice, label=config.speech_label, volume=config.speech_volume,
+            speed=config.speech_speed, interval_s=config.speech_interval,
+            profile_id=config.speech_profile_id, network_id=config.speech_network_id,
+            arbitration=config.speech_arbitration,
+            backoff_min_s=config.speech_backoff_min, backoff_max_s=config.speech_backoff_max,
+            collision_probability=config.speech_collision_probability,
+            emergency_break_in=config.speech_emergency_break_in,
+        )
+
+    def _copilot_profile(self) -> CopilotProfile:
+        config = self.config
+        return CopilotProfile(
+            altitude_warning_ft=config.copilot_altitude_warning_ft,
+            altitude_recovery_ft=config.copilot_altitude_recovery_ft,
+            speed_warning_kt=config.copilot_speed_warning_kt,
+            speed_recovery_kt=config.copilot_speed_recovery_kt,
+            cross_track_warning_nm=config.copilot_cross_track_warning_nm,
+            cross_track_recovery_nm=config.copilot_cross_track_recovery_nm,
+            sustain_s=config.copilot_sustain_seconds,
+            reminder_cooldown_s=config.copilot_reminder_cooldown_seconds,
+        )
 
     def _check_takeover(self, runtime: dict) -> None:
         # A newly started process intentionally replaces an earlier run. Recovery
@@ -143,7 +173,7 @@ class NavigationApplication:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _release(self, control, bridge, owner, instance, key) -> None:
+    async def _release(self, control, bridge, owner, instance, key, speech_attempted: bool) -> None:
         timeout = min(self.config.command_timeout, 2.0)
         try:
             if session_key(await control.status(timeout=timeout)) == key:
@@ -151,6 +181,12 @@ class NavigationApplication:
                                                 expected_instance_id=instance)
         except (NavigationWaiting, *ERRORS) as exc:
             logging.info("Navigation cleanup deferred to Lua lifecycle/new activation: %s", exc)
+        if speech_attempted:
+            try:
+                await configure_speech(bridge, owner, None, enabled=False, timeout=timeout,
+                                       expected_instance_id=instance)
+            except ERRORS as exc:
+                logging.info("Speech cleanup deferred to Lua lifecycle/new activation: %s", exc)
 
     async def run(self) -> int:
         config = self.config
@@ -161,6 +197,7 @@ class NavigationApplication:
                                                client_id="navigation-menu", display_name="Navigation Menu")
             bridge = sdk_from_control_client(control, timeout=config.command_timeout)
             owner, controller, instance, key, attempted = str(uuid4()), None, None, None, False
+            speech_attempted, speech_profile = False, None
             try:
                 key = session_key(await control.status(timeout=config.command_timeout))
                 runtime = await runtime_status(bridge, config.command_timeout)
@@ -174,27 +211,51 @@ class NavigationApplication:
                 if current["instance_id"] != instance or current["theater_id"] != runtime["theater_id"]:
                     raise NavigationWaiting("Mission Lua changed during preflight; retrying.")
                 self._check_takeover(current)
+                if config.speech_enabled:
+                    speech_profile = self._speech_profile()
+                    speech_attempted = True  # A lost ACK may still have configured Lua.
+                    await configure_speech(
+                        bridge, owner, speech_profile, enabled=True, timeout=config.command_timeout,
+                        expected_instance_id=instance,
+                    )
                 controller = NavigationMenuController(
-                    bridge, owner, sample_interval=config.sample_interval, hint_interval=config.hint_interval,
+                    bridge, owner, sample_interval=config.sample_interval,
                     timeout=config.command_timeout, initial_target=config.initial_target,
                     capture_radius_m=config.capture_radius_m, max_sample_gap_s=config.max_sample_gap,
                     navaid_catalogs=provider, navaid_error=unavailable,
+                    speech_profile=speech_profile,
+                    copilot_profile=self._copilot_profile(),
+                    copilot_auto_start=config.copilot_auto_start,
+                    copilot_text_enabled=config.copilot_text_enabled,
+                    copilot_radio_enabled=config.copilot_radio_enabled,
                 )
                 cursor = await bridge.server.event_cursor()
                 attempted = True  # A lost enable ACK can still leave menus in Lua.
                 self._owned_runs.add(owner)
                 await configure_navigation_menu(bridge, owner, enabled=True, timeout=config.command_timeout,
                                                 expected_instance_id=instance)
+                monitoring = "starts automatically" if config.copilot_auto_start else "starts stopped"
                 self.notice(f"Navigation active on {runtime['theater_id']}: Radio menu > F10 Other > Navigation. "
-                            "Route, hints and navaid map display start OFF.")
+                            f"Route and navaid map display start OFF; Copilot monitoring {monitoring}.")
                 if unavailable:
                     print(f"Navaid preflight WARNING: {unavailable}\nOther navigation functions remain available.", flush=True)
-                print("Show/Hide route | Navigation status | Flight status | Enable/Disable hints | Navaids | Airfields / ATC", flush=True)
+                print("Show/Hide route | Navigation status | Flight status | Copilot | Navaids | Airfields / ATC", flush=True)
+                if speech_profile is not None:
+                    print(f"Copilot radio: Hound/Piper {speech_profile.voice} on "
+                          f"{speech_profile.frequency_mhz:.3f} MHz {speech_profile.modulation}; "
+                          f"{speech_profile.arbitration} network arbitration; "
+                          "SRS test tone / Radio check / Queue test.", flush=True)
                 print("Navaids: all types initialize once at menu creation; Refresh nearby updates a type (six stations per page).", flush=True)
                 print("Airfields / ATC: imported radio.lua data joined to live MOOSE AIRBASE:GetID(); six airfields per page.", flush=True)
                 print("Selected station > Show on F10 / Show with bearing line / Hide from F10.", flush=True)
                 print("Flight status: FLIGHTGROUP FSM, altitude/weather, IAS/TAS/GS/Mach, "
                       "MAG/TRUE directions; on demand for 15 seconds. Missing values are N/A.", flush=True)
+                radio_default = config.copilot_radio_enabled and speech_profile is not None
+                print("Copilot: Mission Editor route-conformance monitoring; "
+                      f"text output starts {'enabled' if config.copilot_text_enabled else 'disabled'}, radio output "
+                      f"starts {'enabled' if radio_default else 'disabled'}. Planned speed is compared with GS; "
+                      "normal BARO/RADIO leg altitude is "
+                      "interpolated. Takeoff and landing legs are excluded.", flush=True)
                 print("One player aircraft per group; route navigation also needs its FLIGHTGROUP. "
                       "Bearings are TRUE, navaid bearing lines are static, F10 drawings are coalition-visible. Cockpit unchanged.", flush=True)
                 await self._serve(control, bridge, controller, owner, instance, key, cursor)
@@ -208,7 +269,7 @@ class NavigationApplication:
             finally:
                 if controller is not None:
                     await controller.close()
-                if attempted:
-                    await self._release(control, bridge, owner, instance, key)
+                if attempted or speech_attempted:
+                    await self._release(control, bridge, owner, instance, key, speech_attempted)
                 bridge.close()
             await asyncio.sleep(config.reconnect_interval)
