@@ -30,6 +30,19 @@ def test_lua_player_menu_lifecycle() -> None:
     assert "PLAYER MENU LUA TEST PASSED" in result.stdout
 
 
+def test_lua_navaid_overlay_uses_real_drawing_helpers() -> None:
+    runtime = os.environ.get("MOOSEBRIDGE_TEST_LUA") or shutil.which("lua")
+    if not runtime:
+        pytest.skip("Set MOOSEBRIDGE_TEST_LUA or install Lua to run the drawing harness")
+    result = subprocess.run(
+        [runtime, str(ROOT / "tests/lua/navaid_overlay_test.lua"),
+         str(ROOT / "lua/MooseBridge.lua"), str(ROOT / "lua/MooseBridgeDcsEventsExtension.lua")],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "NAVAID OVERLAY LUA TEST PASSED" in result.stdout
+
+
 @pytest.fixture
 def example(monkeypatch):
     examples = ROOT / "examples/sdk"

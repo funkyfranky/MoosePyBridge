@@ -30,10 +30,12 @@ tmp/frontline_prototype.geojson
 tmp/frontline_prototype.html
 tmp/dcs-lua-datamine/
 tmp/theaters/
+tmp/navaids/
 
 # Local environment files
 .env
 .env.*
+config/navigation.local.json
 
 # Editor and OS files
 .vscode/

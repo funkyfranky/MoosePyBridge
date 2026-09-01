@@ -1,0 +1,21 @@
+{
+  "control": {
+    "host": "127.0.0.1",
+    "port": 42001,
+    "command_timeout_seconds": 10.0,
+    "reconnect_interval_seconds": 3.0,
+    "event_timeout_seconds": 5.0
+  },
+  "navigation": {
+    "sample_interval_seconds": 2.0,
+    "hint_interval_seconds": 10.0,
+    "initial_target_waypoint": 2,
+    "capture_radius_m": 500.0,
+    "max_sample_gap_seconds": 10.0
+  },
+  "navaids": {
+    "enabled": true,
+    "dcs_directory": null,
+    "cache_directory": "../tmp/navaids"
+  }
+}

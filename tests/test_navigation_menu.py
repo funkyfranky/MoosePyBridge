@@ -38,9 +38,12 @@ class Bridge:
         self.calls, self.routes, self.positions = [], [], []
         self.context = {
             "owner_id": "run", "session_id": "1", "group_id": "GROUP:Hornet",
+            "theater_id": "Caucasus",
             "opsgroup_id": "OPSGROUP:Hornet", "group_sessions": [{"unit_id": "UNIT:Hornet-1"}],
         }
         self.x = 0
+        self.selection_serial = 0
+        self.airbases = []
         self.flight_status = {
             "owner_id": "run", "session_id": "1", "group_id": "GROUP:Hornet",
             "unit_id": "UNIT:Hornet-1", "altitude_msl_m": 3048,
@@ -52,6 +55,23 @@ class Bridge:
         result = deepcopy(self.context) if command.action.endswith(".context") else {}
         if command.action.endswith(".flight_status"):
             result = deepcopy(self.flight_status)
+        if command.action.endswith(".navaids.page"):
+            result = {"navaid_revision": command.params["navaid_revision"] + 1}
+        if command.action.endswith(".navaids.initialize"):
+            result = {"types": {kind: {"initialized": True, "navaid_revision": 1, "page": 0}
+                                for kind in command.params["types"]}}
+        if command.action.endswith(".airfields.resolve"):
+            requested = set(command.params["airbase_ids"])
+            matched = [deepcopy(item) for item in self.airbases if item["airbase_id"] in requested]
+            result = {"theater_id": command.params["theater_id"], "airbases": matched,
+                      "unresolved_airbase_ids": sorted(requested.difference(item["airbase_id"] for item in matched))}
+        if command.action.endswith(".airfields.initialize"):
+            result = {"initialized": True, "airfield_revision": 1, "page": 0}
+        if command.action.endswith(".airfields.page"):
+            result = {"airfield_revision": command.params["airfield_revision"] + 1}
+        if command.action.endswith(".message") and command.params.get("station_key"):
+            self.selection_serial += 1
+            result = {"selection_id": str(self.selection_serial)}
         return {"ok": True, "result": result}
 
     async def get_flightgroup_route(self, object_id, **kwargs):
@@ -89,13 +109,19 @@ def test_flight_status_is_fresh_on_demand_without_flightgroup_or_navigation_chan
     async def scenario():
         bridge = Bridge()
         bridge.context["opsgroup_id"] = None
+        bridge.flight_status.update(true_airspeed_mps=150, estimated_ias_mps=125, mach_number=0.45)
         controller = NavigationMenuController(bridge, "run")
         await controller.handle(event("flight_status"))
         first = bridge.messages()[-1]
         assert "10,000 ft MSL" in first
+        assert "IAS: 243.0 kt | TAS: 291.6 kt" in first
+        assert "GS: 194.4 kt | Mach: 0.450" in first
+        assert bridge.calls[-1].params["duration_s"] == 15
         bridge.flight_status["altitude_msl_m"] = 6096
+        bridge.flight_status["estimated_ias_mps"] = None
         await controller.handle(event("flight_status"))
         assert "20,000 ft MSL" in bridge.messages()[-1]
+        assert "IAS: N/A" in bridge.messages()[-1]  # Never reuse the previous sample.
         assert not bridge.routes and not bridge.positions
         state = controller.groups[("GROUP:Hornet", "1")]
         assert state.route is None and state.navigator is None and state.hints is None
@@ -140,15 +166,15 @@ def test_status_uses_player_unit_and_retains_progress_when_route_is_hidden():
         bridge = Bridge()
         controller = NavigationMenuController(bridge, "run")
         await controller.handle(event())
-        assert "WP 1 -> 2" in bridge.messages()[-1]
-        assert "TRUE" in bridge.messages()[-1] and "XTE" in bridge.messages()[-1]
+        assert "Leg: WP 1 -> WP 2" in bridge.messages()[-1]
+        assert "TRUE" in bridge.messages()[-1] and "Cross-track error" in bridge.messages()[-1]
         bridge.x = 10000
         await controller.handle(event())
-        assert "WP 2 -> 3" in bridge.messages()[-1]
+        assert "Leg: WP 2 -> WP 3" in bridge.messages()[-1]
         await controller.handle(event("route_hide"))
         bridge.x = 0
         await controller.handle(event())
-        assert "WP 2 -> 3" in bridge.messages()[-1]
+        assert "Leg: WP 2 -> WP 3" in bridge.messages()[-1]
         assert set(bridge.positions) == {"UNIT:Hornet-1"}
         assert controller.groups[("GROUP:Hornet", "1")].hints is None
         await controller.close()
@@ -169,7 +195,7 @@ def test_hints_are_idempotent_periodic_and_cancelled(action):
                 break
             await asyncio.sleep(0.001)
         assert len(bridge.positions) >= 4
-        assert len([text for text in bridge.messages() if "WP 1 -> 2" in text]) >= 2
+        assert len([text for text in bridge.messages() if "Leg: WP 1 -> WP 2" in text]) >= 2
         if action == "closed":
             await controller.handle(event(closed=True))
             assert not controller.groups
@@ -192,7 +218,7 @@ def test_final_waypoint_is_not_landing_and_does_not_start_hints():
         await controller.handle(event())
         bridge.x = 20000
         await controller.handle(event("hints_on"))
-        assert "landing NOT checked" in bridge.messages()[-1]
+        assert "landing status not checked" in bridge.messages()[-1]
         assert controller.groups[("GROUP:Hornet", "1")].hints is None
         await controller.close()
     asyncio.run(scenario())
@@ -230,7 +256,7 @@ def test_multiple_seats_of_same_unit_are_not_ambiguous():
 
 
 @pytest.mark.parametrize("cross_track,expected", [
-    (-125, "125 m left"), (125, "125 m right"), (0, "0 m on track"), (None, "undefined"),
+    (-125, "125 m left"), (125, "125 m right"), (0, "0 m on track"), (None, "N/A"),
 ])
 def test_cockpit_output_is_english_without_translating_user_defined_names(cross_track, expected):
     # These names are user data, not project-authored interface text.
@@ -241,9 +267,11 @@ def test_cockpit_output_is_english_without_translating_user_defined_names(cross_
     )
     text = cockpit_status("UNIT:\u00dcberflug", solution)
     assert text == (
-        "Reference: \u00dcberflug\nWP 1 -> 2 (K\u00fcstenpunkt)\n"
+        "Navigation status | Reference: \u00dcberflug\n"
+        "Leg: WP 1 -> WP 2 | Target: K\u00fcstenpunkt\n"
         "Distance: 1.00 NM | Bearing: 90.0 deg TRUE\n"
-        f"XTE: {expected}\nFinal waypoint reached horizontally; landing NOT checked."
+        f"Cross-track error: {expected}\n"
+        "Route complete horizontally; landing status not checked."
     )
 
 
@@ -321,47 +349,19 @@ def test_mission_ending_during_position_query_does_not_emit_guidance():
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("boundary", ["mission", "cancel", "timeout_reset", "lost_ack"])
-def test_vscode_script_uses_normal_daemon_and_cleans_up(monkeypatch, boundary):
+def test_vscode_script_delegates_to_persistent_application(monkeypatch):
     examples = Path(__file__).resolve().parents[1] / "examples/sdk"
     monkeypatch.syspath_prepend(str(examples))
     example = runpy.run_path(str(examples / "run_navigation_menu.py"))
 
     async def scenario():
-        bridge = Bridge()
-        closed = []
-        bridge.close = lambda: closed.append(True)
-        bridge.event_cursor = AsyncMock(return_value="baseline")
-        boundary_event = {"event": "mission.ended", "id": "end"}
-        error = (asyncio.CancelledError() if boundary == "cancel"
-                 else RuntimeError("control.event.wait timed out after 5 seconds"))
-        bridge.wait_for_event = AsyncMock(return_value=boundary_event)
-        if boundary in {"cancel", "timeout_reset"}:
-            bridge.wait_for_event.side_effect = error
-        status = AsyncMock(return_value={"mission_ended": True, "mission_generation": 1})
-        session = SimpleNamespace(bridge=bridge, control=SimpleNamespace(status=status))
-        monkeypatch.setitem(example["run"].__globals__, "open_example_session", AsyncMock(return_value=session))
-        if boundary == "lost_ack":
-            original = bridge.send_command
-
-            async def send(command, **kwargs):
-                result = await original(command, **kwargs)
-                if len(bridge.calls) == 1:
-                    raise TimeoutError("lost ACK")
-                return result
-            bridge.send_command = send
-        if boundary in {"cancel", "lost_ack"}:
-            with pytest.raises(asyncio.CancelledError if boundary == "cancel" else TimeoutError):
-                await example["run"]()
-            assert [c.params["enabled"] for c in bridge.calls] == [True, False]
-            assert bridge.calls[0].params["owner_id"] == bridge.calls[1].params["owner_id"]
-        else:
-            assert await example["run"]() == 0
-            assert len(bridge.calls) == 1
-        assert closed == [True]
-        if boundary != "lost_ack":
-            assert bridge.wait_for_event.call_args.args == ("player.menu.*",)
-            assert bridge.wait_for_event.call_args.kwargs["filters"] == {
-                "owner_id": bridge.calls[0].params["owner_id"],
-            }
+        config = object()
+        application = SimpleNamespace(run=AsyncMock(return_value=0))
+        monkeypatch.setitem(example["run"].__globals__, "load_navigation_config", lambda path: config)
+        def factory(value):
+            assert value is config
+            return application
+        monkeypatch.setitem(example["run"].__globals__, "NavigationApplication", factory)
+        assert await example["run"]() == 0
+        application.run.assert_awaited_once()
     asyncio.run(scenario())

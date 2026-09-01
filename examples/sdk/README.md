@@ -5,11 +5,21 @@ and a live DCS/MOOSE mission. Unless noted otherwise, start `run_server.ps1`,
 start the DCS mission, and edit the constants near the top of the selected
 script before running it.
 
+`run_navigation_menu.py` is persistent: run it once, even before the daemon or
+mission. It reads `config/navigation.json` plus local overrides, waits for
+readiness and recovers across mission changes. See the
+[navigation workflow](../../docs/navigation/WORKFLOW.md).
+
 ```powershell
 python examples/sdk/monitor_global_picture.py
 ```
 
 ## Safety Classes
+
+For installed terrain navaids, use the separate offline example
+[`../navigation/import_dcs_beacons.py`](../navigation/import_dcs_beacons.py).
+It needs neither the daemon nor a DCS mission and writes only local cache/report
+files. See [the navaid importer guide](../../docs/navigation/NAVAIDS.md).
 
 | Class | Meaning |
 |---|---|
@@ -54,7 +64,7 @@ configuration and is not intended to be run directly.
 | `monitor_relationship.py` | Read-only | Print diplomacy state, escalation, incidents, and doctrine. |
 | `monitor_player_aircraft.py` | Overlay | Draw the FLIGHTGROUP ME route and monitor player-to-waypoint distance, true bearing, and cross-track error; stop polling and remove the line on leave/exit. |
 | `monitor_player_menu.py` | In-game menu | Enable two MOOSE group-radio test actions: a cockpit message and a click event printed in Python. Remove menus on last occupant leave or Ctrl+C. |
-| `run_navigation_menu.py` | In-game menu / Overlay | Use Navigation radio actions to show/hide the ME route, request distance/bearing/XTE or on-demand live Flight status (altitude, GS, TRUE heading/track, vertical speed), and enable/disable group cockpit hints. Flight status needs no FLIGHTGROUP. Replaces the test menu for this run. |
+| `run_navigation_menu.py` | In-game menu / Overlay | Show/hide the ME route, request navigation or Flight status, enable/disable hints, and browse Navaids or Airfields / ATC with six-entry pages. Flight status includes optional FLIGHTGROUP FSM, altitude/weather, IAS/TAS/GS/Mach, and MAG/TRUE directions in a grouped 15-second readout. Lists initialize once per new group menu; Refresh nearby updates ordering later. Airfield radio data is joined to live MOOSE AIRBASE objects by numeric ID and never tunes the cockpit. Navaids and Airfields / ATC require the local importer cache but no FLIGHTGROUP. Replaces the test menu for this run. |
 | `monitor_airbase_capture.py` | Read-only | Observe airbase ownership and objective transitions. |
 | `monitor_unit_lost.py` | Destructive | Trigger an explosion and verify the resulting destruction event and snapshots. |
 | `territories.py` | Read-only by default | Inspect passive TERRITORY objects; optional owner changes are disabled by default. |

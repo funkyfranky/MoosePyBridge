@@ -192,6 +192,11 @@ Bridge = MOOSE_BRIDGE:New("127.0.0.1", 42000)
 Bridge:Start()
 ```
 
+The development MOOSE branch `FF/PyBridge` already includes these bridge files
+through `Moose/Modules.lua`. In that setup, do not load them again separately;
+only create/start the mission's bridge instance. See the
+[navigation workflow](docs/navigation/WORKFLOW.md#mission-lua-choose-one-loading-path).
+
 Register each MOOSE `COMMANDER` that Python should observe or task. This is a
 one-time reference registration and does not add a polling loop:
 
@@ -1179,27 +1184,68 @@ ack = await server.message_to_coalition(
 )
 ```
 
+### Offline DCS navaid import
+
+Run `examples/navigation/import_dcs_beacons.py` with **Run Python File** in VS Code.
+It reads installed terrain Beacon and airfield `radio.lua` files plus common
+radio definitions without
+executing Lua or changing DCS. No bridge server or mission is required. It shares
+`config/navigation.json` and optional `config/navigation.local.json` with the
+navigation client. Configure `navaids.dcs_directory`; snapshots default to the
+Git-ignored `tmp/navaids` directory.
+
+Raw data and validation issues are retained. Matching source hashes reuse the
+cache; failed file imports do not replace its current snapshot. Completed imports
+can contain invalid individual records and do not prove live reception.
+See [DCS Navaid Import and Validation](docs/navigation/NAVAIDS.md).
+
 ### Navigation radio menu
 
-Start the normal daemon and restart the mission after the Lua update. Run
-`examples/sdk/run_navigation_menu.py` with **Run Python File** in VS Code, then
-open **radio menu > F10 Other > Navigation**. Starting in an already occupied
-slot is supported. Stop the old menu/lifecycle test scripts first to avoid their
-independent route overlays and console output. The normal daemon can keep running.
+Run `examples/sdk/run_navigation_menu.py` with **Run Python File** in VS Code
+once. It waits for the separately started normal daemon and DCS mission, then
+enables **radio menu > F10 Other > Navigation**. It stays running across mission
+changes and reconnects after a daemon restart. Starting in an occupied slot is
+supported. Stop the old menu/lifecycle test scripts first. After Lua updates,
+restart the mission; the client reactivates without needing a script restart.
+See [Navigation Client Workflow](docs/navigation/WORKFLOW.md) for configuration,
+Lua loading, recovery behavior and the pending live lifecycle test.
 
 - **Show route / Hide route**: show/hide the cyan Mission Editor route
   for the group's coalition, using the existing F10 drawing implementation.
-- **Navigation status**: send the reference aircraft, target waypoint, distance
-  in NM, true bearing, and cross-track error to the group via MOOSE MESSAGE.
+- **Navigation status**: send a structured report with the reference aircraft,
+  active route leg, target waypoint, distance in NM, true bearing, and the
+  spelled-out cross-track error to the group via MOOSE MESSAGE.
 - **Flight status**: read live aircraft telemetry once, then show geometric MSL
-  altitude and terrain AGL in feet, horizontal groundspeed in knots, TRUE
-  heading/track, and vertical speed in ft/min in a group message and Python console.
+  altitude and terrain AGL in feet, IAS/TAS/GS in knots,
+  Mach, MAG/TRUE heading/track, vertical speed in ft/min, temperature in Celsius,
+  pressure in hPa/inHg, and the optional FLIGHTGROUP FSM state. The grouped report is
+  shown to the group for 15 seconds and printed in the Python console.
   No FLIGHTGROUP is needed; this action does not change navigation progress or hints.
 - **Enable hints / Disable hints**: sample every two seconds and display guidance
   about every ten seconds, also at waypoint capture. Repeated enable is idempotent.
+- **Navaids**: browse the active terrain's imported stations by type (TACAN, VOR,
+  DME, VOR/DME, VORTAC, NDB, ILS; **More types** contains RSBN, PRMG, ICLS and
+  **Other / unknown**). All type lists initialize once per new group menu from
+  one current aircraft-position snapshot. Open a type and select a station for
+  a group message and Python console report. **Refresh nearby** updates that
+  type later; reopen an already open submenu after initialization or refresh.
+  Each page has at most six stations, plus refresh/previous/next: at most nine
+  custom entries, reserving one position for DCS Back within its ten-item limit.
+  **Navaids > Selected station** provides **Show on F10**, **Show with bearing
+  line** and **Hide from F10** for the last inspected station. A station click
+  alone never creates or moves a display. The labeled amber marker and optional
+  static line are coalition-visible and independent of the cyan route; the
+  line's origin is the aircraft position at display time, not a moving tracker.
+  The type root has nine entries including Selected station and More types.
+- **Airfields / ATC**: browse six nearby airfields per page. Imported
+  `radioId` UIDs are matched only to live MOOSE `AIRBASE:GetID()` values; the
+  live object supplies name and position. Details show callsigns, shared ATC
+  roles, source frequencies, current distance and TRUE bearing without tuning
+  the cockpit radios. Nonstandard/unmatched IDs and empty frequencies are
+  reported rather than guessed.
 
 Route display and hints start **off**. Display toggling does not reset progress
-or stop hints. Without hints, positions are queried only for status requests.
+or stop hints. Without hints, positions are queried only for on-demand actions.
 The Python tracker starts at WP 1 -> WP 2; it neither reads nor changes cockpit
 waypoints. Final capture is horizontal proximity, not a landing check.
 
@@ -1213,25 +1259,60 @@ the group and Python console; failed periodic guidance stops until re-enabled.
 Flight status also requires exactly one distinct player aircraft per group.
 It reads the occupied UNIT's DCS position/orientation and velocity, with terrain
 height and a local geographic-north tangent from DCS coordinate conversions.
-GS is not IAS or TAS; MSL is not a pressure/QNH altitude, and AGL is clearance
-above terrain, not a radar-altimeter or carrier-deck reading. TRUE heading/track
-are not magnetic cockpit headings. Track is unavailable below 1 m/s horizontal
+The current COORDINATE supplies temperature, local pressure and magnetic
+declination; `MAG = TRUE - declination`. If present, the group's FLIGHTGROUP
+supplies its current FSM state. None of these optional values makes a FLIGHTGROUP
+mandatory for the rest of the report.
+The new POSITIONABLE methods supply GS/TAS, Mach and estimated IAS without
+turbulence; the old altitude-based IAS approximation is not used. Estimated
+IAS equals calculated CAS, not a cockpit instrument reading. GS falls back to
+the horizontal DCS velocity if its MOOSE method is unavailable; missing airspeed
+values remain N/A. GS is not IAS or TAS; MSL is not a pressure/QNH altitude, and AGL is clearance
+above terrain, not a radar-altimeter or carrier-deck reading. MAG and TRUE are
+shown explicitly; they are not interchangeable. Track is unavailable below 1 m/s horizontal
 speed; other unavailable optional values appear as N/A instead of guessed data.
 This is an on-demand, read-only status report, not a flight-instructor warning.
 
-The Lua menu session owns its F10 line. Last occupant leave, mission end, Ctrl+C,
-or replacing the menu run clears only that session's line. Messages and overlay
+Navaids also needs one distinct player aircraft, but no FLIGHTGROUP. Run the
+offline importer first; the shared configuration selects the cache and local
+installation. Before each activation, source/artifact hashes are validated and
+the snapshot is pinned. Missing/outdated caches produce a startup warning without
+blocking other navigation actions. Rerun the importer, then use **Refresh nearby**
+to validate and load the repaired cache; restarting the script also works.
+Station order and label distances stay fixed until **Refresh nearby**;
+a station click computes fresh horizontal distance and TRUE bearing. Source
+frequencies/channels are informational, not automatic tuning instructions.
+**[!]** marks source issues; entries without usable coordinates are omitted and
+counted. Nearby does not guarantee reception or Hornet compatibility. No cockpit
+settings are changed. See [the navaid menu guide](docs/navigation/NAVAIDS.md#in-game-navaids-menu)
+for limitations and the parked DCS test.
+
+The user confirmed the initial Navaids menu test on Caucasus: **PASS**
+(2026-08-31). TACAN/NDB station details appeared in the cockpit and Python
+console; Refresh nearby and previous/next-page navigation worked. This does
+not verify radio reception. Remaining live edge cases are tracked in the guide.
+
+The new navaid F10 display still requires a live DCS test. See the guide for
+parked checks of explicit display, line origin, replacement and cleanup.
+
+The Lua menu session owns its route and navaid overlays. Last occupant leave,
+mission end, Ctrl+C, or replacing the menu run clears only that session's
+drawings. Messages and overlay
 commands validate owner, menu-session token, group ID and current occupancy in
 Lua, preventing delayed writes to a new slot session. Python cancels the matching
-hint task on `player.menu.closed`. Mission end/reset ends the script; start it
-again for the next mission. If the process is forcibly killed, Lua cleanup still
-runs on last leave or mission end, and a new script run replaces abandoned menus.
+hint task on `player.menu.closed`. Mission end/reset or connection recovery
+discards the old controller; the script waits and enables a fresh menu session.
+Route progress, station selection and hints are not restored. If another client
+takes menu ownership, the older client stops instead of taking the menus back.
+If forcibly killed, Lua cleanup still runs on last leave or mission end, and a
+new activation replaces abandoned menus.
 
 The old `monitor_player_menu.py` remains a diagnostic two-action test; the new
 navigation script replaces that test menu rather than adding another tree.
-Configuration: `NAVIGATION_INTERVAL_SECONDS`, `HINT_INTERVAL_SECONDS`,
-`INITIAL_TARGET_WAYPOINT`, `WAYPOINT_CAPTURE_RADIUS_M` and
-`NAVIGATION_MAX_SAMPLE_GAP_SECONDS` at the top of the script.
+Configuration: `config/navigation.json`, overridden by the optional Git-ignored
+`config/navigation.local.json`. Paths are relative to the configuration file's
+directory. Restart the script after editing settings. Startup validates the Lua
+navigation API before creating menus; incompatibility keeps the client waiting.
 
 Manual check (possible while parked): show/hide the line, request status, enable
 hints for at least ten seconds, disable them, leave/re-enter the slot, then stop
@@ -1239,7 +1320,10 @@ with Ctrl+C. Check that only the navigation menu's line disappears and no hints
 continue after disabling/leaving. Initial airborne waypoint sequencing has been
 confirmed; deliberate left/right XTE sign checks remain open.
 Also request **Flight status** while parked and from the air-start slot. Check
-the stated references when comparing values with cockpit instruments. Live DCS
+the grouped layout, 15-second display, and IAS/TAS/GS/Mach values. The displayed
+IAS remains a CAS-based estimate. Restart the mission to load the new POSITIONABLE/UTILS
+methods and bridge extension. Check the stated references when comparing values
+with cockpit instruments. Live DCS
 validation of this new action is pending.
 
 ### Player radio-menu test

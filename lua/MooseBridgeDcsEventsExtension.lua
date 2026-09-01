@@ -5,6 +5,10 @@
 -- world event table or MOOSE EVENTDATA implementation details.
 
 if not MOOSE_BRIDGE then error("Load MooseBridge.lua before MooseBridgeDcsEventsExtension.lua") end
+-- Repeated dofile() must not stack command-registration wrappers. Updates need
+-- a fresh mission, not a reload into a running bridge instance.
+if MOOSE_BRIDGE._DcsEventsExtensionLoaded then return end
+MOOSE_BRIDGE._DcsEventsExtensionLoaded = true
 
 local function bridge_event_available(event_id)
   return type(event_id) == "number" and event_id > 0
@@ -416,6 +420,9 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   self:RegisterCommand("player.menu.navigation.configure", function(cmd)
     return self:_ConfigurePlayerTestMenus(cmd.params or {}, "navigation")
   end)
+  self:RegisterCommand("player.menu.navigation.status", function(cmd)
+    return self:_NavigationRuntimeStatus()
+  end)
   self:RegisterCommand("player.menu.navigation.context", function(cmd)
     local params = cmd.params or {}
     local entry = self:_NavigationMenuEntry(params)
@@ -424,9 +431,41 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
   self:RegisterCommand("player.menu.navigation.flight_status", function(cmd)
     return self:_GetPlayerFlightStatus(cmd.params or {})
   end)
+  self:RegisterCommand("player.menu.navigation.navaids.page", function(cmd)
+    return self:_UpdateNavaidMenuPage(cmd.params or {})
+  end)
+  self:RegisterCommand("player.menu.navigation.navaids.initialize", function(cmd)
+    return self:_InitializeNavaidMenus(cmd.params or {})
+  end)
+  self:RegisterCommand("player.menu.navigation.navaids.overlay", function(cmd)
+    return self:_UpdateNavaidOverlay(cmd.params or {})
+  end)
+  self:RegisterCommand("player.menu.navigation.airfields.resolve", function(cmd)
+    return self:_ResolveNavigationAirbases(cmd.params or {})
+  end)
+  self:RegisterCommand("player.menu.navigation.airfields.page", function(cmd)
+    return self:_UpdateAirfieldMenuPage(cmd.params or {})
+  end)
+  self:RegisterCommand("player.menu.navigation.airfields.initialize", function(cmd)
+    return self:_InitializeAirfieldMenu(cmd.params or {})
+  end)
   self:RegisterCommand("player.menu.navigation.message", function(cmd)
     local params = cmd.params or {}
     local entry = self:_NavigationMenuEntry(params)
+    if params.navaid_type ~= nil then
+      local state = self:_NavaidMenuGuard(entry, params)
+      if params.station_key ~= nil and (not state.keys[params.station_key] or type(params.unit_id) ~= "string") then
+        error("Navaid selection is not on this page or has no reference aircraft")
+      end
+    end
+    if params.airfield_revision ~= nil then
+      local state = self:_AirfieldMenuGuard(entry, params)
+      if type(params.station_key) ~= "string" or not state.keys[params.station_key]
+        or type(params.unit_id) ~= "string" then
+        error("Airfield selection is not on this page or has no reference aircraft")
+      end
+    end
+    if params.selection_id ~= nil then self:_NavaidSelectionGuard(entry, params) end
     if params.unit_id ~= nil then
       local unit_name = self:_FlightStatusReferenceUnit(entry)
       if params.unit_id ~= "UNIT:" .. unit_name then error("Flight status reference aircraft changed") end
@@ -434,8 +473,19 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     if type(params.text) ~= "string" or #params.text == 0 or #params.text > 2000 then
       error("navigation message text must contain 1..2000 bytes")
     end
-    MESSAGE:New(params.text, 10, "Navigation"):ToGroup(entry.group)
-    return {delivered=true}
+    local duration = params.duration_s == nil and 10 or params.duration_s
+    if type(duration) ~= "number" or not (duration >= 1 and duration <= 30) then
+      error("navigation message duration_s must be between 1 and 30 seconds")
+    end
+    MESSAGE:New(params.text, duration, "Navigation"):ToGroup(entry.group)
+    local result = {delivered=true}
+    if params.navaid_type ~= nil and params.station_key ~= nil then
+      entry.navaid_selection_serial = (entry.navaid_selection_serial or 0) + 1
+      entry.navaid_selection = {id=tostring(entry.navaid_selection_serial), unit_id=params.unit_id,
+        theater_id=params.theater_id, kind=params.navaid_type, key=params.station_key}
+      result.selection_id = entry.navaid_selection.id
+    end
+    return result
   end)
   self:RegisterCommand("player.menu.navigation.overlay", function(cmd)
     local params = cmd.params or {}
@@ -451,6 +501,25 @@ function MOOSE_BRIDGE:RegisterDefaultCommands()
     return self:_DrawDebugOverlay({overlay_id=entry.overlay_id, features=params.features,
       coalition=coalition_name, replace=true, read_only=true})
   end)
+end
+
+--- Read-only preflight and ownership inspection, independent of occupied slots.
+function MOOSE_BRIDGE:_NavigationRuntimeStatus()
+  local config = self.PlayerTestMenuConfig
+  local drawings = type(self._DrawDebugOverlay) == "function" and type(self._ClearDebugOverlay) == "function"
+  return {api_version=1, instance_id=tostring(self) .. ":" .. tostring(env and env.mission),
+    theater_id=env and env.mission and env.mission.theatre or nil,
+    ready=MENU_GROUP ~= nil and MENU_GROUP_COMMAND ~= nil and MESSAGE ~= nil and _DATABASE ~= nil,
+    capabilities={player_lifecycle=type(self._ForwardPlayerAircraftEvent) == "function",
+      route=type(self._GetFlightGroupRoute) == "function" and drawings,
+      flight_status=type(self._GetPlayerFlightStatus) == "function",
+      navaids=type(self._UpdateNavaidMenuPage) == "function",
+      navaids_initialize=type(self._InitializeNavaidMenus) == "function",
+      navaid_overlay=type(self._UpdateNavaidOverlay) == "function" and drawings and type(self._CreateMapMarker) == "function",
+      airfield_radios=type(self._ResolveNavigationAirbases) == "function"
+        and type(self._UpdateAirfieldMenuPage) == "function" and type(self._InitializeAirfieldMenu) == "function"},
+    enabled=config ~= nil, owner_id=config and config.owner_id or nil,
+    mode=config and config.mode or nil}
 end
 
 --- Validate at execution time so delayed Python work cannot address a new slot.
@@ -474,7 +543,397 @@ function MOOSE_BRIDGE:_NavigationMenuPayload(group_name, entry)
   return {menu_id="navigation", scope="group", owner_id=entry.owner_id,
     session_id=entry.session_id, group_id="GROUP:" .. group_name,
     group_name=group_name, group_sessions=self:_PlayerTestMenuSessions(group_name),
+    theater_id=env and env.mission and env.mission.theatre or nil,
     opsgroup_id=opsgroup and ("OPSGROUP:" .. group_name) or nil}
+end
+
+-- Reserve one position for DCS back navigation: at most nine owned children.
+-- Type pages: seven types + More types. Station pages: six + refresh + prev/next.
+local navaid_types = {{"TACAN", "TACAN"}, {"VOR", "VOR"}, {"DME", "DME"},
+  {"VOR_DME", "VOR/DME"}, {"VORTAC", "VORTAC"}, {"NDB", "NDB"}, {"ILS", "ILS"},
+  {"RSBN", "RSBN"}, {"PRMG", "PRMG"}, {"ICLS", "ICLS"}, {"OTHER", "Other / unknown"}}
+
+function MOOSE_BRIDGE:_NavaidMenuGuard(entry, params)
+  local state = entry.navaids and entry.navaids[params.navaid_type]
+  if not state or state.revision ~= params.navaid_revision then error("Navaid menu page is stale") end
+  if type(params.theater_id) ~= "string" or not env or not env.mission
+    or params.theater_id ~= env.mission.theatre then error("Navaid terrain does not match the mission") end
+  return state
+end
+
+function MOOSE_BRIDGE:_NavaidMenuSelected(entry, kind, revision, action, page, station_key)
+  local state = entry.navaids and entry.navaids[kind]
+  if not state or state.revision ~= revision then return end
+  local ok = pcall(function() self:_NavigationMenuEntry({owner_id=entry.owner_id,
+    group_id="GROUP:" .. entry.group:GetName(), session_id=entry.session_id}) end)
+  if not ok then return end
+  if action == "navaid_details" then
+    if not state.keys[station_key] then return end
+  else
+    state.request_id = state.request_id + 1
+  end
+  local payload = self:_NavigationMenuPayload(entry.group:GetName(), entry)
+  payload.action, payload.navaid_type = action, kind
+  payload.navaid_revision, payload.request_id = revision, tostring(state.request_id)
+  payload.page, payload.station_key = page, station_key
+  self:SendEvent("player.menu.selected", payload)
+end
+
+function MOOSE_BRIDGE:_BuildNavaidMenuPage(entry, kind, state, items)
+  local revision = state.revision
+  MENU_GROUP_COMMAND:New(entry.group, "Refresh nearby", state.menu, function()
+    self:_NavaidMenuSelected(entry, kind, revision, "navaids_refresh", 0)
+  end)
+  for _, item in ipairs(items) do
+    local key = item.key
+    state.keys[key] = true
+    MENU_GROUP_COMMAND:New(entry.group, item.label, state.menu, function()
+      self:_NavaidMenuSelected(entry, kind, revision, "navaid_details", state.page, key)
+    end)
+  end
+  if state.page > 0 then
+    MENU_GROUP_COMMAND:New(entry.group, "Previous page", state.menu, function()
+      self:_NavaidMenuSelected(entry, kind, revision, "navaids_page", state.page - 1)
+    end)
+  end
+  if state.page + 1 < state.pages then
+    MENU_GROUP_COMMAND:New(entry.group, "Next page", state.menu, function()
+      self:_NavaidMenuSelected(entry, kind, revision, "navaids_page", state.page + 1)
+    end)
+  end
+end
+
+function MOOSE_BRIDGE:_CreateNavaidMenus(entry)
+  entry.navaids = {}
+  local parent = MENU_GROUP:New(entry.group, "Navaids", entry.menu)
+  local selected = MENU_GROUP:New(entry.group, "Selected station", parent)
+  local actions = {{"Show on F10", "navaid_show"}, {"Show with bearing line", "navaid_show_line"},
+    {"Hide from F10", "navaid_hide"}}
+  for _, item in ipairs(actions) do
+    local action = item[2]
+    MENU_GROUP_COMMAND:New(entry.group, item[1], selected, function()
+      self:_OnPlayerTestMenuSelected(entry.group:GetName(), entry, action)
+    end)
+  end
+  for index, item in ipairs(navaid_types) do
+    if index > 1 and (index - 1) % 7 == 0 then
+      parent = MENU_GROUP:New(entry.group, "More types", parent)
+    end
+    local kind = item[1]
+    local state = {menu=MENU_GROUP:New(entry.group, item[2], parent),
+      revision=0, request_id=0, page=0, pages=1, keys={}}
+    entry.navaids[kind] = state
+    self:_BuildNavaidMenuPage(entry, kind, state, {})
+  end
+end
+
+local function validate_navaid_page(params)
+  local function integer(value, low, high)
+    return type(value) == "number" and value >= low and value <= high and value == math.floor(value)
+  end
+  if not integer(params.pages, 1, 10000) or not integer(params.page, 0, params.pages - 1) then
+    error("Invalid navaid page bounds")
+  end
+  if type(params.items) ~= "table" or #params.items > 6 then error("Navaid pages allow at most six stations") end
+  local keys, labels, count = {}, {["Refresh nearby"]=true, ["Previous page"]=true, ["Next page"]=true}, 0
+  for index, item in pairs(params.items) do
+    count = count + 1
+    if not integer(index, 1, #params.items) or type(item) ~= "table"
+      or type(item.key) ~= "string" or #item.key == 0 or #item.key > 64 or keys[item.key]
+      or type(item.label) ~= "string" or #item.label == 0 or #item.label > 120
+      or item.label:find("[%c]") or labels[item.label] then error("Invalid or duplicate navaid menu item") end
+    keys[item.key], labels[item.label] = true, true
+  end
+  if count ~= #params.items then error("Navaid items must be a contiguous array") end
+end
+
+function MOOSE_BRIDGE:_ReplaceNavaidMenuPage(entry, kind, state, params)
+  -- Invalidate old callbacks before replacing their commands. The type menu stays.
+  state.revision = state.revision + 1
+  state.page, state.pages, state.keys = params.page, params.pages, {}
+  state.menu:RemoveSubMenus()
+  local ok, err = pcall(function() self:_BuildNavaidMenuPage(entry, kind, state, params.items) end)
+  if not ok then
+    state.revision = state.revision + 1
+    state.keys, state.page, state.pages = {}, 0, 1
+    state.menu:RemoveSubMenus()
+    -- A transient construction failure must still allow a manual refresh.
+    pcall(function() self:_BuildNavaidMenuPage(entry, kind, state, {}) end)
+    error(err)
+  end
+  return {navaid_revision=state.revision, page=state.page, pages=state.pages}
+end
+
+function MOOSE_BRIDGE:_UpdateNavaidMenuPage(params)
+  local entry = self:_NavigationMenuEntry(params)
+  local state = self:_NavaidMenuGuard(entry, params)
+  if state.request_id < 1 or params.request_id ~= tostring(state.request_id) then
+    error("Navaid page request was superseded")
+  end
+  local name = self:_FlightStatusReferenceUnit(entry)
+  if params.unit_id ~= "UNIT:" .. name then error("Navaid reference aircraft changed") end
+  validate_navaid_page(params)
+  return self:_ReplaceNavaidMenuPage(entry, params.navaid_type, state, params)
+end
+
+--- Populate all untouched types in one command, from one Python position sample.
+function MOOSE_BRIDGE:_InitializeNavaidMenus(params)
+  local entry = self:_NavigationMenuEntry(params)
+  local name = self:_FlightStatusReferenceUnit(entry)
+  if params.unit_id ~= "UNIT:" .. name then error("Navaid reference aircraft changed") end
+  if type(params.theater_id) ~= "string" or not env or not env.mission
+    or params.theater_id ~= env.mission.theatre then error("Navaid terrain does not match the mission") end
+  if type(params.types) ~= "table" then error("Missing initial navaid pages") end
+  -- Validate the entire batch before changing any menu, including skipped types.
+  for kind in pairs(params.types) do
+    if not entry.navaids[kind] then error("Unknown navaid type") end
+  end
+  for _, item in ipairs(navaid_types) do
+    local page = params.types[item[1]]
+    if type(page) ~= "table" or page.page ~= 0 then error("Missing initial navaid page") end
+    validate_navaid_page(page)
+  end
+  local result = {}
+  for _, item in ipairs(navaid_types) do
+    local kind = item[1]
+    local state = entry.navaids[kind]
+    result[kind] = {initialized=false}
+    -- A manual request made while Python sampled the position always wins.
+    if state.revision == 0 and state.request_id == 0 then
+      local ok, value = pcall(function()
+        return self:_ReplaceNavaidMenuPage(entry, kind, state, params.types[kind])
+      end)
+      if ok then
+        value.initialized = true
+        result[kind] = value
+      else
+        result[kind].error = tostring(value)
+      end
+    end
+  end
+  return {types=result}
+end
+
+-- Airfield communications use their own paged menu. Six stations plus refresh
+-- and previous/next reserve the tenth DCS position for Back navigation.
+local function validate_airfield_page(params)
+  local function integer(value, low, high)
+    return type(value) == "number" and value >= low and value <= high and value == math.floor(value)
+  end
+  if not integer(params.pages, 1, 10000) or not integer(params.page, 0, params.pages - 1) then
+    error("Invalid airfield page bounds")
+  end
+  if type(params.items) ~= "table" or #params.items > 6 then
+    error("Airfield pages allow at most six stations")
+  end
+  local keys, labels, count = {}, {['Refresh nearby']=true, ['Previous page']=true, ['Next page']=true}, 0
+  for index, item in pairs(params.items) do
+    count = count + 1
+    if not integer(index, 1, #params.items) or type(item) ~= "table"
+      or type(item.key) ~= "string" or #item.key == 0 or #item.key > 64 or keys[item.key]
+      or type(item.label) ~= "string" or #item.label == 0 or #item.label > 120
+      or item.label:find("[%c]") or labels[item.label] then error("Invalid or duplicate airfield menu item") end
+    keys[item.key], labels[item.label] = true, true
+  end
+  if count ~= #params.items then error("Airfield items must be a contiguous array") end
+end
+
+function MOOSE_BRIDGE:_AirfieldMenuGuard(entry, params)
+  local state = entry.airfields
+  if not state or state.revision ~= params.airfield_revision then error("Airfield menu page is stale") end
+  if type(params.theater_id) ~= "string" or not env or not env.mission
+    or params.theater_id ~= env.mission.theatre then error("Airfield terrain does not match the mission") end
+  return state
+end
+
+function MOOSE_BRIDGE:_AirfieldMenuSelected(entry, revision, action, page, station_key)
+  local state = entry.airfields
+  if not state or state.revision ~= revision then return end
+  local ok = pcall(function() self:_NavigationMenuEntry({owner_id=entry.owner_id,
+    group_id="GROUP:" .. entry.group:GetName(), session_id=entry.session_id}) end)
+  if not ok then return end
+  if action == "airfield_details" then
+    if not state.keys[station_key] then return end
+  else
+    state.request_id = state.request_id + 1
+  end
+  local payload = self:_NavigationMenuPayload(entry.group:GetName(), entry)
+  payload.action, payload.airfield_revision = action, revision
+  payload.request_id, payload.page, payload.station_key = tostring(state.request_id), page, station_key
+  self:SendEvent("player.menu.selected", payload)
+end
+
+function MOOSE_BRIDGE:_BuildAirfieldMenuPage(entry, state, items)
+  local revision = state.revision
+  MENU_GROUP_COMMAND:New(entry.group, "Refresh nearby", state.menu, function()
+    self:_AirfieldMenuSelected(entry, revision, "airfields_refresh", 0)
+  end)
+  for _, item in ipairs(items) do
+    local key = item.key
+    state.keys[key] = true
+    MENU_GROUP_COMMAND:New(entry.group, item.label, state.menu, function()
+      self:_AirfieldMenuSelected(entry, revision, "airfield_details", state.page, key)
+    end)
+  end
+  if state.page > 0 then
+    MENU_GROUP_COMMAND:New(entry.group, "Previous page", state.menu, function()
+      self:_AirfieldMenuSelected(entry, revision, "airfields_page", state.page - 1)
+    end)
+  end
+  if state.page + 1 < state.pages then
+    MENU_GROUP_COMMAND:New(entry.group, "Next page", state.menu, function()
+      self:_AirfieldMenuSelected(entry, revision, "airfields_page", state.page + 1)
+    end)
+  end
+end
+
+function MOOSE_BRIDGE:_CreateAirfieldMenu(entry)
+  entry.airfields = {menu=MENU_GROUP:New(entry.group, "Airfields / ATC", entry.menu),
+    revision=0, request_id=0, page=0, pages=1, keys={}}
+  self:_BuildAirfieldMenuPage(entry, entry.airfields, {})
+end
+
+function MOOSE_BRIDGE:_ReplaceAirfieldMenuPage(entry, state, params)
+  state.revision = state.revision + 1
+  state.page, state.pages, state.keys = params.page, params.pages, {}
+  state.menu:RemoveSubMenus()
+  local ok, err = pcall(function() self:_BuildAirfieldMenuPage(entry, state, params.items) end)
+  if not ok then
+    state.revision = state.revision + 1
+    state.keys, state.page, state.pages = {}, 0, 1
+    state.menu:RemoveSubMenus()
+    pcall(function() self:_BuildAirfieldMenuPage(entry, state, {}) end)
+    error(err)
+  end
+  return {airfield_revision=state.revision, page=state.page, pages=state.pages}
+end
+
+--- Match imported radioId UIDs only against live MOOSE AIRBASE:GetID().
+-- Callsigns and display names are deliberately not used as fallbacks.
+function MOOSE_BRIDGE:_ResolveNavigationAirbases(params)
+  local entry = self:_NavigationMenuEntry(params)
+  local unit_name = self:_FlightStatusReferenceUnit(entry)
+  if params.unit_id ~= "UNIT:" .. unit_name then error("Airfield reference aircraft changed") end
+  if type(params.theater_id) ~= "string" or not env or not env.mission
+    or params.theater_id ~= env.mission.theatre then error("Airfield terrain does not match the mission") end
+  if type(params.airbase_ids) ~= "table" or #params.airbase_ids > 512 then error("Invalid AIRBASE ID request") end
+  local requested, count = {}, 0
+  for index, value in pairs(params.airbase_ids) do
+    count = count + 1
+    if type(index) ~= "number" or index < 1 or index > #params.airbase_ids or index ~= math.floor(index)
+      or type(value) ~= "number" or value < 0 or value > 1000000 or value ~= math.floor(value)
+      or requested[value] then error("Invalid or duplicate AIRBASE ID") end
+    requested[value] = true
+  end
+  if count ~= #params.airbase_ids then error("AIRBASE IDs must be a contiguous array") end
+  local result = {}
+  for airbase_name, airbase in pairs(_DATABASE and _DATABASE.AIRBASES or {}) do
+    local uid = self:_SafeCall(airbase, "GetID")
+    if requested[uid] then
+      local ok, item = pcall(function()
+        local value = self:_BuildAirbaseSnapshotItem(airbase_name, airbase)
+        if not value or not value.name or value.x == nil or value.z == nil
+          or value.latitude == nil or value.longitude == nil then error("AIRBASE position unavailable") end
+        value.airbase_id = uid -- GetID() is authoritative for this join.
+        return value
+      end)
+      if ok then
+        result[#result + 1] = item
+        requested[uid] = nil
+      else
+        self:_Log("Failed to resolve navigation AIRBASE " .. tostring(uid) .. ": " .. tostring(item))
+      end
+    end
+  end
+  local unresolved = {}
+  for uid in pairs(requested) do unresolved[#unresolved + 1] = uid end
+  table.sort(unresolved)
+  table.sort(result, function(a, b) return a.airbase_id < b.airbase_id end)
+  return {theater_id=params.theater_id, airbases=result, unresolved_airbase_ids=unresolved}
+end
+
+function MOOSE_BRIDGE:_UpdateAirfieldMenuPage(params)
+  local entry = self:_NavigationMenuEntry(params)
+  local state = self:_AirfieldMenuGuard(entry, params)
+  if state.request_id < 1 or params.request_id ~= tostring(state.request_id) then
+    error("Airfield page request was superseded")
+  end
+  local name = self:_FlightStatusReferenceUnit(entry)
+  if params.unit_id ~= "UNIT:" .. name then error("Airfield reference aircraft changed") end
+  validate_airfield_page(params)
+  return self:_ReplaceAirfieldMenuPage(entry, state, params)
+end
+
+function MOOSE_BRIDGE:_InitializeAirfieldMenu(params)
+  local entry = self:_NavigationMenuEntry(params)
+  local name = self:_FlightStatusReferenceUnit(entry)
+  if params.unit_id ~= "UNIT:" .. name then error("Airfield reference aircraft changed") end
+  if type(params.theater_id) ~= "string" or not env or not env.mission
+    or params.theater_id ~= env.mission.theatre then error("Airfield terrain does not match the mission") end
+  if params.page ~= 0 then error("Initial airfield page must be page zero") end
+  validate_airfield_page(params)
+  local state = entry.airfields
+  if not state or state.revision ~= 0 or state.request_id ~= 0 then
+    return {initialized=false}
+  end
+  local result = self:_ReplaceAirfieldMenuPage(entry, state, params)
+  result.initialized = true
+  return result
+end
+
+function MOOSE_BRIDGE:_NavaidSelectionGuard(entry, params)
+  local selected = entry.navaid_selection
+  if not selected or type(params.selection_id) ~= "string" or selected.id ~= params.selection_id
+    or selected.unit_id ~= params.unit_id or selected.theater_id ~= params.theater_id
+    or not env or not env.mission or selected.theater_id ~= env.mission.theatre then
+    error("Navaid selection changed; select a station again")
+  end
+  local name, unit = self:_FlightStatusReferenceUnit(entry)
+  if selected.unit_id ~= "UNIT:" .. name then error("Navaid reference aircraft changed") end
+  return unit
+end
+
+--- A separate, session-owned overlay; inspecting a station never draws it.
+function MOOSE_BRIDGE:_UpdateNavaidOverlay(params)
+  local entry = self:_NavigationMenuEntry(params)
+  if type(params.show) ~= "boolean" then error("show must be boolean") end
+  if not params.show then return {removed=self:_ClearDebugOverlay(entry.navaid_overlay_id)} end
+  local unit = self:_NavaidSelectionGuard(entry, params)
+  local function finite(value)
+    return type(value) == "number" and value == value and math.abs(value) < math.huge
+  end
+  local point = params.point
+  if type(point) ~= "table" or not finite(point.latitude) or math.abs(point.latitude) > 90
+    or not finite(point.longitude) or math.abs(point.longitude) > 180
+    or not finite(point.altitude) then error("Invalid navaid marker coordinates") end
+  if type(params.text) ~= "string" or #params.text == 0 or #params.text > 180
+    or params.text:find("[%z\1-\8\11-\31\127]") then error("Invalid navaid marker text") end
+  if type(params.bearing_line) ~= "boolean" then error("bearing_line must be boolean") end
+  local coalition_name = self:_CoalitionToName(self:_SafeCall(entry.group, "GetCoalition"))
+  if coalition_name ~= "blue" and coalition_name ~= "red" and coalition_name ~= "neutral" then
+    error("Cannot determine navaid overlay coalition")
+  end
+  local color = {1,0.75,0,1}
+  local features = {{kind="point", points={point}, radius_m=100, color=color, fill_color={1,0.75,0,0.12}}}
+  if params.bearing_line then
+    local position = unit:getPosition()
+    local origin = position and position.p
+    if not origin or not finite(origin.x) or not finite(origin.y) or not finite(origin.z) then
+      error("Navaid bearing-line origin is unavailable")
+    end
+    features[#features + 1] = {kind="line", points={origin, point}, color=color}
+  end
+  -- The drawing helper rolls back failed geometry. Also remove geometry if the
+  -- label fails, and register its ID in the same overlay for all cleanup paths.
+  self:_DrawDebugOverlay({overlay_id=entry.navaid_overlay_id, features=features,
+    coalition=coalition_name, replace=true, read_only=true})
+  local ok, marker = pcall(function()
+    return self:_CreateMapMarker({point=point, text=params.text, coalition=coalition_name, read_only=true})
+  end)
+  if not ok then self:_ClearDebugOverlay(entry.navaid_overlay_id) error(marker) end
+  local ids = self.DebugOverlays[entry.navaid_overlay_id]
+  ids[#ids + 1] = marker.mark_id
+  return {shown=true, coalition=coalition_name, bearing_line=params.bearing_line}
 end
 
 --- Resolve exactly one live player aircraft; multicrew seats may share a unit.
@@ -496,7 +955,7 @@ function MOOSE_BRIDGE:_FlightStatusReferenceUnit(entry)
   if not group or group:getID() ~= entry.group_id then
     error("Flight status aircraft no longer belongs to this group")
   end
-  return unit_name, unit
+  return unit_name, unit, wrapper
 end
 
 local function flight_status_number(value)
@@ -514,14 +973,55 @@ local function flight_status_vector(value)
   return nil
 end
 
---- Read DCS world telemetry once; Python derives labeled flight-state quantities.
+--- Read DCS world telemetry and optional POSITIONABLE air data on demand.
 function MOOSE_BRIDGE:_GetPlayerFlightStatus(params)
   local entry = self:_NavigationMenuEntry(params)
-  local name, unit = self:_FlightStatusReferenceUnit(entry)
+  local name, unit, wrapper = self:_FlightStatusReferenceUnit(entry)
   local position = unit:getPosition()
   local point = type(position) == "table" and flight_status_vector(position.p)
   if not point then error("Flight status position is unavailable") end
   local velocity_ok, velocity = pcall(function() return unit:getVelocity() end)
+  velocity = velocity_ok and flight_status_vector(velocity) or nil
+  local function speed(method)
+    local ok, value = pcall(function() return wrapper[method](wrapper) end)
+    value = ok and flight_status_number(value) or nil
+    return value and value >= 0 and value or nil
+  end
+  local coordinate_ok, coordinate = pcall(function() return wrapper:GetCoord() end)
+  if not coordinate_ok or type(coordinate) ~= "table" then coordinate = nil end
+  local function coordinate_number(method)
+    if not coordinate then return nil end
+    local ok, value = pcall(function() return coordinate[method](coordinate) end)
+    return ok and flight_status_number(value) or nil
+  end
+  local temperature = coordinate_number("GetTemperature")
+  local pressure = coordinate_number("GetPressure")
+  if pressure and pressure <= 0 then pressure = nil end
+  local magnetic_declination = coordinate_number("GetMagneticDeclination")
+  if magnetic_declination and math.abs(magnetic_declination) > 180 then magnetic_declination = nil end
+  local flightgroup = self:_PlayerEventOpsGroup(entry.group:GetName())
+  local flightgroup_state
+  local is_flightgroup_ok, is_flightgroup = pcall(function()
+    return flightgroup and self:_SafeCall(flightgroup, "IsFlightgroup")
+  end)
+  if is_flightgroup_ok and is_flightgroup then
+    local state_ok, state = pcall(function() return self:_SafeCall(flightgroup, "GetState") end)
+    state = state_ok and state or nil
+    if type(state) == "string" and #state > 0 and #state <= 120
+      and not state:find("[%z\1-\31\127]") then flightgroup_state = state end
+  end
+  local groundspeed, tas, estimated_ias, mach
+  if velocity then
+    groundspeed = speed("GetGroundSpeed")
+    -- GetAirspeedTrue returns 0 for unavailable wind/coordinates. Check those
+    -- prerequisites so missing air data cannot masquerade as a stopped aircraft.
+    local wind_ok, wind = pcall(function() return coordinate:GetWindVec3(coordinate.y, false) end)
+    if wind_ok and flight_status_vector(wind) then
+      tas = speed("GetAirspeedTrue")
+      estimated_ias = speed("GetAirspeedIndicatedEstimated")
+      mach = speed("GetMachNumber")
+    end
+  end
   local terrain_ok, terrain = pcall(function()
     return land.getHeight({x=point.x, y=point.z}) -- DCS land API uses Vec2.
   end)
@@ -537,12 +1037,19 @@ function MOOSE_BRIDGE:_GetPlayerFlightStatus(params)
     if not a or not b then return nil end
     return {x=b.x-a.x, y=0, z=b.z-a.z}
   end)
+  local current_name, current_unit = self:_FlightStatusReferenceUnit(entry)
+  if current_name ~= name or current_unit ~= unit then error("Flight status reference aircraft changed") end
   return {owner_id=entry.owner_id, session_id=entry.session_id,
     group_id="GROUP:" .. entry.group:GetName(), unit_id="UNIT:" .. name,
     sample_time_s=flight_status_number(timer.getTime()),
     altitude_msl_m=point.y,
     terrain_elevation_m=terrain_ok and flight_status_number(terrain) or nil,
-    velocity_mps=velocity_ok and flight_status_vector(velocity) or nil,
+    velocity_mps=velocity,
+    groundspeed_mps=groundspeed, true_airspeed_mps=tas,
+    estimated_ias_mps=estimated_ias, mach_number=mach,
+    temperature_c=temperature, pressure_hpa=pressure,
+    magnetic_declination_deg=magnetic_declination,
+    flightgroup_state=flightgroup_state,
     forward=flight_status_vector(position.x),
     true_north=north_ok and flight_status_vector(north) or nil}
 end
@@ -571,9 +1078,11 @@ function MOOSE_BRIDGE:_RemovePlayerTestMenu(group_name)
   if not entry then return end
   self.PlayerTestMenus[group_name] = nil -- Invalidate callbacks before removal.
   if entry.mode == "navigation" then
-    -- Use only this entry's overlay; other scripts' F10 drawings stay untouched.
-    local cleared, clear_err = pcall(function() self:_ClearDebugOverlay(entry.overlay_id) end)
-    if not cleared then self:_Log("Navigation overlay cleanup failed: " .. tostring(clear_err)) end
+    -- Clear each owned overlay independently; one failure must not skip another.
+    for _, id in ipairs({entry.overlay_id, entry.navaid_overlay_id}) do
+      local cleared, clear_err = pcall(function() self:_ClearDebugOverlay(id) end)
+      if not cleared then self:_Log("Navigation overlay cleanup failed: " .. tostring(clear_err)) end
+    end
     self:SendEvent("player.menu.closed", {menu_id="navigation", owner_id=entry.owner_id,
       session_id=entry.session_id, group_id="GROUP:" .. group_name})
   end
@@ -626,7 +1135,8 @@ function MOOSE_BRIDGE:_SyncPlayerTestMenu(group_name, group)
   self.PlayerMenuSerial = (self.PlayerMenuSerial or 0) + 1
   entry = {group=group, group_id=group:GetID(), owner_id=config.owner_id,
     mode=config.mode, session_id=tostring(self.PlayerMenuSerial),
-    overlay_id="navigation-menu-" .. tostring(self.PlayerMenuSerial)}
+    overlay_id="navigation-menu-" .. tostring(self.PlayerMenuSerial),
+    navaid_overlay_id="navigation-navaid-" .. tostring(self.PlayerMenuSerial)}
   if config.mode == "navigation" then
     entry.menu = MENU_GROUP:New(group, "Navigation")
   else
@@ -643,6 +1153,9 @@ function MOOSE_BRIDGE:_SyncPlayerTestMenu(group_name, group)
         self:_OnPlayerTestMenuSelected(group_name, entry, action)
       end)
     end
+    self:_CreateNavaidMenus(entry)
+    self:_CreateAirfieldMenu(entry)
+    self:SendEvent("player.menu.created", self:_NavigationMenuPayload(group_name, entry))
     return
   end
   MENU_GROUP_COMMAND:New(group, "Show message", entry.menu, function()
@@ -662,9 +1175,13 @@ function MOOSE_BRIDGE:_OnPlayerTestMenuSelected(group_name, entry, action)
     or self:_SafeCall(entry.group, "GetID") ~= entry.group_id then return end
   if entry.mode == "navigation" then
     if action ~= "route_show" and action ~= "route_hide" and action ~= "status"
-      and action ~= "flight_status" and action ~= "hints_on" and action ~= "hints_off" then return end
+      and action ~= "flight_status" and action ~= "hints_on" and action ~= "hints_off"
+      and action ~= "navaid_show" and action ~= "navaid_show_line" and action ~= "navaid_hide" then return end
     local payload = self:_NavigationMenuPayload(group_name, entry)
     payload.action = action
+    if action == "navaid_show" or action == "navaid_show_line" then
+      payload.selection_id = entry.navaid_selection and entry.navaid_selection.id or nil
+    end
     self:SendEvent("player.menu.selected", payload)
   elseif action == "message" then
     MESSAGE:New("Menu test successful! Group: " .. group_name, 10, "MoosePyBridge")
@@ -685,6 +1202,9 @@ end
 --- Opt-in test, enabled by the VS Code client, never by default.
 -- A new run replaces an abandoned test; an old client's cleanup cannot remove it.
 function MOOSE_BRIDGE:_ConfigurePlayerTestMenus(params, mode)
+  if params.expected_instance_id ~= nil and params.expected_instance_id ~= self:_NavigationRuntimeStatus().instance_id then
+    error("Navigation bridge instance changed")
+  end
   if type(params.enabled) ~= "boolean" then error("enabled must be boolean") end
   if type(params.owner_id) ~= "string" or #params.owner_id == 0 or #params.owner_id > 128 then
     error("owner_id must be a non-empty string of at most 128 characters")
