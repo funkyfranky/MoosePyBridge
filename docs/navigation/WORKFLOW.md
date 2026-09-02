@@ -37,14 +37,28 @@ missing optional values appear as N/A. Restart the mission after MOOSE changes.
 
 **Copilot** samples the same aircraft every `navigation.sample_interval_seconds`
 and compares it with the active Mission Editor route leg. The target waypoint's
-route speed is compared with GS. Altitude is linearly interpolated only when both
+route speed is compared with GS. Altitude is an arrival constraint only when both
 leg endpoints use the same supported reference: BARO is evaluated against MSL,
-RADIO against terrain AGL. Takeoff and landing legs are excluded. Defaults require
+RADIO against terrain AGL. Nominal 1,000 ft/min climb or 1,500 ft/min descent
+defines the latest maneuver start; a five-second-smoothed vertical speed projects
+arrival at a stabilization point 1 NM before the waypoint. Before that start the
+departure altitude may be held without warning. By default, one advance notice is
+sent within 60 seconds of the calculated start and one instruction is sent at the
+start itself. These are routine once-per-leg advisories; sustained-deviation
+warnings remain separate. Takeoff and landing legs are excluded. Defaults require
 a deviation to persist for 10 seconds and use separate warning/recovery bands:
 300/150 ft, 20/10 kt and 0.50/0.25 NM XTE. Active deviations repeat no sooner
 than every 60 seconds; returning inside the recovery band produces a short
 recovery advisory. Missing/ambiguous data suppresses that metric instead of
 guessing. Monitoring retries if the player FLIGHTGROUP is not yet available.
+Waypoint altitude below 10 m AGL is treated as a probable target constraint and
+suppressed vertically; XTE, distance and route-GS monitoring continue. RADIO
+altitude is directly AGL, while BARO waypoint clearance uses the terrain elevation
+sampled by Lua at route retrieval. Unknown clearance is never guessed.
+
+**Next waypoint** and **Previous waypoint** manually sequence only the Python
+tracker. The preserved route and cockpit waypoint remain unchanged. WP 1 is the
+anchor and WP 2 is the first selectable target; automatic capture continues.
 
 **Copilot radio** uses HoundTTS 0.2.5, MOOSE MSRS, the bridge's per-sender
 outboxes and synthetic radio-network arbiter with the local SRS
@@ -91,8 +105,10 @@ Hound itself must use `DEFAULT_TRANSMITTER = "srs"`; `piper` belongs in
 instead of accepting messages that cannot reach the SRS transmitter.
 
 The `copilot` section controls automatic start, default output channels, warning
-and recovery thresholds, persistence and reminder cooldown. Other settings cover
-the control host/port, command timeout, retry interval, event-wait timeout,
+and recovery thresholds, persistence, reminder cooldown, nominal climb/descent
+rates, stabilization distance, vertical-speed smoothing and the vertical
+advance-notice window, plus the probable-target AGL threshold. Other settings cover the control host/port, command
+timeout, retry interval, event-wait timeout,
 sample interval, initial waypoint and capture radius.
 `control.port` is the daemon's **control** port, not its DCS-facing port. This
 file does not change daemon command-line settings or the mission bridge address.
@@ -181,7 +197,8 @@ owner/session isolation, trusted profile boundaries, sender serialization,
 priority, TTL, deduplication, idempotent retries, Emergency Break-in, all four
 network modes, test-tone dispatch and the nine-entry menu limit. See the
 [general radio service](../RADIO_SPEECH.md).
-Copilot tests cover altitude-reference interpolation, takeoff/landing exclusion,
+Copilot tests cover altitude-reference constraints, projected arrival, delayed
+maneuver start, vertical-speed smoothing, takeoff/landing exclusion,
 sustained deviations, hysteresis, cooldowns, recovery calls, waypoint priority,
 independent output controls and end-to-end text/radio dispatch.
 

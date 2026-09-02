@@ -92,6 +92,32 @@ class RouteNavigator:
         self._target = initial_target_index - 1
         self._complete = False
         self._previous: tuple[float, float, float | None] | None = None
+        self._manual_capture_guard: int | None = None
+
+    @property
+    def target_waypoint_index(self) -> int:
+        return self.route.waypoints[self._target].index
+
+    def _select_target(self, target: int) -> bool:
+        target = min(len(self.route.waypoints) - 1, max(1, target))
+        if target == self._target:
+            return False
+        self._target = target
+        self._complete = False
+        self._previous = None
+        # If Previous is selected while still inside that waypoint's capture
+        # circle, do not immediately undo the manual selection. Automatic
+        # capture is armed again after the aircraft leaves the circle once.
+        self._manual_capture_guard = target
+        return True
+
+    def select_next_waypoint(self) -> bool:
+        """Select the next route target without changing the route or cockpit."""
+        return self._select_target(self._target + 1)
+
+    def select_previous_waypoint(self) -> bool:
+        """Select the previous route target; WP 1 remains the route anchor."""
+        return self._select_target(self._target - 1)
 
     def _leg_metrics(self, x: float, z: float) -> tuple[float, float | None, float | None]:
         start, end = self.route.waypoints[self._target - 1:self._target + 1]
@@ -119,6 +145,10 @@ class RouteNavigator:
         while not self._complete:
             target = self.route.waypoints[self._target]
             within_radius = math.hypot(x - target.x, z - target.z) <= self.capture_radius_m
+            if self._manual_capture_guard == self._target:
+                if within_radius:
+                    break
+                self._manual_capture_guard = None
             length, along, cross = self._leg_metrics(x, z)
             crossed = False
             if self._previous and along is not None and cross is not None and mission_time is not None:

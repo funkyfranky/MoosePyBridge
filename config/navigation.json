@@ -23,7 +23,13 @@
     "cross_track_warning_nm": 0.5,
     "cross_track_recovery_nm": 0.25,
     "sustain_seconds": 10.0,
-    "reminder_cooldown_seconds": 60.0
+    "reminder_cooldown_seconds": 60.0,
+    "nominal_climb_fpm": 1000.0,
+    "nominal_descent_fpm": 1500.0,
+    "stabilization_distance_nm": 1.0,
+    "vertical_speed_smoothing_seconds": 5.0,
+    "vertical_notice_seconds": 60.0,
+    "target_waypoint_max_agl_m": 10.0
   },
   "navaids": {
     "enabled": true,

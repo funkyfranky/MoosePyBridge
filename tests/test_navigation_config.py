@@ -33,6 +33,10 @@ def test_local_overrides_and_relative_paths_do_not_depend_on_cwd(config_file, tm
     assert config.speech_provider == "piper" and config.speech_voice == "en_US-lessac-low"
     assert config.copilot_auto_start and config.copilot_text_enabled and config.copilot_radio_enabled
     assert config.copilot_altitude_warning_ft == 300 and config.copilot_altitude_recovery_ft == 150
+    assert config.copilot_nominal_climb_fpm == 1000 and config.copilot_nominal_descent_fpm == 1500
+    assert config.copilot_stabilization_distance_nm == 1
+    assert config.copilot_vertical_notice_seconds == 60
+    assert config.copilot_target_waypoint_max_agl_m == 10
 
 
 @pytest.mark.parametrize("override", [
@@ -42,6 +46,9 @@ def test_local_overrides_and_relative_paths_do_not_depend_on_cwd(config_file, tm
     {"navigation": {"initial_target_waypoint": 1}}, {"navigation": {"sample_interval_seconds": False}},
     {"copilot": {"auto_start": "yes"}}, {"copilot": {"sustain_seconds": 0}},
     {"copilot": {"speed_recovery_kt": 20}}, {"copilot": {"cross_track_warning_nm": float("nan")}},
+    {"copilot": {"nominal_climb_fpm": 0}}, {"copilot": {"stabilization_distance_nm": -1}},
+    {"copilot": {"vertical_notice_seconds": -1}},
+    {"copilot": {"target_waypoint_max_agl_m": -1}},
     {"navaids": {"enabled": "yes"}}, {"navaids": {"cache_directory": ""}},
     {"navaids": {"dcs_directory": 3}}, {"navigation": []},
     {"speech": {"enabled": "yes"}}, {"speech": {"srs_port": 0}},

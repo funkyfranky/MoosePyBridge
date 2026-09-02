@@ -294,6 +294,32 @@ def test_status_uses_player_unit_and_retains_progress_when_route_is_hidden():
     asyncio.run(scenario())
 
 
+def test_manual_next_previous_waypoint_changes_only_python_navigation_target():
+    async def scenario():
+        bridge = Bridge()
+        controller = NavigationMenuController(bridge, "run")
+        await controller.handle(event("waypoint_next"))
+        state = controller.groups[("GROUP:Hornet", "1")]
+        assert state.navigator.target_waypoint_index == 3
+        assert bridge.messages()[-1].startswith("Manual navigation target selected: WP 3")
+        assert "Mission route and cockpit waypoint unchanged." in bridge.messages()[-1]
+
+        await controller.handle(event("waypoint_previous"))
+        assert state.navigator.target_waypoint_index == 2
+        assert bridge.messages()[-1].startswith("Manual navigation target selected: WP 2")
+        await controller.handle(event("waypoint_previous"))
+        assert state.navigator.target_waypoint_index == 2
+        assert bridge.messages()[-1].endswith("WP 1 remains the route anchor.")
+
+        await controller.handle(event("waypoint_next"))
+        await controller.handle(event("waypoint_next"))
+        assert bridge.messages()[-1] == "Navigation target unchanged: WP 3 is the final waypoint."
+        assert len(bridge.routes) == 1
+        assert not any(call.action.endswith(".overlay") for call in bridge.calls)
+        await controller.close()
+    asyncio.run(scenario())
+
+
 @pytest.mark.parametrize("action", ["copilot_stop", "closed", "shutdown"])
 def test_copilot_is_automatic_idempotent_and_cancelled(action):
     async def scenario():

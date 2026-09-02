@@ -1215,6 +1215,11 @@ Lua loading, recovery behavior and the pending live lifecycle test.
 - **Navigation status**: send a structured report with the reference aircraft,
   active route leg, target waypoint, distance in NM, true bearing, and the
   spelled-out cross-track error to the group via MOOSE MESSAGE.
+- **Next waypoint / Previous waypoint**: manually sequence the Python navigation
+  target while preserving the Mission Editor route and cockpit waypoint. Automatic
+  proximity sequencing remains active; WP 1 is the route anchor, so WP 2 is the
+  first selectable target. Selecting Previous inside a waypoint's capture circle
+  is protected until the aircraft leaves that circle once.
 - **Flight status**: read live aircraft telemetry once, then show geometric MSL
   altitude and terrain AGL in feet, IAS/TAS/GS in knots,
   Mach, MAG/TRUE heading/track, vertical speed in ft/min, temperature in Celsius,
@@ -1225,12 +1230,20 @@ Lua loading, recovery behavior and the pending live lifecycle test.
   Mission Editor route. **Start/Stop monitoring**, **Copilot status**, independent
   **Enable/Disable text output**, independent **Enable/Disable radio output**, and
   **Repeat last advisory** are group-scoped. Monitoring, text and radio start on.
-  Normal route legs use linear BARO-MSL or RADIO-AGL altitude interpolation,
-  target-waypoint route speed versus live GS, and cross-track error. Takeoff and
-  landing legs are deliberately excluded from these comparisons. Deviations must
+  Normal route legs treat matching BARO-MSL or RADIO-AGL waypoint altitudes as
+  arrival constraints, alongside target-waypoint route speed versus live GS and
+  cross-track error. A nominal climb/descent rate determines the latest useful
+  vertical-maneuver start; the projected arrival altitude uses smoothed vertical
+  speed. Each altitude-changing leg receives one advance notice and one start
+  instruction; warnings remain a separate response to sustained noncompliance.
+  Takeoff and landing legs are deliberately excluded. Deviations must
   persist before a warning; hysteresis, recovery calls and cooldowns prevent chatter.
   The default warning/recovery thresholds are 300/150 ft, 20/10 kt and
   0.50/0.25 NM, with a 10-second persistence and 60-second reminder cooldown.
+  Vertical defaults are 1,000 ft/min climb, 1,500 ft/min descent, a 1 NM
+  stabilization distance, 5-second vertical-speed smoothing and 60-second advance notice.
+  A waypoint below 10 m AGL is treated as a probable target: only its vertical
+  constraint is suppressed, while navigation, XTE and planned-GS evaluation remain active.
   Unsupported or ambiguous references remain N/A and do not produce guessed advice.
 - **Copilot > Radio diagnostics**: use HoundTTS through MOOSE MSRS and the general
   bridge radio arbiter for an SRS test tone, one Piper radio check, or two
@@ -1344,9 +1357,12 @@ Manual check: show/hide the line; request Navigation, Flight and Copilot status;
 toggle each Copilot output independently; stop/start monitoring; then leave and
 re-enter the slot and stop the client with Ctrl+C. Check that no automatic
 advisory continues after stopping/leaving. In the air-start slot, deliberately
-hold altitude, GS and XTE outside their warning bands for at least ten seconds,
-then recover inside the smaller recovery band. Confirm one useful warning and
-one recovery call over each enabled output, without rapid repeats. Initial airborne waypoint sequencing has been
+hold the departure altitude before the nominal vertical-guidance start and confirm
+that no altitude warning occurs. Continue holding it after guidance becomes active,
+then follow the reported required vertical speed until the projected waypoint
+altitude recovers. Separately hold GS and XTE outside their warning bands for at
+least ten seconds, then recover inside the smaller recovery bands. Confirm one
+useful warning and one recovery call over each enabled output, without rapid repeats. Initial airborne waypoint sequencing has been
 confirmed; deliberate left/right XTE sign checks remain open.
 Also request **Flight status** while parked and from the air-start slot. Check
 the grouped layout, 15-second display, and IAS/TAS/GS/Mach values. The displayed

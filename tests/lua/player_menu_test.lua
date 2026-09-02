@@ -278,7 +278,8 @@ assert(not bridge.commands["player.menu.navigation.status"]({params={}}).capabil
 bridge._CreateMapMarker = marker_method
 assert(nav.menu.Path == "@Navigation")
 local expected = { ["Show route"]="route_show", ["Hide route"]="route_hide",
-  ["Navigation status"]="status", ["Flight status"]="flight_status" }
+  ["Navigation status"]="status", ["Flight status"]="flight_status",
+  ["Next waypoint"]="waypoint_next", ["Previous waypoint"]="waypoint_previous" }
 local count = 0
 for label, action in pairs(expected) do
   count = count + 1
@@ -289,7 +290,7 @@ for label, action in pairs(expected) do
 end
 local actual = 0
 for _ in pairs(nav.menu.Menus) do actual = actual + 1 end
-assert(count == 4 and actual == 7 and nav.menu.Menus.Navaids and nav.menu.Menus["Airfields / ATC"]
+assert(count == 6 and actual == 9 and nav.menu.Menus.Navaids and nav.menu.Menus["Airfields / ATC"]
   and nav.menu.Menus.Copilot)
 for label, action in pairs({["Start monitoring"]="copilot_start", ["Stop monitoring"]="copilot_stop",
     ["Copilot status"]="copilot_status", ["Enable text output"]="copilot_text_on",
@@ -324,6 +325,25 @@ end
 local context = navcall("context", nav)
 assert(context.opsgroup_id == "OPSGROUP:Hornet" and #context.group_sessions == 1)
 assert(context.theater_id == "Caucasus")
+local original_flightgroup = _DATABASE.FLIGHTGROUPS.Hornet
+_DATABASE.FLIGHTGROUPS.Hornet = {
+  waypoints0={{x=100, y=200, alt=109, alt_type="BARO", speed=150,
+    type="Turning Point", action="Turning Point"}},
+  IsFlightgroup=function() return true end,
+  GetCoalition=function() return 2 end}
+bridge._CoordinatesForPoint = function(self, point)
+  return {latitude=point.x / 1000, longitude=point.z / 1000}
+end
+bridge._OpsCoalition = function() return "blue" end
+land = {getHeight=function(point)
+  assert(point.x == 100 and point.y == 200)
+  return 100
+end}
+local route_data = bridge.commands["flightgroup.route.get"]({params={
+  opsgroup_id="OPSGROUP:Hornet", route_source="mission_editor"}})
+assert(route_data.waypoints[1].terrain_elevation_m == 100)
+assert(route_data.waypoints[1].altitude_m == 109 and route_data.waypoints[1].z == 200)
+_DATABASE.FLIGHTGROUPS.Hornet = original_flightgroup
 navcall("message", nav, {text="NAV status"})
 assert(messages[#messages].group == hornet)
 assert(not pcall(navcall, "message", nav, {text="wrong owner", owner_id="old-run"}))

@@ -424,9 +424,9 @@ cache semantics, the type-based radio menu, limitations, and remaining TODOs.
   once; it waits for the normal daemon and mission and survives mission changes.
   Restart the mission after a Lua update. Stop old diagnostic menu scripts first.
   Shared configuration and loading/recovery rules: [Navigation Client Workflow](WORKFLOW.md).
-- Radio menu -> F10 Other -> **Navigation**, with seven top-level items:
+- Radio menu -> F10 Other -> **Navigation**, with nine top-level items:
   **Show route**, **Hide route**, **Navigation status**, **Flight status**,
-  **Navaids**, **Airfields / ATC**, and **Copilot**.
+  **Next waypoint**, **Previous waypoint**, **Navaids**, **Airfields / ATC**, and **Copilot**.
 - **Navaids** groups imported stations by type. New group menus initialize all
   type lists once from one current aircraft-position snapshot. **Refresh nearby**
   updates a type's list later; select a station for source data, horizontal
@@ -452,10 +452,14 @@ cache semantics, the type-based radio menu, limitations, and remaining TODOs.
   to enabled and can be switched independently. The status action performs a
   fresh comparison; Repeat last advisory uses the currently enabled channels.
   The deterministic first version evaluates sustained altitude, route-GS and
-  cross-track deviations on normal route legs. It linearly interpolates waypoint
-  altitude only for matching BARO or RADIO references, compares the target
+  cross-track deviations on normal route legs. It treats waypoint altitude as an
+  arrival constraint only for matching BARO or RADIO references. Nominal climb/
+  descent performance determines the latest useful start; smoothed vertical speed
+  projects the altitude at the stabilization point. It compares the target
   waypoint speed with GS, excludes takeoff/landing legs, uses warning/recovery
-  hysteresis and emits short recovery calls. It never changes cockpit waypoints.
+  hysteresis and emits short recovery calls. A changing-altitude leg receives one
+  advance notice within the configured window and one start instruction; reaching
+  the target early suppresses an unnecessary start instruction. It never changes cockpit waypoints.
   If the FLIGHTGROUP is late after slot entry, automatic monitoring keeps retrying.
   **Radio diagnostics** appears when the mission-scoped speech profile passes its
   Hound and MSRS preflight. The initial profile uses local SRS port 5002,
@@ -488,6 +492,11 @@ cache semantics, the type-based radio menu, limitations, and remaining TODOs.
   aircraft-position polling while monitoring is stopped. The application still checks
   connection/mission health. Cockpit waypoint selection is neither read nor
   changed; target capture does not prove a landing.
+- **Next waypoint** and **Previous waypoint** sequence this Python tracker only.
+  They do not edit the Mission Editor route or cockpit selection. WP 1 remains
+  the anchor and WP 2 the first selectable target. A manual Previous selection
+  made inside its capture circle is held until the aircraft first leaves that
+  circle, preventing immediate automatic re-advance.
 - Navigation status/Copilot require exactly one player aircraft per group and its FLIGHTGROUP.
   Multiple crew seats in the same UNIT count as one aircraft. Multiple player
   aircraft produce an error message instead of an arbitrary reference choice.
@@ -845,6 +854,12 @@ adapter, telemetry, and later instructor features.
 - [x] Implement the first deterministic Copilot route-conformance monitor with
       automatic per-slot start, independent default-on text/radio channels,
       altitude/GS/XTE tolerances, persistence, hysteresis, cooldowns and recovery calls.
+- [x] Add once-per-leg vertical advance notices and start instructions based on
+      the projected waypoint-altitude constraint.
+- [x] Suppress only vertical guidance for probable target waypoints below 10 m
+      AGL, using live terrain elevation for BARO route points.
+- [x] Add F10 Next/Previous waypoint actions for the Python tracker without
+      changing the Mission Editor route or cockpit waypoint.
 - [ ] Validate Copilot altitude, GS and XTE warnings/recoveries in the airborne
       Hornet slot, including independent text/radio toggles and lifecycle cleanup.
 - [ ] Add the separate Instructor submenu and modes after the Copilot flight test;

@@ -80,6 +80,31 @@ def test_waypoint_sequence_is_monotonic_and_final_capture_is_sticky() -> None:
     assert again.route_complete and not again.reached_waypoint_indexes
 
 
+def test_manual_next_previous_sequence_and_capture_guard():
+    nav = RouteNavigator(route())
+    assert nav.target_waypoint_index == 2
+    assert nav.select_next_waypoint() and nav.target_waypoint_index == 3
+    assert not nav.select_next_waypoint()  # Last waypoint is the upper bound.
+    assert nav.select_previous_waypoint() and nav.target_waypoint_index == 2
+    assert not nav.select_previous_waypoint()  # WP 1 remains the route anchor.
+
+    # Selecting Previous while inside WP 2 must not auto-advance immediately.
+    guarded = update(nav, 10000, 0, 1)
+    assert guarded.target_waypoint_index == 2 and not guarded.reached_waypoint_indexes
+    update(nav, 8000, 0, 2)  # Leaving the capture circle arms automatic capture again.
+    captured = update(nav, 10000, 0, 3)
+    assert captured.reached_waypoint_indexes == (2,)
+    assert captured.target_waypoint_index == 3
+
+
+def test_previous_waypoint_reopens_completed_route():
+    nav = RouteNavigator(route(), initial_target_index=3)
+    assert update(nav, 10000, 10000).route_complete
+    assert nav.select_previous_waypoint()
+    result = update(nav, 9000, 0)
+    assert not result.route_complete and result.target_waypoint_index == 2
+
+
 def test_sampled_flyby_captures_within_corridor() -> None:
     nav = RouteNavigator(route())
     update(nav, 9000, -1000, 10)

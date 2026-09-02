@@ -448,7 +448,7 @@ class NavigationMenuController:
         status = await self._flight_status(state)
         if state.route is None:
             raise ValueError("No Mission Editor route is available.")
-        snapshot = build_copilot_snapshot(state.route, solution, status)
+        snapshot = build_copilot_snapshot(state.route, solution, status, self.copilot_profile)
         state.copilot_last_snapshot = snapshot
         state.copilot_last_error = None
         return snapshot
@@ -560,6 +560,32 @@ class NavigationMenuController:
         print(f"{state.group_id}: queued {len(texts)} copilot transmission(s) on {channel}; "
               f"queue depth={queued}.", flush=True)
 
+    async def _sequence_waypoint(self, state: GroupNavigation, action: str) -> None:
+        if state.navigator is None:
+            await self._sample(state)
+        navigator = state.navigator
+        if navigator is None:  # Defensive: _sample either creates one or raises.
+            raise ValueError("Navigation tracker is unavailable.")
+        previous = navigator.target_waypoint_index
+        changed = (navigator.select_next_waypoint() if action == "waypoint_next"
+                   else navigator.select_previous_waypoint())
+        if not changed:
+            if action == "waypoint_next":
+                text = f"Navigation target unchanged: WP {previous} is the final waypoint."
+            else:
+                text = (f"Navigation target unchanged: WP {previous} is the first selectable target; "
+                        "WP 1 remains the route anchor.")
+            await self._reply(state, text)
+            return
+        solution = await self._sample(state)
+        text = (
+            f"Manual navigation target selected: WP {solution.target_waypoint_index} "
+            f"({solution.target_name}). Mission route and cockpit waypoint unchanged.\n"
+            + cockpit_status(state.unit_id or "", solution)
+        )
+        await self._reply(state, text)
+        print(f"{state.group_id}: {text}", flush=True)
+
     async def handle(self, message: dict[str, Any]) -> None:
         payload = message.get("payload") or {}
         if payload.get("owner_id") != self.owner_id or payload.get("menu_id") != "navigation":
@@ -597,6 +623,7 @@ class NavigationMenuController:
         action = payload.get("action")
         if message.get("event") != "player.menu.selected" or action not in {
             "route_show", "route_hide", "status", "flight_status",
+            "waypoint_next", "waypoint_previous",
             "copilot_start", "copilot_stop", "copilot_status", "copilot_repeat",
             "copilot_text_on", "copilot_text_off", "copilot_radio_on", "copilot_radio_off",
             "navaids_refresh", "navaids_page", "navaid_details",
@@ -634,6 +661,8 @@ class NavigationMenuController:
                     route = await self._route(state, await self._context(state))
                     await self._call(state, "overlay", show=True, features=[route.to_map_line().to_payload()])
                     await self._reply(state, f"F10 route displayed: {len(route.waypoints)} waypoints (own coalition).")
+                elif action in {"waypoint_next", "waypoint_previous"}:
+                    await self._sequence_waypoint(state, action)
                 elif action == "copilot_start":
                     started = self._start_copilot(state)
                     text = ("Copilot monitoring started. It will retry until the player FLIGHTGROUP and route are available."

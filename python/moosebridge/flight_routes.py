@@ -33,9 +33,21 @@ class FlightRouteWaypoint:
     z: float
     altitude_m: float | None
     altitude_type: str | None
+    terrain_elevation_m: float | None
     speed_mps: float | None
     waypoint_type: str | None
     action: str | None
+
+    @property
+    def height_agl_m(self) -> float | None:
+        """Best available planned height above terrain, without guessing."""
+        if self.altitude_m is None:
+            return None
+        if (self.altitude_type or "").upper() == "RADIO":
+            return self.altitude_m
+        if self.terrain_elevation_m is not None:
+            return self.altitude_m - self.terrain_elevation_m
+        return None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "FlightRouteWaypoint":
@@ -50,6 +62,7 @@ class FlightRouteWaypoint:
         if speed_mps is not None and speed_mps < 0:
             raise ValueError("speed_mps must not be negative")
         altitude = payload.get("altitude_m")
+        terrain = payload.get("terrain_elevation_m")
         return cls(
             index=index,
             name=str(payload.get("name") or f"WP {index}"),
@@ -59,6 +72,8 @@ class FlightRouteWaypoint:
             z=_number(payload.get("z"), "z"),
             altitude_m=_number(altitude, "altitude_m") if altitude is not None else None,
             altitude_type=str(payload["altitude_type"]) if payload.get("altitude_type") else None,
+            terrain_elevation_m=(_number(terrain, "terrain_elevation_m")
+                                 if terrain is not None else None),
             speed_mps=speed_mps,
             waypoint_type=str(payload["type"]) if payload.get("type") else None,
             action=str(payload["action"]) if payload.get("action") else None,

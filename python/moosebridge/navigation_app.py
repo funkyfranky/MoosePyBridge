@@ -101,6 +101,12 @@ class NavigationApplication:
             cross_track_recovery_nm=config.copilot_cross_track_recovery_nm,
             sustain_s=config.copilot_sustain_seconds,
             reminder_cooldown_s=config.copilot_reminder_cooldown_seconds,
+            nominal_climb_fpm=config.copilot_nominal_climb_fpm,
+            nominal_descent_fpm=config.copilot_nominal_descent_fpm,
+            stabilization_distance_nm=config.copilot_stabilization_distance_nm,
+            vertical_speed_smoothing_s=config.copilot_vertical_speed_smoothing_seconds,
+            vertical_notice_s=config.copilot_vertical_notice_seconds,
+            target_waypoint_max_agl_m=config.copilot_target_waypoint_max_agl_m,
         )
 
     def _check_takeover(self, runtime: dict) -> None:
@@ -239,7 +245,8 @@ class NavigationApplication:
                             f"Route and navaid map display start OFF; Copilot monitoring {monitoring}.")
                 if unavailable:
                     print(f"Navaid preflight WARNING: {unavailable}\nOther navigation functions remain available.", flush=True)
-                print("Show/Hide route | Navigation status | Flight status | Copilot | Navaids | Airfields / ATC", flush=True)
+                print("Show/Hide route | Navigation status | Flight status | Next/Previous waypoint | "
+                      "Copilot | Navaids | Airfields / ATC", flush=True)
                 if speech_profile is not None:
                     print(f"Copilot radio: Hound/Piper {speech_profile.voice} on "
                           f"{speech_profile.frequency_mhz:.3f} MHz {speech_profile.modulation}; "
@@ -254,8 +261,10 @@ class NavigationApplication:
                 print("Copilot: Mission Editor route-conformance monitoring; "
                       f"text output starts {'enabled' if config.copilot_text_enabled else 'disabled'}, radio output "
                       f"starts {'enabled' if radio_default else 'disabled'}. Planned speed is compared with GS; "
-                      "normal BARO/RADIO leg altitude is "
-                      "interpolated. Takeoff and landing legs are excluded.", flush=True)
+                      "BARO/RADIO waypoint altitude is treated as a projected arrival constraint. "
+                      "Vertical maneuvers receive one advance notice and one start instruction. "
+                      "Probable target waypoints below 10 m AGL have no vertical constraint. "
+                      "Takeoff and landing legs are excluded.", flush=True)
                 print("One player aircraft per group; route navigation also needs its FLIGHTGROUP. "
                       "Bearings are TRUE, navaid bearing lines are static, F10 drawings are coalition-visible. Cockpit unchanged.", flush=True)
                 await self._serve(control, bridge, controller, owner, instance, key, cursor)

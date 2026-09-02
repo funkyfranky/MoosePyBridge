@@ -29,6 +29,7 @@ def route_payload() -> dict[str, Any]:
                 "z": 616000 + index * 100,
                 "altitude_m": 1000,
                 "altitude_type": "RADIO" if index == 2 else "BARO",
+                "terrain_elevation_m": 900,
                 "speed_mps": 150,
                 "type": "Land" if index == 3 else "Turning Point",
                 "action": "Landing" if index == 3 else "Turning Point",
@@ -56,6 +57,8 @@ def test_me_route_retains_landing_altitude_reference_and_point_order() -> None:
     assert route.waypoints[-1].waypoint_type == "Land"
     assert route.waypoints[1].altitude_type == "RADIO"
     assert route.waypoints[1].altitude_m == 1000
+    assert route.waypoints[0].height_agl_m == 100
+    assert route.waypoints[1].height_agl_m == 1000  # RADIO altitude is already AGL.
     assert route.waypoints[1].speed_mps == 150
     line = route.to_map_line()
     assert line.kind == "line"
@@ -67,7 +70,7 @@ def test_me_route_retains_landing_altitude_reference_and_point_order() -> None:
 
 @pytest.mark.parametrize("field,value", [
     ("latitude", 91), ("longitude", float("nan")),
-    ("speed_mps", -1), ("x", True), ("index", 0),
+    ("speed_mps", -1), ("x", True), ("index", 0), ("terrain_elevation_m", float("nan")),
 ])
 def test_route_rejects_invalid_waypoint_data(field: str, value: Any) -> None:
     payload = route_payload()

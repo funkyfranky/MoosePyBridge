@@ -30,6 +30,12 @@ class NavigationConfig:
     copilot_cross_track_recovery_nm: float
     copilot_sustain_seconds: float
     copilot_reminder_cooldown_seconds: float
+    copilot_nominal_climb_fpm: float
+    copilot_nominal_descent_fpm: float
+    copilot_stabilization_distance_nm: float
+    copilot_vertical_speed_smoothing_seconds: float
+    copilot_vertical_notice_seconds: float
+    copilot_target_waypoint_max_agl_m: float
     navaids_enabled: bool
     dcs_directory: Path | None
     cache_directory: Path
@@ -61,7 +67,9 @@ _SECTIONS = {
     "copilot": {"auto_start", "text_enabled", "radio_enabled", "altitude_warning_ft",
                 "altitude_recovery_ft", "speed_warning_kt", "speed_recovery_kt",
                 "cross_track_warning_nm", "cross_track_recovery_nm", "sustain_seconds",
-                "reminder_cooldown_seconds"},
+                "reminder_cooldown_seconds", "nominal_climb_fpm", "nominal_descent_fpm",
+                "stabilization_distance_nm", "vertical_speed_smoothing_seconds",
+                "vertical_notice_seconds", "target_waypoint_max_agl_m"},
     "navaids": {"enabled", "dcs_directory", "cache_directory"},
     "speech": {"enabled", "profile_id", "network_id", "srs_path", "srs_host", "srs_port",
                "frequency_mhz", "modulation", "provider", "voice", "label", "volume", "speed",
@@ -108,6 +116,12 @@ def load_navigation_config(path: str | Path) -> NavigationConfig:
             raise ValueError(f"{section}.{key} must be an integer in {low}..{high}")
         return value
 
+    def nonnegative(section: str, key: str) -> float:
+        value = data[section][key]
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise ValueError(f"{section}.{key} must be finite and non-negative")
+        return float(value)
+
     def directory(key: str, optional: bool = False) -> Path | None:
         value = data["navaids"][key]
         if optional and value is None:
@@ -132,8 +146,15 @@ def load_navigation_config(path: str | Path) -> NavigationConfig:
         key: positive("copilot", key)
         for key in ("altitude_warning_ft", "altitude_recovery_ft", "speed_warning_kt",
                     "speed_recovery_kt", "cross_track_warning_nm", "cross_track_recovery_nm",
-                    "sustain_seconds", "reminder_cooldown_seconds")
+                    "sustain_seconds", "reminder_cooldown_seconds", "nominal_climb_fpm",
+                    "nominal_descent_fpm", "vertical_speed_smoothing_seconds")
     }
+    copilot_values["stabilization_distance_nm"] = nonnegative(
+        "copilot", "stabilization_distance_nm")
+    copilot_values["vertical_notice_seconds"] = nonnegative(
+        "copilot", "vertical_notice_seconds")
+    copilot_values["target_waypoint_max_agl_m"] = nonnegative(
+        "copilot", "target_waypoint_max_agl_m")
     threshold_pairs = {
         "altitude": ("altitude_recovery_ft", "altitude_warning_ft"),
         "speed": ("speed_recovery_kt", "speed_warning_kt"),
@@ -199,6 +220,12 @@ def load_navigation_config(path: str | Path) -> NavigationConfig:
         copilot_cross_track_recovery_nm=copilot_values["cross_track_recovery_nm"],
         copilot_sustain_seconds=copilot_values["sustain_seconds"],
         copilot_reminder_cooldown_seconds=copilot_values["reminder_cooldown_seconds"],
+        copilot_nominal_climb_fpm=copilot_values["nominal_climb_fpm"],
+        copilot_nominal_descent_fpm=copilot_values["nominal_descent_fpm"],
+        copilot_stabilization_distance_nm=copilot_values["stabilization_distance_nm"],
+        copilot_vertical_speed_smoothing_seconds=copilot_values["vertical_speed_smoothing_seconds"],
+        copilot_vertical_notice_seconds=copilot_values["vertical_notice_seconds"],
+        copilot_target_waypoint_max_agl_m=copilot_values["target_waypoint_max_agl_m"],
         navaids_enabled=enabled, dcs_directory=directory("dcs_directory", optional=True),
         cache_directory=directory("cache_directory"),
         speech_enabled=speech_enabled,
