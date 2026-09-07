@@ -1,7 +1,25 @@
+import os
 from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_lua_bridge_transport_lifecycle() -> None:
+    runtime = os.environ.get("MOOSEBRIDGE_TEST_LUA") or shutil.which("lua")
+    if not runtime:
+        pytest.skip("Set MOOSEBRIDGE_TEST_LUA or install Lua to run the bridge transport harness")
+    result = subprocess.run(
+        [runtime, str(REPO_ROOT / "tests/lua/bridge_transport_test.lua"),
+         str(REPO_ROOT / "lua/MooseBridge.lua")],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "BRIDGE TRANSPORT LUA TEST PASSED" in result.stdout
 
 
 def test_bridge_constructor_preserves_moose_base_inheritance() -> None:
@@ -18,11 +36,47 @@ def test_bridge_transport_resumes_partial_nonblocking_io() -> None:
     assert 'line = (self.ReadBuffer or "") .. line' in source
     assert 'self.ReadBuffer = (self.ReadBuffer or "") .. partial' in source
     assert "self.OutQueueOffset = 1" in source
-    assert "local payload = self.OutQueue[1]" in source
+    assert "local entry = self.OutQueue[self.OutQueueHead]" in source
+    assert "local payload = entry.payload" in source
     assert "self.Socket:send(payload, offset)" in source
     assert 'elseif err == "timeout" then' in source
     assert "self.OutQueueOffset = final_byte + 1" in source
-    assert "table.remove(self.OutQueue, 1)" in source
+    assert "self:_RemoveOutQueueEntry(self.OutQueueHead)" in source
+
+
+def test_bridge_start_is_idempotent_and_transport_work_is_bounded() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert "if self.Started then return self end" in source
+    assert "self.Started = true" in source
+    assert "self.Started = false" in source
+    assert "while handled < self.MaxCommandsPerTick do" in source
+    assert 'self:_Disconnect("receive failed: " .. safe_tostring(err))' in source
+    assert "self:_FlushOutQueue(self.MaxOutMessagesPerTick)" in source
+    assert "self.MaxOutQueueBytes = 32 * 1024 * 1024" in source
+
+
+def test_bridge_replays_terminal_events_and_cached_command_results() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+
+    assert '["auftrag.evaluated"]=true' in source
+    assert '["object.destroyed"]=true' in source
+    assert "self:_RetainReliableOutput()" in source
+    assert "self:_ReplayReliableEvents()" in source
+    assert "local cached = command_id and self.CommandResultCache[command_id] or nil" in source
+    assert "self:Send(cached.message, true)" in source
+    assert "self:_RememberCommandResult(command, msg)" in source
+
+
+def test_group_snapshot_avoids_position_lookup_for_absent_dcs_groups() -> None:
+    source = (REPO_ROOT / "lua" / "MooseBridge.lua").read_text(encoding="utf-8")
+    point_lookup = source.split("function MOOSE_BRIDGE:_PointForGroupName(name)", 1)[1]
+    point_lookup = point_lookup.split("function MOOSE_BRIDGE:_PointForUnitName(name)", 1)[0]
+
+    assert point_lookup.index('self:_SafeCall(group, "GetDCSObject")') < point_lookup.index(
+        "self:_PointFromMooseObject(group)"
+    )
+    assert 'if self:_SafeCall(group, "IsAlive") ~= true then return nil end' in point_lookup
 
 
 def test_bridge_exposes_bounded_native_dcs_road_routing() -> None:
@@ -183,7 +237,7 @@ def test_dcs_event_extension_uses_moose_dispatcher() -> None:
 
 
 def test_flightgroup_route_command_reads_me_and_current_without_changing_route() -> None:
-    source = (REPO_ROOT / "lua" / "MooseBridgeDcsEventsExtension.lua").read_text(encoding="utf-8")
+    source = (REPO_ROOT / "lua" / "MooseBridgeNavigationExtension.lua").read_text(encoding="utf-8")
     route_code = source.split("function MOOSE_BRIDGE:_GetFlightGroupRoute(params)", 1)[1]
     route_code = route_code.split("--- Find cached enter data", 1)[0]
     assert "waypoints = opsgroup.waypoints0" in route_code
@@ -197,6 +251,18 @@ def test_flightgroup_route_command_reads_me_and_current_without_changing_route()
     assert "_player_route_register_default_commands(self)" in route_code
     assert "UpdateRoute" not in route_code
     assert "AddWaypoint" not in route_code
+
+
+def test_navigation_and_speech_are_separate_default_extensions() -> None:
+    navigation = (REPO_ROOT / "lua" / "MooseBridgeNavigationExtension.lua").read_text(encoding="utf-8")
+    speech = (REPO_ROOT / "lua" / "MooseBridgeSpeechExtension.lua").read_text(encoding="utf-8")
+
+    assert "MOOSE_BRIDGE._NavigationExtensionLoaded" in navigation
+    assert "MOOSE_BRIDGE._SpeechExtensionLoaded" in speech
+    assert 'self:RegisterCommand("player.menu.navigation.status"' in navigation
+    assert 'self:RegisterCommand("speech.enqueue"' not in navigation
+    assert 'self:RegisterCommand("speech.enqueue"' in speech
+    assert "local _speech_bridge_tick = MOOSE_BRIDGE._Tick" in speech
 
 
 def test_player_enter_waits_for_flightgroup_and_preserves_lifecycle_order() -> None:

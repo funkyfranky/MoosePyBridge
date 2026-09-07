@@ -8,6 +8,7 @@ from moosebridge import (
     AssetRequirement,
     AssetRole,
     BilateralConflictCoordinator,
+    BilateralConflictRun,
     BilateralStrategicRecommendation,
     MissionIntent,
     ObjectiveKind,
@@ -19,6 +20,7 @@ from moosebridge import (
     PlanPhase,
     RelationshipState,
     StrategicAttemptStatus,
+    StrategicCoalitionCycle,
     StrategicCoordinatorConfig,
     StrategicCycleStatus,
     StrategicDecision,
@@ -30,6 +32,8 @@ from moosebridge import (
     StrategicGoalAction,
     StrategicGoalStatus,
     StrategicObjective,
+    format_bilateral_conflict_run,
+    format_strategic_coalition_cycle,
 )
 from moosebridge.clock import DcsTime
 
@@ -322,3 +326,77 @@ def test_bilateral_workers_execute_coalitions_concurrently() -> None:
         assert result.coalition("red")[0].status is StrategicCycleStatus.COMPLETED
 
     asyncio.run(scenario())
+
+
+def test_mission_bound_run_stops_both_workers_without_following_next_generation() -> None:
+    async def scenario() -> None:
+        blue = _decision("blue", "Blue target")
+        red = _decision("red", "Red target")
+        recommendation, activations = _recommendation(blue, red)
+        client = _Client(recommendation, activations)
+        readiness = _Readiness(client)
+        started: set[str] = set()
+        both_started = asyncio.Event()
+
+        async def probe(coalition: str) -> None:
+            started.add(coalition)
+            if started == {"blue", "red"}:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1.0)
+
+        async def advance_generation(cycle) -> None:
+            if cycle.status is StrategicCycleStatus.COMPLETED:
+                client.state.mission_generation = 1
+
+        client.execute_probe = probe
+        coordinator = BilateralConflictCoordinator(
+            client,
+            lambda: asyncio.sleep(0, result=readiness),
+            StrategicCoordinatorConfig(
+                blue_cadence_s=1.0,
+                red_cadence_s=1.0,
+                poll_interval_s=0.01,
+                retain_audit=False,
+            ),
+        )
+
+        result = await asyncio.wait_for(
+            coordinator.run_until_mission_end(on_cycle=advance_generation),
+            timeout=1.0,
+        )
+
+        assert result.requested_cycles_per_coalition is None
+        assert started == {"blue", "red"}
+        assert result.coalition("blue")[-1].status is StrategicCycleStatus.MISSION_CHANGED
+        assert result.coalition("red")[-1].status is StrategicCycleStatus.MISSION_CHANGED
+        assert all(cycle.mission_generation == 0 for cycle in result.cycles)
+
+    asyncio.run(scenario())
+
+
+def test_coordinator_formatters_distinguish_bounded_and_mission_runs() -> None:
+    pair = _decision("blue", "Formatting target")
+    recommendation, _ = _recommendation(pair)
+    cycle = StrategicCoalitionCycle(
+        coalition="blue",
+        cycle_number=2,
+        mission_generation=4,
+        started_mission_time=125.0,
+        completed_mission_time=130.0,
+        status=StrategicCycleStatus.NO_SELECTION,
+        recommendation=recommendation,
+        reason="all candidates are cooling down",
+    )
+    result = BilateralConflictRun(
+        mission_generation=4,
+        requested_cycles_per_coalition=None,
+        cycles=(cycle,),
+    )
+
+    cycle_text = format_strategic_coalition_cycle(cycle)
+    run_text = format_bilateral_conflict_run(result)
+
+    assert "decisions=1/0/0 (selected/deferred/rejected)" in cycle_text
+    assert "reason=all candidates are cooling down" in cycle_text
+    assert "requested_cycles=until_mission_end" in run_text
+    assert "no_selection=1" in run_text

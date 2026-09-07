@@ -313,6 +313,11 @@ active cooldown IDs are passed back into recommendation so the next eligible
 candidate can be selected. A blocked or failed execution explicitly terminalizes
 its still-active strategic Goal before the cooldown is applied. Every completed
 cycle may be retained as a `strategic_conflict_cycle` audit record.
+`run(cycles_per_coalition=...)` is the bounded acceptance interface.
+`run_until_mission_end()` follows exactly the generation captured when the
+coordinator was constructed and returns after both workers observe a mission
+boundary. It never starts work in the next generation; callers must construct a
+new coordinator explicitly.
 
 `approve_operational_plan(plan, approved_by=..., reason=...)` records explicit
 operator attribution in the plan snapshot. A control-backed SDK uses its

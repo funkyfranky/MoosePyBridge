@@ -1,7 +1,7 @@
 # Conflict Simulation Milestones
 
 This document defines the shortest path from the current MoosePyBridge
-foundation to a persistent conflict in which both coalitions select, attack,
+foundation to a mission-length conflict in which both coalitions select, attack,
 capture, and defend strategic objectives. The deterministic rule engine comes
 first. An LLM may later choose among the same validated proposals, but it must
 not gain a separate execution path.
@@ -22,7 +22,7 @@ milestones:
 - diplomacy, doctrine, strategic goal portfolios, and approval policy
 - COMMANDER submission, AUFTRAG lifecycle monitoring, strategic assessment,
   audit, and explicit replanning
-- one bounded rule-based conflict-controller cycle for one coalition
+- one recurring bilateral rule-based conflict coordinator
 
 ## Milestone 1: Conflict-ready scenario contract
 
@@ -98,8 +98,9 @@ Acceptance test:
 - Start in `war` or declare war explicitly.
 - Run one blue and one red cycle in recommendation mode.
 - Each coalition selects at least one feasible goal when a valid candidate and
-  suitable assets exist; friendly, neutral-protected, out-of-scope, unknown,
-  and infeasible targets are rejected with explicit reasons.
+  suitable assets exist. Friendly, neutral-protected, out-of-scope, and unknown
+  targets are rejected; valid plans that lack current assets are deferred with
+  explicit shortfalls so a later cycle can reconsider them.
 - Repeating the cycle does not create duplicate goals.
 
 Implementation entry points:
@@ -215,7 +216,7 @@ This milestone is the first playable automated-war release.
 **Outcome:** Capturing or damaging an objective changes later behavior instead
 of ending at the first successful AUFTRAG.
 
-**Status:** Core behavior is implemented, but live acceptance has been reopened.
+**Status:** Completed and accepted against the live Caucasus mission.
 The first bounded acceptance test used `PATROLZONE` to let red claim neutral
 `OPSZONE:Town Gali`, then blue took the opposing zone with `CAPTUREZONE` using
 two combat groups. Completion was confirmed from the changed OPSZONE owner
@@ -227,10 +228,16 @@ zero combat power. `Executing` was therefore an insufficient security
 postcondition. Execution now restricts MOOSE recruitment to the exact
 Python-qualified COHORT pool and requires an assigned, alive ground guard
 inside the zone whose own MOOSE threat level is positive before consolidation
-completes. A logistics vehicle cannot satisfy this condition.
-The live acceptance script must be rerun before this milestone is closed.
-Both coalition
-readiness reports exposed an available RECON-capable COHORT, so the prior
+completes. A logistics vehicle cannot satisfy this condition. The live rerun
+passed with an assigned combat-capable blue guard, positive in-zone threat, and
+a coherent red recapture selection. A later live run with dynamic force sizing
+reached the same captured and guarded state, then found that red had only six
+ground assets for an eight-unit counterattack after its initial occupation force
+was lost. This is a valid recapture intent but not a currently executable plan;
+the decision is therefore deferred with the concrete shortfall rather than
+rejected as a policy-invalid target. The final live rerun passed with this
+resource-deferred response (`8` ground units required, `6` available).
+Both coalition readiness reports exposed an available RECON-capable COHORT, so the prior
 lost-contact reacquisition shortfall no longer blocked the reaction. The
 inverse blue-to-red capture sequence has also passed live. Neutral OPSZONEs are
 claimed by `PATROLZONE` or `ONGUARD`; `CAPTUREZONE` is reserved for taking an
@@ -239,6 +246,17 @@ transition hold while persistent security is established. Verified SCENERY
 damage was separately accepted live: destroying strategic bridge and port
 components updated objective health, aggregate strategic loss reports, and
 subsequent strategic state.
+
+The production CAPTURE planner now applies that ownership distinction itself.
+For neutral objectives its persistent claim patrol is the guard; for opposing
+objectives it separates the bounded `CAPTUREZONE` assault from persistent
+security. Ground packages are sized from objective value, existing friendly
+combat strength, and fresh or degraded coalition-private ground INTEL. The
+same sizing model reinforces DEFEND plans only by their calculated shortfall,
+with a hard eight-unit planning cap. The live acceptance script exercises the
+production neutral-claim path before the opposing recapture decision. It
+accepts either an immediately selected feasible response or a resource-deferred
+response whose plan and shortfall remain available for later reconsideration.
 
 Required work:
 
@@ -257,20 +275,24 @@ Acceptance test:
 
 - One coalition captures a defended OPSZONE and establishes a combat-capable
   guard rather than leaving only a supply vehicle.
-- The opponent subsequently creates a recapture or attack goal.
+- The opponent subsequently selects a feasible recapture or attack goal, or
+  records a deferred recapture decision with a concrete current asset shortfall.
 - Destroying a verified bridge or infrastructure component updates objective
   health, its aggregate strategic loss report, and future goal selection.
 
 Implementation entry points:
 
-- The rule-based CAPTURE planner always follows seizure with a required,
-  persistent combat `PATROLZONE`; optional air defense and logistics remain
-  independently feasible support tasks.
+- The rule-based CAPTURE planner claims neutral OPSZONEs with a persistent
+  combat `PATROLZONE`. It reserves `CAPTUREZONE` for opposing ownership and
+  follows that assault with a separately sized persistent security patrol.
+- CAPTURE and DEFEND ground requirements use auditable, bounded force sizing
+  from objective value, friendly combat presence, and coalition-private enemy
+  INTEL; zero-threat logistics presence does not satisfy combat security.
 - Plan execution confirms CAPTURE from refreshed OPSZONE ownership and leaves
   the established patrol in `running` state instead of waiting for it to end.
 - `examples/sdk/test_capture_reaction.py` is the bounded live acceptance script
-  for capture, ownership confirmation, persistent security, and opponent
-  recapture selection.
+  for capture, ownership confirmation, persistent security, and the opponent's
+  immediate or resource-deferred recapture decision.
 - `tests/test_operational.py` covers the complete deterministic transition from
   capture through guard establishment to changed opponent goal derivation.
 
@@ -278,6 +300,19 @@ Implementation entry points:
 
 **Outcome:** The conflict loop survives normal runtime failures and can run for
 an entire DCS mission without accumulating contradictory state.
+
+**Status:** In progress. The coordinator now has one canonical mission-bound
+runner, configurable manual or automatic war declaration, compact cycle/run
+status, and an explicit stop at the current mission-generation boundary. The
+older single-coalition controller path has been removed.
+
+Live mission-bound acceptance has passed once on Caucasus. Both coalition
+workers stopped at the same mission boundary while active AUFTRAGs were being
+monitored, neither worker followed the next generation, and daemon generation
+`2 -> 3` reset every mission-scoped snapshot category to zero. The run also
+revealed and fixed duplicate application of `mission.ended` in SDK state
+mirrors; execution audit snapshots now retain the generation and audit session
+in which their attempt began.
 
 Required work:
 
@@ -295,7 +330,9 @@ Acceptance test:
 
 - Run a 60-minute two-sided conflict soak test with at least one map-server or
   SDK-client restart.
-- End and restart the DCS mission twice.
+- End the DCS mission and verify that the mission-bound runner terminates. Start
+  a fresh runner for each of two restarted missions; no process automatically
+  follows a new mission generation.
 - No stale goal, reservation, loss, diplomacy incident, or execution attempt
   leaks into the new mission generation.
 

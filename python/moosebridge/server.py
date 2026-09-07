@@ -105,6 +105,8 @@ class MooseBridgeServer:
         self._sequence = 0
         self._pending: dict[str, PendingCommand] = {}
         self._event_history: list[dict[str, Any]] = []
+        self._seen_event_ids: set[str] = set()
+        self._seen_event_order: list[str] = []
         self._event_waiters: list[tuple[str, dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
         self._message_listeners: list[Callable[[dict[str, Any]], None]] = []
         self._raw_log_file = None
@@ -212,11 +214,15 @@ class MooseBridgeServer:
 
         if self._writer is not None:
             LOGGER.warning("Replacing previous DCS connection")
-            self._fail_pending(DcsBridgeConnectionError("DCS bridge connection was replaced"))
             self._writer.close()
 
         self._writer = writer
         self.state.connected = True
+
+        try:
+            await self._resend_pending_commands(writer)
+        except (ConnectionError, OSError):
+            LOGGER.debug("Could not resend pending commands to %s", peer, exc_info=True)
 
         try:
             while True:
@@ -230,7 +236,6 @@ class MooseBridgeServer:
             if self._writer is writer:
                 LOGGER.warning("DCS disconnected from %s", peer)
                 self._writer = None
-                self._fail_pending(DcsBridgeConnectionError("DCS bridge connection disconnected"))
                 self.state.connected = False
             else:
                 LOGGER.info("Superseded DCS connection closed from %s", peer)
@@ -254,6 +259,9 @@ class MooseBridgeServer:
             return
 
         LOGGER.debug("DCS -> Python: %s", message)
+        if self._is_duplicate_event(message):
+            LOGGER.debug("Ignoring replayed DCS event %s", message.get("id"))
+            return
         self._detect_mission_clock_reset(message)
         self.state.apply_message(message)
         for listener in tuple(self._message_listeners):
@@ -269,6 +277,24 @@ class MooseBridgeServer:
             self._resolve_ack(message)
         elif message.get("type") == "event":
             self._publish_event(message)
+
+    def _is_duplicate_event(self, message: dict[str, Any]) -> bool:
+        """Remember event IDs and reject replayed reliable events."""
+
+        if message.get("type") != "event":
+            return False
+        message_id = str(message.get("id") or "")
+        if not message_id:
+            return False
+        if message_id in self._seen_event_ids:
+            return True
+        self._seen_event_ids.add(message_id)
+        self._seen_event_order.append(message_id)
+        if len(self._seen_event_order) > 20_000:
+            for removed_id in self._seen_event_order[:2_000]:
+                self._seen_event_ids.discard(removed_id)
+            del self._seen_event_order[:2_000]
+        return False
 
     def _detect_mission_clock_reset(self, message: dict[str, Any]) -> None:
         """Turn a DCS mission-clock rollback into the normal mission-end boundary."""
@@ -422,6 +448,27 @@ class MooseBridgeServer:
         if not pending.future.done():
             pending.future.set_result(message)
 
+    async def _write_command(self, writer: asyncio.StreamWriter, command: BridgeCommand) -> None:
+        """Write one command without changing its stable command ID."""
+
+        self._sequence += 1
+        data = command.to_dict(sequence=self._sequence)
+        line = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+        LOGGER.debug("Python -> DCS: %s", data)
+        self._write_raw("python", line)
+        writer.write((line + "\n").encode("utf-8"))
+        await writer.drain()
+
+    async def _resend_pending_commands(self, writer: asyncio.StreamWriter) -> None:
+        """Replay unresolved commands after a DCS bridge reconnect."""
+
+        pending = tuple(self._pending.values())
+        if pending:
+            LOGGER.info("Resending %d unresolved command(s) after DCS reconnect", len(pending))
+        for item in pending:
+            if not item.future.done():
+                await self._write_command(writer, item.command)
+
     async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
         """Send a command to DCS and wait for its ACK.
 
@@ -436,22 +483,19 @@ class MooseBridgeServer:
         if writer is None:
             raise DcsBridgeConnectionError("No DCS bridge connection is active")
 
-        self._sequence += 1
-        data = command.to_dict(sequence=self._sequence)
-        line = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
-
         loop = asyncio.get_running_loop()
         future: asyncio.Future[dict[str, Any]] = loop.create_future()
         self._pending[command.id] = PendingCommand(command=command, future=future)
 
-        LOGGER.debug("Python -> DCS: %s", data)
-        self._write_raw("python", line)
         try:
-            writer.write((line + "\n").encode("utf-8"))
-            await writer.drain()
-        except (ConnectionError, OSError) as exc:
-            self._pending.pop(command.id, None)
-            raise DcsBridgeConnectionError("DCS bridge connection lost while sending command") from exc
+            await self._write_command(writer, command)
+        except (ConnectionError, OSError):
+            LOGGER.debug(
+                "DCS connection was lost while sending %s; retaining command %s for reconnect",
+                command.action,
+                command.id,
+                exc_info=True,
+            )
 
         try:
             return await asyncio.wait_for(future, timeout=timeout)

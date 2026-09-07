@@ -89,8 +89,9 @@ Implemented baseline:
 - controlled recommendation activation and execution boundaries that reject
   stale mission, diplomacy, objective, plan, and resource state before any
   AUFTRAG is submitted through the coalition COMMANDER
-- a bounded bilateral conflict coordinator with independent coalition cadence,
-  concurrent execution, terminal-result cooldowns, and per-cycle audit records
+- a bilateral conflict coordinator with independent coalition cadence,
+  concurrent execution, terminal-result cooldowns, bounded acceptance runs,
+  and a mission-bound run mode that stops at mission end
 
 Before starting either coalition's strategic controller, run the editable live
 preflight:
@@ -144,6 +145,18 @@ coalition's cadence, terminal-result cooldowns, concurrency, and mission
 timeout. All mission work still crosses the controlled activation boundary and
 is executed through `MissionExecutionService` and the coalition COMMANDER.
 
+For an actual mission-length conflict run, use:
+
+```powershell
+python examples/sdk/run_mission_conflict.py
+```
+
+`WAR_START_MODE = "manual"` requires an operator to declare war first;
+`"automatic"` lets the runner declare it when needed. This process controls
+exactly one DCS mission generation. Mission end stops both coalition workers,
+discards their scheduling and cooldown state, and does not follow a restarted
+mission. Start the script again for the next mission.
+
 ## Architecture
 
 The DCS-facing bridge accepts one authoritative Lua connection from the mission.
@@ -168,6 +181,14 @@ High-level layers:
 - **Agent/operator tools**: consume the same state and command surfaces in
   observe, recommend, approval, or autonomous modes
 
+Commands keep their stable ID while an unresolved call is replayed after a
+short disconnect. Lua caches the corresponding ACK, so a replay returns the
+original result without repeating the DCS/MOOSE side effect. Terminal AUFTRAG,
+destruction, ownership and mission-boundary events are retained in a bounded
+Lua journal and replayed after reconnect; the daemon deduplicates their stable
+event IDs. Ordinary heartbeats, telemetry and unsolicited snapshots remain
+lossy and bounded so a disconnected daemon cannot stall the DCS main thread.
+
 ## Load order in DCS
 
 Load the files in this order:
@@ -179,6 +200,8 @@ Load the files in this order:
 5. optional extension files, for example:
    - `lua/MooseBridgeSocketTuningExtension.lua`
    - `lua/MooseBridgeDcsEventsExtension.lua`
+   - `lua/MooseBridgeNavigationExtension.lua`
+   - `lua/MooseBridgeSpeechExtension.lua`
    - `lua/MooseBridgePayloadExtension.lua`
    - `lua/MooseBridgeAuftragExecutionExtension.lua`
    - `lua/MooseBridgeAuftragTraceExtension.lua`
@@ -344,21 +367,13 @@ selection, where it ranks otherwise permissible goals without overriding
 diplomacy. Repeated generation keeps an existing planned or active goal rather
 than creating a duplicate.
 
-For a running mission, the parameterless preview example loads the generated
-GermanyCW infrastructure datasets, resolves the TERRITORY-defined conflict
-area, registers admitted objectives, derives coalition goals, creates
-rule-based operational plan candidates, and performs capacity-aware portfolio
-selection without executing a mission:
+For a running mission, the parameterless preview example loads the selected
+theater datasets, resolves the TERRITORY-defined conflict area, and lists the
+admitted strategic objectives without creating Goals, Plans, or AUFTRAGs:
 
 ```powershell
 & "C:\Program Files\Python313\python.exe" examples/sdk/generate_strategic_objectives.py
 ```
-
-`MANAGE_RELATIONSHIP = False` is the safe default: current diplomacy is used
-unchanged, so offensive goals are rejected during peace. Set it to `True` only
-when the preview is deliberately allowed to invoke the controller's configured
-war declaration. `MAX_CONCURRENT_GOALS` limits the selected portfolio; omitted
-candidates remain visible as deferred or rejected decisions.
 
 Automatic objective generation always retains mission-controlled airbases,
 FARPs, and OPSZONEs. Geographic data is grouped by effective scope
@@ -498,13 +513,12 @@ bridge.declare_war("blue", reason="Recover occupied territory")
 await bridge.persist_diplomacy_state()
 ```
 
-`examples/sdk/run_blue_conflict_controller.py` demonstrates one deliberately
-bounded autonomous cycle. It restores or declares war, uses blue INTEL, derives
-CAPTURE/DEFEND/DESTROY candidates from registered objectives,
-admits at most one capacity-feasible plan, approves it, and executes it through
-the blue COMMANDER. Red DCS forces can serve as targets for this first scenario;
-red LEGIONs and COHORTs are required only when red should plan and execute its
-own MOOSE missions.
+`examples/sdk/recommend_bilateral_strategy.py`,
+`activate_bilateral_strategy.py`, and `execute_bilateral_strategy.py` expose the
+read-only recommendation, mission-state activation, and COMMANDER execution
+boundaries separately. `run_bilateral_conflict.py` combines them for a bounded
+acceptance run; `run_mission_conflict.py` is the canonical mission-length
+controller for both coalitions.
 
 Set `bridge.relationship.automatic_transitions = False` when a scenario should
 require explicit approval through `approve_relationship_transition()`.
@@ -628,13 +642,32 @@ requirements in the same phase, but can be reused in a later phase. The result
 is a provisional feasibility assessment, not a reservation in MOOSE.
 
 Ground assault and defense requirements distinguish minimum groups from minimum
-unit capacity. With the default requirement of at least one group and two
-combat units, two one-unit assets are requested while one homogeneous group of
+unit capacity. The rule-based planner starts with one group and two combat
+units, adds one unit per 40 strategic-value points up to a two-unit bonus, and
+then raises the package when coalition-visible ground INTEL indicates stronger
+opposition. Assaults seek a 1.5:1 advantage plus one unit; defense seeks a
+1:1 advantage plus one unit. Existing friendly combat strength inside the
+OPSZONE is subtracted, packages are capped at eight requested units, and
+zero-threat presence such as an ammunition truck contributes no combat
+strength. Opponent pressure comes only from the coalition's current private
+INTEL picture, never from globally visible enemy OPSZONE counters.
+
+Two one-unit assets satisfy a two-unit request while one homogeneous group of
 four units is sufficient. Because the coalition `COMMANDER` chooses cohorts by
 default, unconstrained plans use the smallest known group strength among all
 currently available eligible cohorts. Explicit cohort restrictions allow the
 planner to use that cohort's exact homogeneous group size. The resolved group
 count is sent to MOOSE through `AUFTRAG:SetRequiredAssets()`.
+
+A CAPTURE goal uses different execution semantics according to current
+authoritative OPSZONE ownership. A neutral zone is claimed directly by a
+persistent `PATROLZONE`; this mission both changes ownership and remains as its
+combat guard. An enemy-owned zone is seized with `CAPTUREZONE`, whose assault
+force stays for a ten-minute transition, then a separately sized persistent
+`PATROLZONE` establishes security. A DEFEND plan requests only the missing
+combat strength and does not stack another ground patrol when the existing
+positive-threat force already satisfies the requirement. Optional air defense
+and ammunition supply remain independent support tasks.
 
 ```python
 assessment = await bridge.refresh_and_validate_operational_plan(plan)
@@ -1373,8 +1406,8 @@ validation of this new action is pending.
 
 ### Player radio-menu test
 
-Start the normal daemon, restart the DCS mission with the updated
-`MooseBridgeDcsEventsExtension.lua`, then run
+Start the normal daemon, restart the DCS mission with the updated bridge Lua
+modules, then run
 `examples/sdk/monitor_player_menu.py` with **Run Python File** in VS Code.
 The script enables a test menu for already occupied aircraft groups and for
 later player entries. No flight, FLIGHTGROUP creation, or route is required.

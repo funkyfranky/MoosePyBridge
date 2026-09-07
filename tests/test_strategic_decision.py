@@ -93,7 +93,7 @@ def _war() -> CoalitionRelationship:
     return relationship
 
 
-def _zone(name: str) -> OpsZone:
+def _zone(name: str, *, owner: str = "red") -> OpsZone:
     return OpsZone.from_payload(
         {
             "object_id": f"OPSZONE:{name}",
@@ -101,7 +101,7 @@ def _zone(name: str) -> OpsZone:
             "x": 100_000,
             "z": 200_000,
             "zone_radius": 5_000,
-            "owner_current_name": "red",
+            "owner_current_name": owner,
             "threat_red": 99,
             "n_red": 99,
         }
@@ -133,7 +133,7 @@ def _apply_blue_capture_force(bridge: MooseBridgeClient, *, available: int = 2) 
                         "stock_asset_count": available,
                         "available_asset_count": available,
                         "homogeneous": True,
-                        "units_per_asset": 2,
+                        "units_per_asset": 4,
                         "mission_types": ["CAPTUREZONE", "PATROLZONE", "ONGUARD"],
                         "mission_performance": {
                             "CAPTUREZONE": 85,
@@ -170,6 +170,63 @@ def test_candidate_matrix_applies_ownership_target_and_relationship_gates() -> N
     assert decisions[("OBJECTIVE:Neutral depot", None)].rejection_code is StrategicDecisionReasonCode.NEUTRAL_PROTECTED
     assert decisions[("OBJECTIVE:Enemy airbase", StrategicGoalAction.CAPTURE)].rejection_code is StrategicDecisionReasonCode.ACTION_NOT_SUPPORTED
     assert decisions[("OBJECTIVE:Enemy airbase", StrategicGoalAction.DISABLE)].rejection_code is None
+
+
+def test_neutral_opszone_recommendation_uses_patrol_claim_plan() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    _apply_blue_capture_force(bridge)
+    bridge.relationship = _war()
+    objective = _objective("Neutral zone", ObjectiveKind.OPSZONE, None, value=60)
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        clock=DcsTime(mission_time=100),
+        opszones=[_zone("Neutral zone", owner="neutral")],
+    )
+
+    portfolio = bridge.recommend_strategic_portfolio(
+        "blue",
+        picture,
+        objectives=(objective,),
+    )
+
+    assert len(portfolio.selected) == 1
+    decision = portfolio.selected[0]
+    assert decision.action is StrategicGoalAction.CAPTURE
+    assert decision.plan is not None
+    assert decision.plan.metadata["capture_mode"] == "neutral_claim"
+    claim = decision.plan.phases[0].intents[0]
+    assert claim.auftrag_types == ("PATROLZONE",)
+    assert claim.metadata["persistent"] is True
+
+
+def test_temporarily_infeasible_plan_is_deferred_for_reconsideration() -> None:
+    bridge = MooseBridgeClient(MooseBridgeServer())
+    _apply_blue_capture_force(bridge, available=0)
+    bridge.relationship = _war()
+    objective = _objective("Deferred enemy zone", ObjectiveKind.OPSZONE, "red", value=80)
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        clock=DcsTime(mission_time=100),
+        opszones=[_zone("Deferred enemy zone")],
+    )
+
+    portfolio = bridge.recommend_strategic_portfolio(
+        "blue",
+        picture,
+        objectives=(objective,),
+    )
+
+    assert not portfolio.selected
+    assert not portfolio.rejected
+    assert len(portfolio.deferred) == 1
+    decision = portfolio.deferred[0]
+    assert decision.action is StrategicGoalAction.CAPTURE
+    assert decision.reason_code is StrategicDecisionReasonCode.PLAN_INFEASIBLE
+    assert decision.plan is not None
+    assert decision.assessment is not None
+    assert decision.assessment.feasible is False
 
 
 def test_offensive_candidate_is_rejected_during_peace() -> None:

@@ -199,6 +199,50 @@ def test_control_backed_sdk_clears_local_registries_after_mission_generation_cha
     asyncio.run(scenario())
 
 
+def test_control_event_wait_applies_mission_boundary_once_and_forwards_original_event() -> None:
+    async def scenario() -> None:
+        daemon = MooseBridgeServer()
+        server = MooseBridgeControlServer(daemon, host="127.0.0.1", port=0)
+        await server.start()
+        control = MooseBridgeControlClient("127.0.0.1", _control_port(server))
+        bridge = sdk_from_control_client(control)
+        observed: list[dict[str, Any]] = []
+        bridge.server.add_message_listener(observed.append)
+        event = {
+            "type": "event",
+            "source": "dcs",
+            "id": "event-control-mission-ended",
+            "event": "mission.ended",
+            "payload": {"reason": "dcs_mission_end"},
+        }
+        try:
+            waiter = asyncio.create_task(
+                bridge.server.wait_for_event(
+                    "auftrag.*",
+                    filters={"auftrag_id": "AUFTRAG:1"},
+                    timeout=1.0,
+                )
+            )
+            for _ in range(100):
+                if daemon._event_waiters:
+                    break
+                await asyncio.sleep(0.01)
+            assert daemon._event_waiters
+            await daemon._handle_line(json.dumps(event))
+            returned = await waiter
+            control.state.apply_message(returned)
+            bridge._on_bridge_message(returned)
+
+            assert returned == event
+            assert control.state.mission_generation == 1
+            assert observed == [event]
+        finally:
+            bridge.close()
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
 def test_control_audit_records_survive_daemon_restart(tmp_path) -> None:
     async def scenario() -> None:
         path = tmp_path / "daemon-audit.jsonl"

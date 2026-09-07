@@ -94,6 +94,7 @@ class MooseBridgeState:
     auftrag_outcomes: dict[str, AuftragOutcome] = field(default_factory=dict)
     auftrag_outcome_history: dict[str, list[AuftragOutcome]] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
+    applied_event_ids: set[str] = field(default_factory=set, repr=False)
 
     def reset_mission(self) -> None:
         """Clear all state owned by the completed DCS mission."""
@@ -140,10 +141,22 @@ class MooseBridgeState:
             return
 
         if message_type == "event":
+            message_id = str(message.get("id") or "")
+            if message_id and message_id in self.applied_event_ids:
+                return
             self.events.append(message)
-            if len(self.events) > 10_000:
-                del self.events[:1_000]
             self._apply_event(message)
+            if message_id:
+                # Add after event handling so mission reset retains the boundary
+                # id and a second waiter cannot advance the generation again.
+                self.applied_event_ids.add(message_id)
+            if len(self.events) > 10_000:
+                removed = self.events[:1_000]
+                del self.events[:1_000]
+                for event in removed:
+                    removed_id = str(event.get("id") or "")
+                    if removed_id:
+                        self.applied_event_ids.discard(removed_id)
             return
 
         if message_type == "snapshot":

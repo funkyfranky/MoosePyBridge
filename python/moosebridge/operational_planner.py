@@ -30,6 +30,7 @@ from .strategic import (
     StrategicGoalEffect,
     StrategicGoalStatus,
     StrategicObjective,
+    normalize_coalition,
 )
 
 
@@ -44,6 +45,13 @@ class RuleBasedPlannerConfig:
     capture_stay_in_zone_s: float = 600.0
     ground_defense_groups: int = 1
     ground_defense_units: int = 2
+    maximum_ground_groups: int = 8
+    maximum_ground_units: int = 8
+    strategic_value_unit_step: float = 40.0
+    strategic_value_bonus_units: int = 2
+    threat_points_per_unit: float = 2.0
+    assault_superiority_ratio: float = 1.5
+    defense_superiority_ratio: float = 1.0
     contact_fresh_for_s: float = 120.0
     contact_stale_after_s: float = 600.0
     lost_contact_recon_window_s: float = 900.0
@@ -66,6 +74,20 @@ class RuleBasedPlannerConfig:
             raise ValueError("ground defense groups must be at least one")
         if self.ground_defense_units < self.ground_defense_groups:
             raise ValueError("ground defense units must be at least the minimum group count")
+        if self.maximum_ground_groups < max(self.ground_assault_groups, self.ground_defense_groups):
+            raise ValueError("maximum ground groups must cover the configured minimum group counts")
+        if self.maximum_ground_units < max(self.ground_assault_units, self.ground_defense_units):
+            raise ValueError("maximum ground units must cover the configured minimum unit counts")
+        if not math.isfinite(self.strategic_value_unit_step) or self.strategic_value_unit_step <= 0:
+            raise ValueError("strategic value unit step must be finite and positive")
+        if self.strategic_value_bonus_units < 0:
+            raise ValueError("strategic value bonus units must be non-negative")
+        if not math.isfinite(self.threat_points_per_unit) or self.threat_points_per_unit <= 0:
+            raise ValueError("threat points per unit must be finite and positive")
+        if not math.isfinite(self.assault_superiority_ratio) or self.assault_superiority_ratio < 1:
+            raise ValueError("assault superiority ratio must be finite and at least one")
+        if not math.isfinite(self.defense_superiority_ratio) or self.defense_superiority_ratio < 1:
+            raise ValueError("defense superiority ratio must be finite and at least one")
         if not math.isfinite(self.contact_fresh_for_s) or self.contact_fresh_for_s < 0:
             raise ValueError("contact fresh duration must be finite and non-negative")
         if not math.isfinite(self.contact_stale_after_s) or self.contact_stale_after_s <= self.contact_fresh_for_s:
@@ -77,6 +99,42 @@ class RuleBasedPlannerConfig:
             raise ValueError("lost-contact recon window must be greater than the contact fresh duration")
         if not math.isfinite(self.lost_contact_recon_threat_min) or self.lost_contact_recon_threat_min < 0:
             raise ValueError("lost-contact recon threat threshold must be finite and non-negative")
+
+
+@dataclass(slots=True, frozen=True)
+class _GroundForceSizing:
+    """Auditable conversion from zone pressure to a bounded reinforcement request."""
+
+    purpose: str
+    required_units: int
+    minimum_groups: int
+    maximum_groups: int
+    desired_total_units: int
+    friendly_strength: int
+    opposing_strength: int
+    friendly_presence: int
+    opposing_presence: int
+    friendly_threat: float
+    opposing_threat: float
+    strategic_value: float
+    strategic_bonus_units: int
+
+    def to_metadata(self) -> dict[str, object]:
+        return {
+            "purpose": self.purpose,
+            "required_units": self.required_units,
+            "minimum_groups": self.minimum_groups,
+            "maximum_groups": self.maximum_groups,
+            "desired_total_units": self.desired_total_units,
+            "friendly_strength": self.friendly_strength,
+            "opposing_strength": self.opposing_strength,
+            "friendly_presence": self.friendly_presence,
+            "opposing_presence": self.opposing_presence,
+            "friendly_threat": self.friendly_threat,
+            "opposing_threat": self.opposing_threat,
+            "strategic_value": self.strategic_value,
+            "strategic_bonus_units": self.strategic_bonus_units,
+        }
 
 
 class RuleBasedOperationalPlanner:
@@ -102,6 +160,29 @@ class RuleBasedOperationalPlanner:
         zone = next((item for item in picture.opszones if item.object_id == objective.control_object_id), None)
         if zone is None:
             raise ValueError(f"tactical picture does not contain target OPSZONE: {objective.control_object_id}")
+        zone_owner = normalize_coalition(zone.owner_current_name) or objective.owner or "neutral"
+        neutral_claim = zone_owner == "neutral"
+        opposing_presence, opposing_threat = self._visible_ground_pressure(zone, picture)
+        assault_sizing = self._ground_force_sizing(
+            objective,
+            zone,
+            goal.coalition,
+            purpose="claim" if neutral_claim else "assault",
+            opposing_presence=opposing_presence,
+            opposing_threat=opposing_threat,
+        )
+        security_sizing = (
+            None
+            if neutral_claim
+            else self._ground_force_sizing(
+                objective,
+                zone,
+                goal.coalition,
+                purpose="defense",
+                opposing_presence=opposing_presence,
+                opposing_threat=opposing_threat,
+            )
+        )
 
         defender = self._select_defender(zone, picture)
         lost_recon_contact = self._select_lost_recon_contact(zone, picture)
@@ -195,96 +276,76 @@ class RuleBasedOperationalPlanner:
             )
             previous_phase = "isolate"
 
+        seizure_phase_id = "claim" if neutral_claim else "seize"
+        seizure_mission_type = "PATROLZONE" if neutral_claim else "CAPTUREZONE"
+        seizure_intent_id = "claim-zone" if neutral_claim else "capture-zone"
+        seizure_requirement_id = "REQ:Ground claim" if neutral_claim else "REQ:Ground assault"
+        seizure_metadata: dict[str, object] = {}
+        if neutral_claim:
+            seizure_metadata.update(
+                {
+                    "persistent": True,
+                    "established_on": "Executing",
+                    "establishment_condition": "assigned_ground_combat_presence_in_zone",
+                }
+            )
+        else:
+            seizure_metadata["auftrag_params"] = {
+                "stay_in_zone_time_s": self.config.capture_stay_in_zone_s,
+            }
         phases.append(
             PlanPhase(
-                phase_id="seize",
-                name="Seize the objective",
+                phase_id=seizure_phase_id,
+                name="Claim the neutral objective" if neutral_claim else "Seize the objective",
                 depends_on=(previous_phase,) if previous_phase else (),
                 intents=(
                     MissionIntent(
-                        intent_id="capture-zone",
-                        name="Capture the OPSZONE",
-                        auftrag_types=("CAPTUREZONE",),
+                        intent_id=seizure_intent_id,
+                        name="Claim and patrol the neutral OPSZONE" if neutral_claim else "Capture the OPSZONE",
+                        auftrag_types=(seizure_mission_type,),
                         target_object_id=objective.control_object_id,
-                        metadata={
-                            "auftrag_params": {
-                                "stay_in_zone_time_s": self.config.capture_stay_in_zone_s,
-                            }
-                        },
+                        metadata=seizure_metadata,
                         asset_requirements=(
-                            AssetRequirement(
-                                requirement_id="REQ:Ground assault",
-                                role=AssetRole.COMBAT,
-                                min_count=self.config.ground_assault_groups,
-                                max_count=max(self.config.ground_assault_groups, self.config.ground_assault_units),
-                                min_unit_count=self.config.ground_assault_units,
-                                mission_types=("CAPTUREZONE",),
-                                performer_categories=("GROUND",),
+                            self._ground_requirement(
+                                seizure_requirement_id,
+                                seizure_mission_type,
+                                assault_sizing,
                             ),
                         ),
                     ),
                 ),
             )
         )
+
+        consolidation_intents: list[MissionIntent] = []
+        if security_sizing is not None and security_sizing.required_units > 0:
+            consolidation_intents.append(
+                MissionIntent(
+                    intent_id="secure-zone",
+                    name="Secure and patrol the captured OPSZONE",
+                    auftrag_types=("PATROLZONE",),
+                    target_object_id=objective.control_object_id,
+                    asset_requirements=(
+                        self._ground_requirement(
+                            "REQ:Ground security",
+                            "PATROLZONE",
+                            security_sizing,
+                        ),
+                    ),
+                    metadata={
+                        "persistent": True,
+                        "established_on": "Executing",
+                        "establishment_condition": "assigned_ground_combat_presence_in_zone",
+                    },
+                )
+            )
+        consolidation_intents.extend(self._support_intents(objective.control_object_id, defending=False))
         phases.append(
             PlanPhase(
                 phase_id="consolidate",
                 name="Consolidate control",
-                depends_on=("seize",),
-                intents=(
-                    MissionIntent(
-                        intent_id="secure-zone",
-                        name="Secure and patrol the captured OPSZONE",
-                        auftrag_types=("PATROLZONE",),
-                        target_object_id=objective.control_object_id,
-                        asset_requirements=(
-                            AssetRequirement(
-                                requirement_id="REQ:Ground security",
-                                role=AssetRole.COMBAT,
-                                min_count=self.config.ground_defense_groups,
-                                max_count=max(self.config.ground_defense_groups, self.config.ground_defense_units),
-                                min_unit_count=self.config.ground_defense_units,
-                                mission_types=("PATROLZONE",),
-                                performer_categories=("GROUND",),
-                            ),
-                        ),
-                        metadata={
-                            "persistent": True,
-                            "established_on": "Executing",
-                            "establishment_condition": "assigned_ground_combat_presence_in_zone",
-                        },
-                    ),
-                    MissionIntent(
-                        intent_id="establish-air-defense",
-                        name="Establish local air defense",
-                        auftrag_types=("AIRDEFENSE",),
-                        target_object_id=objective.control_object_id,
-                        required=False,
-                        asset_requirements=(
-                            AssetRequirement(
-                                requirement_id="REQ:Air defense",
-                                role=AssetRole.AIR_DEFENSE,
-                                mission_types=("AIRDEFENSE",),
-                                performer_categories=("GROUND",),
-                            ),
-                        ),
-                    ),
-                    MissionIntent(
-                        intent_id="sustain-force",
-                        name="Supply the occupying force",
-                        auftrag_types=("AMMOSUPPLY",),
-                        target_object_id=objective.control_object_id,
-                        required=False,
-                        asset_requirements=(
-                            AssetRequirement(
-                                requirement_id="REQ:Logistics",
-                                role=AssetRole.LOGISTICS,
-                                mission_types=("AMMOSUPPLY",),
-                                performer_categories=("GROUND",),
-                            ),
-                        ),
-                    ),
-                ),
+                depends_on=(seizure_phase_id,),
+                intents=tuple(consolidation_intents),
             )
         )
 
@@ -322,18 +383,198 @@ class RuleBasedOperationalPlanner:
                 source_id=self.config.source_id,
                 picture_mission_time=picture.clock.mission_time if picture.clock else None,
                 rationale=(
-                    f"Conservative capture sequence for {objective.objective_id}. {defender_text} "
-                    "Ground seizure and a persistent ground patrol are required; air defense and ammunition "
-                    "supply are optional consolidation tasks."
+                    f"Conservative {'neutral claim' if neutral_claim else 'opposed capture'} sequence for "
+                    f"{objective.objective_id}. {defender_text} "
+                    f"The initial ground package requests {assault_sizing.required_units} reinforcing unit(s). "
+                    "A persistent ground patrol is required; air defense and ammunition supply are optional."
                 ),
             ),
             proposal_issues=proposal_issues,
             metadata={
                 "planner": self.config.source_id,
                 "objective_control_id": objective.control_object_id,
+                "capture_mode": "neutral_claim" if neutral_claim else "opposed_capture",
+                "ground_force_sizing": {
+                    "seizure": assault_sizing.to_metadata(),
+                    "security": security_sizing.to_metadata() if security_sizing is not None else None,
+                },
                 "selected_defender_contact_id": defender.object_id if defender else None,
                 "reconnaissance_requirement": recon_metadata,
             },
+        )
+
+    def _ground_force_sizing(
+        self,
+        objective: StrategicObjective,
+        zone: OpsZone,
+        coalition: str,
+        *,
+        purpose: str,
+        opposing_presence: int,
+        opposing_threat: float,
+    ) -> _GroundForceSizing:
+        """Size a bounded reinforcement from objective value and live zone pressure."""
+
+        if purpose not in {"claim", "assault", "defense"}:
+            raise ValueError(f"unsupported ground force sizing purpose: {purpose}")
+        coalition = normalize_coalition(coalition) or ""
+        if coalition not in {"blue", "red"}:
+            raise ValueError("ground force sizing requires coalition blue or red")
+        friendly_presence = max(0, int(getattr(zone, f"n_{coalition}") or 0))
+        friendly_threat = max(0.0, float(getattr(zone, f"threat_{coalition}") or 0.0))
+        opposing_presence = max(0, int(opposing_presence))
+        opposing_threat = max(0.0, float(opposing_threat))
+        friendly_strength = self._effective_zone_strength(friendly_presence, friendly_threat)
+        opposing_strength = self._effective_zone_strength(opposing_presence, opposing_threat)
+
+        strategic_value = min(100.0, max(0.0, objective.strategic_value, objective.priority))
+        strategic_bonus = min(
+            self.config.strategic_value_bonus_units,
+            int(strategic_value // self.config.strategic_value_unit_step),
+        )
+        base_groups = (
+            self.config.ground_defense_groups
+            if purpose == "defense"
+            else self.config.ground_assault_groups
+        )
+        base_units = (
+            self.config.ground_defense_units
+            if purpose == "defense"
+            else self.config.ground_assault_units
+        )
+        superiority = (
+            self.config.defense_superiority_ratio
+            if purpose == "defense"
+            else self.config.assault_superiority_ratio
+        )
+        pressure_units = (
+            math.ceil(opposing_strength * superiority) + 1
+            if opposing_strength > 0
+            else 0
+        )
+        desired_total = min(
+            self.config.maximum_ground_units,
+            max(base_units + strategic_bonus, pressure_units),
+        )
+        required_units = max(0, desired_total - friendly_strength)
+        if purpose in {"claim", "assault"}:
+            required_units = max(1, required_units)
+        required_units = min(self.config.maximum_ground_units, required_units)
+        minimum_groups = min(base_groups, required_units) if required_units else 0
+        maximum_groups = (
+            min(self.config.maximum_ground_groups, max(minimum_groups, required_units))
+            if required_units
+            else 0
+        )
+        return _GroundForceSizing(
+            purpose=purpose,
+            required_units=required_units,
+            minimum_groups=minimum_groups,
+            maximum_groups=maximum_groups,
+            desired_total_units=desired_total,
+            friendly_strength=friendly_strength,
+            opposing_strength=opposing_strength,
+            friendly_presence=friendly_presence,
+            opposing_presence=opposing_presence,
+            friendly_threat=friendly_threat,
+            opposing_threat=opposing_threat,
+            strategic_value=strategic_value,
+            strategic_bonus_units=strategic_bonus,
+        )
+
+    def _visible_ground_pressure(
+        self,
+        zone: OpsZone,
+        picture: TacticalPicture,
+    ) -> tuple[int, float]:
+        """Return unique visible ground contacts and confidence-weighted threat near a zone."""
+
+        if zone.x is None or zone.z is None:
+            return 0, 0.0
+        radius = max(0.0, zone.zone_radius or 0.0) + self.config.isolation_distance_from_zone_m
+        mission_time = picture.clock.mission_time if picture.clock else None
+        threats: dict[str, float] = {}
+        for contact in picture.contacts:
+            target_id = contact.target_object_id or ""
+            if not contact.is_ground or not target_id.startswith(("GROUP:", "UNIT:")):
+                continue
+            if contact.x is None or contact.z is None:
+                continue
+            if math.hypot(contact.x - zone.x, contact.z - zone.z) > radius:
+                continue
+            assessment = assess_intel_contact(
+                contact,
+                mission_time,
+                fresh_for_s=self.config.contact_fresh_for_s,
+                stale_after_s=self.config.contact_stale_after_s,
+            )
+            if assessment.state is ContactInformationState.STALE:
+                continue
+            threats[target_id] = max(
+                threats.get(target_id, 0.0),
+                max(0.0, float(contact.threat_level or 0.0)) * assessment.confidence,
+            )
+        return len(threats), sum(threats.values())
+
+    def _effective_zone_strength(self, presence: int, threat: float) -> int:
+        """Translate combat-capable MOOSE presence into conservative unit equivalents."""
+
+        if threat <= 0:
+            return 0
+        return max(presence, math.ceil(threat / self.config.threat_points_per_unit))
+
+    @staticmethod
+    def _ground_requirement(
+        requirement_id: str,
+        mission_type: str,
+        sizing: _GroundForceSizing,
+    ) -> AssetRequirement:
+        if sizing.required_units <= 0:
+            raise ValueError(f"{requirement_id} does not require reinforcements")
+        return AssetRequirement(
+            requirement_id=requirement_id,
+            role=AssetRole.COMBAT,
+            min_count=sizing.minimum_groups,
+            max_count=sizing.maximum_groups,
+            min_unit_count=sizing.required_units,
+            mission_types=(mission_type,),
+            performer_categories=("GROUND",),
+            metadata={"force_sizing": sizing.to_metadata()},
+        )
+
+    @staticmethod
+    def _support_intents(control_object_id: str, *, defending: bool) -> tuple[MissionIntent, ...]:
+        return (
+            MissionIntent(
+                intent_id="establish-air-defense",
+                name="Establish local air defense",
+                auftrag_types=("AIRDEFENSE",),
+                target_object_id=control_object_id,
+                required=False,
+                asset_requirements=(
+                    AssetRequirement(
+                        requirement_id="REQ:Air defense",
+                        role=AssetRole.AIR_DEFENSE,
+                        mission_types=("AIRDEFENSE",),
+                        performer_categories=("GROUND", "NAVAL") if defending else ("GROUND",),
+                    ),
+                ),
+            ),
+            MissionIntent(
+                intent_id="sustain-defenders" if defending else "sustain-force",
+                name="Supply the defending force" if defending else "Supply the occupying force",
+                auftrag_types=("AMMOSUPPLY",),
+                target_object_id=control_object_id,
+                required=False,
+                asset_requirements=(
+                    AssetRequirement(
+                        requirement_id="REQ:Logistics",
+                        role=AssetRole.LOGISTICS,
+                        mission_types=("AMMOSUPPLY",),
+                        performer_categories=("GROUND",),
+                    ),
+                ),
+            ),
         )
 
     def propose_defend(
@@ -365,6 +606,15 @@ class RuleBasedOperationalPlanner:
                 "This is not evidence that the objective is not threatened."
             ),
         )
+        opposing_presence, opposing_threat = self._visible_ground_pressure(zone, picture)
+        defense_sizing = self._ground_force_sizing(
+            objective,
+            zone,
+            goal.coalition,
+            purpose="defense",
+            opposing_presence=opposing_presence,
+            opposing_threat=opposing_threat,
+        )
         intents: list[MissionIntent] = []
         if attacker is not None:
             assert attacker.target_object_id is not None
@@ -391,57 +641,23 @@ class RuleBasedOperationalPlanner:
                     metadata={"intel_contact_id": attacker.object_id, **resolution.to_metadata()},
                 )
             )
-        intents.extend(
-            (
+        if defense_sizing.required_units > 0:
+            intents.append(
                 MissionIntent(
                     intent_id="hold-zone",
                     name="Hold the defended OPSZONE",
                     auftrag_types=("PATROLZONE",),
                     target_object_id=objective.control_object_id,
                     asset_requirements=(
-                        AssetRequirement(
-                            requirement_id="REQ:Ground defense",
-                            role=AssetRole.COMBAT,
-                            min_count=self.config.ground_defense_groups,
-                            max_count=max(self.config.ground_defense_groups, self.config.ground_defense_units),
-                            min_unit_count=self.config.ground_defense_units,
-                            mission_types=("PATROLZONE",),
-                            performer_categories=("GROUND",),
+                        self._ground_requirement(
+                            "REQ:Ground defense",
+                            "PATROLZONE",
+                            defense_sizing,
                         ),
                     ),
-                ),
-                MissionIntent(
-                    intent_id="establish-air-defense",
-                    name="Establish local air defense",
-                    auftrag_types=("AIRDEFENSE",),
-                    target_object_id=objective.control_object_id,
-                    required=False,
-                    asset_requirements=(
-                        AssetRequirement(
-                            requirement_id="REQ:Air defense",
-                            role=AssetRole.AIR_DEFENSE,
-                            mission_types=("AIRDEFENSE",),
-                            performer_categories=("GROUND", "NAVAL"),
-                        ),
-                    ),
-                ),
-                MissionIntent(
-                    intent_id="sustain-defenders",
-                    name="Supply the defending force",
-                    auftrag_types=("AMMOSUPPLY",),
-                    target_object_id=objective.control_object_id,
-                    required=False,
-                    asset_requirements=(
-                        AssetRequirement(
-                            requirement_id="REQ:Logistics",
-                            role=AssetRole.LOGISTICS,
-                            mission_types=("AMMOSUPPLY",),
-                            performer_categories=("GROUND",),
-                        ),
-                    ),
-                ),
+                )
             )
-        )
+        intents.extend(self._support_intents(objective.control_object_id, defending=True))
 
         attacker_text = (
             f"Visible attacker {attacker.target_object_id} selected for interdiction."
@@ -462,7 +678,8 @@ class RuleBasedOperationalPlanner:
                 picture_mission_time=picture.clock.mission_time if picture.clock else None,
                 rationale=(
                     f"Conservative defense of {objective.objective_id} until mission time "
-                    f"{goal.deadline_mission_time}. {attacker_text} Ground defense is required; "
+                    f"{goal.deadline_mission_time}. {attacker_text} The current force picture requests "
+                    f"{defense_sizing.required_units} reinforcing ground unit(s); "
                     "air defense and ammunition supply are optional support tasks."
                 ),
             ),
@@ -471,6 +688,7 @@ class RuleBasedOperationalPlanner:
                 "planner": self.config.source_id,
                 "objective_control_id": objective.control_object_id,
                 "defense_deadline_mission_time": goal.deadline_mission_time,
+                "ground_force_sizing": defense_sizing.to_metadata(),
                 "selected_attacker_contact_id": attacker.object_id if attacker else None,
             },
         )

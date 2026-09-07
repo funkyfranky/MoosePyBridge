@@ -42,6 +42,7 @@ default control endpoint `127.0.0.1:42001`.
 | `activate_bilateral_strategy.py` | DCS runtime state | Revalidate and atomically activate one selected decision per coalition as a Goal and validated Plan without creating AUFTRAGs. |
 | `execute_bilateral_strategy.py` | DCS runtime state | Activate one bounded decision per coalition, then approve and execute both plans concurrently through their MOOSE COMMANDERs. |
 | `run_bilateral_conflict.py` | Mission-changing | Run a finite recurring blue/red conflict with independent cadence, concurrent COMMANDER execution, cooldowns, and cycle audit. |
+| `run_mission_conflict.py` | Mission-changing | Run both strategic coalition workers until the current DCS mission ends, with manual or automatic war declaration. |
 | `monitor_global_picture.py` | Read-only | Print and validate the complete global picture periodically. |
 | `run_auftrag_lifecycle.py` | Mission-changing | Run the representative bounded ONGUARD lifecycle used by the release test. |
 | `test_mission_reset.py` | Mission-changing | Verify mission-end/restart generations and mission-scoped state cleanup. |
@@ -81,8 +82,7 @@ configuration and is not intended to be run directly.
 | `plan_destroy_goal.py` | Mission-changing | Execute DESTROY strike rounds until weighted damage is sufficient. |
 | `attack_strategic_objective.py` | Destructive | Plan and optionally execute a verified SCENERY infrastructure attack. |
 | `plan_deny_runway_goal.py` | Mission-changing | Plan and execute runway denial. |
-| `run_blue_conflict_controller.py` | Mission-changing | Run one bounded rule-based strategic decision cycle. |
-| `generate_strategic_objectives.py` | Offline/build and read-only DCS | Generate scoped objectives from territories and normalized infrastructure. |
+| `generate_strategic_objectives.py` | Read-only DCS | Generate and inspect scoped objectives from territories and normalized infrastructure. |
 
 ## Diplomacy And Events
 
@@ -91,7 +91,7 @@ configuration and is not intended to be run directly.
 | `declare_war.py` | Mission-changing | Explicitly transition the coalition relationship to war. |
 | `test_border_violation.py` | Mission-changing | Validate tolerance timing, deduplication, and incursion escalation. |
 | `test_opszone_relationship.py` | Mission-changing | Validate future OPSZONE capture events and diplomacy scoring. |
-| `test_capture_reaction.py` | Mission-changing | Capture one configured OPSZONE, confirm its persistent combat patrol, and validate the opponent's selected recapture reaction. |
+| `test_capture_reaction.py` | Mission-changing | Capture one configured OPSZONE, confirm its persistent combat patrol, and validate that the opponent selects a feasible recapture or defers it with a concrete asset shortfall. |
 
 ## Topography And Routing
 

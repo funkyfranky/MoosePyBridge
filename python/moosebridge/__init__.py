@@ -561,12 +561,6 @@ from .strategic_goals import (
     evaluate_strategic_objective,
     generate_strategic_goals,
 )
-from .conflict_controller import (
-    ConflictControllerConfig,
-    ConflictControllerCycle,
-    ConflictControllerIssue,
-    RuleBasedConflictController,
-)
 from .strategic_coordinator import (
     STRATEGIC_COORDINATOR_AUDIT_TYPE,
     BilateralConflictCoordinator,
@@ -580,6 +574,7 @@ from .strategic_coordinator import (
     StrategicCoordinatorConfig,
     StrategicCycleStatus,
     format_bilateral_conflict_run,
+    format_strategic_coalition_cycle,
     strategic_coordinator_cycle_to_dict,
 )
 from .strategic import (
@@ -743,9 +738,6 @@ __all__ = [
     "CoalitionRelationship",
     "CoalitionConflictReadiness",
     "ConflictCapability",
-    "ConflictControllerConfig",
-    "ConflictControllerCycle",
-    "ConflictControllerIssue",
     "ConflictReadinessError",
     "ConflictReadinessIssue",
     "ConflictReadinessReport",
@@ -894,7 +886,6 @@ __all__ = [
     "RestoredOperationalPlan",
     "RuleBasedOperationalPlanner",
     "RuleBasedPlannerConfig",
-    "RuleBasedConflictController",
     "SensorDetectionType",
     "SensorPlatformCategory",
     "SensorRangeProfile",
@@ -985,6 +976,7 @@ __all__ = [
     "evaluate_strategic_objective",
     "generate_strategic_goals",
     "format_bilateral_conflict_run",
+    "format_strategic_coalition_cycle",
     "strategic_coordinator_cycle_to_dict",
     "StrategicMissionResolver",
     "StrategicTargetDomain",

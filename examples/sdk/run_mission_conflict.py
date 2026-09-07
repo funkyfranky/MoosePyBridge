@@ -1,9 +1,8 @@
-"""Run a bounded recurring strategic conflict for both coalitions."""
+"""Run bilateral strategic conflict until the current DCS mission ends."""
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 
 from example_support import load_example_theater, open_example_session, run_example
 
@@ -12,6 +11,7 @@ from moosebridge import (
     DEFAULT_THEATER_PROFILE_PATH,
     RelationshipState,
     StrategicCoordinatorConfig,
+    StrategicCycleStatus,
     StrategicDecisionConfig,
     StrategicObjectiveGenerationConfig,
     StrategicVerificationRegistry,
@@ -22,6 +22,7 @@ from moosebridge import (
     TheaterTransportInfrastructure,
     format_bilateral_conflict_run,
     format_conflict_readiness,
+    format_relationship,
     format_strategic_coalition_cycle,
 )
 from moosebridge.control import DEFAULT_CONTROL_PORT
@@ -35,7 +36,13 @@ MISSION_TIMEOUT_SECONDS = 3_600.0
 THEATER_PROFILE = DEFAULT_THEATER_PROFILE_PATH.with_name("Caucasus_topography.json")
 BLUE_INTEL_ID = "INTEL:Blue Intel"
 RED_INTEL_ID = "INTEL:Red Intel"
-CYCLES_PER_COALITION = 3
+
+# "manual" requires examples/sdk/declare_war.py (or another operator action)
+# before this script starts. "automatic" declares war when needed.
+WAR_START_MODE = "manual"
+AUTOMATIC_WAR_DECLARING_COALITION = "blue"
+AUTOMATIC_WAR_REASON = "Start mission-bound bilateral conflict control"
+
 BLUE_DECISION_CADENCE_SECONDS = 60.0
 RED_DECISION_CADENCE_SECONDS = 75.0
 COMPLETED_COOLDOWN_SECONDS = 900.0
@@ -47,8 +54,7 @@ MAX_CONCURRENT_GOALS_PER_COALITION = 1
 DEFENSE_DURATION_SECONDS = 1_800.0
 DESTROY_REQUIRED_DAMAGE = 0.70
 RETAIN_DECISION_AUDIT = True
-REQUIRE_WAR = True
-REQUIRE_AUFTRAG_PER_COALITION = True
+PRINT_EXECUTION_EVENTS = True
 
 
 def _load_context(profile_path) -> TheaterContext:
@@ -65,14 +71,36 @@ def _load_context(profile_path) -> TheaterContext:
     )
 
 
+async def _prepare_relationship(bridge) -> None:
+    mode = WAR_START_MODE.strip().casefold()
+    if mode not in {"manual", "automatic"}:
+        raise ValueError("WAR_START_MODE must be 'manual' or 'automatic'")
+
+    await bridge.refresh_diplomacy_state()
+    if bridge.relationship.state is RelationshipState.WAR:
+        return
+    if mode == "manual":
+        raise ValueError(
+            "relationship must be war in manual mode; run examples/sdk/declare_war.py"
+        )
+
+    bridge.declare_war(
+        AUTOMATIC_WAR_DECLARING_COALITION,
+        reason=AUTOMATIC_WAR_REASON,
+    )
+    # This snapshot coordinates clients in the current mission generation. It
+    # is not restored into a later DCS mission.
+    await bridge.persist_diplomacy_state()
+
+
 async def run(profile_path=THEATER_PROFILE) -> int:
     context = _load_context(profile_path)
     session = await open_example_session(
         CONTROL_HOST,
         CONTROL_PORT,
         COMMAND_TIMEOUT_SECONDS,
-        client_id="bilateral-conflict-coordinator-example",
-        display_name="Bilateral Conflict Coordinator Example",
+        client_id="mission-conflict-coordinator-example",
+        display_name="Mission Conflict Coordinator Example",
     )
     bridge = session.bridge
     objective_config = StrategicObjectiveGenerationConfig(
@@ -93,12 +121,9 @@ async def run(profile_path=THEATER_PROFILE) -> int:
     readiness = await assess_readiness()
     print(format_conflict_readiness(readiness))
     readiness.require_ready()
-
-    await bridge.refresh_diplomacy_state()
-    if REQUIRE_WAR and bridge.relationship.state is not RelationshipState.WAR:
-        raise ValueError(
-            "relationship must be war; run examples/sdk/declare_war.py or disable REQUIRE_WAR"
-        )
+    await _prepare_relationship(bridge)
+    print()
+    print(format_relationship(bridge.relationship))
 
     coordinator = BilateralConflictCoordinator(
         bridge,
@@ -121,40 +146,32 @@ async def run(profile_path=THEATER_PROFILE) -> int:
     )
 
     def print_event(coalition, event) -> None:
-        print(f"[{coalition}] {event}")
+        if PRINT_EXECUTION_EVENTS:
+            print(f"[{coalition}] {event}")
 
     def print_cycle(cycle) -> None:
         print(format_strategic_coalition_cycle(cycle))
 
     print(
-        "\nRunning bounded bilateral conflict coordination "
-        f"({CYCLES_PER_COALITION} cycles per coalition). Press Ctrl+C to stop."
+        "\nRunning bilateral conflict for the current mission generation. "
+        "The process stops at mission end; press Ctrl+C for an operator stop."
     )
-    result = await coordinator.run(
-        cycles_per_coalition=CYCLES_PER_COALITION,
+    result = await coordinator.run_until_mission_end(
         on_event=print_event,
         on_cycle=print_cycle,
     )
     print()
     print(format_bilateral_conflict_run(result))
 
-    failures: list[str] = []
-    for coalition in ("blue", "red"):
-        cycles = result.coalition(coalition)
-        if len(cycles) != CYCLES_PER_COALITION:
-            failures.append(
-                f"{coalition}: received {len(cycles)}/{CYCLES_PER_COALITION} cycles"
-            )
-        if REQUIRE_AUFTRAG_PER_COALITION and not any(
-            attempt.execution is not None and attempt.execution.missions
-            for cycle in cycles
-            for attempt in cycle.attempts
-        ):
-            failures.append(f"{coalition}: no coordinator execution created an AUFTRAG")
-    if failures:
-        raise RuntimeError("; ".join(failures))
+    stopped = {
+        coalition: bool(result.coalition(coalition))
+        and result.coalition(coalition)[-1].status is StrategicCycleStatus.MISSION_CHANGED
+        for coalition in ("blue", "red")
+    }
+    if not all(stopped.values()):
+        raise RuntimeError(f"mission-bound coordinator stopped unexpectedly: {stopped}")
 
-    print("\nPASS: both coalitions completed the bounded recurring conflict run.")
+    print("\nPASS: mission end stopped both coalition workers without following the next mission.")
     return 0
 
 

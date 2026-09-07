@@ -144,11 +144,12 @@ class StrategicCoalitionCycle:
 
 @dataclass(slots=True, frozen=True)
 class BilateralConflictRun:
-    """Bounded result returned after both independent workers finish."""
+    """Result returned after both independent coalition workers finish."""
 
     mission_generation: int
-    requested_cycles_per_coalition: int
+    requested_cycles_per_coalition: int | None
     cycles: tuple[StrategicCoalitionCycle, ...]
+    cooldowns: tuple[StrategicCandidateCooldown, ...] = ()
 
     def coalition(self, coalition: str) -> tuple[StrategicCoalitionCycle, ...]:
         """Return all cycles for one coalition in execution order."""
@@ -192,10 +193,48 @@ class BilateralConflictCoordinator:
 
         if cycles_per_coalition < 1:
             raise ValueError("cycles_per_coalition must be at least one")
+        return await self._run(
+            cycles_per_coalition=cycles_per_coalition,
+            on_event=on_event,
+            on_cycle=on_cycle,
+        )
+
+    async def run_until_mission_end(
+        self,
+        *,
+        on_event: CoordinatorEventCallback | None = None,
+        on_cycle: CoordinatorCycleCallback | None = None,
+    ) -> BilateralConflictRun:
+        """Run both workers until the current DCS mission generation changes.
+
+        This method never follows the next mission. The caller must construct a
+        fresh coordinator for every new mission generation.
+        """
+
+        watcher = await self._start_mission_boundary_watcher()
+        try:
+            return await self._run(
+                cycles_per_coalition=None,
+                on_event=on_event,
+                on_cycle=on_cycle,
+            )
+        finally:
+            if watcher is not None:
+                watcher.cancel()
+                await asyncio.gather(watcher, return_exceptions=True)
+
+    async def _run(
+        self,
+        *,
+        cycles_per_coalition: int | None,
+        on_event: CoordinatorEventCallback | None,
+        on_cycle: CoordinatorCycleCallback | None,
+    ) -> BilateralConflictRun:
+        """Run bounded or mission-bound coalition workers."""
 
         async def worker(coalition: str) -> tuple[StrategicCoalitionCycle, ...]:
             cycles: list[StrategicCoalitionCycle] = []
-            while len(cycles) < cycles_per_coalition:
+            while cycles_per_coalition is None or len(cycles) < cycles_per_coalition:
                 cycle = await self.run_cycle(coalition, on_event=on_event)
                 if cycle is None:
                     await asyncio.sleep(self.config.poll_interval_s)
@@ -215,6 +254,7 @@ class BilateralConflictCoordinator:
             mission_generation=self.mission_generation,
             requested_cycles_per_coalition=cycles_per_coalition,
             cycles=cycles,
+            cooldowns=self.cooldowns,
         )
 
     async def run_cycle(
@@ -451,6 +491,22 @@ class BilateralConflictCoordinator:
         clock = self.client.state.clock
         return clock.mission_time if clock is not None else None
 
+    async def _start_mission_boundary_watcher(self) -> asyncio.Task[object] | None:
+        """Start a passive event wait so control-backed state sees mission end promptly."""
+
+        cursor_method = getattr(self.client.server, "event_cursor", None)
+        wait_method = getattr(self.client.server, "wait_for_event", None)
+        if not callable(cursor_method) or not callable(wait_method):
+            return None
+        cursor = await cursor_method()
+        return asyncio.create_task(
+            wait_method(
+                "mission.ended",
+                timeout=31_536_000.0,
+                after_id=cursor,
+            )
+        )
+
 
 def strategic_coordinator_cycle_to_dict(cycle: StrategicCoalitionCycle) -> dict[str, object]:
     """Return the compact persistent audit payload for one coordinator cycle."""
@@ -483,31 +539,54 @@ def strategic_coordinator_cycle_to_dict(cycle: StrategicCoalitionCycle) -> dict[
 
 
 def format_bilateral_conflict_run(result: BilateralConflictRun) -> str:
-    """Format a bounded coordinator result for examples and operators."""
+    """Format a completed coordinator run for examples and operators."""
 
+    requested = (
+        str(result.requested_cycles_per_coalition)
+        if result.requested_cycles_per_coalition is not None
+        else "until_mission_end"
+    )
     lines = [
         (
             f"Bilateral conflict run generation={result.mission_generation} "
-            f"requested_cycles={result.requested_cycles_per_coalition}"
+            f"requested_cycles={requested} cooldowns={len(result.cooldowns)}"
         )
     ]
-    for cycle in result.cycles:
+    for coalition in ("blue", "red"):
+        cycles = result.coalition(coalition)
+        status_counts = ", ".join(
+            f"{status.value}={sum(cycle.status is status for cycle in cycles)}"
+            for status in StrategicCycleStatus
+            if any(cycle.status is status for cycle in cycles)
+        ) or "none"
         lines.append(
-            f"  {cycle.coalition} cycle={cycle.cycle_number} status={cycle.status.value} "
-            f"mission_time={_time_text(cycle.started_mission_time)} attempts={len(cycle.attempts)}"
+            f"  {coalition}: cycles={len(cycles)} attempts="
+            f"{sum(len(cycle.attempts) for cycle in cycles)} statuses=[{status_counts}]"
         )
-        if cycle.reason:
-            lines.append(f"    reason={cycle.reason}")
-        for attempt in cycle.attempts:
-            cooldown = (
-                f" cooldown_until={_time_text(attempt.cooldown.available_mission_time)}"
-                if attempt.cooldown is not None
-                else ""
-            )
-            lines.append(
-                f"    {attempt.decision.candidate_id} status={attempt.status.value}{cooldown}"
-            )
+        if cycles and cycles[-1].reason:
+            lines.append(f"    latest_reason={cycles[-1].reason}")
     return "\n".join(lines)
+
+
+def format_strategic_coalition_cycle(cycle: StrategicCoalitionCycle) -> str:
+    """Format one concise live coordinator-cycle status line."""
+
+    try:
+        portfolio = cycle.recommendation.coalition(cycle.coalition)
+    except ValueError:
+        selected = deferred = rejected = 0
+    else:
+        selected = len(portfolio.selected)
+        deferred = len(portfolio.deferred)
+        rejected = len(portfolio.rejected)
+    attempts = ",".join(attempt.status.value for attempt in cycle.attempts) or "none"
+    text = (
+        f"[{cycle.coalition}] cycle={cycle.cycle_number} status={cycle.status.value} "
+        f"mission_time={_time_text(cycle.started_mission_time)} "
+        f"decisions={selected}/{deferred}/{rejected} "
+        f"(selected/deferred/rejected) attempts={attempts}"
+    )
+    return f"{text} reason={cycle.reason}" if cycle.reason else text
 
 
 def _cycle_status(attempts: tuple[StrategicCoordinatorAttempt, ...]) -> StrategicCycleStatus:
@@ -560,5 +639,6 @@ __all__ = [
     "StrategicCoordinatorConfig",
     "StrategicCycleStatus",
     "format_bilateral_conflict_run",
+    "format_strategic_coalition_cycle",
     "strategic_coordinator_cycle_to_dict",
 ]

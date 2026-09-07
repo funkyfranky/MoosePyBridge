@@ -1501,9 +1501,12 @@ class MooseBridgeClient:
                         objective_name=spec.objective.name,
                         action=spec.action,
                         effect=spec.effect,
-                        disposition=StrategicDecisionDisposition.REJECTED,
+                        disposition=StrategicDecisionDisposition.DEFERRED,
                         reason_code=StrategicDecisionReasonCode.PLAN_INFEASIBLE,
-                        reason="operational plan is infeasible with current coalition assets",
+                        reason=(
+                            "operational plan is currently infeasible with available coalition assets; "
+                            "reconsider after the force state changes"
+                        ),
                         objective=spec.objective,
                         score=score,
                         goal=goal,
@@ -3004,7 +3007,8 @@ class MooseBridgeClient:
                 self._strategic_feedback_message_ids.clear()
                 self._strategic_feedback_message_ids.add(message_id)
         if message_type == "event" and event_name == "mission.ended":
-            self.reset_mission(reset_state=False)
+            if feedback_message_is_new:
+                self.reset_mission(reset_state=False)
             return
         if message_type == "event" and event_name == "object.destroyed" and feedback_message_is_new:
             self._record_strategic_scenery_loss(DestroyedObjectEvent.from_message(message))

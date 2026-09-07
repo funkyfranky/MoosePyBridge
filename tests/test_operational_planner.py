@@ -45,7 +45,14 @@ def _capture_context() -> tuple[MooseBridgeClient, StrategicGoal, StrategicObjec
     return bridge, goal, objective
 
 
-def _zone() -> OpsZone:
+def _zone(
+    *,
+    owner: str = "red",
+    n_red: int | None = None,
+    n_blue: int | None = None,
+    threat_red: int | None = None,
+    threat_blue: int | None = None,
+) -> OpsZone:
     return OpsZone.from_payload(
         {
             "object_id": "OPSZONE:Town",
@@ -53,7 +60,11 @@ def _zone() -> OpsZone:
             "x": 100_000,
             "z": 200_000,
             "zone_radius": 5_000,
-            "owner_current_name": "red",
+            "owner_current_name": owner,
+            "n_red": n_red,
+            "n_blue": n_blue,
+            "threat_red": threat_red,
+            "threat_blue": threat_blue,
         }
     )
 
@@ -121,8 +132,8 @@ def test_rule_based_capture_proposal_uses_highest_threat_visible_nearby_defender
     assert capture.metadata["auftrag_params"]["stay_in_zone_time_s"] == 600.0
     assault = capture.asset_requirements[0]
     assert assault.min_count == 1
-    assert assault.max_count == 2
-    assert assault.min_unit_count == 2
+    assert assault.max_count == 8
+    assert assault.min_unit_count == 8
     consolidate = plan.phases[2]
     assert [intent.intent_id for intent in consolidate.intents] == [
         "secure-zone",
@@ -134,8 +145,8 @@ def test_rule_based_capture_proposal_uses_highest_threat_visible_nearby_defender
     assert security.auftrag_types == ("PATROLZONE",)
     assert security.target_object_id == "OPSZONE:Town"
     assert security.asset_requirements[0].min_count == 1
-    assert security.asset_requirements[0].max_count == 2
-    assert security.asset_requirements[0].min_unit_count == 2
+    assert security.asset_requirements[0].max_count == 6
+    assert security.asset_requirements[0].min_unit_count == 6
     assert security.metadata == {
         "persistent": True,
         "established_on": "Executing",
@@ -168,6 +179,75 @@ def test_rule_based_capture_proposal_omits_isolation_without_visible_defender() 
     assert "no isolation strike" in (plan.provenance.rationale or "").lower()  # type: ignore[union-attr]
     assert [issue.code for issue in plan.proposal_issues] == ["intel_no_visible_defenders"]
     assert "not evidence" in plan.proposal_issues[0].message
+
+
+def test_rule_based_capture_claims_neutral_zone_with_persistent_patrol() -> None:
+    bridge, goal, objective = _capture_context()
+    objective.owner = "neutral"
+    objective.strategic_value = 80.0
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        intel=_intel(),
+        clock=DcsTime(mission_time=321.5),
+        opszones=[_zone(owner="neutral")],
+    )
+
+    plan = bridge.propose_capture_plan(goal, picture)
+
+    assert [phase.phase_id for phase in plan.phases] == ["claim", "consolidate"]
+    claim = plan.phases[0].intents[0]
+    assert claim.intent_id == "claim-zone"
+    assert claim.auftrag_types == ("PATROLZONE",)
+    assert claim.metadata == {
+        "persistent": True,
+        "established_on": "Executing",
+        "establishment_condition": "assigned_ground_combat_presence_in_zone",
+    }
+    requirement = claim.asset_requirements[0]
+    assert requirement.min_count == 1
+    assert requirement.max_count == 4
+    assert requirement.min_unit_count == 4
+    assert requirement.metadata["force_sizing"]["strategic_bonus_units"] == 2
+    assert all(
+        intent.auftrag_types != ("CAPTUREZONE",)
+        for phase in plan.phases
+        for intent in phase.intents
+    )
+    assert [intent.intent_id for intent in plan.phases[1].intents] == [
+        "establish-air-defense",
+        "sustain-force",
+    ]
+    assert plan.metadata["capture_mode"] == "neutral_claim"
+    assert "neutral claim" in (plan.provenance.rationale or "")  # type: ignore[union-attr]
+
+
+def test_rule_based_capture_scales_assault_and_security_from_zone_pressure() -> None:
+    bridge, goal, objective = _capture_context()
+    objective.strategic_value = 80.0
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        intel=_intel(),
+        clock=DcsTime(mission_time=321.5),
+        opszones=[_zone(n_red=2, n_blue=0, threat_red=6, threat_blue=0)],
+        contacts=[
+            _contact("INTELCONTACT:Defender", "GROUP:Defender", 101_000, 201_000, 6),
+        ],
+    )
+
+    plan = bridge.propose_capture_plan(goal, picture)
+
+    assault = next(phase for phase in plan.phases if phase.phase_id == "seize").intents[0].asset_requirements[0]
+    security = next(phase for phase in plan.phases if phase.phase_id == "consolidate").intents[0].asset_requirements[0]
+    assert assault.mission_types == ("CAPTUREZONE",)
+    assert assault.min_unit_count == 6
+    assert assault.max_count == 6
+    assert security.min_unit_count == 4
+    assert security.max_count == 4
+    sizing = plan.metadata["ground_force_sizing"]
+    assert sizing["seizure"]["opposing_strength"] == 3
+    assert sizing["security"]["opposing_strength"] == 3
 
 
 def test_rule_based_capture_proposal_requests_recon_for_important_lost_contact() -> None:
@@ -317,8 +397,8 @@ def test_rule_based_defend_proposal_holds_zone_and_interdicts_visible_attacker()
     hold = plan.phases[0].intents[1]
     assert hold.auftrag_types == ("PATROLZONE",)
     assert hold.asset_requirements[0].min_count == 1
-    assert hold.asset_requirements[0].max_count == 2
-    assert hold.asset_requirements[0].min_unit_count == 2
+    assert hold.asset_requirements[0].max_count == 6
+    assert hold.asset_requirements[0].min_unit_count == 6
     assert plan.metadata["defense_deadline_mission_time"] == 1_200
     assert plan.proposal_issues == ()
 
@@ -342,6 +422,61 @@ def test_rule_based_defend_proposal_warns_when_no_attacker_is_visible() -> None:
     ]
     assert [issue.code for issue in plan.proposal_issues] == ["intel_no_visible_attackers"]
     assert "not evidence" in plan.proposal_issues[0].message
+
+
+def test_rule_based_defend_does_not_stack_ground_patrol_when_presence_is_sufficient() -> None:
+    bridge, goal, objective = _defend_context()
+    objective.strategic_value = 80.0
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        intel=_intel(),
+        clock=DcsTime(mission_time=600),
+        opszones=[_zone(owner="blue", n_blue=1, threat_blue=8)],
+    )
+
+    plan = bridge.propose_defend_plan(goal, picture)
+
+    assert [intent.intent_id for intent in plan.phases[0].intents] == [
+        "establish-air-defense",
+        "sustain-defenders",
+    ]
+    sizing = plan.metadata["ground_force_sizing"]
+    assert sizing["desired_total_units"] == 4
+    assert sizing["friendly_strength"] == 4
+    assert sizing["required_units"] == 0
+
+
+def test_rule_based_defend_requests_only_the_missing_reinforcement() -> None:
+    bridge, goal, _ = _defend_context()
+    picture = TacticalPicture(
+        coalition="blue",
+        intel_id="INTEL:Blue",
+        intel=_intel(),
+        clock=DcsTime(mission_time=600),
+        opszones=[
+            _zone(
+                owner="blue",
+                n_blue=1,
+                n_red=2,
+                threat_blue=2,
+                threat_red=6,
+            )
+        ],
+        contacts=[
+            _contact("INTELCONTACT:Attacker", "GROUP:Attacker", 101_000, 201_000, 6, detected_time=590),
+        ],
+    )
+
+    plan = bridge.propose_defend_plan(goal, picture)
+
+    hold = plan.phases[0].intents[1]
+    assert hold.intent_id == "hold-zone"
+    requirement = hold.asset_requirements[0]
+    assert requirement.min_unit_count == 3
+    assert requirement.max_count == 3
+    assert requirement.metadata["force_sizing"]["desired_total_units"] == 4
+    assert requirement.metadata["force_sizing"]["friendly_strength"] == 1
 
 
 def test_rule_based_defend_proposal_requires_friendly_control() -> None:

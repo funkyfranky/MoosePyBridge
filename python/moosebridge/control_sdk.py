@@ -34,16 +34,25 @@ class ControlSdkAdapter:
         if listener in self._message_listeners:
             self._message_listeners.remove(listener)
 
-    def _notify_mission_boundary(self) -> None:
+    def _notify_mission_boundary(self, observed_message: dict[str, Any] | None = None) -> None:
         generation = self.client.state.mission_generation
         if generation == self._mission_generation:
             return
         self._mission_generation = generation
-        message = {
-            "type": "event",
-            "event": "mission.ended",
-            "payload": {"reason": "mission_generation_changed", "mission_generation": generation},
-        }
+        message = (
+            observed_message
+            if isinstance(observed_message, dict)
+            and observed_message.get("type") == "event"
+            and observed_message.get("event") == "mission.ended"
+            else {
+                "type": "event",
+                "event": "mission.ended",
+                "payload": {
+                    "reason": "mission_generation_changed",
+                    "mission_generation": generation,
+                },
+            }
+        )
         for listener in tuple(self._message_listeners):
             listener(message)
 
@@ -76,7 +85,7 @@ class ControlSdkAdapter:
         """Wait for one daemon event through the control API."""
 
         result = await self.client.wait_for_event(event_name, filters=filters, timeout=timeout, after_id=after_id)
-        self._notify_mission_boundary()
+        self._notify_mission_boundary(result)
         return result
 
     async def event_cursor(self) -> str | None:

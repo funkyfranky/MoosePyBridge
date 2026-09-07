@@ -126,16 +126,18 @@ Bridge:Start()
 ```
 
 For MOOSE distributions without that integration, load the JSON helper, bridge
-core and required extensions before creating the instance. The general
+core, DCS-events, navigation and speech extensions before creating the instance. The general
 `MooseBridgeMissionExample.lua` is for this separate-loading setup; it is not an
 additional loader to use on top of the integrated development configuration.
-Navigation requires the DCS-events extension. The socket-tuning extension is
+All four runtime modules remain part of the standard bridge; the file split
+only separates their responsibilities. Navigation requires the DCS-events
+extension. The socket-tuning extension is
 recommended for low-impact retries while the daemon is absent.
 
 Edit runtime Lua in this project's `lua` directory first, then synchronize it
 to the configured MOOSE `Moose/Python` directory. Restart the mission to load
 changes. Do not hot-reload bridge extensions into a running mission. Repeated
-loads of the DCS-events extension are ignored, not treated as a live update.
+loads of the runtime extensions are ignored, not treated as a live update.
 
 ## Startup checks and recovery
 

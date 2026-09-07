@@ -31,10 +31,11 @@ Priorities:
   constraints, select a capacity-feasible portfolio, submit approved plans
   through COMMANDER, and reassess on relevant events. Limit concurrency and
   decision frequency so the first scenario remains understandable and
-  auditable rather than becoming a full campaign engine. The first controller
-  supports one coalition, one selected goal per cycle, explicit scenario
-  objectives, automatic war initialization, and CAPTURE/DEFEND/DESTROY through
-  the existing portfolio, approval, COMMANDER execution, and audit paths.
+  auditable rather than becoming a full campaign engine. The canonical
+  bilateral coordinator supports one selected goal per coalition and cycle,
+  explicit scenario objectives, configurable manual or automatic war
+  initialization, and CAPTURE/DEFEND/DESTROY through the existing portfolio,
+  approval, COMMANDER execution, and audit paths.
 - [x] **Apply relationship constraints and doctrine to goal selection.** Block
   offensive goals that are politically invalid in peace or a ceasefire, bound
   limited-conflict goals to their authorized area/effects, and use doctrine
@@ -317,6 +318,12 @@ Priorities:
   currently a hard capacity constraint and unit/group count is deliberately not
   a score component. Revisit combat mass, losses, and remaining unit count only
   with a model that does not reward oversized formations indiscriminately.
+- [ ] **Calibrate dynamic ground package sizing in live conflicts.** The
+  deterministic planner currently combines a two-unit baseline, up to two
+  strategic-value units, private visible enemy threat, existing friendly
+  combat strength, and an eight-unit cap. Validate those conversions and the
+  1.5:1 assault / 1:1 defense ratios against varied COHORT templates and real
+  OPSZONE battles before making them doctrine-specific.
 - [ ] **Make ranking diagnostics reflect the two-stage decision.** Show only
   COHORT alternatives for the selected AUFTRAG type under `cohort_options`, and
   list lower-priority mission types separately as doctrinal fallbacks. Retain

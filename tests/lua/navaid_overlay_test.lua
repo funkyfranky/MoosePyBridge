@@ -3,6 +3,7 @@ MOOSE_BRIDGE_JSON = {}
 unpack = unpack or table.unpack
 dofile(assert(arg[1], "base bridge path required"))
 dofile(assert(arg[2], "event extension path required"))
+dofile(assert(arg[3], "navigation extension path required"))
 env = {mission={theatre="Caucasus"}}
 coalition = {side={BLUE=2, RED=1, NEUTRAL=0}}
 local serial, marks, removed = 100, {}, {}

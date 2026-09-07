@@ -993,6 +993,18 @@ def test_mission_end_wakes_unrelated_event_waiters() -> None:
     asyncio.run(scenario())
 
 
+def test_mission_end_event_is_idempotent_in_state_mirror() -> None:
+    state = MooseBridgeState()
+    event = mission_ended_message()
+
+    state.apply_message(event)
+    state.apply_message(event)
+
+    assert state.mission_generation == 1
+    assert state.mission_ended is True
+    assert event["id"] in state.applied_event_ids
+
+
 def test_mission_clock_rollback_uses_the_mission_end_reset_path() -> None:
     async def scenario() -> None:
         server = MooseBridgeServer()

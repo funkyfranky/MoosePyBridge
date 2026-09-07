@@ -5,6 +5,8 @@
 -- not listening yet.
 dofile(lfs.writedir() .. "Scripts/MooseBridgeSocketTuningExtension.lua")
 dofile(lfs.writedir() .. "Scripts/MooseBridgeDcsEventsExtension.lua")
+dofile(lfs.writedir() .. "Scripts/MooseBridgeNavigationExtension.lua")
+dofile(lfs.writedir() .. "Scripts/MooseBridgeSpeechExtension.lua")
 
 Bridge = MOOSE_BRIDGE:New("127.0.0.1", 42000)
 Bridge:Start()

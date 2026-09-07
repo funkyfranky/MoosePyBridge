@@ -1,5 +1,9 @@
 -- Run with Lua 5.1+; DCS/MOOSE boundaries are deliberately mocked.
-local source = assert(arg[1], "extension path required")
+local sources = {
+  assert(arg[1], "DCS event extension path required"),
+  assert(arg[2], "navigation extension path required"),
+  assert(arg[3], "speech extension path required"),
+}
 local events, messages, logs, scheduled = {}, {}, {}, {}
 local created = 0
 local mission_time = 100
@@ -101,9 +105,9 @@ SCHEDULER = {New=function(_, bridge, callback, args, delay)
   scheduled[#scheduled + 1] = entry
   return entry
 end}
-dofile(source)
+for _, source in ipairs(sources) do dofile(source) end
 local registered = MOOSE_BRIDGE.RegisterDefaultCommands
-dofile(source)
+for _, source in ipairs(sources) do dofile(source) end
 assert(MOOSE_BRIDGE.RegisterDefaultCommands == registered, "duplicate loads must not wrap registration again")
 local bridge = setmetatable({}, {__index=MOOSE_BRIDGE})
 -- Leave the actual lifecycle and menu functions under test intact.

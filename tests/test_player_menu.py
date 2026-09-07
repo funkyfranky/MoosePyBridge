@@ -23,7 +23,9 @@ def test_lua_player_menu_lifecycle() -> None:
         pytest.skip("Set MOOSEBRIDGE_TEST_LUA or install Lua to run the Lua lifecycle harness")
     result = subprocess.run(
         [runtime, str(ROOT / "tests/lua/player_menu_test.lua"),
-         str(ROOT / "lua/MooseBridgeDcsEventsExtension.lua")],
+         str(ROOT / "lua/MooseBridgeDcsEventsExtension.lua"),
+         str(ROOT / "lua/MooseBridgeNavigationExtension.lua"),
+         str(ROOT / "lua/MooseBridgeSpeechExtension.lua")],
         capture_output=True, text=True, timeout=15, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -36,7 +38,8 @@ def test_lua_navaid_overlay_uses_real_drawing_helpers() -> None:
         pytest.skip("Set MOOSEBRIDGE_TEST_LUA or install Lua to run the drawing harness")
     result = subprocess.run(
         [runtime, str(ROOT / "tests/lua/navaid_overlay_test.lua"),
-         str(ROOT / "lua/MooseBridge.lua"), str(ROOT / "lua/MooseBridgeDcsEventsExtension.lua")],
+         str(ROOT / "lua/MooseBridge.lua"), str(ROOT / "lua/MooseBridgeDcsEventsExtension.lua"),
+         str(ROOT / "lua/MooseBridgeNavigationExtension.lua")],
         capture_output=True, text=True, timeout=15, check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
@@ -127,7 +130,10 @@ def test_monitor_prints_click_and_cleans_up_its_own_run(example, monkeypatch, ca
 
 
 def test_lua_menu_hooks_preserve_lifecycle_and_use_moose_classes() -> None:
-    source = (ROOT / "lua/MooseBridgeDcsEventsExtension.lua").read_text(encoding="utf-8")
+    source = "\n".join(
+        (ROOT / "lua" / name).read_text(encoding="utf-8")
+        for name in ("MooseBridgeDcsEventsExtension.lua", "MooseBridgeNavigationExtension.lua")
+    )
     assert 'MENU_GROUP:New(group, "MoosePyBridge Test")' in source
     assert 'MENU_GROUP_COMMAND:New(group, "Show message"' in source
     assert 'MENU_GROUP_COMMAND:New(group, "Python console"' in source

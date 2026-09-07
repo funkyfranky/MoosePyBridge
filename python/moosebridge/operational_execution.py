@@ -178,6 +178,8 @@ class OperationalPlanExecution:
     started_mission_time: float | None = None
     completed_mission_time: float | None = None
     blocked_reason: str | None = None
+    mission_generation: int | None = None
+    audit_session_id: str | None = None
     plan_snapshot: dict[str, Any] = field(default_factory=dict)
     goal_snapshot: dict[str, Any] = field(default_factory=dict)
     objective_snapshot: dict[str, Any] = field(default_factory=dict)
@@ -626,6 +628,8 @@ class OperationalPlanExecutor:
             resumed_from_phase_id=plan.metadata.pop("retry_resume_phase_id", None),
             status=OperationalPlanStatus.EXECUTING,
             started_mission_time=self.client._current_mission_time(),
+            mission_generation=self.client.state.mission_generation,
+            audit_session_id=self.client.state.audit_session_id,
             plan_snapshot=plan_snapshot(plan),
             assessment_snapshot=assessment_snapshot(assessment),
             plan_ref=plan,
@@ -866,8 +870,23 @@ class OperationalPlanExecutor:
                         on_event=self._mission_lifecycle_callback(execution, on_event),
                         stop_on_failure=goal.action is not StrategicGoalAction.DESTROY,
                     )
+                if (
+                    self.client.state.mission_ended
+                    or self.client.state.mission_generation != execution.mission_generation
+                ):
+                    raise DcsMissionEndedError(
+                        "DCS mission ended while executing operational plan"
+                    )
                 if goal.action is StrategicGoalAction.DESTROY:
                     await self._replay_destroyed_events(after_id=destroy_event_cursor)
+            except DcsMissionEndedError as exc:
+                return await self._block(
+                    plan,
+                    phase,
+                    execution,
+                    str(exc),
+                    on_event,
+                )
             except Exception as exc:
                 return await self._block(
                     plan,
@@ -1802,8 +1821,16 @@ class OperationalPlanExecutor:
                         execution.objective_snapshot = objective_snapshot(objective)
 
             payload = execution_to_dict(execution)
-            payload["mission_generation"] = self.client.state.mission_generation
-            payload["audit_session_id"] = self.client.state.audit_session_id
+            payload["mission_generation"] = (
+                execution.mission_generation
+                if execution.mission_generation is not None
+                else self.client.state.mission_generation
+            )
+            payload["audit_session_id"] = (
+                execution.audit_session_id
+                if execution.audit_session_id is not None
+                else self.client.state.audit_session_id
+            )
             await append(PLAN_EXECUTION_AUDIT_TYPE, payload)
         except Exception:
             LOGGER.warning("Could not persist operational execution %s", execution.attempt_id, exc_info=True)

@@ -1254,6 +1254,41 @@ class _IncompleteSceneryDestroyExecutionServer(_SceneryDestroyExecutionServer):
         return result
 
 
+class _MissionEndSceneryDestroyExecutionServer(_ExecutionServer):
+    """End the mission while an exact SCENERY strike is being monitored."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.query_events_called = False
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        self._event_number += 1
+        event = {
+            "type": "event",
+            "source": "dcs",
+            "id": f"event-mission-ended-{self._event_number}",
+            "event": "mission.ended",
+            "payload": {"reason": "dcs_mission_end"},
+        }
+        self.event_history.append(event)
+        return event
+
+    async def query_events(
+        self,
+        event_name: str = "*",
+        filters: dict[str, Any] | None = None,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        self.query_events_called = True
+        return await super().query_events(event_name, filters, after_id)
+
+
 class _ScenerySummaryOnlyExecutionServer(_ExecutionServer):
     """Resolve SCENERY exactly but expose damage only through AUFTRAG summary."""
 
@@ -1365,11 +1400,13 @@ class _CaptureReactionExecutionServer(_ExecutionServer):
         *args: Any,
         guard_threat: int = 4,
         guard_group_threat: int = 4,
+        initial_owner: str = "red",
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.guard_threat = guard_threat
         self.guard_group_threat = guard_group_threat
+        self.initial_owner = initial_owner
 
     async def wait_for_event(
         self,
@@ -1401,7 +1438,7 @@ class _CaptureReactionExecutionServer(_ExecutionServer):
         return event
 
     async def snapshot_opszones(self) -> dict[str, Any]:
-        owner = self.final_owner if self._objective_updated else "red"
+        owner = self.final_owner if self._objective_updated else self.initial_owner
         self.state.apply_message(
             {
                 "type": "snapshot",
@@ -1517,6 +1554,26 @@ class _CaptureReactionExecutionServer(_ExecutionServer):
             }
         )
         return {"ok": True, "result": {"kind": "groups", "count": 1}}
+
+
+class _NeutralClaimExecutionServer(_CaptureReactionExecutionServer):
+    """Claim a neutral OPSZONE when its persistent patrol starts executing."""
+
+    def __init__(self) -> None:
+        super().__init__(initial_owner="neutral", final_owner="blue")
+
+    async def wait_for_event(
+        self,
+        event_name: str,
+        filters: dict[str, Any] | None = None,
+        timeout: float = 600.0,
+        after_id: str | None = None,
+    ) -> dict[str, Any]:
+        auftrag_id = str((filters or {}).get("auftrag_id") or "AUFTRAG:1")
+        mission_number = int(auftrag_id.partition(":")[2])
+        if self._mission_types.get(mission_number) == "PATROLZONE":
+            self._objective_updated = True
+        return await super().wait_for_event(event_name, filters, timeout, after_id)
 
 
 class _CancelBeforeEvaluatedExecutionServer(_ExecutionServer):
@@ -2372,6 +2429,119 @@ def test_capture_establishes_guard_and_changes_opponent_goal_derivation() -> Non
     asyncio.run(scenario())
 
 
+def test_neutral_capture_executes_as_persistent_patrol_claim() -> None:
+    async def scenario() -> None:
+        server = _NeutralClaimExecutionServer()
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        objective = bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Town",
+                name="Town",
+                kind=ObjectiveKind.OPSZONE,
+                control_object_id="OPSZONE:Town",
+                ownership_policy=OwnershipPolicy.MOOSE_MANAGED,
+                owner="neutral",
+                strategic_value=80.0,
+            )
+        )
+        goal = bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Claim Town",
+                name="Claim Town",
+                coalition="blue",
+                action=StrategicGoalAction.CAPTURE,
+                objective_id=objective.objective_id,
+            )
+        )
+        for kind, payload in (
+            (
+                "commanders",
+                [{
+                    "object_id": "COMMANDER:Blue Command",
+                    "object_type": "COMMANDER",
+                    "coalition": "blue",
+                    "legion_ids": ["LEGION:Blue Brigade"],
+                }],
+            ),
+            (
+                "legions",
+                [{"object_id": "LEGION:Blue Brigade", "coalition": "blue"}],
+            ),
+            (
+                "cohorts",
+                [{
+                    "object_id": "COHORT:Blue Armor",
+                    "legion_id": "LEGION:Blue Brigade",
+                    "is_ground": True,
+                    "available_asset_count": 4,
+                    "homogeneous": True,
+                    "units_per_asset": 4,
+                    "mission_types": ["PATROLZONE"],
+                }],
+            ),
+        ):
+            bridge.state.apply_message(
+                {"type": "snapshot", "kind": kind, "payload": {kind: payload}}
+            )
+
+        zone = OpsZone.from_payload(
+            {
+                "object_id": "OPSZONE:Town",
+                "object_type": "OPSZONE",
+                "owner_current_name": "neutral",
+                "zone_name": "Town",
+                "zone_radius": 5_000.0,
+                "x": 10_000.0,
+                "z": 20_000.0,
+            }
+        )
+        plan = bridge.add_operational_plan(
+            bridge.propose_capture_plan(
+                goal,
+                TacticalPicture(
+                    coalition="blue",
+                    intel_id="INTEL:Blue",
+                    opszones=(zone,),
+                ),
+                plan_id="PLAN:Claim Town",
+            )
+        )
+        assessment = bridge.validate_operational_plan(plan)
+        assert assessment.feasible
+        bridge.approve_operational_plan(plan)
+
+        execution = await bridge.execute_plan(plan, mission_timeout_s=1)
+
+        assert execution.status is OperationalPlanStatus.COMPLETED
+        assert objective.owner == "blue"
+        assert goal.status is StrategicGoalStatus.ACHIEVED
+        mission_types = [mission.mission_type for mission in execution.missions]
+        assert mission_types.count("PATROLZONE") == 1
+        assert "CAPTUREZONE" not in mission_types
+        patrol = next(
+            mission for mission in execution.missions if mission.mission_type == "PATROLZONE"
+        )
+        assert patrol.persistent is True
+        assert patrol.status is PlanMissionStatus.RUNNING
+        create_commands = [
+            command
+            for command in server.commands
+            if command.action.startswith("auftrag.create_")
+        ]
+        create_actions = [command.action for command in create_commands]
+        assert create_actions.count("auftrag.create_patrolzone") == 1
+        assert "auftrag.create_capturezone" not in create_actions
+        patrol_command = next(
+            command
+            for command in create_commands
+            if command.action == "auftrag.create_patrolzone"
+        )
+        assert patrol_command.params["required_assets_min"] == 1
+        assert patrol_command.params["required_assets_max"] == 1
+
+    asyncio.run(scenario())
+
+
 def test_capture_guard_is_not_established_when_assigned_group_has_no_combat_power() -> None:
     async def scenario() -> None:
         server = _CaptureReactionExecutionServer(
@@ -2651,6 +2821,34 @@ def test_execute_destroy_plan_blocks_when_destruction_history_is_incomplete() ->
             "strategic damage cannot be assessed reliably"
         )
         assert "SCENERY:Bridge" not in bridge.state.destroyed_object_ids
+
+    asyncio.run(scenario())
+
+
+def test_execute_destroy_plan_preserves_original_generation_at_mission_end() -> None:
+    async def scenario() -> None:
+        server = _MissionEndSceneryDestroyExecutionServer()
+        server.state.mission_generation = 4
+        bridge, plan = _executable_scenery_destroy_plan(server)
+
+        execution = await bridge.execute_plan(plan)
+
+        assert execution.status is OperationalPlanStatus.BLOCKED
+        assert execution.blocked_reason == "DCS mission ended while executing operational plan"
+        assert execution.mission_generation == 4
+        assert execution.audit_session_id == "test-session"
+        assert bridge.state.mission_generation == 5
+        assert server.query_events_called is False
+        records = latest_attempt_records(
+            server.audit_store.query(
+                record_type="operational_plan.execution",
+                plan_id=plan.plan_id,
+            )
+        )
+        assert len(records) == 1
+        assert records[0]["payload"]["status"] == "blocked"
+        assert records[0]["payload"]["mission_generation"] == 4
+        assert records[0]["payload"]["audit_session_id"] == "test-session"
 
     asyncio.run(scenario())
 

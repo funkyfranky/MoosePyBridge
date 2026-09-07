@@ -15,6 +15,8 @@ from moosebridge import (
     PlanMissionStatus,
     RelationshipState,
     StrategicDecisionConfig,
+    StrategicDecisionDisposition,
+    StrategicDecisionReasonCode,
     StrategicGoal,
     StrategicGoalAction,
     StrategicGoalStatus,
@@ -129,8 +131,6 @@ async def _stage_defender(
     bridge,
     opszone,
     coalition: str,
-    *,
-    claim_neutral_zone: bool = False,
 ) -> tuple[str, object]:
     cohort_ids = _ground_mission_cohort_ids(bridge, coalition, "PATROLZONE")
     if not cohort_ids:
@@ -155,7 +155,7 @@ async def _stage_defender(
     if not auftrag_id:
         raise RuntimeError("defender staging did not return an AUFTRAG id")
 
-    print("\nClaiming neutral OPSZONE" if claim_neutral_zone else "\nStaging active defense")
+    print("\nStaging active defense")
     print("=" * 96)
     print(f"AUFTRAG           : {auftrag_id} PATROLZONE")
     print(f"Coalition         : {coalition}")
@@ -181,7 +181,6 @@ async def _stage_defender(
             if (
                 (count or 0) > 0
                 and (threat or 0) > 0
-                and (not claim_neutral_zone or owner == coalition)
             ):
                 print(
                     f"Occupation confirmed: owner={owner} red={live_zone.n_red or 0} "
@@ -231,6 +230,91 @@ async def _wait_for_initial_owner(bridge):
     return opszone, "neutral"
 
 
+async def _claim_neutral_opszone(
+    bridge,
+    objective,
+    coalition: str,
+) -> tuple[str, object]:
+    """Claim the neutral test zone through the production planning path."""
+
+    intel_id = BLUE_INTEL_ID if coalition == "blue" else RED_INTEL_ID
+    picture = await bridge.refresh_tactical_picture(coalition, intel_id)
+    token = _mission_token(bridge)
+    goal = bridge.add_strategic_goal(
+        StrategicGoal(
+            goal_id=f"GOAL:{coalition}:claim:Town-Gali:ACCEPTANCE:{token}",
+            name=f"{coalition.title()} claim neutral Town Gali",
+            coalition=coalition,
+            action=StrategicGoalAction.CAPTURE,
+            objective_id=objective.objective_id,
+            priority=max(90.0, objective.priority),
+        )
+    )
+    plan = bridge.add_operational_plan(
+        bridge.propose_capture_plan(
+            goal,
+            picture,
+            plan_id=f"PLAN:{coalition}:claim:Town-Gali:ACCEPTANCE:{token}",
+        )
+    )
+    mission_types = {
+        mission_type
+        for phase in plan.phases
+        for intent in phase.intents
+        for mission_type in intent.auftrag_types
+    }
+    if plan.metadata.get("capture_mode") != "neutral_claim":
+        raise RuntimeError("neutral OPSZONE did not produce a neutral-claim plan")
+    if "PATROLZONE" not in mission_types or "CAPTUREZONE" in mission_types:
+        raise RuntimeError(
+            "neutral claim must use PATROLZONE and must not submit CAPTUREZONE"
+        )
+
+    assessment = await bridge.refresh_and_validate_operational_plan(plan)
+    print("\nNeutral claim plan")
+    print("=" * 96)
+    print(format_operational_plan_assessment(plan, assessment))
+    if not assessment.feasible:
+        raise RuntimeError("neutral Town Gali claim plan is not feasible")
+    bridge.approve_operational_plan(
+        plan,
+        reason="Milestone 4 production-path neutral claim acceptance test",
+    )
+
+    print("\nClaiming the neutral OPSZONE with a persistent patrol ...")
+    execution = await bridge.execute_plan(
+        plan,
+        mission_timeout_s=MISSION_TIMEOUT_SECONDS,
+        on_event=print,
+    )
+    print()
+    print(format_operational_plan_execution(execution))
+    if execution.status is not OperationalPlanStatus.COMPLETED:
+        raise RuntimeError(f"neutral claim plan ended with {execution.status.value}")
+
+    guards = tuple(
+        mission
+        for mission in execution.missions
+        if mission.mission_type == "PATROLZONE" and mission.persistent
+    )
+    if not guards or any(mission.status is not PlanMissionStatus.RUNNING for mission in guards):
+        states = ", ".join(mission.status.value for mission in guards) or "missing"
+        raise RuntimeError(f"neutral claim did not establish its persistent patrol: {states}")
+
+    await bridge.snapshot_opszones()
+    bridge.sync_strategic_objectives(source="capture_reaction.neutral_claim")
+    bridge.sync_strategic_goals(source="capture_reaction.neutral_claim")
+    live_zone = bridge.state.opszone_objects.get(OPSZONE_ID)
+    live_owner = (live_zone.owner_current_name or "neutral").lower() if live_zone else "missing"
+    if live_owner != coalition:
+        raise RuntimeError(
+            f"neutral claim was not confirmed by OPSZONE ownership: owner={live_owner}"
+        )
+    if goal.status is not StrategicGoalStatus.ACHIEVED:
+        raise RuntimeError(f"neutral claim goal ended with {goal.status.value}")
+    return ", ".join(mission.auftrag_id for mission in guards), live_zone
+
+
 async def run(profile_path=THEATER_PROFILE) -> int:
     context = _load_context(profile_path)
     session = await open_example_session(
@@ -260,15 +344,18 @@ async def run(profile_path=THEATER_PROFILE) -> int:
 
     objective_id = f"OBJECTIVE:{OPSZONE_ID}"
     live_opszone, live_owner = await _wait_for_initial_owner(bridge)
+    bridge.sync_strategic_objectives(source="capture_reaction.initial_owner")
+    objective = bridge.strategic_objective(objective_id)
+    if objective is None:
+        raise ValueError(f"strategic objective is unavailable: {objective_id}")
     staged_defender_id = None
     if live_owner == "neutral":
         capturing_coalition = CAPTURING_COALITION or "blue"
         defending_coalition = "red" if capturing_coalition == "blue" else "blue"
-        staged_defender_id, live_opszone = await _stage_defender(
+        staged_defender_id, live_opszone = await _claim_neutral_opszone(
             bridge,
-            live_opszone,
+            objective,
             defending_coalition,
-            claim_neutral_zone=True,
         )
     else:
         defending_coalition = live_owner
@@ -441,15 +528,23 @@ async def run(profile_path=THEATER_PROFILE) -> int:
     recapture = next(
         (
             decision
-            for decision in reaction.selected
+            for decision in reaction.decisions
             if decision.objective_id == objective.objective_id
             and decision.action is StrategicGoalAction.CAPTURE
         ),
         None,
     )
-    if recapture is None:
+    coherent_reaction = recapture is not None and (
+        recapture.disposition is StrategicDecisionDisposition.SELECTED
+        or (
+            recapture.disposition is StrategicDecisionDisposition.DEFERRED
+            and recapture.reason_code is StrategicDecisionReasonCode.PLAN_INFEASIBLE
+        )
+    )
+    if not coherent_reaction:
         reasons = "; ".join(_reaction_failure_reason(item) for item in reaction.decisions)
-        raise RuntimeError(f"opponent did not select the recapture reaction: {reasons}")
+        raise RuntimeError(f"opponent did not produce a coherent recapture reaction: {reasons}")
+    assert recapture is not None
 
     print("\nMilestone 4 acceptance")
     print("=" * 96)
@@ -469,9 +564,11 @@ async def run(profile_path=THEATER_PROFILE) -> int:
     )
     print(
         f"Opponent reaction  : {recapture.candidate_id} action={recapture.action.value} "
-        f"status={recapture.disposition.value}"
+        f"status={recapture.disposition.value} reason={recapture.reason_code.value}"
     )
-    print("\nPASS: capture, persistent defense, and opponent recapture selection are coherent.")
+    if recapture.disposition is StrategicDecisionDisposition.DEFERRED:
+        print(f"Reaction constraint: {_reaction_failure_reason(recapture)}")
+    print("\nPASS: capture, persistent defense, and the opponent recapture decision are coherent.")
     return 0
 
 

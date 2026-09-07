@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from moosebridge.protocol import BridgeCommand
-from moosebridge.server import DcsBridgeCommandTimeoutError, DcsBridgeConnectionError, MooseBridgeServer
+from moosebridge.server import DcsBridgeCommandTimeoutError, MooseBridgeServer
 
 
 def _bridge_port(server: MooseBridgeServer) -> int:
@@ -88,33 +89,72 @@ def test_dcs_connection_reset_during_close_is_handled() -> None:
     asyncio.run(scenario())
 
 
-def test_pending_command_fails_when_dcs_disconnects() -> None:
+def test_pending_command_is_replayed_with_same_id_after_dcs_reconnect() -> None:
     async def scenario() -> None:
         server = MooseBridgeServer(host="127.0.0.1", port=0)
         await server.start()
         try:
-            _, writer = await asyncio.open_connection("127.0.0.1", _bridge_port(server))
+            first_reader, writer = await asyncio.open_connection("127.0.0.1", _bridge_port(server))
             try:
                 while server._writer is None:
                     await asyncio.sleep(0.01)
 
-                task = asyncio.create_task(server.send_command(BridgeCommand(action="message.to_all", params={"text": "hello"}), timeout=5.0))
+                command = BridgeCommand(action="message.to_all", params={"text": "hello"})
+                task = asyncio.create_task(server.send_command(command, timeout=5.0))
                 while not server._pending:
                     await asyncio.sleep(0.01)
+                first_payload = json.loads((await first_reader.readline()).decode("utf-8"))
+                assert first_payload["id"] == command.id
 
                 writer.close()
                 await writer.wait_closed()
+                while server._writer is not None:
+                    await asyncio.sleep(0.01)
 
+                second_reader, second_writer = await asyncio.open_connection(
+                    "127.0.0.1", _bridge_port(server)
+                )
                 try:
-                    await task
-                except DcsBridgeConnectionError as exc:
-                    assert "disconnected" in str(exc)
-                else:
-                    raise AssertionError("pending command did not fail after DCS disconnect")
+                    replay = json.loads((await second_reader.readline()).decode("utf-8"))
+                    assert replay["id"] == command.id
+                    second_writer.write(
+                        (json.dumps({
+                            "type": "ack", "id": "ack-1", "correlation_id": command.id,
+                            "ok": True, "result": {"replayed": True},
+                        }) + "\n").encode("utf-8")
+                    )
+                    await second_writer.drain()
+                    ack = await task
+                    assert ack["result"] == {"replayed": True}
+                finally:
+                    second_writer.close()
+                    await second_writer.wait_closed()
             finally:
                 writer.close()
         finally:
             await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_replayed_reliable_event_is_applied_and_published_once() -> None:
+    async def scenario() -> None:
+        server = MooseBridgeServer()
+        observed: list[dict[str, object]] = []
+        server.add_message_listener(observed.append)
+        line = json.dumps({
+            "type": "event",
+            "id": "event-bridge-1-9",
+            "event": "auftrag.evaluated",
+            "payload": {"auftrag_id": "AUFTRAG:1", "summary": {"success": True}},
+        })
+
+        await server._handle_line(line)
+        await server._handle_line(line)
+
+        history = await server.query_events("auftrag.evaluated")
+        assert len(history["events"]) == 1
+        assert len(observed) == 1
 
     asyncio.run(scenario())
 
