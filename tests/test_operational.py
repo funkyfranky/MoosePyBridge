@@ -3687,6 +3687,75 @@ def test_reconcile_interrupted_plan_reports_running_and_missing_auftraege(tmp_pa
     asyncio.run(scenario())
 
 
+def test_reconcile_interrupted_plan_with_only_skipped_optional_missions_can_resume(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "skipped-interrupted-audit.jsonl"
+        bridge, plan = _executable_capture_plan(audit_path=path)
+        execution = await bridge.execute_plan(plan)
+        mission = execution.missions[0]
+        mission.required = False
+        mission.status = PlanMissionStatus.SKIPPED
+        mission.auftrag_id = None
+        mission.outcome = None
+        plan.status = OperationalPlanStatus.EXECUTING
+        plan.phases[0].status = PlanPhaseStatus.ACTIVE
+        execution.status = OperationalPlanStatus.EXECUTING
+        execution.current_phase_id = plan.phases[0].phase_id
+        execution.completed_mission_time = None
+        goal = bridge.strategic_goal(plan.goal_id)
+        assert goal is not None
+        goal.status = StrategicGoalStatus.ACTIVE
+        goal.completed_mission_time = None
+        await bridge.plan_executor._persist(execution)
+        bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+        server = _ExecutionServer(audit_path=path)
+        restored_bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await restored_bridge.restore_operational_plan(plan.plan_id)
+
+        result = await restored_bridge.reconcile_operational_plan(restored.plan)
+
+        assert result.status is PlanReconciliationStatus.REVALIDATION_REQUIRED
+        assert restored.plan.status is OperationalPlanStatus.BLOCKED
+        assert "only skipped optional missions" in (result.message or "")
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_reconcile_interrupted_plan_before_first_submission_can_resume(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "pre-submission-interrupted-audit.jsonl"
+        bridge, plan = _executable_capture_plan(audit_path=path)
+        execution = await bridge.execute_plan(plan)
+        execution.missions.clear()
+        plan.status = OperationalPlanStatus.EXECUTING
+        plan.phases[0].status = PlanPhaseStatus.PENDING
+        execution.status = OperationalPlanStatus.EXECUTING
+        execution.current_phase_id = plan.phases[0].phase_id
+        execution.completed_mission_time = None
+        goal = bridge.strategic_goal(plan.goal_id)
+        assert goal is not None
+        goal.status = StrategicGoalStatus.ACTIVE
+        goal.completed_mission_time = None
+        await bridge.plan_executor._persist(execution)
+        bridge.server.audit_store.close()  # type: ignore[attr-defined]
+
+        server = _ExecutionServer(audit_path=path)
+        restored_bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await restored_bridge.restore_operational_plan(plan.plan_id)
+
+        result = await restored_bridge.reconcile_operational_plan(restored.plan)
+
+        assert result.status is PlanReconciliationStatus.REVALIDATION_REQUIRED
+        assert restored.plan.status is OperationalPlanStatus.BLOCKED
+        assert restored.plan.phases[0].status is PlanPhaseStatus.BLOCKED
+        assert "before any AUFTRAG was submitted" in (result.message or "")
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
 def test_reconcile_interrupted_plan_blocks_on_failed_summary(tmp_path) -> None:
     async def scenario() -> None:
         path = tmp_path / "failed-interrupted-audit.jsonl"
@@ -3757,6 +3826,123 @@ def test_monitor_interrupted_plan_reattaches_to_events_without_new_auftrag(tmp_p
         assert restored.plan.status is OperationalPlanStatus.COMPLETED
         assert restored.executions[-1].missions[0].status.value == "succeeded"
         assert not [command for command in server.commands if command.action.startswith("auftrag.create_")]
+        server.audit_store.close()
+
+    asyncio.run(scenario())
+
+
+def test_monitor_interrupted_neutral_claim_waits_for_real_capture_security(tmp_path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "interrupted-neutral-claim-audit.jsonl"
+        audit_server = _ExecutionServer(audit_path=path)
+        audit_bridge = MooseBridgeClient(audit_server)  # type: ignore[arg-type]
+        objective = audit_bridge.add_strategic_objective(
+            StrategicObjective(
+                objective_id="OBJECTIVE:Town",
+                name="Town",
+                kind=ObjectiveKind.OPSZONE,
+                control_object_id="OPSZONE:Town",
+                ownership_policy=OwnershipPolicy.MOOSE_MANAGED,
+                owner="neutral",
+            )
+        )
+        goal = audit_bridge.add_strategic_goal(
+            StrategicGoal(
+                goal_id="GOAL:Claim Town",
+                name="Claim Town",
+                coalition="blue",
+                action=StrategicGoalAction.CAPTURE,
+                objective_id=objective.objective_id,
+                status=StrategicGoalStatus.ACTIVE,
+            )
+        )
+        plan = audit_bridge.add_operational_plan(
+            OperationalPlan(
+                plan_id="PLAN:Claim Town",
+                name="Claim Town",
+                goal_id=goal.goal_id,
+                coalition="blue",
+                phases=(
+                    PlanPhase(
+                        phase_id="claim",
+                        name="Claim",
+                        status=PlanPhaseStatus.ACTIVE,
+                        intents=(
+                            MissionIntent(
+                                intent_id="claim-zone",
+                                name="Claim and patrol the neutral OPSZONE",
+                                auftrag_types=("PATROLZONE",),
+                                target_object_id="OPSZONE:Town",
+                                metadata={
+                                    "persistent": True,
+                                    "establishment_condition": (
+                                        "assigned_ground_combat_presence_in_zone"
+                                    ),
+                                },
+                                asset_requirements=(
+                                    AssetRequirement(
+                                        requirement_id="REQ:Ground claim",
+                                        role=AssetRole.COMBAT,
+                                        mission_types=("PATROLZONE",),
+                                        performer_categories=("GROUND",),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+                status=OperationalPlanStatus.EXECUTING,
+            )
+        )
+        execution = OperationalPlanExecution(
+            plan_id=plan.plan_id,
+            commander_id="COMMANDER:Blue Command",
+            attempt_id=f"{plan.plan_id}/ATTEMPT:1",
+            attempt_number=1,
+            status=OperationalPlanStatus.EXECUTING,
+            current_phase_id="claim",
+            mission_generation=0,
+            audit_session_id="test-session",
+            plan_ref=plan,
+            missions=[
+                PlanMissionExecution(
+                    phase_id="claim",
+                    intent_id="claim-zone",
+                    requirement_id="REQ:Ground claim",
+                    mission_type="PATROLZONE",
+                    required=True,
+                    persistent=True,
+                    established_on="Executing",
+                    status=PlanMissionStatus.RUNNING,
+                    auftrag_id="AUFTRAG:1",
+                )
+            ],
+        )
+        audit_bridge.plan_executor._executions[plan.plan_id] = [execution]
+        await audit_bridge.plan_executor._persist(execution)
+        audit_server.audit_store.close()
+
+        server = _CaptureReactionExecutionServer(
+            audit_path=path,
+            initial_owner="neutral",
+            final_owner="blue",
+        )
+        server._mission_types[1] = "PATROLZONE"
+        bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
+        restored = await bridge.restore_operational_plan(plan.plan_id)
+
+        result = await bridge.monitor_interrupted_operational_plan(
+            restored.plan,
+            mission_timeout_s=0.01,
+        )
+
+        assert result.status is PlanReconciliationStatus.BLOCKED
+        assert restored.plan.status is OperationalPlanStatus.BLOCKED
+        assert restored.plan.phases[0].status is PlanPhaseStatus.BLOCKED
+        assert "capture guard did not establish combat presence" in (result.message or "")
+        assert not [
+            command for command in server.commands if command.action.startswith("auftrag.create_")
+        ]
         server.audit_store.close()
 
     asyncio.run(scenario())

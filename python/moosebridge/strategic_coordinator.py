@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 import inspect
@@ -12,8 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 from .conflict_readiness import ConflictReadinessReport
 from .operational import OperationalPlanStatus
-from .operational_execution import OperationalPlanExecution, PlanExecutionEvent
-from .strategic import StrategicGoalStatus, normalize_coalition
+from .operational_execution import (
+    PLAN_EXECUTION_AUDIT_TYPE,
+    OperationalPlanExecution,
+    PlanExecutionEvent,
+    PlanReconciliationStatus,
+)
+from .strategic import StrategicGoal, StrategicGoalStatus, normalize_coalition
 from .strategic_decision import (
     BilateralStrategicRecommendation,
     StrategicDecision,
@@ -26,6 +31,7 @@ if TYPE_CHECKING:
 
 
 STRATEGIC_COORDINATOR_AUDIT_TYPE = "strategic_conflict_cycle"
+STRATEGIC_COORDINATOR_APPROVER = "Bilateral Conflict Coordinator"
 
 ReadinessProvider = Callable[[], Awaitable[ConflictReadinessReport]]
 CoordinatorEventCallback = Callable[[str, PlanExecutionEvent], Any | Awaitable[Any]]
@@ -53,12 +59,22 @@ class StrategicAttemptStatus(StrEnum):
     MISSION_CHANGED = "mission_changed"
 
 
+class StrategicRecoveryStatus(StrEnum):
+    """Outcome of recovering one coordinator-owned interrupted plan."""
+
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+    MISSION_CHANGED = "mission_changed"
+
+
 @dataclass(slots=True, frozen=True)
 class StrategicCoordinatorConfig:
     """Scheduling, cooldown, and execution policy for both coalitions."""
 
     blue_cadence_s: float = 60.0
     red_cadence_s: float = 60.0
+    no_selection_backoff_s: float = 300.0
     completed_cooldown_s: float = 900.0
     blocked_cooldown_s: float = 300.0
     failed_cooldown_s: float = 600.0
@@ -75,6 +91,7 @@ class StrategicCoordinatorConfig:
             "mission_timeout_s": self.mission_timeout_s,
         }
         non_negative = {
+            "no_selection_backoff_s": self.no_selection_backoff_s,
             "completed_cooldown_s": self.completed_cooldown_s,
             "blocked_cooldown_s": self.blocked_cooldown_s,
             "failed_cooldown_s": self.failed_cooldown_s,
@@ -143,6 +160,21 @@ class StrategicCoalitionCycle:
 
 
 @dataclass(slots=True, frozen=True)
+class StrategicCoordinatorRecovery:
+    """Result of reconciling one plan left active by a previous SDK client."""
+
+    coalition: str
+    candidate_id: str
+    objective_id: str
+    plan_id: str
+    interrupted_attempt_id: str
+    status: StrategicRecoveryStatus
+    auftrag_ids: tuple[str, ...] = ()
+    resumed_attempt_id: str | None = None
+    reason: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
 class BilateralConflictRun:
     """Result returned after both independent coalition workers finish."""
 
@@ -150,6 +182,7 @@ class BilateralConflictRun:
     requested_cycles_per_coalition: int | None
     cycles: tuple[StrategicCoalitionCycle, ...]
     cooldowns: tuple[StrategicCandidateCooldown, ...] = ()
+    recoveries: tuple[StrategicCoordinatorRecovery, ...] = ()
 
     def coalition(self, coalition: str) -> tuple[StrategicCoalitionCycle, ...]:
         """Return all cycles for one coalition in execution order."""
@@ -174,7 +207,10 @@ class BilateralConflictCoordinator:
         self._decision_lock = asyncio.Lock()
         self._cycle_numbers = {"blue": 0, "red": 0}
         self._last_cycle_mission_time: dict[str, float | None] = {"blue": None, "red": None}
+        self._not_before_mission_time: dict[str, float | None] = {"blue": None, "red": None}
         self._cooldowns: dict[tuple[str, str], StrategicCandidateCooldown] = {}
+        self._audit_state_loaded = False
+        self._interrupted_plans: tuple[dict[str, Any], ...] = ()
 
     @property
     def cooldowns(self) -> tuple[StrategicCandidateCooldown, ...]:
@@ -232,8 +268,26 @@ class BilateralConflictCoordinator:
     ) -> BilateralConflictRun:
         """Run bounded or mission-bound coalition workers."""
 
-        async def worker(coalition: str) -> tuple[StrategicCoalitionCycle, ...]:
+        await self._load_audit_state()
+
+        async def worker(
+            coalition: str,
+        ) -> tuple[tuple[StrategicCoalitionCycle, ...], tuple[StrategicCoordinatorRecovery, ...]]:
             cycles: list[StrategicCoalitionCycle] = []
+            recoveries: list[StrategicCoordinatorRecovery] = []
+            for payload in self._interrupted_plans:
+                if self._interrupted_plan_coalition(payload) != coalition:
+                    continue
+                recovery = await self._recover_interrupted_plan(payload, on_event=on_event)
+                recoveries.append(recovery)
+                if recovery.status is StrategicRecoveryStatus.MISSION_CHANGED:
+                    cycle = self._mission_changed_cycle(coalition, self._current_mission_time())
+                    cycles.append(cycle)
+                    if on_cycle is not None:
+                        value = on_cycle(cycle)
+                        if inspect.isawaitable(value):
+                            await value
+                    return tuple(cycles), tuple(recoveries)
             while cycles_per_coalition is None or len(cycles) < cycles_per_coalition:
                 cycle = await self.run_cycle(coalition, on_event=on_event)
                 if cycle is None:
@@ -246,16 +300,403 @@ class BilateralConflictCoordinator:
                         await value
                 if cycle.status is StrategicCycleStatus.MISSION_CHANGED:
                     break
-            return tuple(cycles)
+            return tuple(cycles), tuple(recoveries)
 
         blue, red = await asyncio.gather(worker("blue"), worker("red"))
-        cycles = tuple(sorted((*blue, *red), key=_cycle_sort_key))
+        cycles = tuple(sorted((*blue[0], *red[0]), key=_cycle_sort_key))
+        recoveries = tuple(sorted((*blue[1], *red[1]), key=_recovery_sort_key))
         return BilateralConflictRun(
             mission_generation=self.mission_generation,
             requested_cycles_per_coalition=cycles_per_coalition,
             cycles=cycles,
             cooldowns=self.cooldowns,
+            recoveries=recoveries,
         )
+
+    async def _load_audit_state(self) -> None:
+        """Restore current-generation cooldowns and find interrupted coordinator plans."""
+
+        if self._audit_state_loaded:
+            return
+        query = getattr(self.client.server, "query_audit_records", None)
+        if not callable(query):
+            self._audit_state_loaded = True
+            return
+
+        cycle_records = await query(record_type=STRATEGIC_COORDINATOR_AUDIT_TYPE)
+        execution_records = await query(
+            record_type=PLAN_EXECUTION_AUDIT_TYPE,
+            latest_attempts=True,
+        )
+        audit_session_id = str(getattr(self.client.state, "audit_session_id", "") or "")
+        for record in cycle_records:
+            payload = _audit_payload(record)
+            if not self._is_current_audit_payload(payload, audit_session_id=audit_session_id):
+                continue
+            self._restore_cycle_audit(payload)
+
+        interrupted: list[dict[str, Any]] = []
+        for record in execution_records:
+            payload = _audit_payload(record)
+            if not self._is_current_audit_payload(payload, audit_session_id=audit_session_id):
+                continue
+            if not self._is_coordinator_execution(payload):
+                continue
+            if str(payload.get("status") or "").casefold() == OperationalPlanStatus.EXECUTING.value:
+                interrupted.append(dict(payload))
+            else:
+                self._restore_execution_cooldown(payload)
+
+        self._interrupted_plans = tuple(
+            sorted(
+                interrupted,
+                key=_execution_sort_key,
+            )
+        )
+        self._audit_state_loaded = True
+
+    def _is_current_audit_payload(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        audit_session_id: str,
+    ) -> bool:
+        try:
+            generation = int(payload.get("mission_generation"))
+        except (TypeError, ValueError):
+            return False
+        return (
+            generation == self.mission_generation
+            and bool(audit_session_id)
+            and str(payload.get("audit_session_id") or "") == audit_session_id
+        )
+
+    def _restore_cycle_audit(self, payload: Mapping[str, Any]) -> None:
+        coalition = normalize_coalition(payload.get("coalition")) or ""
+        if coalition not in {"blue", "red"}:
+            return
+        try:
+            cycle_number = int(payload.get("cycle_number") or 0)
+        except (TypeError, ValueError):
+            cycle_number = 0
+        previous_cycle_number = self._cycle_numbers[coalition]
+        self._cycle_numbers[coalition] = max(previous_cycle_number, cycle_number)
+        started = _optional_number(payload.get("started_mission_time"))
+        previous = self._last_cycle_mission_time[coalition]
+        is_latest = started is not None and (
+            previous is None
+            or started > previous
+            or (started == previous and cycle_number > previous_cycle_number)
+        )
+        if is_latest:
+            self._last_cycle_mission_time[coalition] = started
+            self._not_before_mission_time[coalition] = (
+                started + self.config.no_selection_backoff_s
+                if str(payload.get("status") or "") == StrategicCycleStatus.NO_SELECTION.value
+                else None
+            )
+
+        attempts = payload.get("attempts")
+        if not isinstance(attempts, list):
+            return
+        for attempt in attempts:
+            if not isinstance(attempt, Mapping):
+                continue
+            candidate_id = str(attempt.get("candidate_id") or "")
+            objective_id = str(attempt.get("objective_id") or "")
+            if not candidate_id or not objective_id:
+                continue
+            try:
+                status = StrategicAttemptStatus(str(attempt.get("status") or ""))
+            except ValueError:
+                continue
+            if status is StrategicAttemptStatus.MISSION_CHANGED:
+                continue
+            cooldown = StrategicCandidateCooldown(
+                coalition=coalition,
+                candidate_id=candidate_id,
+                objective_id=objective_id,
+                status=status,
+                started_mission_time=started,
+                available_mission_time=_optional_number(attempt.get("cooldown_until")),
+                reason=str(attempt.get("error") or payload.get("reason") or "restored coordinator cooldown"),
+            )
+            self._merge_cooldown(cooldown)
+
+    def _restore_execution_cooldown(self, payload: Mapping[str, Any]) -> None:
+        plan = payload.get("plan")
+        goal = payload.get("goal")
+        objective = payload.get("objective")
+        if not isinstance(plan, Mapping):
+            return
+        metadata = plan.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        candidate_id = str(metadata.get("candidate_id") or "")
+        coalition = normalize_coalition(plan.get("coalition")) or ""
+        objective_id = ""
+        if isinstance(objective, Mapping):
+            objective_id = str(objective.get("objective_id") or "")
+        elif isinstance(goal, Mapping):
+            objective_id = str(goal.get("objective_id") or "")
+        if not candidate_id or coalition not in {"blue", "red"} or not objective_id:
+            return
+        execution_status = str(payload.get("status") or "").casefold()
+        status = (
+            StrategicAttemptStatus.COMPLETED
+            if execution_status == OperationalPlanStatus.COMPLETED.value
+            else StrategicAttemptStatus.BLOCKED
+            if execution_status == OperationalPlanStatus.BLOCKED.value
+            else StrategicAttemptStatus.FAILED
+        )
+        completed = _optional_number(payload.get("completed_mission_time"))
+        started = _optional_number(payload.get("started_mission_time"))
+        base_time = completed if completed is not None else started
+        cooldown = self._make_cooldown(
+            coalition=coalition,
+            candidate_id=candidate_id,
+            objective_id=objective_id,
+            status=status,
+            started_mission_time=base_time,
+            reason=str(payload.get("blocked_reason") or f"restored {execution_status} execution"),
+            base_time=base_time,
+        )
+        self._merge_cooldown(cooldown)
+
+    async def _recover_interrupted_plan(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        on_event: CoordinatorEventCallback | None,
+    ) -> StrategicCoordinatorRecovery:
+        plan_id = str(payload.get("plan_id") or "")
+        interrupted_attempt_id = str(payload.get("attempt_id") or "")
+        coalition = self._interrupted_plan_coalition(payload)
+        plan_snapshot = payload.get("plan")
+        plan_metadata = (
+            plan_snapshot.get("metadata")
+            if isinstance(plan_snapshot, Mapping) and isinstance(plan_snapshot.get("metadata"), Mapping)
+            else {}
+        )
+        objective_snapshot = payload.get("objective")
+        candidate_id = str(plan_metadata.get("candidate_id") or "")
+        objective_id = str(
+            objective_snapshot.get("objective_id")
+            if isinstance(objective_snapshot, Mapping)
+            else ""
+        )
+        auftrag_ids = tuple(
+            dict.fromkeys(
+                str(mission.get("auftrag_id"))
+                for mission in payload.get("missions", ())
+                if isinstance(mission, Mapping) and mission.get("auftrag_id")
+            )
+        )
+
+        async def forward(event: PlanExecutionEvent) -> None:
+            if on_event is None:
+                return
+            value = on_event(coalition, event)
+            if inspect.isawaitable(value):
+                await value
+
+        await forward(
+            PlanExecutionEvent(
+                "plan.recovery_started",
+                plan_id,
+                status="recovering",
+                message=(
+                    f"reattaching to {', '.join(auftrag_ids)}"
+                    if auftrag_ids
+                    else "reconciling interrupted coordinator plan"
+                ),
+                attempt_id=interrupted_attempt_id,
+            )
+        )
+
+        resumed_attempt_id: str | None = None
+        reason: str | None = None
+        recovery_status = StrategicRecoveryStatus.FAILED
+        restored = None
+        try:
+            restored = await self.client.restore_operational_plan(plan_id, replace=True)
+            reconciliation = await self.client.monitor_interrupted_operational_plan(
+                restored.plan,
+                mission_timeout_s=self.config.mission_timeout_s,
+                on_event=forward,
+            )
+            if self.client.state.mission_generation != self.mission_generation:
+                recovery_status = StrategicRecoveryStatus.MISSION_CHANGED
+                reason = "DCS mission generation changed during coordinator recovery"
+            elif reconciliation.status is PlanReconciliationStatus.REVALIDATION_REQUIRED:
+                await forward(
+                    PlanExecutionEvent(
+                        "plan.recovery_revalidating",
+                        plan_id,
+                        status="pending",
+                        message="revalidating the first unfinished phase at a safe recovery boundary",
+                        attempt_id=interrupted_attempt_id,
+                    )
+                )
+                self.client.prepare_plan_retry(restored.plan)
+                assessment = await self.client.refresh_and_validate_operational_plan(restored.plan)
+                if not assessment.feasible:
+                    reason = "remaining phases are no longer feasible after coordinator recovery"
+                    restored.plan.status = OperationalPlanStatus.FAILED
+                    self._fail_restored_goal(restored.goal, reason)
+                    recovery_status = StrategicRecoveryStatus.BLOCKED
+                else:
+                    self.client.approve_operational_plan(
+                        restored.plan,
+                        approved_by=STRATEGIC_COORDINATOR_APPROVER,
+                        reason="Resume unfinished phases after SDK client restart",
+                    )
+                    resumed = await self.client.execute_plan(
+                        restored.plan,
+                        commander=payload.get("commander_id") or None,
+                        mission_timeout_s=self.config.mission_timeout_s,
+                        on_event=forward,
+                    )
+                    resumed_attempt_id = resumed.attempt_id
+                    recovery_status = (
+                        StrategicRecoveryStatus.COMPLETED
+                        if resumed.status is OperationalPlanStatus.COMPLETED
+                        else StrategicRecoveryStatus.BLOCKED
+                        if resumed.status is OperationalPlanStatus.BLOCKED
+                        else StrategicRecoveryStatus.FAILED
+                    )
+                    reason = resumed.blocked_reason
+                    if recovery_status is not StrategicRecoveryStatus.COMPLETED:
+                        self._fail_restored_goal(
+                            restored.goal,
+                            reason or f"operational plan ended {resumed.status.value}",
+                        )
+            elif reconciliation.status is PlanReconciliationStatus.COMPLETED:
+                recovery_status = StrategicRecoveryStatus.COMPLETED
+                reason = reconciliation.message
+            elif reconciliation.status is PlanReconciliationStatus.BLOCKED:
+                recovery_status = StrategicRecoveryStatus.BLOCKED
+                reason = reconciliation.message or "interrupted operational plan could not be resumed"
+                self._fail_restored_goal(restored.goal, reason)
+            else:
+                raise RuntimeError(
+                    reconciliation.message
+                    or f"interrupted operational plan reconciliation ended {reconciliation.status.value}"
+                )
+        except Exception as exc:
+            reason = str(exc) or exc.__class__.__name__
+            if self.client.state.mission_generation != self.mission_generation:
+                recovery_status = StrategicRecoveryStatus.MISSION_CHANGED
+            else:
+                await forward(
+                    PlanExecutionEvent(
+                        "plan.recovery_failed",
+                        plan_id,
+                        status="failed",
+                        message=reason,
+                        attempt_id=interrupted_attempt_id,
+                    )
+                )
+                raise RuntimeError(f"coordinator recovery failed for {plan_id}: {reason}") from exc
+
+        if recovery_status is not StrategicRecoveryStatus.MISSION_CHANGED:
+            cooldown_status = (
+                StrategicAttemptStatus.COMPLETED
+                if recovery_status is StrategicRecoveryStatus.COMPLETED
+                else StrategicAttemptStatus.BLOCKED
+                if recovery_status is StrategicRecoveryStatus.BLOCKED
+                else StrategicAttemptStatus.FAILED
+            )
+            cooldown = self._make_cooldown(
+                coalition=coalition,
+                candidate_id=candidate_id,
+                objective_id=objective_id,
+                status=cooldown_status,
+                started_mission_time=_optional_number(payload.get("started_mission_time")),
+                reason=reason or "recovered operational plan completed",
+            )
+            self._merge_cooldown(cooldown)
+
+        await forward(
+            PlanExecutionEvent(
+                "plan.recovered",
+                plan_id,
+                status=recovery_status.value,
+                message=reason,
+                attempt_id=resumed_attempt_id or interrupted_attempt_id,
+            )
+        )
+        return StrategicCoordinatorRecovery(
+            coalition=coalition,
+            candidate_id=candidate_id,
+            objective_id=objective_id,
+            plan_id=plan_id,
+            interrupted_attempt_id=interrupted_attempt_id,
+            status=recovery_status,
+            auftrag_ids=auftrag_ids,
+            resumed_attempt_id=resumed_attempt_id,
+            reason=reason,
+        )
+
+    def _interrupted_plan_coalition(self, payload: Mapping[str, Any]) -> str:
+        plan = payload.get("plan")
+        coalition = normalize_coalition(plan.get("coalition")) if isinstance(plan, Mapping) else None
+        return coalition or ""
+
+    def _is_coordinator_execution(self, payload: Mapping[str, Any]) -> bool:
+        plan = payload.get("plan")
+        if not isinstance(plan, Mapping):
+            return False
+        metadata = plan.get("metadata")
+        return (
+            isinstance(metadata, Mapping)
+            and bool(metadata.get("candidate_id"))
+            and str(plan.get("approved_by") or "") == STRATEGIC_COORDINATOR_APPROVER
+        )
+
+    def _fail_restored_goal(self, goal: StrategicGoal, reason: str) -> None:
+        current = self.client.strategic_goal(goal.goal_id)
+        if current is not None and current.status is StrategicGoalStatus.ACTIVE:
+            self.client.complete_strategic_goal(current, achieved=False, reason=reason)
+
+    def _make_cooldown(
+        self,
+        *,
+        coalition: str,
+        candidate_id: str,
+        objective_id: str,
+        status: StrategicAttemptStatus,
+        started_mission_time: float | None,
+        reason: str,
+        base_time: float | None = None,
+    ) -> StrategicCandidateCooldown:
+        duration = (
+            self.config.completed_cooldown_s
+            if status is StrategicAttemptStatus.COMPLETED
+            else self.config.blocked_cooldown_s
+            if status is StrategicAttemptStatus.BLOCKED
+            else self.config.failed_cooldown_s
+        )
+        if base_time is None:
+            base_time = self._current_mission_time()
+        if base_time is None:
+            base_time = started_mission_time
+        return StrategicCandidateCooldown(
+            coalition=coalition,
+            candidate_id=candidate_id,
+            objective_id=objective_id,
+            status=status,
+            started_mission_time=started_mission_time,
+            available_mission_time=base_time + duration if base_time is not None else None,
+            reason=reason,
+        )
+
+    def _merge_cooldown(self, cooldown: StrategicCandidateCooldown) -> None:
+        if not cooldown.candidate_id or cooldown.coalition not in {"blue", "red"}:
+            return
+        key = (cooldown.coalition, cooldown.candidate_id)
+        previous = self._cooldowns.get(key)
+        if previous is None or _cooldown_sort_value(cooldown) >= _cooldown_sort_value(previous):
+            self._cooldowns[key] = cooldown
 
     async def run_cycle(
         self,
@@ -281,12 +722,13 @@ class BilateralConflictCoordinator:
                 return self._mission_changed_cycle(coalition, readiness.mission_time)
             mission_time = readiness.mission_time
             previous = self._last_cycle_mission_time[coalition]
-            if (
-                previous is not None
-                and mission_time is not None
-                and mission_time < previous + self.config.cadence(coalition)
-            ):
-                return None
+            if mission_time is not None:
+                next_due = self._not_before_mission_time[coalition]
+                if previous is not None:
+                    cadence_due = previous + self.config.cadence(coalition)
+                    next_due = cadence_due if next_due is None else max(next_due, cadence_due)
+                if next_due is not None and mission_time < next_due:
+                    return None
 
             excluded = {
                 candidate_id
@@ -303,6 +745,11 @@ class BilateralConflictCoordinator:
             self._cycle_numbers[coalition] += 1
             cycle_number = self._cycle_numbers[coalition]
             self._last_cycle_mission_time[coalition] = mission_time
+            self._not_before_mission_time[coalition] = (
+                mission_time + self.config.no_selection_backoff_s
+                if not decisions and mission_time is not None
+                else None
+            )
 
             activations: list[tuple[StrategicDecision, StrategicDecisionActivation]] = []
             activation_failures: list[StrategicCoordinatorAttempt] = []
@@ -348,7 +795,7 @@ class BilateralConflictCoordinator:
             try:
                 execution = await self.client.execute_strategic_activation(
                     activation,
-                    approved_by="Bilateral Conflict Coordinator",
+                    approved_by=STRATEGIC_COORDINATOR_APPROVER,
                     approval_reason=(
                         f"Approved by bilateral coordinator {coalition} cycle {cycle_number}"
                     ),
@@ -433,27 +880,19 @@ class BilateralConflictCoordinator:
     ) -> StrategicCandidateCooldown | None:
         if status is StrategicAttemptStatus.MISSION_CHANGED:
             return None
-        duration = (
-            self.config.completed_cooldown_s
-            if status is StrategicAttemptStatus.COMPLETED
-            else self.config.blocked_cooldown_s
-            if status is StrategicAttemptStatus.BLOCKED
-            else self.config.failed_cooldown_s
-        )
         now = self._current_mission_time()
         if now is None:
             now = started_mission_time
-        available = now + duration if now is not None else None
-        cooldown = StrategicCandidateCooldown(
+        cooldown = self._make_cooldown(
             coalition=decision.coalition,
             candidate_id=decision.candidate_id,
             objective_id=decision.objective_id,
             status=status,
             started_mission_time=now,
-            available_mission_time=available,
             reason=reason,
+            base_time=now,
         )
-        self._cooldowns[(decision.coalition, decision.candidate_id)] = cooldown
+        self._merge_cooldown(cooldown)
         return cooldown
 
     def _mission_changed_cycle(
@@ -482,9 +921,13 @@ class BilateralConflictCoordinator:
     async def _retain_cycle(self, cycle: StrategicCoalitionCycle) -> None:
         append = getattr(self.client.server, "append_audit_record", None)
         if self.config.retain_audit and callable(append):
+            payload = strategic_coordinator_cycle_to_dict(cycle)
+            payload["audit_session_id"] = str(
+                getattr(self.client.state, "audit_session_id", "") or ""
+            )
             await append(
                 STRATEGIC_COORDINATOR_AUDIT_TYPE,
-                strategic_coordinator_cycle_to_dict(cycle),
+                payload,
             )
 
     def _current_mission_time(self) -> float | None:
@@ -549,9 +992,17 @@ def format_bilateral_conflict_run(result: BilateralConflictRun) -> str:
     lines = [
         (
             f"Bilateral conflict run generation={result.mission_generation} "
-            f"requested_cycles={requested} cooldowns={len(result.cooldowns)}"
+            f"requested_cycles={requested} cooldowns={len(result.cooldowns)} "
+            f"recoveries={len(result.recoveries)}"
         )
     ]
+    if result.recoveries:
+        recovery_counts = ", ".join(
+            f"{status.value}={sum(item.status is status for item in result.recoveries)}"
+            for status in StrategicRecoveryStatus
+            if any(item.status is status for item in result.recoveries)
+        )
+        lines.append(f"  recovered interrupted plans: {recovery_counts}")
     for coalition in ("blue", "red"):
         cycles = result.coalition(coalition)
         status_counts = ", ".join(
@@ -626,8 +1077,46 @@ def _time_text(value: float | None) -> str:
     return "-" if value is None else f"{value:.1f}"
 
 
+def _audit_payload(record: object) -> Mapping[str, Any]:
+    if not isinstance(record, Mapping):
+        return {}
+    payload = record.get("payload")
+    return payload if isinstance(payload, Mapping) else {}
+
+
+def _optional_number(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _cooldown_sort_value(cooldown: StrategicCandidateCooldown) -> tuple[float, float]:
+    return (
+        cooldown.started_mission_time
+        if cooldown.started_mission_time is not None
+        else -math.inf,
+        cooldown.available_mission_time
+        if cooldown.available_mission_time is not None
+        else math.inf,
+    )
+
+
+def _recovery_sort_key(recovery: StrategicCoordinatorRecovery) -> tuple[str, str, str]:
+    return recovery.coalition, recovery.plan_id, recovery.interrupted_attempt_id
+
+
+def _execution_sort_key(payload: Mapping[str, Any]) -> tuple[float, str]:
+    started = _optional_number(payload.get("started_mission_time"))
+    return started if started is not None else math.inf, str(payload.get("plan_id") or "")
+
+
 __all__ = [
     "STRATEGIC_COORDINATOR_AUDIT_TYPE",
+    "STRATEGIC_COORDINATOR_APPROVER",
     "BilateralConflictCoordinator",
     "BilateralConflictRun",
     "CoordinatorCycleCallback",
@@ -636,8 +1125,10 @@ __all__ = [
     "StrategicCandidateCooldown",
     "StrategicCoalitionCycle",
     "StrategicCoordinatorAttempt",
+    "StrategicCoordinatorRecovery",
     "StrategicCoordinatorConfig",
     "StrategicCycleStatus",
+    "StrategicRecoveryStatus",
     "format_bilateral_conflict_run",
     "format_strategic_coalition_cycle",
     "strategic_coordinator_cycle_to_dict",

@@ -7,6 +7,8 @@ import logging
 from contextlib import redirect_stdout
 from typing import Any
 
+import pytest
+
 from moosebridge.control import MooseBridgeControlClient, MooseBridgeControlServer, apply_state_payload, state_payload
 from examples.control_server_client.interactive_control_client import (
     normalize_snapshot_actions,
@@ -1468,6 +1470,24 @@ def test_control_client_wait_for_event_roundtrip() -> None:
             event = await task
             assert event["event"] == "auftrag.evaluated"
             assert client.state.events[-1]["payload"]["auftrag_id"] == "AUFTRAG:1"
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_control_client_preserves_event_wait_timeout_type() -> None:
+    async def scenario() -> None:
+        bridge = MooseBridgeServer()
+        server = MooseBridgeControlServer(bridge, host="127.0.0.1", port=0)
+        await server.start()
+        client = MooseBridgeControlClient("127.0.0.1", _control_port(server))
+        try:
+            with pytest.raises(
+                TimeoutError,
+                match=r"control\.event\.wait timed out after 0\.01 seconds",
+            ):
+                await client.wait_for_event("auftrag.*", timeout=0.01)
         finally:
             await server.stop()
 

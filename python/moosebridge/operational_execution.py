@@ -76,6 +76,7 @@ class PlanReconciliationStatus(str, Enum):
 
     RUNNING = "running"
     INDETERMINATE = "indeterminate"
+    REVALIDATION_REQUIRED = "revalidation_required"
     BLOCKED = "blocked"
     COMPLETED = "completed"
 
@@ -274,6 +275,36 @@ class OperationalPlanExecutor:
         )
 
         if not required:
+            if not execution.missions:
+                current = self._current_execution_phase(plan, execution)
+                reason = (
+                    "interrupted before any AUFTRAG was submitted; "
+                    "phase revalidation is required"
+                )
+                await self._block(plan, current, execution, reason, on_event)
+                return OperationalPlanReconciliation(
+                    plan.plan_id,
+                    execution.attempt_id,
+                    PlanReconciliationStatus.REVALIDATION_REQUIRED,
+                    observations,
+                    reason,
+                )
+            if execution.missions and all(
+                mission.status is PlanMissionStatus.SKIPPED for mission in execution.missions
+            ):
+                current = self._current_execution_phase(plan, execution)
+                reason = (
+                    "interrupted phase contains only skipped optional missions; "
+                    "revalidation is required"
+                )
+                await self._block(plan, current, execution, reason, on_event)
+                return OperationalPlanReconciliation(
+                    plan.plan_id,
+                    execution.attempt_id,
+                    PlanReconciliationStatus.REVALIDATION_REQUIRED,
+                    observations,
+                    reason,
+                )
             return OperationalPlanReconciliation(
                 plan.plan_id,
                 execution.attempt_id,
@@ -352,7 +383,12 @@ class OperationalPlanExecutor:
                 reconciled.observations,
                 execution.blocked_reason,
             )
-        status, message = await self._finish_reconciled_phase(plan, execution, on_event)
+        status, message = await self._finish_reconciled_phase(
+            plan,
+            execution,
+            on_event,
+            capture_security_timeout_s=mission_timeout_s,
+        )
         return OperationalPlanReconciliation(
             plan.plan_id,
             execution.attempt_id,
@@ -1535,6 +1571,8 @@ class OperationalPlanExecutor:
         plan: OperationalPlan,
         execution: OperationalPlanExecution,
         callback: PlanExecutionCallback | None,
+        *,
+        capture_security_timeout_s: float | None = None,
     ) -> tuple[PlanReconciliationStatus, str | None]:
         current = self._current_execution_phase(plan, execution)
         goal = self.client.strategic_goal(plan.goal_id)
@@ -1542,6 +1580,27 @@ class OperationalPlanExecutor:
             reason = f"strategic goal is unavailable after reconciliation: {plan.goal_id}"
             await self._block(plan, current, execution, reason, callback)
             return PlanReconciliationStatus.BLOCKED, reason
+        requires_capture_security = goal.action is StrategicGoalAction.CAPTURE and any(
+            intent.metadata.get("establishment_condition")
+            == "assigned_ground_combat_presence_in_zone"
+            for intent in current.intents
+        )
+        if requires_capture_security:
+            if capture_security_timeout_s is None:
+                return (
+                    PlanReconciliationStatus.RUNNING,
+                    "capture guard requires monitored ownership and combat-presence confirmation",
+                )
+            security_error = await self._confirm_capture_security(
+                plan,
+                current,
+                execution,
+                timeout_s=capture_security_timeout_s,
+                callback=callback,
+            )
+            if security_error is not None:
+                await self._block(plan, current, execution, security_error, callback)
+                return PlanReconciliationStatus.BLOCKED, security_error
         if goal.action is StrategicGoalAction.DISABLE:
             effect_error = await self._confirm_disable_effect(
                 goal,
@@ -1576,7 +1635,7 @@ class OperationalPlanExecutor:
         if next_phase is not None:
             reason = "interrupted phase completed; remaining phases require explicit revalidation and approval"
             await self._block(plan, next_phase, execution, reason, callback)
-            return PlanReconciliationStatus.BLOCKED, reason
+            return PlanReconciliationStatus.REVALIDATION_REQUIRED, reason
 
         await self._refresh_goal_control(goal.objective_id)
         self.client.sync_strategic_objectives(source="plan.reconciliation")

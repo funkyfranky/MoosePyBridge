@@ -157,6 +157,21 @@ exactly one DCS mission generation. Mission end stops both coalition workers,
 discards their scheduling and cooldown state, and does not follow a restarted
 mission. Start the script again for the next mission.
 
+If the Python runner stops while that DCS mission continues, starting the same
+script again first loads coordinator cooldowns and execution snapshots from the
+current daemon audit session. It reconciles every coordinator-owned executing
+plan with the current MOOSE AUFTRAG snapshot before selecting new work. An
+existing AUFTRAG is monitored without being submitted again. If its recovered
+phase completes and the plan has later phases, those phases are refreshed,
+validated, approved, and resumed as a new execution attempt. An interruption
+before the first AUFTRAG submission is also a safe boundary: the unfinished
+phase is revalidated and started as a new attempt. Ambiguous submitted mission
+state stops recovery instead of risking duplicate tasking. Run only one copy of
+the mission conflict coordinator at a time. Reattached CAPTURE guards use the
+same ownership, uncontested-zone, and assigned ground-combat-presence checks as
+normal plan execution; reaching AUFTRAG `Executing` alone does not complete the
+recovered phase.
+
 ## Architecture
 
 The DCS-facing bridge accepts one authoritative Lua connection from the mission.

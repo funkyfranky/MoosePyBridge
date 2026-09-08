@@ -283,7 +283,12 @@ class MooseBridgeControlServer:
             timeout = request.timeout if request is not None else 10.0
             error = f"{action} timed out after {timeout:g} seconds"
             LOGGER.info("Control request timed out: %s", error)
-            return {"id": request_id, "ok": False, "error": error}
+            return {
+                "id": request_id,
+                "ok": False,
+                "error": error,
+                "error_type": "timeout",
+            }
         except Exception as exc:
             request_id = None
             try:
@@ -408,6 +413,7 @@ class MooseBridgeControlClient:
         :param params: Request parameters.
         :param timeout: Request timeout in seconds.
         :returns: Result payload.
+        :raises TimeoutError: If the requested control operation times out.
         :raises RuntimeError: If the control server rejects the request.
         """
 
@@ -428,7 +434,10 @@ class MooseBridgeControlClient:
                 raise RuntimeError("Control server closed the connection without response")
             response = json.loads(line.decode("utf-8"))
             if not response.get("ok"):
-                raise RuntimeError(str(response.get("error") or response))
+                error = str(response.get("error") or response)
+                if response.get("error_type") == "timeout":
+                    raise TimeoutError(error)
+                raise RuntimeError(error)
             result = response.get("result") if isinstance(response.get("result"), dict) else {}
             state_data = result.get("state") if isinstance(result.get("state"), dict) else None
             if state_data is not None:

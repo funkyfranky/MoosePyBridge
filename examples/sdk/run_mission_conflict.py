@@ -45,6 +45,7 @@ AUTOMATIC_WAR_REASON = "Start mission-bound bilateral conflict control"
 
 BLUE_DECISION_CADENCE_SECONDS = 60.0
 RED_DECISION_CADENCE_SECONDS = 75.0
+NO_SELECTION_RETRY_SECONDS = 300.0
 COMPLETED_COOLDOWN_SECONDS = 900.0
 BLOCKED_COOLDOWN_SECONDS = 300.0
 FAILED_COOLDOWN_SECONDS = 600.0
@@ -131,6 +132,7 @@ async def run(profile_path=THEATER_PROFILE) -> int:
         StrategicCoordinatorConfig(
             blue_cadence_s=BLUE_DECISION_CADENCE_SECONDS,
             red_cadence_s=RED_DECISION_CADENCE_SECONDS,
+            no_selection_backoff_s=NO_SELECTION_RETRY_SECONDS,
             completed_cooldown_s=COMPLETED_COOLDOWN_SECONDS,
             blocked_cooldown_s=BLOCKED_COOLDOWN_SECONDS,
             failed_cooldown_s=FAILED_COOLDOWN_SECONDS,

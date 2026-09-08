@@ -15,6 +15,7 @@ from moosebridge import (
     OperationalPlan,
     OperationalPlanAssessment,
     OperationalPlanExecution,
+    OperationalPlanReconciliation,
     OperationalPlanStatus,
     OwnershipPolicy,
     PlanPhase,
@@ -22,6 +23,7 @@ from moosebridge import (
     StrategicAttemptStatus,
     StrategicCoalitionCycle,
     StrategicCoordinatorConfig,
+    StrategicRecoveryStatus,
     StrategicCycleStatus,
     StrategicDecision,
     StrategicDecisionDisposition,
@@ -32,6 +34,7 @@ from moosebridge import (
     StrategicGoalAction,
     StrategicGoalStatus,
     StrategicObjective,
+    PlanReconciliationStatus,
     format_bilateral_conflict_run,
     format_strategic_coalition_cycle,
 )
@@ -57,6 +60,7 @@ class _Readiness:
 class _AuditServer:
     def __init__(self) -> None:
         self.records: list[tuple[str, dict[str, object]]] = []
+        self.query_records: list[dict[str, object]] = []
 
     async def append_audit_record(
         self,
@@ -65,6 +69,27 @@ class _AuditServer:
     ) -> dict[str, object]:
         self.records.append((record_type, payload))
         return payload
+
+    async def query_audit_records(
+        self,
+        *,
+        record_type: str | None = None,
+        plan_id: str | None = None,
+        attempt_id: str | None = None,
+        latest_attempts: bool = False,
+    ) -> tuple[dict[str, object], ...]:
+        del latest_attempts
+        result = []
+        for record in self.query_records:
+            payload = record.get("payload")
+            if record_type is not None and record.get("record_type") != record_type:
+                continue
+            if plan_id is not None and isinstance(payload, dict) and payload.get("plan_id") != plan_id:
+                continue
+            if attempt_id is not None and isinstance(payload, dict) and payload.get("attempt_id") != attempt_id:
+                continue
+            result.append(record)
+        return tuple(result)
 
 
 class _Client:
@@ -76,6 +101,7 @@ class _Client:
         self.state = SimpleNamespace(
             mission_generation=0,
             clock=DcsTime(mission_time=100.0),
+            audit_session_id="test-session",
         )
         self.relationship = SimpleNamespace(state=RelationshipState.WAR)
         self.server = _AuditServer()
@@ -89,6 +115,12 @@ class _Client:
         }
         self.excluded_calls: list[dict[str, set[str]]] = []
         self.execute_probe = None
+        self.activation_calls: list[str] = []
+        self.restore_calls: list[str] = []
+        self.monitor_calls: list[str] = []
+        self.resume_execute_calls: list[str] = []
+        self.recovery_context = None
+        self.reconciliation_status = PlanReconciliationStatus.COMPLETED
 
     async def recommend_bilateral_strategy(self, readiness, **kwargs):
         excluded = {
@@ -120,6 +152,7 @@ class _Client:
         )
 
     async def activate_strategic_decision(self, recommendation, decision, **kwargs):
+        self.activation_calls.append(decision.candidate_id)
         return self.activations[decision.candidate_id]
 
     async def execute_strategic_activation(self, activation, **kwargs):
@@ -141,6 +174,55 @@ class _Client:
 
     def operational_plan(self, plan_id: str) -> OperationalPlan | None:
         return self.plans.get(plan_id)
+
+    async def restore_operational_plan(self, plan_id: str, *, replace: bool = False):
+        assert replace is True
+        self.restore_calls.append(plan_id)
+        if self.recovery_context is None:
+            raise KeyError(plan_id)
+        return self.recovery_context
+
+    async def monitor_interrupted_operational_plan(self, plan, **kwargs):
+        self.monitor_calls.append(plan.plan_id)
+        context = self.recovery_context
+        assert context is not None
+        if self.reconciliation_status is PlanReconciliationStatus.COMPLETED:
+            plan.status = OperationalPlanStatus.COMPLETED
+            context.goal.status = StrategicGoalStatus.ACHIEVED
+        elif self.reconciliation_status is PlanReconciliationStatus.REVALIDATION_REQUIRED:
+            plan.status = OperationalPlanStatus.BLOCKED
+        return OperationalPlanReconciliation(
+            plan.plan_id,
+            f"{plan.plan_id}/ATTEMPT:1",
+            self.reconciliation_status,
+            (),
+        )
+
+    def prepare_plan_retry(self, plan):
+        plan.status = OperationalPlanStatus.DRAFT
+        return plan
+
+    async def refresh_and_validate_operational_plan(self, plan):
+        plan.status = OperationalPlanStatus.VALIDATED
+        return OperationalPlanAssessment(plan.plan_id, True, (), ())
+
+    def approve_operational_plan(self, plan, **kwargs):
+        plan.status = OperationalPlanStatus.APPROVED
+        return plan
+
+    async def execute_plan(self, plan, **kwargs):
+        self.resume_execute_calls.append(plan.plan_id)
+        plan.status = OperationalPlanStatus.COMPLETED
+        context = self.recovery_context
+        assert context is not None
+        context.goal.status = StrategicGoalStatus.ACHIEVED
+        return OperationalPlanExecution(
+            plan_id=plan.plan_id,
+            commander_id="COMMANDER:blue",
+            attempt_id=f"{plan.plan_id}/ATTEMPT:2",
+            attempt_number=2,
+            status=OperationalPlanStatus.COMPLETED,
+        )
 
     def complete_strategic_goal(
         self,
@@ -245,6 +327,33 @@ def _recommendation(
     }
 
 
+def _interrupted_record(
+    decision: StrategicDecision,
+    activation: StrategicDecisionActivation,
+) -> dict[str, object]:
+    return {
+        "record_type": "operational_plan.execution",
+        "payload": {
+            "audit_session_id": "test-session",
+            "mission_generation": 0,
+            "plan_id": activation.plan.plan_id,
+            "attempt_id": f"{activation.plan.plan_id}/ATTEMPT:1",
+            "attempt_number": 1,
+            "status": "executing",
+            "started_mission_time": 90.0,
+            "commander_id": "COMMANDER:blue",
+            "plan": {
+                "coalition": "blue",
+                "approved_by": "Bilateral Conflict Coordinator",
+                "metadata": {"candidate_id": decision.candidate_id},
+            },
+            "goal": {"objective_id": decision.objective_id},
+            "objective": {"objective_id": decision.objective_id},
+            "missions": [{"auftrag_id": "AUFTRAG:13"}],
+        },
+    }
+
+
 def test_blocked_cycle_terminalizes_goal_and_suppresses_candidate_until_cooldown() -> None:
     async def scenario() -> None:
         pair = _decision("blue", "Blocked target")
@@ -285,8 +394,244 @@ def test_blocked_cycle_terminalizes_goal_and_suppresses_candidate_until_cooldown
             "strategic_conflict_cycle",
             "strategic_conflict_cycle",
         ]
+        assert client.server.records[0][1]["audit_session_id"] == "test-session"
         assert client.server.records[0][1]["status"] == "blocked"
         assert client.server.records[1][1]["status"] == "no_selection"
+
+    asyncio.run(scenario())
+
+
+def test_no_selection_uses_mission_time_backoff_before_recommending_again() -> None:
+    async def scenario() -> None:
+        recommendation = BilateralStrategicRecommendation(
+            0,
+            100.0,
+            "war",
+            (
+                StrategicDecisionPortfolio("blue", 100.0, ()),
+                StrategicDecisionPortfolio("red", 100.0, ()),
+            ),
+        )
+        client = _Client(recommendation, {})
+        readiness = _Readiness(client)
+        coordinator = BilateralConflictCoordinator(
+            client,
+            lambda: asyncio.sleep(0, result=readiness),
+            StrategicCoordinatorConfig(
+                blue_cadence_s=10.0,
+                red_cadence_s=10.0,
+                no_selection_backoff_s=300.0,
+                retain_audit=False,
+            ),
+        )
+
+        first = await coordinator.run_cycle("blue")
+        assert first is not None
+        assert first.status is StrategicCycleStatus.NO_SELECTION
+
+        client.state.clock = DcsTime(mission_time=399.0)
+        assert await coordinator.run_cycle("blue") is None
+        assert len(client.excluded_calls) == 1
+
+        client.state.clock = DcsTime(mission_time=400.0)
+        second = await coordinator.run_cycle("blue")
+        assert second is not None
+        assert second.status is StrategicCycleStatus.NO_SELECTION
+        assert second.cycle_number == 2
+        assert len(client.excluded_calls) == 2
+
+    asyncio.run(scenario())
+
+
+def test_coordinator_restores_no_selection_backoff_from_current_session() -> None:
+    async def scenario() -> None:
+        recommendation = BilateralStrategicRecommendation(
+            0,
+            100.0,
+            "war",
+            (
+                StrategicDecisionPortfolio("blue", 100.0, ()),
+                StrategicDecisionPortfolio("red", 100.0, ()),
+            ),
+        )
+        client = _Client(recommendation, {})
+        client.server.query_records.append(
+            {
+                "record_type": "strategic_conflict_cycle",
+                "payload": {
+                    "audit_session_id": "test-session",
+                    "mission_generation": 0,
+                    "coalition": "blue",
+                    "cycle_number": 7,
+                    "started_mission_time": 95.0,
+                    "status": "no_selection",
+                    "attempts": [],
+                },
+            }
+        )
+        readiness = _Readiness(client)
+        coordinator = BilateralConflictCoordinator(
+            client,
+            lambda: asyncio.sleep(0, result=readiness),
+            StrategicCoordinatorConfig(
+                blue_cadence_s=1.0,
+                red_cadence_s=1.0,
+                no_selection_backoff_s=20.0,
+                retain_audit=False,
+            ),
+        )
+
+        await coordinator._load_audit_state()
+        assert await coordinator.run_cycle("blue") is None
+        assert client.excluded_calls == []
+
+        client.state.clock = DcsTime(mission_time=115.0)
+        cycle = await coordinator.run_cycle("blue")
+        assert cycle is not None
+        assert cycle.cycle_number == 8
+        assert cycle.status is StrategicCycleStatus.NO_SELECTION
+
+    asyncio.run(scenario())
+
+
+def test_coordinator_restores_current_session_cycle_numbers_and_cooldowns() -> None:
+    async def scenario() -> None:
+        blue = _decision("blue", "Blue audited target")
+        red = _decision("red", "Red audited target")
+        recommendation, activations = _recommendation(blue, red)
+        client = _Client(recommendation, activations)
+        for cycle_number, pair in ((3, blue), (7, red)):
+            decision = pair[0]
+            client.server.query_records.append(
+                {
+                    "record_type": "strategic_conflict_cycle",
+                    "payload": {
+                        "audit_session_id": "test-session",
+                        "mission_generation": 0,
+                        "coalition": decision.coalition,
+                        "cycle_number": cycle_number,
+                        "started_mission_time": 95.0,
+                        "status": "completed",
+                        "attempts": [
+                            {
+                                "candidate_id": decision.candidate_id,
+                                "objective_id": decision.objective_id,
+                                "status": "completed",
+                                "cooldown_until": 500.0,
+                            }
+                        ],
+                    },
+                }
+            )
+        readiness = _Readiness(client)
+        coordinator = BilateralConflictCoordinator(
+            client,
+            lambda: asyncio.sleep(0, result=readiness),
+            StrategicCoordinatorConfig(
+                blue_cadence_s=1.0,
+                red_cadence_s=1.0,
+                retain_audit=False,
+            ),
+        )
+
+        result = await coordinator.run(cycles_per_coalition=1)
+
+        assert result.coalition("blue")[0].cycle_number == 4
+        assert result.coalition("red")[0].cycle_number == 8
+        assert all(cycle.status is StrategicCycleStatus.NO_SELECTION for cycle in result.cycles)
+        assert client.activation_calls == []
+        assert client.excluded_calls[0]["blue"] == {blue[0].candidate_id}
+        assert client.excluded_calls[1]["red"] == {red[0].candidate_id}
+
+    asyncio.run(scenario())
+
+
+def test_coordinator_recovers_interrupted_plan_before_selecting_new_work() -> None:
+    async def scenario() -> None:
+        blue = _decision("blue", "Interrupted target")
+        decision, activation = blue
+        activation.plan.status = OperationalPlanStatus.EXECUTING
+        recommendation = BilateralStrategicRecommendation(
+            0,
+            100.0,
+            "war",
+            (
+                StrategicDecisionPortfolio("blue", 100.0, (decision,)),
+                StrategicDecisionPortfolio("red", 100.0, ()),
+            ),
+        )
+        client = _Client(recommendation, {decision.candidate_id: activation})
+        client.recovery_context = SimpleNamespace(
+            objective=activation.objective,
+            goal=activation.goal,
+            plan=activation.plan,
+        )
+        client.server.query_records.append(_interrupted_record(decision, activation))
+        readiness = _Readiness(client)
+        coordinator = BilateralConflictCoordinator(
+            client,
+            lambda: asyncio.sleep(0, result=readiness),
+            StrategicCoordinatorConfig(
+                blue_cadence_s=1.0,
+                red_cadence_s=1.0,
+                completed_cooldown_s=300.0,
+                retain_audit=False,
+            ),
+        )
+
+        result = await coordinator.run(cycles_per_coalition=1)
+
+        assert client.restore_calls == [activation.plan.plan_id]
+        assert client.monitor_calls == [activation.plan.plan_id]
+        assert client.activation_calls == []
+        assert result.recoveries[0].status is StrategicRecoveryStatus.COMPLETED
+        assert result.recoveries[0].auftrag_ids == ("AUFTRAG:13",)
+        assert result.coalition("blue")[0].status is StrategicCycleStatus.NO_SELECTION
+        assert client.excluded_calls[0]["blue"] == {decision.candidate_id}
+
+    asyncio.run(scenario())
+
+
+def test_coordinator_revalidates_remaining_phases_after_recovered_phase() -> None:
+    async def scenario() -> None:
+        decision, activation = _decision("blue", "Multi-phase target")
+        activation.plan.status = OperationalPlanStatus.EXECUTING
+        recommendation = BilateralStrategicRecommendation(
+            0,
+            100.0,
+            "war",
+            (
+                StrategicDecisionPortfolio("blue", 100.0, (decision,)),
+                StrategicDecisionPortfolio("red", 100.0, ()),
+            ),
+        )
+        client = _Client(recommendation, {decision.candidate_id: activation})
+        client.recovery_context = SimpleNamespace(
+            objective=activation.objective,
+            goal=activation.goal,
+            plan=activation.plan,
+        )
+        client.reconciliation_status = PlanReconciliationStatus.REVALIDATION_REQUIRED
+        client.server.query_records.append(_interrupted_record(decision, activation))
+        readiness = _Readiness(client)
+        coordinator = BilateralConflictCoordinator(
+            client,
+            lambda: asyncio.sleep(0, result=readiness),
+            StrategicCoordinatorConfig(
+                blue_cadence_s=1.0,
+                red_cadence_s=1.0,
+                retain_audit=False,
+            ),
+        )
+
+        result = await coordinator.run(cycles_per_coalition=1)
+
+        assert client.restore_calls == [activation.plan.plan_id]
+        assert client.monitor_calls == [activation.plan.plan_id]
+        assert client.resume_execute_calls == [activation.plan.plan_id]
+        assert client.activation_calls == []
+        assert result.recoveries[0].status is StrategicRecoveryStatus.COMPLETED
+        assert result.recoveries[0].resumed_attempt_id == f"{activation.plan.plan_id}/ATTEMPT:2"
 
     asyncio.run(scenario())
 

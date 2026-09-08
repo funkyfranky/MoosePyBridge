@@ -306,13 +306,46 @@ runner, configurable manual or automatic war declaration, compact cycle/run
 status, and an explicit stop at the current mission-generation boundary. The
 older single-coalition controller path has been removed.
 
-Live mission-bound acceptance has passed once on Caucasus. Both coalition
-workers stopped at the same mission boundary while active AUFTRAGs were being
-monitored, neither worker followed the next generation, and daemon generation
-`2 -> 3` reset every mission-scoped snapshot category to zero. The run also
-revealed and fixed duplicate application of `mission.ended` in SDK state
-mirrors; execution audit snapshots now retain the generation and audit session
-in which their attempt began.
+An interrupted SDK client is now recovered before either coalition may select
+new work. The coordinator restores current audit-session cycle numbers and
+cooldowns, reconciles executing coordinator plans against live MOOSE AUFTRAG
+snapshots, and reattaches to recognized running AUFTRAGs without submitting
+duplicates. A successfully recovered phase with remaining work receives fresh
+feasibility validation and explicit coordinator approval before a new attempt
+continues those phases. A plan interrupted before its first AUFTRAG submission
+uses the same safe revalidation boundary. Ambiguous submitted mission state
+aborts the runner instead of risking duplicate tasking. Concurrent coordinator
+instances remain forbidden. Recovered persistent capture guards must also pass
+the normal ownership and combat-presence confirmation before their phase can
+complete.
+
+The first extended Caucasus soak exceeded 80,000 seconds of accelerated DCS
+mission time. The coordinator remained live, an idle same-mission SDK-client
+restart restored cycle numbers and cooldowns, and mission end stopped both
+workers without following the next generation. The run exposed two load and
+transport issues. Control API event-wait timeouts now retain their structured
+timeout type, so the normal ten-second RECON position-sampling tick no longer
+blocks every RECON plan. Repeated cycles with no eligible candidate now use a
+configurable mission-time backoff, which is also restored after a same-session
+client restart.
+
+A live same-mission SDK-client restart on Caucasus confirmed both recovery
+boundaries: the coordinator reattached to the existing red `AUFTRAG:6` without
+submitting it again, while a blue plan interrupted before submission was
+revalidated and created its first mission as `AUFTRAG:7`. The run then exposed
+that the reattached persistent neutral-claim patrol completed its phase at
+`Executing` before normal ownership and combat-presence confirmation. Recovery
+now applies that confirmation too; the regression test is automated and the
+focused live retest remains open.
+
+Live mission-bound acceptance has passed on Caucasus, including a clean rerun
+after correcting duplicate mission-boundary handling. Both coalition workers
+stopped at the same mission boundary while active AUFTRAGs were being monitored,
+neither worker followed the next generation, and daemon generation `0 -> 1`
+reset every mission-scoped snapshot category to zero. Both interrupted attempts
+retained generation `0` and the original audit session, while generation `1`
+contained zero restorable execution attempts. Execution audit snapshots now
+retain the generation and audit session in which their attempt began.
 
 Required work:
 
