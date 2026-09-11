@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from moosebridge import (
     Auftrag_ARTY,
     AssetRequirement,
@@ -2429,7 +2431,8 @@ def test_capture_establishes_guard_and_changes_opponent_goal_derivation() -> Non
     asyncio.run(scenario())
 
 
-def test_neutral_capture_executes_as_persistent_patrol_claim() -> None:
+@pytest.mark.parametrize("interrupt_after_submission", [False, True])
+def test_neutral_capture_executes_as_persistent_patrol_claim(interrupt_after_submission, monkeypatch) -> None:
     async def scenario() -> None:
         server = _NeutralClaimExecutionServer()
         bridge = MooseBridgeClient(server)  # type: ignore[arg-type]
@@ -2508,6 +2511,34 @@ def test_neutral_capture_executes_as_persistent_patrol_claim() -> None:
         )
         assessment = bridge.validate_operational_plan(plan)
         assert assessment.feasible
+        if interrupt_after_submission:
+            monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "examples" / "sdk"))
+            import prepare_claim_recovery as preparation
+
+            plan.metadata["candidate_id"] = "blue:capture:OBJECTIVE:Town"
+            bridge.approve_operational_plan(plan, approved_by=preparation.STRATEGIC_COORDINATOR_APPROVER)
+            with pytest.raises(preparation._ClaimSubmitted) as stopped:
+                await bridge.execute_plan(
+                    plan, mission_timeout_s=1, on_event=preparation._interrupt_after_submission,
+                )
+            records = await server.query_audit_records(
+                record_type=preparation.PLAN_EXECUTION_AUDIT_TYPE,
+                plan_id=plan.plan_id,
+                latest_attempts=True,
+            )
+            preparation._require_recoverable_checkpoint(records, stopped.value.event, bridge.state)
+            with pytest.raises(RuntimeError, match="no recoverable"):
+                preparation._require_recoverable_checkpoint([], stopped.value.event, bridge.state)
+            assert plan.status is OperationalPlanStatus.EXECUTING
+            assert objective.owner == "neutral"
+            create_actions = [
+                command.action for command in server.commands if command.action.startswith("auftrag.create_")
+            ]
+            assert create_actions == ["auftrag.create_patrolzone"]
+            assert not any(command.action == "auftrag.cancel" for command in server.commands)
+            server.audit_store.close()
+            return
+
         bridge.approve_operational_plan(plan)
 
         execution = await bridge.execute_plan(plan, mission_timeout_s=1)

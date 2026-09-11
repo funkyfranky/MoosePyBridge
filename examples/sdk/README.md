@@ -43,6 +43,7 @@ default control endpoint `127.0.0.1:42001`.
 | `execute_bilateral_strategy.py` | DCS runtime state | Activate one bounded decision per coalition, then approve and execute both plans concurrently through their MOOSE COMMANDERs. |
 | `run_bilateral_conflict.py` | Mission-changing | Run a finite recurring blue/red conflict with independent cadence, concurrent COMMANDER execution, cooldowns, and cycle audit. |
 | `run_mission_conflict.py` | Mission-changing | Run both strategic coalition workers until the current DCS mission ends, with manual or automatic war declaration, idle-decision backoff, and same-mission client-restart recovery. |
+| `prepare_claim_recovery.py` | Mission-changing | Select one feasible neutral OPSZONE for red, declare war if needed, and interrupt the client after a durably recorded PATROLZONE submission; immediately continue with the normal mission conflict runner. |
 | `monitor_global_picture.py` | Read-only | Print and validate the complete global picture periodically. |
 | `run_auftrag_lifecycle.py` | Mission-changing | Run the representative bounded ONGUARD lifecycle used by the release test. |
 | `test_mission_reset.py` | Mission-changing | Verify mission-end/restart generations and mission-scoped state cleanup. |
@@ -53,6 +54,38 @@ default control endpoint `127.0.0.1:42001`.
 `example_support.py` provides shared repository bootstrap, daemon connection,
 and error handling for executable examples. It contains no mission-specific
 configuration and is not intended to be run directly.
+
+### Neutral claim recovery acceptance
+
+Start a fresh Caucasus test mission and the daemon, with no other conflict
+runner active. Keep DCS at normal speed. Run these commands in PowerShell:
+
+```powershell
+python -u examples/sdk/prepare_claim_recovery.py 2>&1 | Tee-Object -FilePath claim-preparation.log
+if ($LASTEXITCODE -eq 0) {
+    python -u examples/sdk/run_mission_conflict.py 2>&1 | Tee-Object -FilePath claim-recovery.log
+}
+```
+
+The preparation script declares war for red if necessary. It limits its
+recommendation to verified neutral, uncontested OPSZONEs and uses the normal
+planner, activation, COMMANDER, and execution audit path. Immediately after
+the PATROLZONE submission it deliberately interrupts its client and confirms
+the persisted execution checkpoint and the still-neutral owner. It prints
+`CHECKPOINT READY` and exits successfully; this is preparation, not a passed
+recovery test. DCS and the daemon must stay running between the two clients.
+Do not rerun preparation once a claim has been submitted. An unsuccessful
+preparation reports its reason and prevents automatic runner startup.
+
+The normal runner must report `plan.recovery_started` with the same AUFTRAG id
+without resubmitting the claim. While the zone remains neutral, `Executing`
+alone must not complete that claim phase. Completion requires the normal
+`strategic.security_established` ownership and assigned combat-presence check,
+followed by phase reconciliation and eventual `plan.recovered`. Later optional
+support phases may be revalidated and submitted as legitimate new work.
+If ownership changed before recovery began, that run does not exercise the
+still-neutral guard case. The normal runner continues bilateral conflict after
+recovery; stop it with Ctrl+C when the required output has been collected.
 
 ## Monitoring
 

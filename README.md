@@ -749,6 +749,33 @@ Changing the COMMANDER is therefore an execution decision and does not require
 modifying the plan itself. Audit write failures are logged but do not interrupt
 a mission already being executed.
 
+Semantic audit retention is enabled by default. At a 16 MiB file/index target,
+the daemon atomically compacts superseded snapshots and keeps up to 256 recent
+additional history records. It retains recovery checkpoints for three mission
+scopes (daemon audit session plus DCS generation), always including the active
+mission. These checkpoints include the latest snapshot of every execution
+attempt, RECON results, the latest diplomacy state, coalition cycle counters
+and idle schedules, and each candidate's latest cooldown. Execution snapshots
+retain their accumulated events and typed planning context. Old missions and
+intermediate recommendation history outside this window are discarded.
+
+The target is deliberately soft: recovery checkpoints are never dropped to
+satisfy a byte limit. If protected data alone exceeds the target, the daemon
+warns and exposes the overshoot in `control.status` under `audit`. Compaction
+is retried after further growth, rather than on every append. Existing large
+files are compacted when opened by the daemon; loading an `AuditStore` alone
+does not modify its file. No rotating archives are created, and the separate
+raw protocol log is not affected by these semantic audit settings.
+
+Configure both daemon and standalone server with `--audit-max-mib 16`,
+`--audit-history-records 256`, and `--audit-retained-missions 3`.
+`--audit-max-mib 0` disables automatic retention and preserves full history.
+Retention also bounds the query index when file persistence is disabled.
+For programmatic configuration, pass `AuditRetentionConfig` from
+`moosebridge.audit` as `MooseBridgeServer(audit_retention=...)`.
+Retained historical missions remain scoped; retention does not make their
+state eligible for recovery in another daemon session or DCS generation.
+
 After an SDK process restart, the complete typed planning context can be
 restored explicitly without issuing DCS commands:
 

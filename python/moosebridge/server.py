@@ -10,7 +10,10 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from .audit import AuditStore, latest_attempt_records
+from .audit import (
+    AuditRetentionConfig, AuditStore, add_audit_retention_arguments,
+    audit_retention_from_args, latest_attempt_records,
+)
 from .protocol import BridgeCommand, PendingCommand
 from .state import MooseBridgeState
 from .streams import close_stream_writer
@@ -83,6 +86,7 @@ class MooseBridgeServer:
     :param port: TCP port to listen on.
     :param log_path: Optional raw JSONL log file path.
     :param audit_path: Optional persistent semantic audit JSONL path.
+    :param audit_retention: Semantic audit compaction limits; defaults to a 16 MiB target.
     :param reader_limit: Maximum incoming JSONL line size in bytes.
     """
 
@@ -93,13 +97,17 @@ class MooseBridgeServer:
         log_path: Path | None = None,
         reader_limit: int = DEFAULT_READER_LIMIT,
         audit_path: Path | None = None,
+        audit_retention: AuditRetentionConfig | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.log_path = log_path
-        self.audit_store = AuditStore(audit_path)
         self.reader_limit = reader_limit
         self.state = MooseBridgeState(audit_session_id=f"server-{uuid.uuid4().hex}")
+        self.audit_store = AuditStore(
+            audit_path, retention=audit_retention,
+            active_scope=(self.state.audit_session_id, self.state.mission_generation),
+        )
         self._server: asyncio.AbstractServer | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._sequence = 0
@@ -187,7 +195,11 @@ class MooseBridgeServer:
     ) -> dict[str, Any]:
         """Persist one semantic audit record in the daemon-owned store."""
 
-        return self.audit_store.append(record_type, payload, client_identity=client_identity)
+        scoped_payload = dict(payload)
+        scoped_payload.setdefault("audit_session_id", self.state.audit_session_id)
+        scoped_payload.setdefault("mission_generation", self.state.mission_generation)
+        self.audit_store.active_scope = (self.state.audit_session_id, self.state.mission_generation)
+        return self.audit_store.append(record_type, scoped_payload, client_identity=client_identity)
 
     async def query_audit_records(
         self,
@@ -264,6 +276,7 @@ class MooseBridgeServer:
             return
         self._detect_mission_clock_reset(message)
         self.state.apply_message(message)
+        self.audit_store.active_scope = (self.state.audit_session_id, self.state.mission_generation)
         for listener in tuple(self._message_listeners):
             try:
                 listener(message)
@@ -1241,6 +1254,7 @@ async def _run(args: argparse.Namespace) -> None:
         Path(args.log) if args.log else None,
         reader_limit=args.reader_limit,
         audit_path=Path(args.audit_log) if args.audit_log else None,
+        audit_retention=audit_retention_from_args(args),
     )
 
     if args.interactive:
@@ -1262,6 +1276,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--log", default="moosebridge_raw.jsonl")
     parser.add_argument("--audit-log", default="moosebridge_audit.jsonl")
+    add_audit_retention_arguments(parser)
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--reader-limit", type=int, default=DEFAULT_READER_LIMIT, help="Maximum incoming JSONL line size in bytes")
     parser.add_argument("--interactive", action="store_true", help="Run an interactive command console after starting the server")

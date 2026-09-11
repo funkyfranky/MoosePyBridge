@@ -39,7 +39,7 @@ from moosebridge.protocol import BridgeCommand
 from moosebridge.sdk_backend import SdkBackend
 from moosebridge.sdk import NearestResult
 from moosebridge.state import MooseBridgeState
-from moosebridge.server import DcsBridgeCommandTimeoutError, DcsBridgeConnectionError, MooseBridgeServer
+from moosebridge.server import DcsBridgeCommandTimeoutError, DcsBridgeConnectionError, DcsMissionEndedError, MooseBridgeServer
 from moosebridge.strategic import ObjectiveKind, OwnershipPolicy, StrategicObjective
 
 
@@ -1351,6 +1351,35 @@ def test_control_status_and_state_roundtrip() -> None:
     asyncio.run(scenario())
 
 
+def test_control_audit_retention_status_and_original_execution_scope() -> None:
+    from moosebridge.audit import AuditRetentionConfig
+
+    async def scenario() -> None:
+        bridge = MooseBridgeServer(audit_retention=AuditRetentionConfig(512, 0))
+        server = MooseBridgeControlServer(bridge, host="127.0.0.1", port=0)
+        await server.start()
+        client = MooseBridgeControlClient("127.0.0.1", _control_port(server))
+        try:
+            await client.append_audit_record("strategic_decision", {"mission_generation": 0})
+            record = bridge.audit_store.query()[0]
+            assert record["payload"]["audit_session_id"] == bridge.state.audit_session_id
+            await client.append_audit_record("operational_plan.execution", {
+                "audit_session_id": "original-session", "mission_generation": 7,
+                "plan_id": "PLAN:1", "attempt_id": "PLAN:1/ATTEMPT:1",
+                "status": "executing", "events": ["x" * 1024],
+            })
+            payload = bridge.audit_store.query(record_type="operational_plan.execution")[0]["payload"]
+            assert (payload["audit_session_id"], payload["mission_generation"]) == ("original-session", 7)
+            status = await client.status()
+            assert status["audit"]["max_bytes"] == 512
+            assert status["audit"]["protected_over_target"] is True
+            assert status["audit"]["compactions"] > 0
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
 def test_control_dcs_disconnect_is_not_logged_as_server_error(caplog: Any) -> None:
     class DisconnectingBridge(FakeBridgeServer):
         async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
@@ -1488,6 +1517,24 @@ def test_control_client_preserves_event_wait_timeout_type() -> None:
                 match=r"control\.event\.wait timed out after 0\.01 seconds",
             ):
                 await client.wait_for_event("auftrag.*", timeout=0.01)
+        finally:
+            await server.stop()
+
+    asyncio.run(scenario())
+
+
+def test_control_client_preserves_mission_end_during_snapshot_request() -> None:
+    class EndingBridge(MooseBridgeServer):
+        async def send_command(self, command: BridgeCommand, timeout: float = 10.0) -> dict[str, Any]:
+            raise DcsMissionEndedError("DCS mission ended")
+
+    async def scenario() -> None:
+        server = MooseBridgeControlServer(EndingBridge(), host="127.0.0.1", port=0)
+        await server.start()
+        client = MooseBridgeControlClient("127.0.0.1", _control_port(server))
+        try:
+            with pytest.raises(DcsMissionEndedError, match="DCS mission ended"):
+                await client.request_snapshots(("snapshot.groups",), timeout=1.0)
         finally:
             await server.stop()
 

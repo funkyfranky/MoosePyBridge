@@ -335,8 +335,8 @@ submitting it again, while a blue plan interrupted before submission was
 revalidated and created its first mission as `AUFTRAG:7`. The run then exposed
 that the reattached persistent neutral-claim patrol completed its phase at
 `Executing` before normal ownership and combat-presence confirmation. Recovery
-now applies that confirmation too; the regression test is automated and the
-focused live retest remains open.
+now applies that confirmation too; automated regression coverage and the
+focused live retest described below both pass.
 
 Live mission-bound acceptance has passed on Caucasus, including a clean rerun
 after correcting duplicate mission-boundary handling. Both coalition workers
@@ -346,6 +346,113 @@ reset every mission-scoped snapshot category to zero. Both interrupted attempts
 retained generation `0` and the original audit session, while generation `1`
 contained zero restorable execution attempts. Execution audit snapshots now
 retain the generation and audit session in which their attempt began.
+
+A further Caucasus live run on 2026-09-10 recovered blue's existing
+`CAPTUREZONE` (`AUFTRAG:15`), revalidated the remaining consolidation phase,
+and established a new patrol with six assigned combat-capable units inside
+the uncontested blue OPSZONE. Red also recovered an interrupted DEFEND phase
+containing only skipped optional missions; a later blue DEFEND goal completed
+at its deadline. Idle decision intervals remained above the configured
+300 mission seconds. No RECON was submitted, and the restart did not interrupt
+a neutral claim patrol, so that run did not exercise those focused cases.
+The final mission end interrupted a decision refresh and escaped as
+`Example failed: DCS mission ended`. The Control API now preserves
+`DcsMissionEndedError`, and the coordinator treats mission end during readiness
+or recommendation as a terminal boundary for both workers, even before the
+passive watcher updates local generation. Cleared next-generation readiness is
+checked after the boundary check. Automated regressions cover this path and
+preserve unrelated decision errors; its live retest remains open.
+
+The subsequent focused `recon_intel_test.py` live run passed on Caucasus.
+Blue `AUFTRAG:2` completed its RECON lifecycle with MOOSE success, ten spatial
+samples, 100% potential area coverage, sufficient sampling, a satisfied
+requirement, and complete history. The assigned MQ-9 contributed one new
+contact (`GROUP:Red Camp Achigava Refueler-1`), with a first-detection delay of
+1,045 mission seconds. The former ten-second control event-wait failure did
+not abort this execution, providing live acceptance of the shared RECON
+sampling path. The neutral-claim recovery acceptance is documented below;
+the precise decision-refresh mission-end race remains an automated check.
+
+The subsequent mission-end live retest also passed: blue `AUFTRAG:2`
+(`BOMBRUNWAY`) and red `AUFTRAG:3` (`STRIKE`) were interrupted after reaching
+`Started`. Both execution attempts recorded the mission-end reason, both
+workers emitted `mission_changed`, and the generation-0 runner printed its
+summary and `PASS` without following another mission. The two cooldowns in
+that summary belong to the terminating coordinator instance; this output alone
+does not verify the next mission's persisted state. This live run confirms
+shutdown during active execution. The narrower race during a readiness or
+recommendation refresh remains covered by deterministic regressions rather
+than this live timing.
+
+`examples/sdk/prepare_claim_recovery.py` now prepares that case directly:
+it selects a feasible neutral OPSZONE for red through the production
+recommendation and activation path, interrupts its client immediately after
+PATROLZONE submission, verifies the current-session audit checkpoint, and
+checks that the zone is still neutral. The operator then starts the canonical
+mission conflict runner to exercise recovery. Automated checks confirm that
+the interruption preserves an executing, recoverable plan and submits exactly
+one patrol without cancelling it.
+
+The focused neutral-claim live acceptance passed on Caucasus in mission
+generation 1. Preparation submitted red `AUFTRAG:2` for neutral
+`OPSZONE:Town Gali` and verified its persisted checkpoint. The normal runner
+reattached to that same patrol without another submission. Its recovered
+claim completed only after `strategic.security_established` reported
+`owner=red`, `contested=False`, `threat_red=16`, and four assigned ground
+combat units inside the zone. Remaining consolidation work was revalidated;
+unavailable optional air defense and logistics were skipped, then the plan
+reported `plan.recovered status=completed`.
+
+The same run continued beyond 23,900 mission seconds. Red completed two
+infrastructure destruction plans and five DEFEND plans. Blue's repeated BAI
+and BOMBRUNWAY attempts returned unsuccessful MOOSE outcomes; the runner
+continued to handle them without stopping red. Their tactical causes are not
+established by the console output. Mission end interrupted a red DEFEND goal
+and a blue BAI, both workers emitted `mission_changed`, and the final summary
+reported `recoveries=1` with one completed recovery and `PASS`. This closes
+the focused neutral-claim recovery test, not the remaining Milestone 5 work
+on retention, audit growth, command load, and cross-generation state checks.
+
+Semantic audit retention is implemented with a default 16 MiB compaction
+target, three mission scopes including the active mission, and up to 256
+additional recent history records. Compaction retains the latest execution
+snapshot per attempt (including accumulated events and complete restore
+context), RECON results, diplomacy, coalition schedules, and candidate
+cooldowns. The active mission's recovery data is protected even when it exceeds
+the target; the overshoot is logged and exposed through `control.status`.
+Atomic file replacement preserves the original audit on failure, and startup
+indexing of large existing files is compacted incrementally before the file is
+rewritten on open. Retention can be disabled or configured through daemon CLI
+options. Raw protocol logging and growth of indispensable current-mission
+state remain separate from this bounded history policy.
+
+An offline check on a copy of the 81,295,524-byte live audit reduced it to
+6,767,440 bytes and successfully reloaded the compacted records. The original
+live file was unchanged. Regression coverage verifies cooldown and idle
+schedule recovery, cumulative execution data, scope isolation, bounded generic
+history, delayed cycle records, oversized protected checkpoints, failed atomic
+replacement, and appending after a partial trailing record.
+
+Live startup with retention enabled on 2026-09-11 confirmed one successful
+compaction, approximately 6.9 MB on disk, and no protected-data overshoot.
+After a fresh DCS mission in the same daemon session, the runner recovered
+red `PLAN:STRATEGIC:red:9ccdbd29ce9193f2` and its existing `AUFTRAG:2`
+PATROLZONE without resubmitting it. The claim guard confirmed red ownership,
+an uncontested zone, and four assigned combat units inside Town Gali before
+reconciliation and `plan.recovered status=completed`. Blue later completed
+BAI, opposing CAPTUREZONE, and consolidation with three assigned combat units
+inside the now-blue zone. The live audit status at inspection showed
+10,677,723 bytes, 599 records, one compaction, and no overshoot. This confirms
+startup compaction followed by normal writes and client recovery under the
+new policy. A second compaction during active execution was not observed
+at that inspection. The final generation-1 run subsequently stopped cleanly:
+`recoveries=1` with one completed recovery, blue with 17 cycles and 10 attempts
+(three completed, seven blocked), and red with 37 cycles and five attempts
+(two completed, three blocked). Both workers reported `mission_changed` and
+the runner printed `PASS`. Startup compaction, subsequent client recovery,
+continued bilateral operation, and mission-end shutdown are therefore accepted
+live under the retention policy; in-flight compaction remains covered by the
+automated checks rather than this console evidence.
 
 Required work:
 

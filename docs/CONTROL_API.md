@@ -59,6 +59,11 @@ Error response:
 }
 ```
 
+Error responses may include `error_type`: `timeout` preserves a control wait's
+`TimeoutError`, while `mission_ended` preserves `DcsMissionEndedError` when a
+mission boundary interrupts a DCS request. The Python client restores these
+exception types; other error responses raise `RuntimeError`.
+
 Errors are transport-level or control-level failures. DCS command rejection is
 usually represented as a successful control response containing an ACK with
 `ok=false`.
@@ -81,6 +86,17 @@ emitted.
 
 Returns daemon connectivity and object counts. It does not include full object
 payload lists.
+
+The `audit` object reports `retention_enabled`, `max_bytes`, `history_records`,
+`retained_missions`, `records`, `indexed_bytes`, `file_bytes`, `compactions`,
+and the last compaction's `protected_bytes` and `protected_over_target`.
+Indexed bytes describe serialized records, not the Python process's RSS.
+The byte target is soft when protected recovery checkpoints alone exceed it.
+Compaction keeps the latest cumulative execution/RECON snapshots, diplomacy,
+coalition scheduling, and candidate cooldown records for the configured
+mission window; queries no longer return discarded intermediate history.
+Identical attempt IDs in different daemon sessions or mission generations
+remain distinct when querying with `latest_attempts=True`.
 
 Example result:
 
@@ -610,9 +626,10 @@ trace AUFTRAG:1
 
 - No authentication or roles yet.
 - No persistent client sessions yet.
-- The daemon has a versioned append-only semantic audit store for operational
-  plan execution. Broader command, recommendation, and operator-session audit
-  records still need schemas.
+- The versioned semantic audit compacts superseded history under configurable
+  retention limits. Protected recovery checkpoints may exceed the byte target;
+  full-history retention is available with `--audit-max-mib 0`. Raw protocol
+  log retention is separate and is not implemented by these settings.
 - Request timeout is currently also used as the DCS command timeout.
 - Autonomous agents should still use higher-level validation and policy checks
   before calling `control.command`.

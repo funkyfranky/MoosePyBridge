@@ -7,6 +7,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from .audit import add_audit_retention_arguments, audit_retention_from_args
 from .control import DEFAULT_CONTROL_PORT, MooseBridgeControlServer
 from .server import DEFAULT_PORT, DEFAULT_READER_LIMIT, MooseBridgeServer
 from .trace_cli import run_interactive_console
@@ -31,6 +32,7 @@ async def _run(args: argparse.Namespace) -> None:
         Path(args.log) if args.log else None,
         reader_limit=args.reader_limit,
         audit_path=Path(args.audit_log) if args.audit_log else None,
+        audit_retention=audit_retention_from_args(args),
     )
     control_server = None
     if not args.no_control:
@@ -71,6 +73,7 @@ def main() -> None:
         default="moosebridge_audit.jsonl",
         help="Persistent semantic audit JSONL path; pass an empty value to disable file persistence.",
     )
+    add_audit_retention_arguments(parser)
     parser.add_argument("--log-level", default="INFO")
     parser.add_argument("--reader-limit", type=int, default=DEFAULT_READER_LIMIT, help="Maximum incoming DCS JSONL line size in bytes.")
     parser.add_argument("--control-reader-limit", type=int, default=DEFAULT_READER_LIMIT, help="Maximum incoming control JSONL line size in bytes.")

@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -54,3 +57,32 @@ def test_regular_sdk_examples_use_shared_runtime_support() -> None:
 
     assert missing_support == []
     assert direct_control == []
+
+
+@pytest.mark.parametrize(
+    ("objective_owner", "live_owner", "contested", "expected"),
+    [
+        ("neutral", "neutral", False, True),
+        ("neutral", "red", False, False),
+        ("red", "neutral", False, False),
+        ("neutral", None, False, False),
+        ("neutral", "neutral", True, False),
+        ("neutral", "neutral", None, False),
+    ],
+)
+def test_claim_recovery_preparation_requires_confirmed_neutral_ownership(
+    monkeypatch, objective_owner, live_owner, contested, expected,
+) -> None:
+    monkeypatch.syspath_prepend(str(EXAMPLE_ROOT))
+    import prepare_claim_recovery as preparation
+
+    objective = SimpleNamespace(
+        kind=preparation.ObjectiveKind.OPSZONE,
+        control_object_id="OPSZONE:Town",
+        owner=objective_owner,
+    )
+    readiness = SimpleNamespace(objective_generation=SimpleNamespace(objectives=(objective,)))
+    state = SimpleNamespace(opszone_objects={
+        "OPSZONE:Town": SimpleNamespace(owner_current_name=live_owner, is_contested=contested),
+    })
+    assert bool(preparation._neutral_objectives(readiness, state)) is expected

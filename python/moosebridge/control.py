@@ -276,13 +276,13 @@ class MooseBridgeControlServer:
         except DcsMissionEndedError as exc:
             request_id = data.get("id") if isinstance(data, dict) else None
             LOGGER.info("Control request interrupted by mission end: %s", exc)
-            return {"id": request_id, "ok": False, "error": str(exc)}
+            return {"id": request_id, "ok": False, "error": str(exc), "error_type": "mission_ended"}
         except TimeoutError:
             request_id = data.get("id") if isinstance(data, dict) else None
             action = request.action if request is not None else "control request"
             timeout = request.timeout if request is not None else 10.0
             error = f"{action} timed out after {timeout:g} seconds"
-            LOGGER.info("Control request timed out: %s", error)
+            LOGGER.debug("Control request timed out: %s", error)
             return {
                 "id": request_id,
                 "ok": False,
@@ -308,7 +308,12 @@ class MooseBridgeControlServer:
 
         action = request.action
         if action == "control.status":
-            return {**state_payload(self.bridge_server.state, kinds=()), "client": request.client.to_dict()}
+            audit = getattr(self.bridge_server, "audit_store", None)
+            return {
+                **state_payload(self.bridge_server.state, kinds=()),
+                "client": request.client.to_dict(),
+                "audit": audit.status() if audit is not None else None,
+            }
         if action == "control.state":
             kinds = request.params.get("kinds")
             if isinstance(kinds, str):
@@ -437,6 +442,8 @@ class MooseBridgeControlClient:
                 error = str(response.get("error") or response)
                 if response.get("error_type") == "timeout":
                     raise TimeoutError(error)
+                if response.get("error_type") == "mission_ended":
+                    raise DcsMissionEndedError(error)
                 raise RuntimeError(error)
             result = response.get("result") if isinstance(response.get("result"), dict) else {}
             state_data = result.get("state") if isinstance(result.get("state"), dict) else None

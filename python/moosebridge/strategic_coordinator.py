@@ -11,6 +11,7 @@ import math
 from typing import TYPE_CHECKING, Any
 
 from .conflict_readiness import ConflictReadinessReport
+from .server import DcsMissionEndedError
 from .operational import OperationalPlanStatus
 from .operational_execution import (
     PLAN_EXECUTION_AUDIT_TYPE,
@@ -210,6 +211,7 @@ class BilateralConflictCoordinator:
         self._not_before_mission_time: dict[str, float | None] = {"blue": None, "red": None}
         self._cooldowns: dict[tuple[str, str], StrategicCandidateCooldown] = {}
         self._audit_state_loaded = False
+        self._mission_ended = False
         self._interrupted_plans: tuple[dict[str, Any], ...] = ()
 
     @property
@@ -710,16 +712,36 @@ class BilateralConflictCoordinator:
         if coalition not in {"blue", "red"}:
             raise ValueError("strategic coordinator coalition must be blue or red")
 
+        try:
+            return await self._run_cycle(coalition, on_event=on_event)
+        except Exception as exc:
+            if not self._has_mission_ended(exc):
+                raise
+            return self._mission_changed_cycle(coalition, self._current_mission_time())
+
+    def _has_mission_ended(self, error: Exception | None = None) -> bool:
+        # A command response can report mission end before the passive event
+        # watcher updates the local generation. Retain that terminal boundary.
+        if isinstance(error, DcsMissionEndedError):
+            self._mission_ended = True
+        return self._mission_ended or self.client.state.mission_generation != self.mission_generation
+
+    async def _run_cycle(
+        self,
+        coalition: str,
+        *,
+        on_event: CoordinatorEventCallback | None,
+    ) -> StrategicCoalitionCycle | None:
         async with self._decision_lock:
-            if self.client.state.mission_generation != self.mission_generation:
+            if self._has_mission_ended():
                 return self._mission_changed_cycle(coalition, None)
             readiness = await self.readiness_provider()
-            readiness.require_ready()
             if (
                 readiness.mission_generation != self.mission_generation
-                or self.client.state.mission_generation != self.mission_generation
+                or self._has_mission_ended()
             ):
                 return self._mission_changed_cycle(coalition, readiness.mission_time)
+            readiness.require_ready()
             mission_time = readiness.mission_time
             previous = self._last_cycle_mission_time[coalition]
             if mission_time is not None:
@@ -850,7 +872,7 @@ class BilateralConflictCoordinator:
         error: Exception,
         started_mission_time: float | None,
     ) -> StrategicCoordinatorAttempt:
-        if self.client.state.mission_generation != self.mission_generation:
+        if self._has_mission_ended(error):
             status = StrategicAttemptStatus.MISSION_CHANGED
         else:
             status = StrategicAttemptStatus.ERROR

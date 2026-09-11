@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from moosebridge import (
     AssetRequirement,
     AssetRole,
@@ -39,6 +41,7 @@ from moosebridge import (
     format_strategic_coalition_cycle,
 )
 from moosebridge.clock import DcsTime
+from moosebridge.server import DcsMissionEndedError
 
 
 class _Readiness:
@@ -715,6 +718,74 @@ def test_mission_bound_run_stops_both_workers_without_following_next_generation(
         assert result.coalition("blue")[-1].status is StrategicCycleStatus.MISSION_CHANGED
         assert result.coalition("red")[-1].status is StrategicCycleStatus.MISSION_CHANGED
         assert all(cycle.mission_generation == 0 for cycle in result.cycles)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("stage", "boundary"),
+    [
+        ("readiness", "command_error"),
+        ("recommendation", "command_error"),
+        ("readiness", "generation_changed"),
+        ("recommendation", "generation_changed"),
+        ("readiness", "blocked_readiness"),
+    ],
+)
+def test_mission_end_during_decision_stops_both_workers(stage: str, boundary: str) -> None:
+    async def scenario() -> None:
+        recommendation, activations = _recommendation(_decision("blue", "Target"))
+        client = _Client(recommendation, activations)
+        calls = []
+
+        class BlockedReadiness(_Readiness):
+            def require_ready(self):
+                raise ValueError("mission state has been cleared")
+
+        async def end_mission(*args, **kwargs):
+            calls.append(stage)
+            await asyncio.sleep(0)
+            if boundary == "command_error":
+                # The response wins the race with the passive event watcher.
+                raise DcsMissionEndedError("DCS mission ended")
+            client.state.mission_generation = 1
+            if boundary == "blocked_readiness":
+                return BlockedReadiness(client)
+            raise RuntimeError("request interrupted at mission boundary")
+
+        readiness_provider = end_mission
+        if stage == "recommendation":
+            readiness_provider = lambda: asyncio.sleep(0, result=_Readiness(client))
+            client.recommend_bilateral_strategy = end_mission
+        coordinator = BilateralConflictCoordinator(
+            client,
+            readiness_provider,
+            StrategicCoordinatorConfig(poll_interval_s=0.01, retain_audit=False),
+        )
+        result = await asyncio.wait_for(coordinator.run_until_mission_end(), timeout=1.0)
+
+        assert calls == [stage]
+        assert client.activation_calls == []
+        assert coordinator.cooldowns == ()
+        for coalition in ("blue", "red"):
+            assert result.coalition(coalition)[-1].status is StrategicCycleStatus.MISSION_CHANGED
+        assert all(cycle.mission_generation == 0 for cycle in result.cycles)
+
+    asyncio.run(scenario())
+
+
+def test_decision_error_without_mission_boundary_is_not_hidden() -> None:
+    async def scenario() -> None:
+        recommendation, activations = _recommendation(_decision("blue", "Target"))
+        client = _Client(recommendation, activations)
+
+        async def broken_readiness():
+            raise RuntimeError("invalid scenario data")
+
+        coordinator = BilateralConflictCoordinator(client, broken_readiness)
+        with pytest.raises(RuntimeError, match="invalid scenario data"):
+            await coordinator.run_cycle("blue")
+        assert client.activation_calls == []
 
     asyncio.run(scenario())
 
